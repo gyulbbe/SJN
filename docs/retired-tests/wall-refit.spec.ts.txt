@@ -1,0 +1,648 @@
+import { seedTestTiles, uploadBathroomPhoto } from '../tests/helpers/catalog-fixtures.mjs';
+import { test, expect, type Page, type TestInfo } from '@playwright/test';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import type { AssetRecord, MaterialVersion, ProjectDocument, Surface } from '../src/lib/types';
+
+test.use({ channel: 'chrome', actionTimeout: 15000 });
+test.setTimeout(180000);
+
+// Independently annotated image landmarks. No manually traced wall/floor polygons are used here.
+const landmarks = [
+  { name: 'left wall', x: 0.2, y: 0.61, changes: true },
+  { name: 'back wall', x: 0.54, y: 0.35, changes: true },
+  { name: 'right wall', x: 0.84, y: 0.59, changes: true },
+  { name: 'door', x: 0.05, y: 0.5, changes: false },
+  { name: 'door top', x: 0.07, y: 0.1, changes: false },
+  { name: 'door bottom', x: 0.04, y: 0.85, changes: false },
+  { name: 'right door frame', x: 0.94, y: 0.4, changes: false },
+  { name: 'door handle', x: 0.14, y: 0.41, changes: false },
+  { name: 'mirror', x: 0.37, y: 0.31, changes: false },
+  { name: 'window', x: 0.84, y: 0.08, changes: false },
+  { name: 'basin body', x: 0.365, y: 0.57, changes: false },
+  { name: 'toilet body', x: 0.65, y: 0.68, changes: false },
+  { name: 'basin tap', x: 0.372, y: 0.471, changes: false },
+  { name: 'paper holder', x: 0.795, y: 0.438, changes: false },
+  { name: 'left shelf', x: 0.239, y: 0.45, changes: false },
+  { name: 'existing manual floor', x: 0.55, y: 0.9, changes: false },
+  { name: 'placed product', x: 0.22, y: 0.935, changes: false },
+];
+
+async function evidence(info: TestInfo, name: string, body: Buffer, contentType = 'application/json') {
+  const directory = resolve('test-results/wall-refit-qa');
+  await mkdir(directory, { recursive: true });
+  const path = resolve(directory, name);
+  await writeFile(path, body);
+  await info.attach(name, { path, contentType });
+}
+
+async function stored(page: Page): Promise<ProjectDocument> {
+  return page.evaluate(
+    (id) =>
+      new Promise<ProjectDocument>((resolve, reject) => {
+        const request = indexedDB.open('gongganmiri-v1');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const get = db.transaction('projects').objectStore('projects').get(id);
+          get.onerror = () => {
+            db.close();
+            reject(get.error);
+          };
+          get.onsuccess = () => {
+            db.close();
+            resolve(get.result);
+          };
+        };
+      }),
+    page.url().split('/').at(-1)!,
+  );
+}
+
+async function ready(page: Page) {
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await page.getByRole('button', { name: '벽 타일', exact: true }).click();
+}
+
+async function writeDocument(page: Page, document: ProjectDocument) {
+  await page.evaluate(
+    (document) =>
+      new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open('gongganmiri-v1');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction('projects', 'readwrite');
+          tx.objectStore('projects').put(document);
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+          tx.onerror = () => {
+            db.close();
+            reject(tx.error);
+          };
+        };
+      }),
+    document,
+  );
+  await page.reload();
+  await ready(page);
+}
+
+async function pixels(page: Page) {
+  return page.locator('[data-testid="canvas-frame"] canvas').evaluate((canvas, points) => {
+    const image = canvas as HTMLCanvasElement;
+    const copy = document.createElement('canvas');
+    copy.width = image.width;
+    copy.height = image.height;
+    const ctx = copy.getContext('2d')!;
+    ctx.drawImage(image, 0, 0);
+    return points.map((point) =>
+      Array.from(
+        ctx.getImageData(Math.floor(point.x * copy.width) - 1, Math.floor(point.y * copy.height) - 1, 3, 3)
+          .data,
+      ),
+    );
+  }, landmarks);
+}
+function delta(before: number[], after: number[]) {
+  return Math.max(...before.map((value, index) => (index % 4 === 3 ? 0 : Math.abs(value - after[index]))));
+}
+
+async function renderedOriginalPixels(page: Page) {
+  const reference = await page.evaluate(async (points) => {
+    const response = await fetch('/examples/bathroom.png');
+    if (!response.ok) throw new Error('QA 원본 사진을 읽지 못했어요.');
+    const bitmap = await createImageBitmap(await response.blob());
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return points.map((point) =>
+      Array.from(
+        context.getImageData(
+          Math.floor(point.x * canvas.width) - 1,
+          Math.floor(point.y * canvas.height) - 1,
+          3,
+          3,
+        ).data,
+      ),
+    );
+  }, landmarks);
+  // A visible canvas/loading label does not prove the first GPU frame is ready. Match actual
+  // source-photo pixels at protected landmarks, plus the deliberately placed pink product.
+  const probes = ['door', 'mirror', 'window'].map((name) =>
+    landmarks.findIndex((point) => point.name === name),
+  );
+  const product = landmarks.findIndex((point) => point.name === 'placed product');
+  const pink = Array.from({ length: 9 }, () => [232, 39, 93, 255]).flat();
+  let rendered: number[][] = [];
+  await expect
+    .poll(
+      async () => {
+        rendered = await pixels(page);
+        return Math.max(
+          ...probes.map((index) => delta(reference[index], rendered[index])),
+          delta(pink, rendered[product]),
+        );
+      },
+      { message: '원본 사진과 기존 배치 제품이 실제 캔버스에 그려져야 한다', timeout: 15000 },
+    )
+    .toBeLessThanOrEqual(3);
+  return rendered;
+}
+
+async function fixtureProject(page: Page, existingWall = false) {
+  await page.goto('/');
+  await seedTestTiles(page);
+  await uploadBathroomPhoto(page);
+  await ready(page);
+  const current = await stored(page);
+  // A historical project fixture in a fresh test context: generic lower-floor mask and a real
+  // transparent product asset. No wall result from manual tracing is mixed into automatic QA.
+  await page.evaluate(
+    async ({ id, existingWall }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('gongganmiri-v1');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const read = <T>(store: string, id?: string) =>
+        new Promise<T>((resolve, reject) => {
+          const source = db.transaction(store).objectStore(store);
+          const request = id ? source.get(id) : source.getAll();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      const project = await read<ProjectDocument>('projects', id);
+      const versions = await read<MaterialVersion[]>('versions');
+      const tile = versions.find((v) => v.name === '라이트 스톤')!;
+      const cloud = versions.find((v) => v.name === '클라우드 화이트')!;
+      const color = { exposure: 0, contrast: 1, saturation: 1, warmth: 0 };
+      const rectangle = (left: number, top: number, right: number, bottom: number): Surface['quad'] => [
+        { x: left, y: top },
+        { x: right, y: top },
+        { x: right, y: bottom },
+        { x: left, y: bottom },
+      ];
+      const floor: Surface = {
+        id: crypto.randomUUID(),
+        name: '사용자가 지정한 기존 바닥',
+        kind: 'floor',
+        quad: [
+          { x: 0.263, y: 0.719 },
+          { x: 0.72, y: 0.719 },
+          { x: 0.919, y: 0.996 },
+          { x: 0.118, y: 0.996 },
+        ],
+        mask: { polygon: rectangle(0.2, 0.85, 0.88, 0.99), strokes: [] },
+        widthMm: 2300,
+        heightMm: 2600,
+        calibrated: true,
+        materialVersionId: tile.id,
+        tile: {
+          rotation: 13,
+          offsetX: 37,
+          offsetY: -29,
+          groutWidth: 3,
+          groutColor: '#d0c5bb',
+          pattern: 'brick',
+          seed: 27,
+          shading: 0.2,
+        },
+        color: { ...color, warmth: 0.02 },
+      };
+      project.scene.surfaces = [floor];
+      if (existingWall)
+        project.scene.surfaces.push({
+          ...structuredClone(floor),
+          id: crypto.randomUUID(),
+          name: '기존 단일 벽',
+          kind: 'wall',
+          mask: { polygon: rectangle(0.3, 0.12, 0.72, 0.7), strokes: [] },
+          quad: rectangle(0.3, 0.12, 0.72, 0.7),
+          materialVersionId: cloud.id,
+          widthMm: 2200,
+          heightMm: 2100,
+          tile: { ...floor.tile, rotation: 0, offsetY: 17 },
+        });
+      project.scene.protection = { polygon: rectangle(0.49, 0.02, 0.53, 0.04), strokes: [] };
+      project.scene.backgroundAssetId = project.scene.previewAssetId;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 32;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#e8275d';
+      ctx.beginPath();
+      ctx.arc(16, 16, 12, 0, Math.PI * 2);
+      ctx.fill();
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/png'));
+      const stamp = new Date().toISOString(),
+        assetId = crypto.randomUUID(),
+        materialId = crypto.randomUUID(),
+        versionId = crypto.randomUUID();
+      const asset: AssetRecord = {
+        id: assetId,
+        ownerId: 'local',
+        name: 'QA fixture.png',
+        mime: 'image/png',
+        size: blob.size,
+        width: 32,
+        height: 32,
+        kind: 'product',
+        createdAt: stamp,
+        blob,
+      };
+      const version: MaterialVersion = {
+        ...tile,
+        id: versionId,
+        materialId,
+        category: 'basin',
+        scope: 'personal',
+        name: '보존할 배치 제품',
+        code: 'QA-WALL-REFIT',
+        coverAssetId: assetId,
+        imageAssetIds: [],
+        textureAssetIds: [],
+        views: [{ assetId, direction: '정면', anchor: { x: 0.5, y: 0.5 } }],
+        createdAt: stamp,
+      };
+      project.scene.fixtures = [
+        {
+          id: crypto.randomUUID(),
+          name: '보존할 배치 제품',
+          materialVersionId: versionId,
+          viewIndex: 0,
+          position: { x: 0.22, y: 0.935 },
+          width: 0.055,
+          height: 0.0825,
+          rotation: 11,
+          anchor: { x: 0.5, y: 0.5 },
+          locked: true,
+          shadow: { x: 0, y: 0.004, opacity: 0.2, blur: 0.01, scale: 0.7 },
+          occlusion: { polygon: [], strokes: [] },
+          color,
+        },
+      ];
+      project.history = { past: [], future: [] };
+      project.editRevision = 0;
+      const tx = db.transaction(['assets', 'materials', 'versions', 'projects'], 'readwrite');
+      tx.objectStore('assets').add(asset);
+      tx.objectStore('versions').add(version);
+      tx.objectStore('materials').add({
+        id: materialId,
+        ownerId: 'local',
+        currentVersionId: versionId,
+        active: true,
+        scope: 'personal',
+        updatedAt: stamp,
+      });
+      tx.objectStore('projects').put(project);
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    },
+    { id: current.id, existingWall },
+  );
+  await page.reload();
+  await ready(page);
+  return stored(page);
+}
+
+const wallsOf = (document: ProjectDocument) => document.scene.surfaces.filter((s) => s.kind === 'wall');
+const untouched = (document: ProjectDocument) => ({
+  ...document.scene,
+  surfaces: document.scene.surfaces.filter((s) => s.kind !== 'wall'),
+});
+const appearance = (surface: Surface) => ({
+  materialVersionId: surface.materialVersionId,
+  color: surface.color,
+  tile: { ...surface.tile, offsetY: undefined },
+});
+
+async function refit(page: Page, revision: number) {
+  await page.getByRole('button', { name: '벽 경계 다시 맞추기', exact: true }).click();
+  await expect
+    .poll(async () => (await stored(page)).editRevision, { timeout: 120000 })
+    .toBeGreaterThan(revision);
+  await expect(page.getByTestId('auto-detection-status')).toHaveCount(0);
+  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.locator('.editor-error')).toHaveCount(0);
+  return stored(page);
+}
+
+test('실제 세 벽에 화이트 적용 후 벽만 재조정하며 기존 바닥·제품·보호·자재를 보존한다', async ({
+  page,
+}, info) => {
+  const pageErrors: string[] = [],
+    requests: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.context().on('request', (request) => {
+    if (/\/models\/deeplab-/.test(request.url())) requests.push(request.url());
+  });
+  const before = await fixtureProject(page);
+  const originalPixels = await renderedOriginalPixels(page);
+  await page.locator('button.material-tile').filter({ hasText: '클라우드 화이트' }).click();
+  await expect.poll(async () => wallsOf(await stored(page)).length, { timeout: 120000 }).toBe(3);
+  await expect(page.getByTestId('auto-detection-status')).toHaveCount(0);
+  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  const first = await stored(page),
+    firstWalls = wallsOf(first);
+  expect(firstWalls.map((s) => s.name).sort()).toEqual(['왼쪽 벽', '정면 벽', '오른쪽 벽'].sort());
+  expect(firstWalls.every((s) => s.materialVersionId && !s.calibrated)).toBe(true);
+  expect(new Set(firstWalls.map((s) => s.materialVersionId)).size).toBe(1);
+  expect(untouched(first)).toEqual(untouched(before));
+  expect(first.history.past.at(-1)).toEqual(before.scene);
+  expect(first.editRevision).toBe(before.editRevision + 1);
+  await expect.poll(async () => delta(originalPixels[1], (await pixels(page))[1])).toBeGreaterThan(10);
+  const appliedPixels = await pixels(page);
+  const coverage = landmarks.map((point, i) => ({
+    ...point,
+    delta: delta(originalPixels[i], appliedPixels[i]),
+  }));
+  await evidence(
+    info,
+    'automatic-wall-coverage.json',
+    Buffer.from(JSON.stringify({ coverage, requests, firstWalls, pageErrors }, null, 2)),
+  );
+  await evidence(info, 'automatic-three-walls.png', await page.screenshot(), 'image/png');
+  for (const result of coverage) {
+    if (result.changes) expect(result.delta, result.name).toBeGreaterThan(10);
+    else expect(result.delta, `${result.name} remains unchanged`).toBeLessThanOrEqual(3);
+  }
+
+  const legacy = structuredClone(first);
+  for (const surface of wallsOf(legacy)) {
+    surface.mask = { polygon: structuredClone(surface.quad), strokes: [] };
+    surface.tile = {
+      ...surface.tile,
+      rotation: 7,
+      offsetX: 41,
+      groutWidth: 4,
+      groutColor: '#c6bcb1',
+      pattern: 'brick',
+      seed: 103,
+      shading: 0.38,
+    };
+    surface.color = { exposure: 0.15, contrast: 1.05, saturation: 0.93, warmth: 0.025 };
+    surface.calibrated = true;
+  }
+  await writeDocument(page, legacy);
+  const repaired = await refit(page, legacy.editRevision);
+  expect(untouched(repaired)).toEqual(untouched(before));
+  expect(wallsOf(repaired)).toHaveLength(3);
+  for (const surface of wallsOf(repaired)) {
+    const old = wallsOf(legacy).find((s) => s.id === surface.id)!;
+    expect(old).toBeDefined();
+    expect(appearance(surface)).toEqual(appearance(old));
+    expect(surface.widthMm).toBe(old.widthMm);
+    expect(surface.calibrated).toBe(false);
+    expect(surface.mask).not.toEqual(old.mask);
+  }
+  expect(repaired.editRevision).toBe(legacy.editRevision + 1);
+  expect(repaired.history.past.at(-1)).toEqual(legacy.scene);
+  const refitPixels = await pixels(page);
+  for (const [i, point] of landmarks.entries())
+    if (!point.changes)
+      expect(
+        delta(originalPixels[i], refitPixels[i]),
+        `${point.name} remains unchanged after refit`,
+      ).toBeLessThanOrEqual(3);
+  const repeated = await refit(page, repaired.editRevision);
+  expect(repeated.scene).toEqual(repaired.scene);
+  await page.getByRole('button', { name: '실행 취소', exact: true }).click();
+  await expect.poll(async () => (await stored(page)).scene).toEqual(repaired.scene);
+  await page.getByRole('button', { name: '실행 취소', exact: true }).click();
+  await expect.poll(async () => (await stored(page)).scene).toEqual(legacy.scene);
+  await page.getByRole('button', { name: '다시 실행', exact: true }).click();
+  await expect.poll(async () => (await stored(page)).scene).toEqual(repaired.scene);
+  await page.reload();
+  await ready(page);
+  expect((await stored(page)).scene).toEqual(repaired.scene);
+  expect(pageErrors).toEqual([]);
+  await evidence(
+    info,
+    'wall-refit-report.json',
+    Buffer.from(
+      JSON.stringify(
+        {
+          actualModelRequests: requests,
+          walls: wallsOf(repaired),
+          repeatedRefitIdempotent: true,
+          nonWallsUnchanged: true,
+          historyAndReloadPassed: true,
+          pageErrors,
+        },
+        null,
+        2,
+      ),
+    ),
+  );
+});
+
+test('벽 다시 찾기 모델 실패는 기존 문서와 화면을 유지하고 다시 시도할 수 있다', async ({ page }, info) => {
+  let block = true;
+  const blocked: string[] = [],
+    errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.context().route(/\/models\/deeplab-ade20k\/model\.json(?:\?|$)/, async (route) => {
+    if (block) {
+      blocked.push(route.request().url());
+      await route.abort('failed');
+    } else await route.continue();
+  });
+  const before = await fixtureProject(page, true),
+    beforePixels = await pixels(page);
+  await page.getByRole('button', { name: '벽 경계 다시 맞추기', exact: true }).click();
+  await expect(page.locator('.editor-error')).toBeVisible({ timeout: 120000 });
+  await expect(page.getByTestId('auto-detection-status')).toHaveCount(0);
+  expect(blocked.length).toBeGreaterThan(0);
+  expect(await stored(page)).toEqual(before);
+  expect(await pixels(page)).toEqual(beforePixels);
+  block = false;
+  const repaired = await refit(page, before.editRevision);
+  expect(wallsOf(repaired)).toHaveLength(3);
+  expect(untouched(repaired)).toEqual(untouched(before));
+  expect(errors).toEqual([]);
+  await evidence(
+    info,
+    'wall-refit-failure.json',
+    Buffer.from(
+      JSON.stringify({ blocked, documentAndPixelsPreserved: true, realRetryPassed: true, errors }, null, 2),
+    ),
+  );
+});
+
+test('벽 분석 취소 후 늦게 끝난 실제 결과는 문서를 바꾸지 않고 재시도에 재사용한다', async ({
+  page,
+}, info) => {
+  const errors: string[] = [],
+    requests: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    const state = window as unknown as { wallQAReplies: number };
+    state.wallQAReplies = 0;
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        this.addEventListener('message', (event: MessageEvent<{ type?: string }>) => {
+          if (event.data?.type === 'result') state.wallQAReplies++;
+        });
+      }
+    };
+  });
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.context().route(/\/models\/deeplab-ade20k\/model\.json(?:\?|$)/, async (route) => {
+    requests.push(route.request().url());
+    await gate;
+    await route.continue();
+  });
+  try {
+    const before = await fixtureProject(page, true),
+      beforePixels = await pixels(page);
+    await page.getByRole('button', { name: '벽 경계 다시 맞추기', exact: true }).click();
+    await expect.poll(() => requests.length, { timeout: 30000 }).toBeGreaterThan(0);
+    await expect(page.getByTestId('auto-detection-status')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('auto-detection-status')).toHaveCount(0);
+    expect(await stored(page)).toEqual(before);
+    release();
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { wallQAReplies: number }).wallQAReplies), {
+        timeout: 120000,
+      })
+      .toBe(1);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(await stored(page)).toEqual(before);
+    expect(await pixels(page)).toEqual(beforePixels);
+    const count = requests.length;
+    const repaired = await refit(page, before.editRevision);
+    expect(wallsOf(repaired)).toHaveLength(3);
+    expect(untouched(repaired)).toEqual(untouched(before));
+    expect(requests).toHaveLength(count);
+    expect(errors).toEqual([]);
+    await evidence(
+      info,
+      'wall-refit-cancel.json',
+      Buffer.from(
+        JSON.stringify(
+          {
+            actualLateWorkerResultObserved: true,
+            cancelledDocumentAndPixelsPreserved: true,
+            retryUsesCache: true,
+            requests,
+            errors,
+          },
+          null,
+          2,
+        ),
+      ),
+    );
+  } finally {
+    release();
+  }
+});
+
+test('세 벽의 접점에서 정면 벽 원근점을 드래그하면 선택과 다른 면을 유지한다', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await fixtureProject(page);
+  await page.locator('button.material-tile').filter({ hasText: '클라우드 화이트' }).click();
+  await expect.poll(async () => wallsOf(await stored(page)).length, { timeout: 120000 }).toBe(3);
+  await expect(page.getByTestId('auto-detection-status')).toHaveCount(0);
+  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  const before = await stored(page);
+  const front = wallsOf(before).find((surface) => surface.name === '정면 벽')!;
+  const selection = page.getByLabel('타일 적용 위치', { exact: true });
+  await selection.selectOption(front.id);
+  await expect(selection).toHaveValue(front.id);
+  expect((await stored(page)).editRevision).toBe(before.editRevision);
+  const handle = page.locator(`[data-entity="${front.id}"][data-handle="q0"]`);
+  await expect(handle).toBeVisible();
+  const bounds = (await handle.boundingBox())!;
+  const start = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  const end = { x: start.x + 17, y: start.y + 14 };
+  const hitStack = await page.evaluate(
+    ({ x, y }) =>
+      document
+        .elementsFromPoint(x, y)
+        .filter((element) => element.hasAttribute('data-entity'))
+        .map((element) => ({
+          entity: element.getAttribute('data-entity'),
+          handle: element.getAttribute('data-handle'),
+          tag: element.tagName,
+        })),
+    start,
+  );
+  // Use the visible handle's actual CSS center, without force-click or dispatching synthetic events.
+  // Adjacent transparent surface paths must not intercept it.
+  expect(hitStack[0]).toMatchObject({ entity: front.id, handle: 'q0' });
+  expect(
+    hitStack.some(
+      (hit) =>
+        hit.tag === 'path' &&
+        hit.entity !== front.id &&
+        wallsOf(before).some((wall) => wall.id === hit.entity),
+    ),
+    'The regression must actually overlap another wall at the handle center',
+  ).toBe(true);
+  const frame = (await page.getByTestId('canvas-frame').boundingBox())!;
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => (await stored(page)).editRevision).toBe(before.editRevision + 1);
+  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(selection).toHaveValue(front.id);
+  await expect(page.locator(`path.selected-region[data-entity="${front.id}"]`)).toHaveCount(1);
+  await expect(page.locator('.editor-error')).toHaveCount(0);
+  const after = await stored(page);
+  const moved = wallsOf(after).find((surface) => surface.id === front.id)!;
+  expect(moved.quad[0]).not.toEqual(front.quad[0]);
+  expect(moved.quad[0].x).toBeCloseTo((end.x - frame.x) / frame.width, 4);
+  expect(moved.quad[0].y).toBeCloseTo((end.y - frame.y) / frame.height, 4);
+  expect(moved.quad.slice(1)).toEqual(front.quad.slice(1));
+  expect({ ...moved, quad: front.quad }).toEqual(front);
+  expect(after.scene.surfaces.filter((surface) => surface.id !== front.id)).toEqual(
+    before.scene.surfaces.filter((surface) => surface.id !== front.id),
+  );
+  expect(after.scene.surfaces.map((surface) => surface.id)).toEqual(
+    before.scene.surfaces.map((surface) => surface.id),
+  );
+  expect(untouched(after)).toEqual(untouched(before));
+  expect(after.history.past.at(-1)).toEqual(before.scene);
+  expect(after.history.past).toHaveLength(before.history.past.length + 1);
+  expect(errors).toEqual([]);
+  await evidence(
+    info,
+    'selected-wall-handle.json',
+    Buffer.from(
+      JSON.stringify(
+        {
+          start,
+          end,
+          hitStack,
+          beforeQuad: front.quad,
+          afterQuad: moved.quad,
+          selectionPreserved: true,
+          otherSurfacesAndSceneOrderUnchanged: true,
+          oneCommand: true,
+          errors,
+        },
+        null,
+        2,
+      ),
+    ),
+  );
+  await evidence(info, 'selected-wall-handle.png', await page.screenshot(), 'image/png');
+});

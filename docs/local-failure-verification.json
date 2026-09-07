@@ -1,0 +1,51 @@
+{
+  "startedAt": "2026-09-05T15:26:04.785Z",
+  "browser": "152.0.7977.76",
+  "runtime": "v22.13.1",
+  "environment": "Windows / real Chrome headless / next dev / fresh isolated browser contexts",
+  "diskWasFilled": false,
+  "webglFailure": {
+    "passed": true,
+    "injection": "HTMLCanvasElement.getContext(\"webgl2\") returns null",
+    "injectionCalls": 2,
+    "errorGuidanceVisible": true,
+    "noInfiniteSpinner": true,
+    "projectAndOriginalAssetPreserved": true,
+    "originalAsset": {
+      "id": "6df0ef48-851c-4935-a091-1d62f41a5c4d",
+      "bytes": 2112713
+    },
+    "storageRevision": 1,
+    "reopenedAfterRemovingFault": true,
+    "uncaughtPageErrors": [],
+    "consoleErrors": [
+      "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ],
+    "httpErrors": [],
+    "screenshot": "test-results/failure-qa/webgl-failure.png"
+  },
+  "quotaFailure": {
+    "passed": true,
+    "injection": "one QuotaExceededError from IDBObjectStore.put, only projects store",
+    "priorDocumentUnchangedOnFailure": true,
+    "currentFormPreserved": true,
+    "errorStatusVisible": true,
+    "explicitSaveRetrySucceeded": true,
+    "reloadRetainsRecoveredDocument": true,
+    "beforeStorageRevision": 1,
+    "recoveredStorageRevision": 3,
+    "injectionAfterRetry": {
+      "remaining": 0,
+      "thrown": 1,
+      "projectPuts": 3
+    },
+    "staleAlertAfterRetry": [],
+    "uncaughtPageErrors": [],
+    "screenshots": [
+      "test-results/failure-qa/quota-failure.png",
+      "test-results/failure-qa/quota-recovered.png"
+    ]
+  },
+  "passed": true,
+  "finishedAt": "2026-09-05T15:26:11.582Z"
+}

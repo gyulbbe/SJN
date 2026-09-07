@@ -1,0 +1,53 @@
+{
+  "scope": "Newly registered transparent 2D products only; photographed fixture removal is not performed.",
+  "wallCount": 3,
+  "floorCount": 1,
+  "checkpoints": [
+    "new product",
+    "product occlusion",
+    "mouse move",
+    "duplicate",
+    "delete duplicate",
+    "delete all new products",
+    "save and reload"
+  ],
+  "wallPoint": {
+    "x": 0.5,
+    "y": 0.6
+  },
+  "floorPoint": {
+    "x": 0.5,
+    "y": 0.7919999999999999
+  },
+  "transparentPoint": {
+    "x": 0.428,
+    "y": 0.5935999999999999
+  },
+  "shadowPoint": {
+    "x": 0.54,
+    "y": 0.864
+  },
+  "shadowDifference": 10,
+  "oldPosition": {
+    "maxDifference": 0,
+    "meanDifference": 0,
+    "changedOverTolerance": 0,
+    "pixels": 151790
+  },
+  "tiledHash": "532d57a11eb25503494cf1808da5f94f1ebf25e4872bf9822f550977f53cd4dc",
+  "movedHash": "bfea37246f6b9b0f309d76111f8f5bb69b6e77956b44051bcdad4a76890476ba",
+  "allProductsDeletedRestoredEntireRaster": true,
+  "cloneDeletionRestoredMovedRaster": true,
+  "undoRedoAndReloadRestoredEntireRaster": true,
+  "exportHash": "87832d68d501f16f01530623d007ea44816001bbc0d78fa703074e51093b8126",
+  "exportVsPreview": {
+    "maxDifference": 4,
+    "meanDifference": 0.3247566223144531,
+    "changedOverTolerance": 154,
+    "pixels": 1572864
+  },
+  "selectedAndUnselectedExportsHaveIdenticalRGBA": true,
+  "exportExcludesVisibleHandles": true,
+  "unchangedSurfaceMasksPerspectivePhaseAndMaterialVersions": true,
+  "errors": []
+}

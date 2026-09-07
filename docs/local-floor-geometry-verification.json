@@ -1,0 +1,69 @@
+{
+  "inferenceMs": 4045.89999999851,
+  "maskResolution": [
+    512,
+    341
+  ],
+  "oldQuad": [
+    {
+      "x": 0.263671875,
+      "y": 0.7155425219941349
+    },
+    {
+      "x": 0.71875,
+      "y": 0.718475073313783
+    },
+    {
+      "x": 0.91796875,
+      "y": 1
+    },
+    {
+      "x": 0.12109375,
+      "y": 1
+    }
+  ],
+  "newQuad": [
+    {
+      "x": 0.2611051317660312,
+      "y": 0.7194171481108119
+    },
+    {
+      "x": 0.7159850752163893,
+      "y": 0.7177260985750383
+    },
+    {
+      "x": 0.9330511841781892,
+      "y": 0.9967144860138839
+    },
+    {
+      "x": 0.04927197807336981,
+      "y": 1
+    }
+  ],
+  "oldVanishingPoint": {
+    "x": 0.4514984358359957,
+    "y": 0.3408099338224043
+  },
+  "newVanishingPoint": {
+    "x": 0.4857701320653189,
+    "y": 0.4218379193413765
+  },
+  "oldDiagonalBoundaryMedianErrorPixels": {
+    "left": 11.788659793814418,
+    "right": 3.78125
+  },
+  "newDiagonalBoundaryMedianErrorPixels": {
+    "left": 0.4517918429244503,
+    "right": 0.31715241280460305
+  },
+  "maskDifferences": 0,
+  "floorPixels": 31124,
+  "warnings": [
+    "너무 작은 감지 영역 1개는 자동 적용에서 제외했어요.",
+    "맞닿은 벽의 꺾임은 자동으로 확정하지 않았어요. 타일 방향과 원근점을 확인해 주세요."
+  ],
+  "browser": "152.0.7977.76",
+  "externalRequests": [],
+  "errors": [],
+  "limitation": "Boundary fit estimates texture perspective. It is not metric calibration or a measured ground-truth grout-line fit; segmentation errors are kept unchanged."
+}

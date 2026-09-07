@@ -1,0 +1,116 @@
+{
+  "browser": "152.0.7977.76",
+  "runtime": "v22.13.1",
+  "environment": "Windows / Chrome headless / next dev; no SwiftShader launch flags",
+  "desktopViewport": [
+    1920,
+    1080
+  ],
+  "performance": {
+    "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+    "hardwareConcurrency": 16,
+    "viewport": [
+      1920,
+      1080
+    ],
+    "canvasBacking": [
+      1536,
+      1024
+    ],
+    "canvasDisplay": [
+      1254,
+      836
+    ],
+    "durationMs": 5011,
+    "inputEvents": 307,
+    "rafCallbacks": 1141,
+    "rafRate": 227.6990620634604,
+    "renderedCanvasSubmissions": 255,
+    "submittedCanvasRate": 50.88804629814408,
+    "rafGapP95Ms": 4.300000000000182,
+    "rafGapMaxMs": 54.19999999999982,
+    "inputToDrawP95Ms": 10.899999998509884,
+    "longTaskCount": 1,
+    "longTaskMaxMs": 56,
+    "methodology": "1500ms warmup, 5000ms native input setter + bubbling input events at ~16ms; real React editor and final canvas framebuffer draws instrumented; draw submission does not guarantee physical presentation."
+  },
+  "scene": {
+    "photo": [
+      1536,
+      1024
+    ],
+    "surfaces": 1,
+    "fixtures": 1,
+    "protectionPolygons": 1,
+    "shadows": 1
+  },
+  "background": {
+    "cancelPreservesScene": true,
+    "cloneApplyCreatesSeparateAsset": true,
+    "originalAssetPreserved": true,
+    "outsideMaskPixelUnchanged": true,
+    "insideMaskPixelChanged": true,
+    "pixels": {
+      "original": {
+        "pixels": [
+          [
+            159,
+            152,
+            140,
+            255
+          ],
+          [
+            196,
+            188,
+            176,
+            255
+          ]
+        ],
+        "size": [
+          1536,
+          1024
+        ]
+      },
+      "edited": {
+        "pixels": [
+          [
+            188,
+            175,
+            159,
+            255
+          ],
+          [
+            196,
+            188,
+            176,
+            255
+          ]
+        ],
+        "size": [
+          1536,
+          1024
+        ]
+      }
+    }
+  },
+  "mobile": {
+    "viewport": [
+      390,
+      844
+    ],
+    "overflow": {
+      "viewport": 390,
+      "documentWidth": 390,
+      "bodyWidth": 390,
+      "headerWidth": 390
+    },
+    "propertyDrawerOpened": true,
+    "propertySliderKeyboardUsable": true,
+    "propertyDrawerClosed": true,
+    "catalogOpened": true,
+    "catalogTilesVisible": true,
+    "catalogCloseButtons": 1
+  },
+  "pageErrors": []
+}

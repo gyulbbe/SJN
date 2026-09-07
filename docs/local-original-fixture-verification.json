@@ -1,0 +1,53 @@
+{
+  "browser": "system Chrome",
+  "fixture": {
+    "id": "54a9c14b-7317-414e-a806-8502b580b635",
+    "name": "사진에서 분리한 빨간 도기",
+    "materialVersionId": "f542e8f4-1b33-4ab7-999b-4c937d26fc6f",
+    "viewIndex": 0,
+    "position": {
+      "x": 0.5,
+      "y": 0.8
+    },
+    "width": 0.2,
+    "height": 0.5,
+    "rotation": 0,
+    "anchor": {
+      "x": 0.5,
+      "y": 1
+    },
+    "locked": false,
+    "shadow": {
+      "x": 0,
+      "y": 0.005,
+      "opacity": 0,
+      "blur": 0.015,
+      "scale": 0.7
+    },
+    "occlusion": {
+      "polygon": [],
+      "strokes": []
+    },
+    "color": {
+      "exposure": 0,
+      "contrast": 1,
+      "saturation": 1,
+      "warmth": 0
+    }
+  },
+  "sceneSurfaceCount": 2,
+  "restoredSurfaceKinds": [
+    "floor",
+    "wall"
+  ],
+  "originalBytesPreserved": true,
+  "cancelPreservesScene": true,
+  "selectionOnlyApplyDisabled": true,
+  "partialCloneRejected": true,
+  "samePositionPixelsPreserved": true,
+  "movingRevealsBothWallAndFloorTile": true,
+  "deletingRevealsBothWallAndFloorTile": true,
+  "undoAndReloadPreserveMovedFixture": true,
+  "beforeShowsOriginal": true,
+  "pageErrors": []
+}

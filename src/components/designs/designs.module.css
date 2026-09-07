@@ -1,0 +1,702 @@
+.backdrop,
+.confirmBackdrop {
+  position: fixed;
+  inset: 0;
+  background: #1b292757;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 70;
+}
+.manager {
+  width: min(1100px, 100%);
+  max-height: min(900px, calc(100dvh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: #fbfcfa;
+  border: 1px solid #d7ded8;
+  border-radius: 18px;
+  box-shadow: 0 24px 80px #10282430;
+  overflow: hidden;
+  color: #243b35;
+  outline: none;
+}
+.manager button,
+.comparison button,
+.manager input {
+  font: inherit;
+}
+.manager button,
+.comparison button {
+  cursor: pointer;
+}
+.manager button:disabled,
+.comparison button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.manager button:focus-visible,
+.comparison button:focus-visible,
+.manager input:focus-visible,
+.comparison input:focus-visible,
+.viewport:focus-visible {
+  outline: 2px solid #267864;
+  outline-offset: 3px;
+}
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 25px 28px 20px;
+  border-bottom: 1px solid #e2e7e1;
+}
+.modalHeader h2,
+.comparisonToolbar h2 {
+  font-size: 22px;
+  font-weight: 650;
+  margin: 0;
+  letter-spacing: -0.5px;
+}
+.modalHeader h2 span,
+.comparisonToolbar h2 span {
+  color: #718078;
+  font-size: 14px;
+  font-weight: 450;
+  margin-left: 6px;
+}
+.modalHeader p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #728078;
+}
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  border-radius: 7px;
+}
+.iconButton:hover:enabled {
+  background: #e9eeea;
+}
+.primaryButton,
+.secondaryButton,
+.dangerButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 8px;
+  padding: 9px 13px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+.primaryButton {
+  background: #28634e;
+  color: #fff;
+}
+.primaryButton:hover:enabled {
+  background: #1e513f;
+}
+.secondaryButton {
+  background: #fff;
+  border-color: #d9dfd8;
+  color: #355046;
+}
+.secondaryButton:hover:enabled {
+  background: #f1f4ef;
+}
+.dangerButton {
+  color: #fff;
+  background: #a73b35;
+}
+.textButton {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  border: none;
+  background: transparent;
+  color: #326b57;
+  font-size: 12px !important;
+  border-radius: 4px;
+  padding: 6px;
+  white-space: nowrap;
+}
+.textButton:hover:enabled {
+  background: #e9eee8;
+}
+.managerTools {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 28px;
+  font-size: 13px;
+}
+.managerTools > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: #48816b;
+  border-radius: 100%;
+  vertical-align: 1px;
+}
+.managerBody {
+  flex: 1;
+  overflow: auto;
+  padding: 0 28px 24px;
+  min-height: 120px;
+}
+.designList {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 17px;
+}
+.designCard {
+  min-width: 0;
+  border: 1px solid #dce2da;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.activeCard {
+  border-color: #4a836b;
+  box-shadow: 0 0 0 1px #4a836b;
+}
+.thumbnailButton {
+  display: block;
+  position: relative;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: #e8ece7;
+}
+.thumbnail {
+  width: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ecf0eb;
+  overflow: hidden;
+  color: #9aa99e;
+  min-height: 130px;
+  max-height: 215px;
+}
+.thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.activeBadge {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  background: #275f4de8;
+  color: #fff;
+  border-radius: 20px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+.cardBody {
+  padding: 10px 12px 8px;
+}
+.cardTitle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+}
+.cardTitle h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nameForm {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.nameForm input {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #adc4b7;
+  border-radius: 5px;
+  padding: 6px 7px;
+  font-size: 13px;
+}
+.cardActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 7px;
+  border-top: 1px solid #edf0eb;
+}
+.cardActions > div {
+  display: flex;
+}
+.compareCheck {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.compareCheck input {
+  width: 15px;
+  height: 15px;
+  accent-color: #326a52;
+}
+.managerFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 17px 28px;
+  border-top: 1px solid #e2e7e1;
+  background: #f5f7f2;
+}
+.managerFooter p {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.managerFooter p span {
+  color: #738277;
+  font-size: 11px;
+}
+.previewState {
+  position: absolute;
+  bottom: 9px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fafff3ed;
+  border: 1px solid #d9e1d6;
+  color: #607360;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.error,
+.limitNotice {
+  margin: 0 24px 12px;
+  padding: 10px 12px;
+  border: 1px solid #e6d4bb;
+  background: #fff7e8;
+  border-radius: 7px;
+  color: #805d2f;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.error {
+  border-color: #e9c6c1;
+  background: #fff3f0;
+  color: #94453a;
+}
+.empty {
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding: 32px;
+  color: #6c7c70;
+  grid-column: 1/-1;
+}
+.empty h3,
+.empty p {
+  margin: 0;
+}
+.empty h3 {
+  color: #405c49;
+  font-size: 17px;
+}
+.empty p {
+  font-size: 13px;
+}
+.confirmBackdrop {
+  z-index: 80;
+}
+.confirm {
+  max-width: 410px;
+  padding: 26px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 15px 60px #1520193f;
+}
+.confirm h3 {
+  margin: 0 0 10px;
+  font-size: 19px;
+}
+.confirm p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #627165;
+  overflow-wrap: anywhere;
+}
+.confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+.comparison {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #edf0ea;
+  color: #2e453b;
+  overflow: auto;
+}
+.comparison:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+}
+.comparisonToolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 18px;
+  background: #fcfdf9;
+  border-bottom: 1px solid #dce3d9;
+  flex-wrap: wrap;
+}
+.comparisonToolbar > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.comparisonToolbar h2 {
+  font-size: 18px;
+}
+.comparisonHint {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 20px;
+}
+.comparisonHint p {
+  margin: 0;
+  color: #75806f;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.comparisonGrid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(var(--design-columns), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--design-rows), minmax(220px, 1fr));
+  min-height: 0;
+  gap: 12px;
+  padding: 4px 18px 18px;
+}
+.comparisonCard {
+  min-width: 0;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #d7dfd3;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 2px 5px #30482b08;
+}
+.comparisonCardHeader {
+  padding: 8px 10px 8px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid #e8ece5;
+}
+.comparisonCardHeader h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.comparisonCardHeader > div {
+  display: flex;
+  align-items: center;
+}
+.viewport {
+  position: relative;
+  flex: 1;
+  min-height: 140px;
+  overflow: hidden;
+  touch-action: none;
+  background-color: #e3e8e1;
+  background-image: radial-gradient(#cbd4c6 0.7px, transparent 0.7px);
+  background-size: 12px 12px;
+  cursor: grab;
+}
+.viewport:active {
+  cursor: grabbing;
+}
+.imagePlane {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  will-change: transform;
+  pointer-events: none;
+  transform-origin: center;
+}
+.imagePlane img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: fill;
+  user-select: none;
+}
+.previewError {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  text-align: center;
+  background: #f2f4edf2;
+  cursor: default;
+}
+.previewError p {
+  font-size: 12px;
+  line-height: 1.7;
+  max-width: 360px;
+  color: #806447;
+}
+.comparisonCardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 9px;
+  gap: 5px;
+  background: #fbfcf8;
+  border-top: 1px solid #e5e9df;
+}
+.comparisonCardFooter > div {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.comparisonCardFooter span {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 35px;
+  text-align: center;
+  color: #677b65;
+}
+@media (max-width: 1100px) {
+  .comparisonToolbar {
+    gap: 8px;
+  }
+  .comparisonToolbar > div {
+    gap: 7px;
+  }
+  .comparisonGrid {
+    gap: 8px;
+    padding-inline: 10px;
+  }
+}
+@media (max-width: 850px) {
+  .designList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .comparisonGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    grid-auto-rows: minmax(240px, 1fr);
+  }
+  .comparisonHint {
+    align-items: flex-start;
+  }
+}
+@media (max-width: 560px) {
+  .backdrop {
+    padding: 8px;
+  }
+  .manager {
+    border-radius: 12px;
+    max-height: calc(100dvh - 16px);
+  }
+  .modalHeader {
+    padding: 18px 16px;
+  }
+  .modalHeader h2 {
+    font-size: 20px;
+  }
+  .modalHeader p {
+    font-size: 11px;
+  }
+  .managerTools {
+    padding: 13px 16px;
+  }
+  .managerBody {
+    padding: 0 16px 18px;
+  }
+  .designList {
+    gap: 10px;
+  }
+  .thumbnail {
+    min-height: 95px;
+  }
+  .cardBody {
+    padding: 7px;
+  }
+  .cardTitle h3 {
+    font-size: 12px;
+  }
+  .cardActions {
+    margin-top: 5px;
+    gap: 0;
+  }
+  .cardActions .iconButton {
+    width: 27px;
+  }
+  .compareCheck {
+    font-size: 11px;
+    gap: 4px;
+  }
+  .managerFooter {
+    padding: 13px 16px;
+  }
+  .managerFooter p span {
+    max-width: 150px;
+  }
+  .error,
+  .limitNotice {
+    margin-inline: 16px;
+  }
+  .comparisonToolbar {
+    padding: 10px;
+  }
+  .comparisonToolbar > div {
+    gap: 5px;
+  }
+  .comparisonToolbar h2 {
+    font-size: 16px;
+  }
+  .comparisonToolbar .secondaryButton,
+  .comparisonToolbar .primaryButton {
+    padding: 7px 8px;
+    font-size: 11px !important;
+  }
+  .comparisonHint {
+    flex-direction: column;
+    padding: 8px 12px;
+    gap: 3px;
+  }
+  .comparisonGrid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: 320px;
+    flex: none;
+  }
+  .comparisonCard {
+    min-height: 300px;
+  }
+  .comparisonToolbar h2 span {
+    font-size: 12px;
+  }
+}
+
+.comparisonBody {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.comparisonBody .comparisonGrid {
+  min-width: 0;
+  overflow: auto;
+}
+.costSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-top: 1px solid #e8ece5;
+  background: #fafcf8;
+}
+.costSummary > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  min-width: 0;
+}
+.costSummary span {
+  color: #617065;
+  font-size: 10px;
+}
+.costSummary strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.costSummary small {
+  width: 100%;
+  color: #956535;
+  font-size: 10px;
+}
+.usageDetail {
+  flex: 0 0 350px;
+  width: 350px;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid #dce3d9;
+  background: white;
+}
+@media (max-width: 900px) {
+  .comparisonBody {
+    min-height: 0;
+    overflow: auto;
+  }
+  .comparisonBody .comparisonGrid {
+    overflow: visible;
+  }
+  .usageDetail {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    z-index: 32;
+    max-width: 94vw;
+    box-shadow: -8px 0 32px #1c322330;
+  }
+  .comparison:fullscreen .usageDetail {
+    position: absolute;
+  }
+}

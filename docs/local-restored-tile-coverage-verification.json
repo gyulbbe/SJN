@@ -1,0 +1,56 @@
+{
+  "browser": "152.0.7977.76",
+  "checks": [
+    {
+      "width": 97,
+      "height": 71,
+      "erase": false,
+      "maxAlphaDifference": 45,
+      "interiorWrongPixels": 0,
+      "nonBoundaryDifferencePixels": 0
+    },
+    {
+      "width": 97,
+      "height": 71,
+      "erase": true,
+      "maxAlphaDifference": 45,
+      "interiorWrongPixels": 0,
+      "nonBoundaryDifferencePixels": 0
+    },
+    {
+      "width": 333,
+      "height": 249,
+      "erase": false,
+      "maxAlphaDifference": 19,
+      "interiorWrongPixels": 0,
+      "nonBoundaryDifferencePixels": 0
+    },
+    {
+      "width": 333,
+      "height": 249,
+      "erase": true,
+      "maxAlphaDifference": 19,
+      "interiorWrongPixels": 0,
+      "nonBoundaryDifferencePixels": 0
+    },
+    {
+      "width": 4096,
+      "height": 3072,
+      "erase": false,
+      "maxAlphaDifference": 51,
+      "interiorWrongPixels": 0,
+      "nonBoundaryDifferencePixels": 0
+    },
+    {
+      "width": 4096,
+      "height": 3072,
+      "erase": true,
+      "maxAlphaDifference": 51,
+      "interiorWrongPixels": 0,
+      "nonBoundaryDifferencePixels": 0
+    }
+  ],
+  "outsideChangedPixels": 0,
+  "wallRestored": true,
+  "floorRestored": true
+}

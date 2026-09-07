@@ -1,0 +1,398 @@
+import { seedTestTiles, uploadBathroomPhoto } from './helpers/catalog-fixtures.mjs';
+/** Real application QA: start localhost:3000, then node --experimental-strip-types tests/ui-browser.ts. */
+import { chromium, expect, type Page } from '@playwright/test';
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import sharp from 'sharp';
+import type { ProjectDocument } from '../src/lib/types';
+
+const browser = await chromium.launch({
+  channel: 'chrome',
+  headless: true,
+  args: ['--enable-webgl', '--ignore-gpu-blocklist'],
+});
+const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
+const errors: string[] = [];
+page.on('pageerror', (error) => errors.push(error.message));
+page.setDefaultTimeout(15000);
+const report: Record<string, unknown> = {
+  browser: await browser.version(),
+  runtime: process.version,
+  environment: 'Windows / Chrome headless / next dev; no SwiftShader launch flags',
+  desktopViewport: [1920, 1080],
+};
+const directory = 'test-results/ui-qa';
+
+async function saved(): Promise<ProjectDocument> {
+  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  return page.evaluate(
+    (id) =>
+      new Promise<ProjectDocument>((resolve, reject) => {
+        const request = indexedDB.open('gongganmiri-v1');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const get = db.transaction('projects').objectStore('projects').get(id);
+          get.onerror = () => {
+            db.close();
+            reject(get.error);
+          };
+          get.onsuccess = () => {
+            db.close();
+            resolve(get.result);
+          };
+        };
+      }),
+    page.url().split('/').at(-1)!,
+  );
+}
+async function pointAt(canvas: ReturnType<Page['locator']>, point: [number, number]) {
+  const rect = await canvas.boundingBox();
+  assert.ok(rect);
+  return { x: rect.x + point[0] * rect.width, y: rect.y + point[1] * rect.height };
+}
+async function clickAt(canvas: ReturnType<Page['locator']>, point: [number, number]) {
+  const p = await pointAt(canvas, point);
+  await page.mouse.click(p.x, p.y);
+}
+async function paint(canvas: ReturnType<Page['locator']>, points: [number, number][]) {
+  const first = await pointAt(canvas, points[0]);
+  await page.mouse.move(first.x, first.y);
+  await page.mouse.down();
+  for (const point of points.slice(1)) {
+    const p = await pointAt(canvas, point);
+    await page.mouse.move(p.x, p.y, { steps: 8 });
+  }
+  await page.mouse.up();
+}
+
+try {
+  await mkdir(directory, { recursive: true });
+  await page.goto('http://127.0.0.1:3000');
+  await seedTestTiles(page);
+  await uploadBathroomPhoto(page);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  const overlay = page.getByTestId('editor-canvas');
+  await page.getByRole('button', { name: '면 만들기 (4점)', exact: true }).click();
+  for (const point of [
+    [0.262, 0.72],
+    [0.719, 0.72],
+    [0.917, 0.98],
+    [0.119, 0.98],
+  ] as [number, number][])
+    await clickAt(overlay, point);
+  await page.getByRole('button', { name: /라이트 스톤.*600/ }).click();
+  await page.getByLabel('가로 (mm)', { exact: true }).fill('2200');
+  await page.getByLabel('세로 (mm)', { exact: true }).fill('2400');
+  await page.getByRole('button', { name: '보호 영역 그리기', exact: true }).click();
+  for (const point of [
+    [0.58, 0.49],
+    [0.73, 0.49],
+    [0.73, 0.82],
+    [0.58, 0.82],
+  ] as [number, number][])
+    await clickAt(overlay, point);
+  await page.getByRole('button', { name: '다각형 완료', exact: true }).click();
+
+  const fixture = await sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="500"><ellipse cx="180" cy="140" rx="150" ry="80" fill="#e4e9e4"/><path d="M70 145H290L245 320H115Z" fill="#c1cbc3"/><rect x="125" y="300" width="110" height="170" rx="20" fill="#d4dcd4"/><ellipse cx="180" cy="135" rx="120" ry="52" fill="#7e9a91"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
+  await page.getByRole('button', { name: '신규 자재 등록', exact: true }).click();
+  const form = page.getByRole('dialog', { name: '신규 자재 등록', exact: true });
+  await form.getByLabel('상품명', { exact: false }).fill('성능 검증용 세면대');
+  await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
+  await form.getByLabel('가로 (mm)', { exact: true }).fill('600');
+  await form.getByLabel('높이 (mm)', { exact: true }).fill('800');
+  await form.getByLabel('깊이 (mm)', { exact: true }).fill('450');
+  await form
+    .getByLabel('+ 제품 방향 이미지 올리기', { exact: true })
+    .setInputFiles({ name: 'fixture.png', mimeType: 'image/png', buffer: fixture });
+  await form.getByRole('button', { name: '대표 이미지로 사용', exact: true }).click();
+  await form.getByRole('button', { name: '자재 등록', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await page.getByRole('button', { name: '위생도기', exact: true }).click();
+  await page.getByRole('button', { name: /성능 검증용 세면대.*600/ }).click();
+  await expect(page.getByRole('heading', { name: '제품 속성', exact: true })).toBeVisible();
+  assert.equal((await saved()).scene.fixtures.length, 1);
+
+  // Full UI events, React/Zustand updates and real renderer submission, not direct renderer loops.
+  await page.getByLabel('노출', { exact: true }).scrollIntoViewIfNeeded();
+  const performanceResult = await page.evaluate(async () => {
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="노출"]')!;
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="canvas-frame"] canvas')!;
+    const gl = canvas.getContext('webgl2')!;
+    const debug = gl.getExtension('WEBGL_debug_renderer_info');
+    const gpu = debug
+      ? (gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) as string)
+      : (gl.getParameter(gl.RENDERER) as string);
+    const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    const drive = (value: number) => {
+      nativeSet.call(input, value.toFixed(2));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    await new Promise<void>((resolve) => {
+      const start = performance.now();
+      const timer = setInterval(() => {
+        drive(Math.sin((performance.now() - start) / 200) * 0.18);
+        if (performance.now() - start >= 1500) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 16);
+    });
+    const rafTimes: number[] = [],
+      drawTimes: number[] = [],
+      inputToDraw: number[] = [],
+      longTasks: number[] = [];
+    const originalDrawElements = gl.drawElements.bind(gl),
+      originalDrawArrays = gl.drawArrays.bind(gl),
+      originalBind = gl.bindFramebuffer.bind(gl);
+    let defaultTarget = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING) === null;
+    let lastInput = performance.now(),
+      active = true,
+      inputs = 0;
+    gl.bindFramebuffer = (target, framebuffer) => {
+      if (target === gl.FRAMEBUFFER || target === gl.DRAW_FRAMEBUFFER) defaultTarget = framebuffer === null;
+      originalBind(target, framebuffer);
+    };
+    const record = () => {
+      if (active && defaultTarget) {
+        const now = performance.now();
+        drawTimes.push(now);
+        inputToDraw.push(now - lastInput);
+      }
+    };
+    gl.drawElements = (mode, count, type, offset) => {
+      originalDrawElements(mode, count, type, offset);
+      record();
+    };
+    gl.drawArrays = (mode, first, count) => {
+      originalDrawArrays(mode, first, count);
+      record();
+    };
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) longTasks.push(entry.duration);
+    });
+    observer.observe({ type: 'longtask', buffered: false });
+    const started = performance.now();
+    const frame = (timestamp: number) => {
+      if (active) {
+        rafTimes.push(timestamp);
+        requestAnimationFrame(frame);
+      }
+    };
+    requestAnimationFrame(frame);
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        lastInput = performance.now();
+        inputs++;
+        drive(Math.sin((lastInput - started) / 340) * 0.45);
+        if (lastInput - started >= 5000) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 16);
+    });
+    const duration = performance.now() - started;
+    active = false;
+    observer.disconnect();
+    gl.drawElements = originalDrawElements;
+    gl.drawArrays = originalDrawArrays;
+    gl.bindFramebuffer = originalBind;
+    drive(0);
+    input.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    input.blur();
+    const gaps = rafTimes
+      .slice(1)
+      .map((time, i) => time - rafTimes[i])
+      .sort((a, b) => a - b);
+    const p95 = gaps[Math.floor(gaps.length * 0.95)] ?? null;
+    return {
+      gpu,
+      userAgent: navigator.userAgent,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      viewport: [innerWidth, innerHeight],
+      canvasBacking: [canvas.width, canvas.height],
+      canvasDisplay: [canvas.getBoundingClientRect().width, canvas.getBoundingClientRect().height],
+      durationMs: duration,
+      inputEvents: inputs,
+      rafCallbacks: rafTimes.length,
+      rafRate: (rafTimes.length / duration) * 1000,
+      renderedCanvasSubmissions: drawTimes.length,
+      submittedCanvasRate: (drawTimes.length / duration) * 1000,
+      rafGapP95Ms: p95,
+      rafGapMaxMs: gaps.at(-1),
+      inputToDrawP95Ms: inputToDraw.sort((a, b) => a - b)[Math.floor(inputToDraw.length * 0.95)],
+      longTaskCount: longTasks.length,
+      longTaskMaxMs: Math.max(0, ...longTasks),
+      methodology:
+        '1500ms warmup, 5000ms native input setter + bubbling input events at ~16ms; real React editor and final canvas framebuffer draws instrumented; draw submission does not guarantee physical presentation.',
+    };
+  });
+  assert.ok(performanceResult.renderedCanvasSubmissions > 10, 'Slider must actually cause app rendering');
+  const current = await saved();
+  report.performance = performanceResult;
+  report.scene = {
+    photo: [current.scene.imageWidth, current.scene.imageHeight],
+    surfaces: current.scene.surfaces.length,
+    fixtures: current.scene.fixtures.length,
+    protectionPolygons: current.scene.protection.polygons?.length ?? 0,
+    shadows: current.scene.fixtures.filter((value) => value.shadow.opacity > 0).length,
+  };
+  console.log('PERFORMANCE', JSON.stringify(report.performance));
+  await page.screenshot({ path: `${directory}/desktop-editor.png`, fullPage: true });
+
+  // Clone stamping must be confined to the removal mask; preview/cancel/apply are separate.
+  const before = await saved();
+  await page.getByRole('button', { name: '기존 제품 제거 / 배경 복원', exact: true }).click();
+  const restore = page.getByRole('dialog', { name: '기존 제품 제거 및 배경 복원', exact: true });
+  const restoreCanvas = restore.getByLabel('배경 복원 캔버스', { exact: true });
+  await expect(restoreCanvas).toBeVisible();
+  await expect.poll(() => restoreCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).width)).toBe(1536);
+  await expect(restore.getByRole('button', { name: '확인한 배경 적용', exact: true })).toBeDisabled();
+  await paint(restoreCanvas, [
+    [0.8, 0.425],
+    [0.81, 0.44],
+    [0.8, 0.45],
+  ]);
+  await restore.getByRole('button', { name: '복제 도장', exact: true }).click();
+  await page.keyboard.down('Alt');
+  await clickAt(restoreCanvas, [0.79, 0.31]);
+  await page.keyboard.up('Alt');
+  await expect(restore.getByText('복제 기준점이 지정됐어요.', { exact: false })).toBeVisible();
+  await paint(restoreCanvas, [
+    [0.8, 0.425],
+    [0.81, 0.44],
+    [0.8, 0.45],
+  ]);
+  await restore.getByLabel('제거 영역 표시', { exact: false }).uncheck();
+  await page.screenshot({ path: `${directory}/clone-preview.png`, fullPage: true });
+  await restore.getByRole('button', { name: '취소', exact: true }).click();
+  assert.deepEqual((await saved()).scene, before.scene);
+
+  await page.getByRole('button', { name: '기존 제품 제거 / 배경 복원', exact: true }).click();
+  await expect(restoreCanvas).toBeVisible();
+  await expect.poll(() => restoreCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).width)).toBe(1536);
+  await paint(restoreCanvas, [
+    [0.8, 0.425],
+    [0.81, 0.44],
+    [0.8, 0.45],
+  ]);
+  await restore.getByRole('button', { name: '복제 도장', exact: true }).click();
+  await page.keyboard.down('Alt');
+  await clickAt(restoreCanvas, [0.79, 0.31]);
+  await page.keyboard.up('Alt');
+  await paint(restoreCanvas, [
+    [0.8, 0.425],
+    [0.81, 0.44],
+    [0.8, 0.45],
+  ]);
+  await restore.getByLabel('제거 영역 표시', { exact: false }).uncheck();
+  await restore.getByRole('button', { name: '확인한 배경 적용', exact: true }).click();
+  await expect(restore).toHaveCount(0);
+  const after = await saved();
+  assert.ok(after.scene.backgroundAssetId);
+  assert.equal(after.scene.originalAssetId, before.scene.originalAssetId);
+  const backgroundPixels = await page.evaluate(
+    async (ids) => {
+      const database = await new Promise<IDBDatabase>((resolve) => {
+        const request = indexedDB.open('gongganmiri-v1');
+        request.onsuccess = () => resolve(request.result);
+      });
+      const read = (id: string) =>
+        new Promise<import('../src/lib/types').AssetRecord>((resolve) => {
+          const request = database.transaction('assets').objectStore('assets').get(id);
+          request.onsuccess = () => resolve(request.result);
+        });
+      const readPixels = async (id: string) => {
+        const asset = await read(id);
+        const bitmap = await createImageBitmap(asset.blob);
+        const canvas = document.createElement('canvas');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        return {
+          pixels: [
+            [0.8, 0.44],
+            [0.3, 0.3],
+          ].map(([x, y]) => [
+            ...ctx.getImageData(Math.floor(x * canvas.width), Math.floor(y * canvas.height), 1, 1).data,
+          ]),
+          size: [canvas.width, canvas.height],
+        };
+      };
+      const original = await readPixels(ids.original),
+        edited = await readPixels(ids.background);
+      database.close();
+      return { original, edited };
+    },
+    { original: after.scene.originalAssetId, background: after.scene.backgroundAssetId! },
+  );
+  assert.deepEqual(backgroundPixels.original.pixels[1], backgroundPixels.edited.pixels[1]);
+  assert.notDeepEqual(backgroundPixels.original.pixels[0], backgroundPixels.edited.pixels[0]);
+  report.background = {
+    cancelPreservesScene: true,
+    cloneApplyCreatesSeparateAsset: true,
+    originalAssetPreserved: true,
+    outsideMaskPixelUnchanged: true,
+    insideMaskPixelChanged: true,
+    pixels: backgroundPixels,
+  };
+  console.log('BACKGROUND', JSON.stringify(report.background));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '화면 맞춤', exact: true }).click();
+  await page.screenshot({ path: `${directory}/mobile-editor.png`, fullPage: true });
+  const overflow = await page.evaluate(() => ({
+    viewport: innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    bodyWidth: document.body.scrollWidth,
+    headerWidth: document.querySelector('.editor-top')!.scrollWidth,
+  }));
+  await page.getByTitle('속성', { exact: true }).click();
+  await expect(page.locator('.inspector.open')).toBeVisible();
+  await page.getByLabel('노출', { exact: true }).scrollIntoViewIfNeeded();
+  await page.getByLabel('노출', { exact: true }).press('ArrowRight');
+  await page.getByLabel('노출', { exact: true }).press('ArrowLeft');
+  await page.screenshot({ path: `${directory}/mobile-inspector.png`, fullPage: true });
+  await page.locator('.inspector .mobile-close').click();
+  await page.getByTitle('자재 목록', { exact: true }).click();
+  await expect(page.locator('.catalog-panel.open')).toBeVisible();
+  await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
+  await expect(page.getByRole('button', { name: /라이트 스톤.*600/ })).toBeVisible();
+  await page.screenshot({ path: `${directory}/mobile-catalog.png`, fullPage: true });
+  const closeOptions = await page.locator('.catalog-panel').getByRole('button', { name: /닫기/ }).count();
+  if (closeOptions) {
+    await page.locator('.catalog-panel').getByRole('button', { name: /닫기/ }).click();
+    await expect(page.locator('.catalog-panel.open')).toHaveCount(0);
+  }
+  report.mobile = {
+    viewport: [390, 844],
+    overflow,
+    propertyDrawerOpened: true,
+    propertySliderKeyboardUsable: true,
+    propertyDrawerClosed: true,
+    catalogOpened: true,
+    catalogTilesVisible: true,
+    catalogCloseButtons: closeOptions,
+  };
+  report.pageErrors = errors;
+  await writeFile(`${directory}/report.json`, JSON.stringify(report, null, 2));
+  console.log('UI_REPORT', JSON.stringify(report, null, 2));
+  assert.deepEqual(errors, []);
+} catch (error) {
+  report.error = error instanceof Error ? error.message : String(error);
+  report.pageErrors = errors;
+  await page.screenshot({ path: `${directory}/failure.png`, fullPage: true }).catch(() => {});
+  await writeFile(`${directory}/report.json`, JSON.stringify(report, null, 2));
+  throw error;
+} finally {
+  await browser.close();
+}

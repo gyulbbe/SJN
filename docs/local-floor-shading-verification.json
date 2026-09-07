@@ -1,0 +1,193 @@
+{
+  "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+  "hasCapturedBaseline": true,
+  "real-before-0.25": {
+    "prepareRenderAndPngMs": 203.20000000298023,
+    "pixels": {
+      "frontFloor": [
+        199,
+        197,
+        186,
+        255
+      ],
+      "rightCorner": [
+        186,
+        184,
+        174,
+        255
+      ],
+      "leftWallContact": [
+        193,
+        191,
+        181,
+        255
+      ],
+      "basinSide": [
+        195,
+        193,
+        183,
+        255
+      ]
+    }
+  },
+  "real-before-0.65": {
+    "prepareRenderAndPngMs": 40.30000000447035,
+    "pixels": {
+      "frontFloor": [
+        196,
+        194,
+        183,
+        255
+      ],
+      "rightCorner": [
+        157,
+        155,
+        147,
+        255
+      ],
+      "leftWallContact": [
+        180,
+        178,
+        168,
+        255
+      ],
+      "basinSide": [
+        186,
+        184,
+        174,
+        255
+      ]
+    }
+  },
+  "synthetic-before": {
+    "neutral": [
+      190,
+      188,
+      178,
+      255
+    ],
+    "besideWhiteFixture": [
+      235,
+      233,
+      220,
+      255
+    ],
+    "contact": [
+      193,
+      191,
+      181,
+      255
+    ],
+    "originalHole": [
+      255,
+      255,
+      255,
+      255
+    ]
+  },
+  "grout-before": {
+    "expected": 0.0033222591362126247,
+    "minimum": 0.001125905964716642,
+    "maximum": 0.008111235819216805,
+    "mean": 0.004260790282418161
+  },
+  "real-after-0.25": {
+    "prepareRenderAndPngMs": 170.89999999850988,
+    "pixels": {
+      "frontFloor": [
+        206,
+        204,
+        193,
+        255
+      ],
+      "rightCorner": [
+        166,
+        164,
+        155,
+        255
+      ],
+      "leftWallContact": [
+        195,
+        193,
+        183,
+        255
+      ],
+      "basinSide": [
+        194,
+        192,
+        182,
+        255
+      ]
+    }
+  },
+  "real-after-0.65": {
+    "prepareRenderAndPngMs": 40.30000000447035,
+    "pixels": {
+      "frontFloor": [
+        215,
+        213,
+        201,
+        255
+      ],
+      "rightCorner": [
+        121,
+        120,
+        113,
+        255
+      ],
+      "leftWallContact": [
+        187,
+        185,
+        175,
+        255
+      ],
+      "basinSide": [
+        184,
+        182,
+        172,
+        255
+      ]
+    }
+  },
+  "synthetic-after": {
+    "neutral": [
+      201,
+      199,
+      188,
+      255
+    ],
+    "besideWhiteFixture": [
+      201,
+      199,
+      188,
+      255
+    ],
+    "contact": [
+      161,
+      159,
+      150,
+      255
+    ],
+    "originalHole": [
+      255,
+      255,
+      255,
+      255
+    ]
+  },
+  "grout-after": {
+    "expected": 0.0033222591362126247,
+    "minimum": 0.00330003427389636,
+    "maximum": 0.0033331300716289564,
+    "mean": 0.0033198115479530226
+  },
+  "mask-coverage": {
+    "extraCoveragePixels": 0,
+    "featheredPixels": 1092,
+    "imageEdgeAlpha": 255,
+    "interiorAlpha": 255,
+    "stepEdgeAlpha": 197,
+    "protectedAlpha": 0,
+    "holeAlpha": 0
+  }
+}

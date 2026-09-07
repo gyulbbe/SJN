@@ -1,0 +1,424 @@
+import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
+import { test, expect, type Locator, type Page } from '@playwright/test';
+import { mkdir, writeFile } from 'node:fs/promises';
+import sharp from 'sharp';
+import type { ProjectDocument } from '../src/lib/types';
+
+test.use({ channel: 'chrome', actionTimeout: 15000 });
+test.setTimeout(150000);
+const directory = 'test-results/original-fixture-qa';
+const outline: [number, number][] = [
+  [0.4, 0.3],
+  [0.6, 0.3],
+  [0.6, 0.8],
+  [0.4, 0.8],
+];
+const landmarks = [
+  { x: 0.5, y: 0.4 },
+  { x: 0.5, y: 0.7 },
+  { x: 0.73, y: 0.4 },
+  { x: 0.73, y: 0.7 },
+];
+const red = [239, 48, 48],
+  blue = [34, 119, 238],
+  gray = [128, 128, 128];
+
+async function saved(page: Page): Promise<ProjectDocument> {
+  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  return page.evaluate(
+    (id) =>
+      new Promise<ProjectDocument>((resolve, reject) => {
+        const request = indexedDB.open('gongganmiri-v1');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const get = db.transaction('projects').objectStore('projects').get(id);
+          get.onerror = () => {
+            db.close();
+            reject(get.error);
+          };
+          get.onsuccess = () => {
+            db.close();
+            resolve(get.result);
+          };
+        };
+      }),
+    page.url().split('/').at(-1)!,
+  );
+}
+async function clickAt(page: Page, canvas: Locator, x: number, y: number) {
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.click(box!.x + box!.width * x, box!.y + box!.height * y);
+}
+async function setRange(input: Locator, value: string) {
+  await input.evaluate((element, next) => {
+    const range = element as HTMLInputElement;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(range, next);
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    range.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    range.blur();
+  }, value);
+}
+async function pixels(page: Page) {
+  return page.locator('[data-testid="canvas-frame"] canvas').evaluate((element, points) => {
+    const source = element as HTMLCanvasElement,
+      copy = document.createElement('canvas');
+    copy.width = source.width;
+    copy.height = source.height;
+    const ctx = copy.getContext('2d')!;
+    ctx.drawImage(source, 0, 0);
+    return points.map(({ x, y }) =>
+      [...ctx.getImageData(Math.floor(x * copy.width), Math.floor(y * copy.height), 1, 1).data].slice(0, 3),
+    );
+  }, landmarks);
+}
+async function expectPixels(page: Page, expected: number[][]) {
+  await expect
+    .poll(
+      async () => {
+        const actual = await pixels(page);
+        return actual.every((pixel, index) =>
+          pixel.every((value, channel) => Math.abs(value - expected[index][channel]) <= 4),
+        );
+      },
+      { message: `Canvas pixels should match ${JSON.stringify(expected)}` },
+    )
+    .toBe(true);
+}
+async function drawSurface(page: Page, kind: 'floor' | 'wall', top: number, bottom: number) {
+  await page.getByRole('button', { name: '면 만들기 (4점)', exact: true }).click();
+  await page.getByLabel('새 면 종류').selectOption(kind);
+  for (const [x, y] of [
+    [0.1, top],
+    [0.9, top],
+    [0.9, bottom],
+    [0.1, bottom],
+  ])
+    await clickAt(page, page.getByTestId('editor-canvas'), x, y);
+  await expect(page.getByRole('heading', { name: '면 속성', exact: true })).toBeVisible();
+}
+async function openOutline(page: Page) {
+  await page.getByRole('button', { name: '기존 제품 제거 / 배경 복원', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '기존 제품 제거 및 배경 복원', exact: true });
+  const canvas = dialog.getByLabel('배경 복원 캔버스', { exact: true });
+  await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).width)).toBe(800);
+  await dialog.getByRole('button', { name: '제품 윤곽 그리기', exact: true }).click();
+  for (const [x, y] of outline) await clickAt(page, canvas, x, y);
+  await dialog.getByRole('button', { name: '제품 윤곽 완료', exact: true }).click();
+  return { dialog, canvas };
+}
+
+test('원본 제품을 수동 분리·복원한 뒤 이동·삭제하면 벽과 바닥 타일이 이어지고 실행 취소·재진입·Before가 유지된다', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const photo = await sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="#808080"/><rect x="320" y="180" width="160" height="300" fill="#ef3030"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
+  const background = await sharp({ create: { width: 800, height: 600, channels: 3, background: '#808080' } })
+    .png()
+    .toBuffer();
+  const texture = await sharp({ create: { width: 200, height: 100, channels: 3, background: '#2277ee' } })
+    .png()
+    .toBuffer();
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await page
+    .getByTestId('project-upload')
+    .setInputFiles({ name: '분리 검증 원본.png', mimeType: 'image/png', buffer: photo });
+  await expect(page).toHaveURL(/\/projects\/[\w-]+/);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  const originalId = (await saved(page)).scene.originalAssetId;
+  await drawSurface(page, 'floor', 0.55, 0.9);
+  await page.getByRole('button', { name: '신규 자재 등록', exact: true }).click();
+  const material = page.getByRole('dialog', { name: '신규 자재 등록', exact: true });
+  await material.getByLabel('상품명').fill('복원 검증 블루 타일');
+  await material.getByLabel('카테고리', { exact: true }).selectOption('tile');
+  await material.getByLabel('가로 (mm)', { exact: true }).fill('600');
+  await material.getByLabel('세로 (mm)', { exact: true }).fill('300');
+  await material.getByLabel('기본 줄눈 폭 (mm)', { exact: true }).fill('0');
+  await material
+    .getByLabel('대표 이미지 올리기', { exact: true })
+    .setInputFiles({ name: 'blue.png', mimeType: 'image/png', buffer: texture });
+  await expect(material.getByLabel('대표 이미지 변경', { exact: true })).toBeEnabled();
+  await material
+    .getByLabel('+ 타일 텍스처 올리기', { exact: true })
+    .setInputFiles({ name: 'blue-texture.png', mimeType: 'image/png', buffer: texture });
+  await expect(material.getByRole('img', { name: '타일 텍스처 1', exact: true })).toBeVisible();
+  await material.getByRole('button', { name: '자재 등록', exact: true }).click();
+  await expect(material).toHaveCount(0);
+  const tile = page.locator('button.material-tile').filter({ hasText: '복원 검증 블루 타일' });
+  await tile.click();
+  await setRange(page.getByLabel('원본 명암 보존', { exact: true }), '0');
+  await page.getByRole('button', { name: '영역 지우개', exact: true }).click();
+  await clickAt(page, page.getByTestId('editor-canvas'), 0.5, 0.7);
+  await drawSurface(page, 'wall', 0.1, 0.55);
+  await page.getByRole('button', { name: '벽 타일', exact: true }).click();
+  await tile.click();
+  await page.locator('.layer-item').filter({ hasText: '벽 1' }).click();
+  await setRange(page.getByLabel('원본 명암 보존', { exact: true }), '0');
+  await page.getByRole('button', { name: '영역 지우개', exact: true }).click();
+  await clickAt(page, page.getByTestId('editor-canvas'), 0.5, 0.4);
+  await page.getByRole('button', { name: '보호 영역 그리기', exact: true }).click();
+  for (const [x, y] of outline) await clickAt(page, page.getByTestId('editor-canvas'), x, y);
+  await page.getByRole('button', { name: '다각형 완료', exact: true }).click();
+  const before = await saved(page);
+  expect(before.scene.surfaces).toHaveLength(2);
+  expect(before.scene.surfaces.every((surface) => surface.mask.strokes.some((stroke) => stroke.erase))).toBe(
+    true,
+  );
+  await expectPixels(page, [red, red, blue, blue]);
+
+  // Selecting a product is not a completed restoration; cancel leaves the document untouched.
+  let restore = await openOutline(page);
+  await restore.dialog
+    .getByRole('checkbox', { name: '기존 제품을 이동 가능한 도기로 분리', exact: true })
+    .check();
+  await expect(restore.dialog.getByRole('button', { name: '확인한 배경 적용', exact: true })).toBeDisabled();
+  await restore.dialog.getByRole('button', { name: '취소', exact: true }).click();
+  expect((await saved(page)).scene).toEqual(before.scene);
+
+  // A small clone stamp cannot silently count as restoring the whole selected product.
+  restore = await openOutline(page);
+  await restore.dialog
+    .getByRole('checkbox', { name: '기존 제품을 이동 가능한 도기로 분리', exact: true })
+    .check();
+  await restore.dialog.getByRole('button', { name: '복제 도장', exact: true }).click();
+  await setRange(restore.dialog.getByLabel('복원 브러시 크기', { exact: true }), '8');
+  await page.keyboard.down('Alt');
+  await clickAt(page, restore.canvas, 0.2, 0.3);
+  await page.keyboard.up('Alt');
+  await clickAt(page, restore.canvas, 0.5, 0.5);
+  await restore.dialog.getByRole('button', { name: '확인한 배경 적용', exact: true }).click();
+  await expect(restore.dialog.getByRole('alert')).toContainText('제거 영역 전체를 먼저 복원');
+  expect((await saved(page)).scene).toEqual(before.scene);
+  await restore.dialog.getByRole('button', { name: '취소', exact: true }).click();
+
+  restore = await openOutline(page);
+  await restore.dialog
+    .locator('input[type="file"]')
+    .setInputFiles({ name: '복원 배경.png', mimeType: 'image/png', buffer: background });
+  await expect(restore.dialog.getByLabel('배경 크기', { exact: true })).toBeVisible();
+  await restore.dialog
+    .getByRole('checkbox', { name: '기존 제품을 이동 가능한 도기로 분리', exact: true })
+    .check();
+  await restore.dialog.getByLabel('분리할 제품 이름', { exact: true }).fill('사진에서 분리한 빨간 도기');
+  await restore.dialog
+    .getByRole('combobox', { name: '분리할 제품 종류', exact: true })
+    .selectOption('toilet');
+  for (const surface of before.scene.surfaces)
+    await expect(restore.dialog.getByRole('checkbox', { name: surface.name, exact: true })).toBeChecked();
+  await restore.dialog.getByRole('button', { name: '확인한 배경 적용', exact: true }).click();
+  await expect(restore.dialog).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '제품 속성', exact: true })).toBeVisible();
+  const separated = await saved(page);
+  expect(separated.scene.fixtures).toHaveLength(1);
+  expect(separated.scene.originalAssetId).toBe(originalId);
+  expect(separated.scene.backgroundAssetId).toBeTruthy();
+  expect(separated.history.past).toHaveLength(before.history.past.length + 1);
+  expect(separated.history.past.at(-1)).toEqual(before.scene);
+  expect(separated.scene.fixtures[0].position.x).toBeCloseTo(0.5, 2);
+  expect(separated.scene.fixtures[0].position.y).toBeCloseTo(0.8, 2);
+  expect(separated.scene.surfaces.map((surface) => surface.quad)).toEqual(
+    before.scene.surfaces.map((surface) => surface.quad),
+  );
+  await expectPixels(page, [red, red, blue, blue]);
+  await page.getByLabel('기준점 가로 (%)', { exact: true }).fill('73');
+  const moved = await saved(page);
+  expect(moved.scene.fixtures[0].position.x).toBe(0.73);
+  await expectPixels(page, [blue, blue, red, red]);
+  await mkdir(directory, { recursive: true });
+  await page.screenshot({ path: `${directory}/moved-original-fixture.png`, fullPage: true });
+
+  await page.getByRole('button', { name: '선택 항목 삭제', exact: true }).click();
+  expect((await saved(page)).scene.fixtures).toHaveLength(0);
+  await expectPixels(page, [blue, blue, blue, blue]);
+  await page.getByRole('button', { name: '실행 취소', exact: true }).click();
+  expect((await saved(page)).scene.fixtures).toHaveLength(1);
+  await expectPixels(page, [blue, blue, red, red]);
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  const reloaded = await saved(page);
+  expect(reloaded.scene.fixtures).toEqual(moved.scene.fixtures);
+  expect(reloaded.scene.originalAssetId).toBe(originalId);
+  await expectPixels(page, [blue, blue, red, red]);
+  await page.getByRole('button', { name: 'Before', exact: true }).click();
+  await expectPixels(page, [red, red, gray, gray]);
+  await page.getByRole('button', { name: 'After', exact: true }).click();
+  await expectPixels(page, [blue, blue, red, red]);
+  const bytes = await page.evaluate(
+    (id) =>
+      new Promise<number[]>((resolve, reject) => {
+        const request = indexedDB.open('gongganmiri-v1');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const get = db.transaction('assets').objectStore('assets').get(id);
+          get.onsuccess = async () => {
+            db.close();
+            resolve([...new Uint8Array(await get.result.blob.arrayBuffer())]);
+          };
+        };
+      }),
+    originalId,
+  );
+  expect(Buffer.from(bytes)).toEqual(photo);
+  expect(errors).toEqual([]);
+  await writeFile(
+    `${directory}/report.json`,
+    JSON.stringify(
+      {
+        browser: 'system Chrome',
+        fixture: separated.scene.fixtures[0],
+        sceneSurfaceCount: separated.scene.surfaces.length,
+        restoredSurfaceKinds: separated.scene.surfaces.map((surface) => surface.kind),
+        originalBytesPreserved: true,
+        cancelPreservesScene: true,
+        selectionOnlyApplyDisabled: true,
+        partialCloneRejected: true,
+        samePositionPixelsPreserved: true,
+        movingRevealsBothWallAndFloorTile: true,
+        deletingRevealsBothWallAndFloorTile: true,
+        undoAndReloadPreserveMovedFixture: true,
+        beforeShowsOriginal: true,
+        pageErrors: errors,
+      },
+      null,
+      2,
+    ),
+  );
+});
+
+test('분리 도기 버전을 읽는 중 복원 창을 취소하면 늦은 응답이 프로젝트를 적용하지 않는다', async ({
+  page,
+}, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const photo = await sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="#808080"/><rect x="320" y="180" width="160" height="300" fill="#ef3030"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
+  const background = await sharp({ create: { width: 800, height: 600, channels: 3, background: '#808080' } })
+    .png()
+    .toBuffer();
+  await page.goto('/');
+  await seedTestTiles(page);
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await page
+    .getByTestId('project-upload')
+    .setInputFiles({ name: '취소 경합 원본.png', mimeType: 'image/png', buffer: photo });
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await drawSurface(page, 'floor', 0.55, 0.9);
+  await page.locator('button.material-tile').filter({ hasText: '라이트 스톤' }).click();
+  const before = await saved(page),
+    beforePixels = await pixels(page);
+  const restore = await openOutline(page);
+  await restore.dialog
+    .locator('input[type="file"]')
+    .setInputFiles({ name: '복원 배경.png', mimeType: 'image/png', buffer: background });
+  await expect(restore.dialog.getByLabel('배경 크기', { exact: true })).toBeVisible();
+  await restore.dialog
+    .getByRole('checkbox', { name: '기존 제품을 이동 가능한 도기로 분리', exact: true })
+    .check();
+  const productName = '취소 경합 검증 도기';
+  await restore.dialog.getByLabel('분리할 제품 이름', { exact: true }).fill(productName);
+  await page.evaluate((productName) => {
+    const state = window as unknown as {
+      restoreVersionPaused?: string;
+      restoreVersionReleased?: boolean;
+      releaseRestoreVersion?: () => void;
+    };
+    const original = IDBObjectStore.prototype.get;
+    IDBObjectStore.prototype.get = function (key) {
+      const request = original.call(this, key);
+      if (this.name !== 'versions') return request;
+      // Observe the real stored version, pausing only the final metadata read after registration.
+      request.addEventListener(
+        'success',
+        (event) => {
+          const value = request.result as { id?: string; name?: string; category?: string } | undefined;
+          if (value?.name !== productName || value.category === 'tile') return;
+          IDBObjectStore.prototype.get = original;
+          event.stopImmediatePropagation();
+          state.restoreVersionPaused = value.id;
+          state.releaseRestoreVersion = () => {
+            state.restoreVersionReleased = true;
+            request.dispatchEvent(new Event('success'));
+          };
+        },
+        { once: true },
+      );
+      return request;
+    };
+  }, productName);
+  try {
+    await restore.dialog.getByRole('button', { name: '확인한 배경 적용', exact: true }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as { restoreVersionPaused?: string }).restoreVersionPaused),
+      )
+      .toBeTruthy();
+    await expect(restore.dialog).toBeVisible();
+    await expect(restore.dialog.getByRole('button', { name: '처리 중…', exact: true })).toBeDisabled();
+    const pausedVersion = await page.evaluate(
+      () => (window as unknown as { restoreVersionPaused: string }).restoreVersionPaused,
+    );
+    expect(await saved(page)).toEqual(before);
+    await restore.dialog.getByRole('button', { name: '취소', exact: true }).click();
+    await expect(restore.dialog).toHaveCount(0);
+    expect(await saved(page)).toEqual(before);
+    await page.evaluate(async () => {
+      const state = window as unknown as { releaseRestoreVersion: () => void };
+      state.releaseRestoreVersion();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    expect(
+      await page.evaluate(
+        () => (window as unknown as { restoreVersionReleased: boolean }).restoreVersionReleased,
+      ),
+    ).toBe(true);
+    expect(await saved(page)).toEqual(before);
+    expect(await pixels(page)).toEqual(beforePixels);
+    await expect(page.locator('.editor-error')).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByTestId('editor-canvas')).toBeVisible();
+    await expect(page.locator('.canvas-loading')).toHaveCount(0);
+    expect(await saved(page)).toEqual(before);
+    expect(await pixels(page)).toEqual(beforePixels);
+    expect(errors).toEqual([]);
+    const report = {
+      pausedVersion,
+      cancelledDuringRealVersionRead: true,
+      realLateResponseReleased: true,
+      sceneHistoryRevisionsAndPixelsUnchanged: true,
+      reloadPreservedOriginalProject: true,
+      pageErrors: errors,
+    };
+    await mkdir(directory, { recursive: true });
+    const path = `${directory}/cancel-during-apply.json`;
+    await writeFile(path, JSON.stringify(report, null, 2));
+    await info.attach('cancel-during-apply.json', { path, contentType: 'application/json' });
+  } finally {
+    await page
+      .evaluate(() => {
+        const state = window as unknown as {
+          releaseRestoreVersion?: () => void;
+          restoreVersionReleased?: boolean;
+        };
+        if (!state.restoreVersionReleased) state.releaseRestoreVersion?.();
+      })
+      .catch(() => {});
+  }
+});

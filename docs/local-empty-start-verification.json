@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-06T03:45:06.292Z",
+  "browser": "152.0.7977.76",
+  "checks": [
+    "No built-in home photo or practice button",
+    "Empty material library; no auto-created database records",
+    "Desktop and mobile home without horizontal overflow",
+    "User upload opens empty scene with no surfaces, fixtures, or history",
+    "Saved empty project reopens after reload",
+    "No browser page errors"
+  ],
+  "counts": {
+    "projects": 1,
+    "materials": 0,
+    "versions": 0,
+    "surfaces": 0,
+    "fixtures": 0
+  }
+}

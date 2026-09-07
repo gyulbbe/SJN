@@ -1,0 +1,122 @@
+{
+  "browser": "152.0.7977.76",
+  "compute": "TensorFlow.js 4.22.0 WASM single-thread CPU in Worker",
+  "model": "Google DeepLabV3 MobileNetV2 ADE20K quantized uint8 v1",
+  "modelBytes": 2294595,
+  "modelSHA256": "82f62665e01cf0d94e5df172d4bd1efb6ddcddbaa9bb40fac73b9e55d1e7e192",
+  "coldMs": 3901.6999999955297,
+  "warmMs": 3337,
+  "dimensions": [
+    512,
+    341
+  ],
+  "source": [
+    1536,
+    1024
+  ],
+  "wallPixels": 120915,
+  "floorPixels": 31124,
+  "points": {
+    "rearWall": {
+      "wall": 255,
+      "floor": 0
+    },
+    "leftWall": {
+      "wall": 255,
+      "floor": 0
+    },
+    "rightWall": {
+      "wall": 255,
+      "floor": 0
+    },
+    "floor": {
+      "wall": 0,
+      "floor": 255
+    },
+    "toilet": {
+      "wall": 0,
+      "floor": 0
+    },
+    "basin": {
+      "wall": 0,
+      "floor": 0
+    },
+    "mirror": {
+      "wall": 0,
+      "floor": 0
+    },
+    "window": {
+      "wall": 0,
+      "floor": 0
+    }
+  },
+  "stages": [
+    {
+      "message": "브라우저 분석 엔진 준비 중",
+      "elapsedMs": 0.19999999552965164
+    },
+    {
+      "message": "사진 크기와 방향 확인 중",
+      "elapsedMs": 37.599999994039536
+    },
+    {
+      "message": "브라우저 분석 엔진 준비 중",
+      "elapsedMs": 215.69999999552965
+    },
+    {
+      "message": "앱에 포함된 공간 분석 모델 읽는 중",
+      "elapsedMs": 234.69999999552965
+    },
+    {
+      "message": "이 브라우저에서 벽과 바닥 분석 중",
+      "elapsedMs": 275.3999999985099
+    },
+    {
+      "message": "벽과 바닥 경계 정리 중",
+      "elapsedMs": 3898.7999999970198
+    }
+  ],
+  "warmStages": [
+    "사진 크기와 방향 확인 중",
+    "이 브라우저에서 벽과 바닥 분석 중",
+    "벽과 바닥 경계 정리 중"
+  ],
+  "same": true,
+  "mainThreadIntervalTicks": 156,
+  "portrait": [
+    341,
+    512
+  ],
+  "requests": [
+    {
+      "url": "http://127.0.0.1:12006/",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:12006/index.js",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:12006/examples/bathroom.png",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:12006/worker.ts",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:12006/models/tfjs-wasm/tfjs-backend-wasm-simd.wasm",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:12006/models/deeplab-ade20k/model.json",
+      "method": "GET"
+    },
+    {
+      "url": "http://127.0.0.1:12006/models/deeplab-ade20k/group1-shard1of1",
+      "method": "GET"
+    }
+  ],
+  "externalRequests": [],
+  "errors": []
+}

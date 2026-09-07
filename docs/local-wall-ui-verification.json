@@ -1,0 +1,240 @@
+{
+  "measuredAt": "2026-09-05T16:39:53.508Z",
+  "browser": "152.0.7977.76",
+  "runtime": "v22.13.1",
+  "environment": "Windows / installed Chrome headless / next dev / isolated temporary browser context",
+  "launchArgs": [
+    "--enable-webgl",
+    "--ignore-gpu-blocklist"
+  ],
+  "compositorSha256": "6956351af1b0f030580b095402133386eb646ae4ebf3e0ba9cd14f2d6e3c65f5",
+  "photoSha256": "e001be5c0f0d53d34d6ebff168d223d7c89ad5d51dc786b21a82d9bc74292ee5",
+  "automaticSceneReadyMs": 4923,
+  "scene": {
+    "source": "public/examples/bathroom.png",
+    "creation": "Fresh example project; wall tile tab then Cloud White tile; actual bundled model inference and automatic three-wall geometry",
+    "sourcePixels": [
+      1536,
+      1024
+    ],
+    "surfaces": [
+      {
+        "name": "정면 벽",
+        "kind": "wall",
+        "applied": true,
+        "quad": [
+          {
+            "x": 0.25897012423866267,
+            "y": 0.05455193844267738
+          },
+          {
+            "x": 0.7253488271632108,
+            "y": 0.060013123218518066
+          },
+          {
+            "x": 0.7218445662794027,
+            "y": 0.7177043154874684
+          },
+          {
+            "x": 0.2571988430787432,
+            "y": 0.7194316700253661
+          }
+        ],
+        "widthMm": 2000,
+        "heightMm": 2000,
+        "calibrated": false,
+        "tile": {
+          "rotation": 0,
+          "offsetX": 0,
+          "offsetY": 0,
+          "groutWidth": 2,
+          "groutColor": "#d5d1c9",
+          "pattern": "grid",
+          "seed": 12,
+          "shading": 0.55
+        },
+        "maskContours": 1,
+        "maskHoles": 3,
+        "maskVertices": 530
+      },
+      {
+        "name": "오른쪽 벽",
+        "kind": "wall",
+        "applied": true,
+        "quad": [
+          {
+            "x": 0.7244702865885537,
+            "y": 0.2249005037993018
+          },
+          {
+            "x": 0.9368355810989307,
+            "y": 0.04969042764648465
+          },
+          {
+            "x": 0.9331080833526296,
+            "y": 0.9824757874246656
+          },
+          {
+            "x": 0.7218445662794027,
+            "y": 0.7177043154874684
+          }
+        ],
+        "widthMm": 2000,
+        "heightMm": 1500,
+        "calibrated": false,
+        "tile": {
+          "rotation": 0,
+          "offsetX": 0,
+          "offsetY": -500,
+          "groutWidth": 2,
+          "groutColor": "#d5d1c9",
+          "pattern": "grid",
+          "seed": 12,
+          "shading": 0.55
+        },
+        "maskContours": 1,
+        "maskHoles": 6,
+        "maskVertices": 374
+      },
+      {
+        "name": "왼쪽 벽",
+        "kind": "wall",
+        "applied": true,
+        "quad": [
+          {
+            "x": 0.0531085396785326,
+            "y": 0.039922022559470055
+          },
+          {
+            "x": 0.25852603906895766,
+            "y": 0.22124666490086145
+          },
+          {
+            "x": 0.2571988430787432,
+            "y": 0.7194316700253661
+          },
+          {
+            "x": 0.04931155779568225,
+            "y": 0.9900953969579824
+          }
+        ],
+        "widthMm": 2000,
+        "heightMm": 1500,
+        "calibrated": false,
+        "tile": {
+          "rotation": 0,
+          "offsetX": 0,
+          "offsetY": -500,
+          "groutWidth": 2,
+          "groutColor": "#d5d1c9",
+          "pattern": "grid",
+          "seed": 12,
+          "shading": 0.55
+        },
+        "maskContours": 1,
+        "maskHoles": 1,
+        "maskVertices": 202
+      },
+      {
+        "name": "바닥 1",
+        "kind": "floor",
+        "applied": false,
+        "quad": [
+          {
+            "x": 0.2611051317660312,
+            "y": 0.7194171481108119
+          },
+          {
+            "x": 0.7159850752163893,
+            "y": 0.7177260985750383
+          },
+          {
+            "x": 0.9330511841781892,
+            "y": 0.9967144860138839
+          },
+          {
+            "x": 0.04927197807336981,
+            "y": 1
+          }
+        ],
+        "widthMm": 2000,
+        "heightMm": 2000,
+        "calibrated": false,
+        "tile": {
+          "rotation": 0,
+          "offsetX": 0,
+          "offsetY": 0,
+          "groutWidth": 2,
+          "groutColor": "#d5d1c9",
+          "pattern": "grid",
+          "seed": 12,
+          "shading": 0.25
+        },
+        "maskContours": 1,
+        "maskHoles": 0,
+        "maskVertices": 414
+      }
+    ],
+    "material": {
+      "name": "클라우드 화이트",
+      "widthMm": 300,
+      "heightMm": 600,
+      "textureVariants": 1
+    },
+    "fixtures": 0,
+    "protectionContours": 0,
+    "globalColorBefore": {
+      "exposure": 0,
+      "contrast": 1,
+      "saturation": 1,
+      "warmth": 0
+    }
+  },
+  "measurement": {
+    "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti (0x00002782) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+    "hardwareConcurrency": 16,
+    "viewport": [
+      1920,
+      1080
+    ],
+    "devicePixelRatio": 1,
+    "canvasBacking": [
+      1536,
+      1024
+    ],
+    "canvasDisplay": [
+      1254,
+      836
+    ],
+    "warmupMs": 1504.8000000044703,
+    "durationMs": 5016.29999999702,
+    "inputEvents": 310,
+    "inputValueChanges": 259,
+    "renderedCanvasSubmissions": 258,
+    "submittedCanvasRate": 51.432330602267264,
+    "submissionGapP95Ms": 33.400000005960464,
+    "submissionGapMaxMs": 120.5,
+    "lastInputToDrawP95Ms": 15,
+    "longTaskCount": 0,
+    "longTaskMaxMs": 0,
+    "rafCallbacks": 1087,
+    "rafCallbackRate": 216.6935789328082,
+    "rafGapP95Ms": 8.199999999998909,
+    "rafGapMaxMs": 20.899999999999636
+  },
+  "methodology": {
+    "control": "Whole-space exposure slider, native HTMLInputElement setter and bubbling input events; sine -0.45 to +0.45, 0.01 step, timer approximately 16ms",
+    "timing": "At least 1500ms actual slider warmup, then at least 5000ms actual React/Zustand UI updates and final default-framebuffer draw calls",
+    "count": "Compositor has one final default-framebuffer output draw per complete render; intermediate surface passes are excluded",
+    "limitations": [
+      "Submission rate is not GPU completion or physical display presentation FPS.",
+      "1920x1080 is the browser viewport; actual renderer backing resolution is recorded separately.",
+      "rAF callback rate measures browser scheduling only, not app-rendered frames.",
+      "Last-input-to-draw is age of the most recent generated event, not verified per-event end-to-end latency.",
+      "One warmed five-second sample on this PC in development mode; no cross-device performance guarantee.",
+      "Repeated quantized input values can cause fewer state updates than generated events."
+    ]
+  },
+  "pageErrors": []
+}
