@@ -6,6 +6,8 @@
 
 **사진으로 비교 공간 만들기**에서는 기존 공간 사진과 치수로 Before 초안을 재구성하고, 동일한 구도의 빈 After에서 새 디자인을 시작합니다. 생성 직후 After 편집 화면이 열립니다. Before 확인·보정은 필요할 때 하고, 우측 자재 수량·금액은 현재 시안의 After에 적용한 자재만 집계합니다. 실제 제품을 복원하는 대신 수정 가능한 유사 모형을 사용합니다. [재구성 Before / After 사용법](docs/reconstructed-comparison.md)
 
+[Cloudflare 배포와 main 자동 배포 안내](docs/cloudflare-deployment.md)
+
 ## 실행
 
 Node.js 22.13 이상을 권장합니다. 프로젝트 폴더에서:

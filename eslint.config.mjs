@@ -4,7 +4,17 @@ import ts from 'eslint-config-next/typescript';
 export default defineConfig([
   ...next,
   ...ts,
-  globalIgnores(['.next/**', '.npm-cache/**', 'test-results/**', 'playwright-report/**']),
+  globalIgnores([
+    '!build/**',
+    '.next/**',
+    'dist/**',
+    '.wrangler/**',
+    '.vinext/**',
+    'tmp/**',
+    '.npm-cache/**',
+    'test-results/**',
+    'playwright-report/**',
+  ]),
   {
     rules: {
       '@next/next/no-img-element': 'off',
