@@ -111,7 +111,7 @@ export type AssetRecord = {
   kind: 'original' | 'preview' | 'texture' | 'product' | 'background' | 'thumbnail';
   sourceAssetId?: string;
   /** Distinguishes a resized upload from a deliberately edited image. */
-  derivation?: 'upload-preview' | 'manual-alpha' | 'rectified';
+  derivation?: 'upload-preview' | 'manual-alpha' | 'ai-alpha' | 'rectified';
   createdAt: string;
   blob: Blob;
 };

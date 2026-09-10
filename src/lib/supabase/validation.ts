@@ -372,6 +372,6 @@ export const assetMetadataSchema = z.object({
   name: z.string().min(1).max(300),
   kind: z.enum(['original', 'preview', 'texture', 'product', 'background', 'thumbnail']),
   sourceAssetId: id.optional(),
-  derivation: z.enum(['upload-preview', 'manual-alpha', 'rectified']).optional(),
+  derivation: z.enum(['upload-preview', 'manual-alpha', 'ai-alpha', 'rectified']).optional(),
 });
 export const identifierSchema = id;

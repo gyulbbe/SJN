@@ -2,7 +2,8 @@
 
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { getRepositories } from '@/lib/repositories';
-import { importImage } from '@/lib/images';
+import { importImage, makeAsset } from '@/lib/images';
+import type { BackgroundRemovalResult } from '@/lib/background-removal/types';
 import { defaultMaterialPricing, QUOTE_UNIT_LABELS } from '@/lib/quote';
 import { packagingCoverage } from '@/lib/material-usage';
 import type { MaterialPricing, QuoteUnit } from '@/lib/quote-types';
@@ -153,8 +154,12 @@ export function MaterialForm({
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
-  const [preparing, setPreparing] = useState<{ assetId: string; mode: 'crop' | 'alpha'; index: number }>();
-  const [backgroundTest, setBackgroundTest] = useState<{ assetId: string; direction: string }>();
+  const [preparing, setPreparing] = useState<{ assetId: string; index: number }>();
+  const [backgroundTest, setBackgroundTest] = useState<{
+    assetId: string;
+    direction: string;
+    index: number;
+  }>();
   const set = <K extends keyof MaterialInput>(key: K, value: MaterialInput[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
   const setPricing = <K extends keyof MaterialPricing>(key: K, value: MaterialPricing[K]) =>
@@ -236,6 +241,21 @@ export function MaterialForm({
     } finally {
       setUploading(false);
     }
+  };
+
+  const applyBackgroundResult = async (result: BackgroundRemovalResult) => {
+    if (!writable || (form.scope === 'shared' && !isAdmin))
+      throw new Error('이 자재의 편집 권한이 없어요. 편집 가능한 탭에서 다시 시도해 주세요.');
+    if (!backgroundTest || form.views[backgroundTest.index]?.assetId !== backgroundTest.assetId)
+      throw new Error('선택한 제품 사진이 바뀌었어요. 결과 창을 닫고 다시 선택해 주세요.');
+    const { assetId, index } = backgroundTest;
+    const assets = getRepositories().assets;
+    const selected = await assets.get(assetId);
+    const asset = await makeAsset(result.blob, `${selected.name} · AI 배경 제거.png`, 'product', assetId);
+    asset.derivation = 'ai-alpha';
+    // Save new PNG bytes before changing the draft; existing assets and material versions stay intact.
+    await assets.put(asset);
+    setView(index, { assetId: asset.id });
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -573,7 +593,7 @@ export function MaterialForm({
                 <p>
                   {form.category === 'tile'
                     ? '타일 한 장의 정면 사진을 등록하세요. 여러 장이 찍혔다면 모서리 네 점으로 한 장만 선택할 수 있어요.'
-                    : '투명 배경 이미지를 권장해요. 배경이 남아 있다면 수동 지우기로 제품만 남길 수 있어요.'}
+                    : '투명 배경 이미지를 권장해요. AI 배경 제거 결과를 확인하고 제품 사진으로 적용할 수 있어요.'}
                 </p>
               </div>
             </div>
@@ -648,7 +668,7 @@ export function MaterialForm({
                         <button
                           type="button"
                           className="btn"
-                          onClick={() => setPreparing({ assetId: id, mode: 'crop', index })}
+                          onClick={() => setPreparing({ assetId: id, index })}
                         >
                           한 장 선택·정면 보정
                         </button>
@@ -747,17 +767,10 @@ export function MaterialForm({
                         disabled={busy || uploading || !!backgroundTest}
                         aria-label={`${view.direction} 사진 AI 배경 제거 테스트`}
                         onClick={() =>
-                          setBackgroundTest({ assetId: view.assetId, direction: view.direction })
+                          setBackgroundTest({ assetId: view.assetId, direction: view.direction, index })
                         }
                       >
                         AI 배경 제거 테스트
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => setPreparing({ assetId: view.assetId, mode: 'alpha', index })}
-                      >
-                        배경 수동 지우기
                       </button>
                       <div className={styles.toolbar}>
                         <button
@@ -787,7 +800,7 @@ export function MaterialForm({
                   <div className={styles.emptyAsset}>
                     아직 배치용 제품 이미지가 없어요.
                     <br />
-                    <span>배경이 투명한 PNG를 올리거나 수동으로 배경을 지울 수 있어요.</span>
+                    <span>제품 사진을 올린 뒤 AI 배경 제거 테스트로 배경을 지울 수 있어요.</span>
                   </div>
                 )}
               </>
@@ -970,7 +983,12 @@ export function MaterialForm({
         </footer>
       </form>
       {backgroundTest && (
-        <BackgroundRemovalTest {...backgroundTest} onClose={() => setBackgroundTest(undefined)} />
+        <BackgroundRemovalTest
+          {...backgroundTest}
+          onApply={applyBackgroundResult}
+          canApply={writable && (form.scope !== 'shared' || isAdmin)}
+          onClose={() => setBackgroundTest(undefined)}
+        />
       )}
       {preparing && (
         <ImagePreparer
@@ -978,12 +996,10 @@ export function MaterialForm({
           widthMm={form.widthMm}
           heightMm={form.heightMm}
           onSaved={(id) => {
-            if (preparing.mode === 'crop')
-              set(
-                'textureAssetIds',
-                form.textureAssetIds.map((value, index) => (index === preparing.index ? id : value)),
-              );
-            else setView(preparing.index, { assetId: id });
+            set(
+              'textureAssetIds',
+              form.textureAssetIds.map((value, index) => (index === preparing.index ? id : value)),
+            );
             setPreparing(undefined);
           }}
           onCancel={() => setPreparing(undefined)}

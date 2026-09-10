@@ -25,7 +25,7 @@ npm run test:cloudflare
 
 ## AI 배경 제거 테스트의 브라우저 실행
 
-제품 사진 미리보기의 AI 테스트는 Cloudflare AI나 별도 서버를 사용하지 않습니다. 브라우저의 모듈 Worker에서 ONNX 추론을 실행하고, 테스트 결과도 서버에 저장하지 않습니다. 모델은 고정 Hugging Face 리비전에서, ONNX WASM 실행 파일은 버전이 고정된 jsDelivr 주소에서 처음 실행할 때 다운로드합니다. 이 두 외부 호스트를 차단하면 테스트 창에 다운로드 실패를 안내합니다.
+제품 사진 미리보기의 AI 테스트는 Cloudflare AI나 별도 서버를 사용하지 않습니다. 브라우저의 모듈 Worker에서 ONNX 추론을 실행합니다. 결과 확인·다운로드만으로는 자재를 바꾸지 않으며, 투명 PNG 업로드를 누르면 선택한 저장소의 새 제품 자산으로 저장합니다. 로컬 모드에서는 IndexedDB에만 저장합니다. 모델은 고정 Hugging Face 리비전에서, ONNX WASM 실행 파일은 버전이 고정된 jsDelivr 주소에서 처음 실행할 때 다운로드합니다. 이 두 외부 호스트를 차단하면 테스트 창에 다운로드 실패를 안내합니다.
 
 Vite는 Worker를 ES 모듈로 빌드하고, client 환경의 기본 resolve 조건에 `onnxruntime-web-use-extern-wasm`을 추가합니다. 실제 CDN 경로를 사용하는 실행 파일이 배포 파일에 중복 포함되는 것을 막습니다. 기존 TensorFlow Worker의 환경 보정도 유지합니다. 상세 버전·라이선스·조건은 [AI 테스트 문서](ai-background-removal.md)에 기록합니다.
 

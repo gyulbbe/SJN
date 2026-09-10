@@ -5,6 +5,7 @@ export default defineConfig({
   testDir: './e2e',
   testMatch: [
     'background-removal.spec.ts',
+    'background-removal-apply.spec.ts',
     'background-removal-failures.spec.ts',
     'background-removal-wasm.spec.ts',
     'background-removal-cache.spec.ts',

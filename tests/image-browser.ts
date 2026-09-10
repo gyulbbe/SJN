@@ -6,7 +6,7 @@ import { build } from 'esbuild';
 import sharp from 'sharp';
 
 const tile = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><rect width="800" height="500" fill="#cbbfae"/><path d="M0 80 Q180 220 350 100 T800 150 M0 310 Q220 150 480 350 T800 300" stroke="#a99b89" stroke-width="4" fill="none"/><rect x="35" y="25" width="730" height="450" stroke="#f2ebdd" stroke-width="12" fill="none"/></svg>')).png().toBuffer();
-const fixture = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="700"><rect width="600" height="700" fill="white"/><ellipse cx="300" cy="230" rx="180" ry="95" fill="#4d8a72"/><rect x="175" y="230" width="250" height="330" rx="25" fill="#75aa8b"/><ellipse cx="300" cy="230" rx="140" ry="60" fill="#c9ded0"/></svg>')).png().toBuffer();
+const fixture = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="700"><ellipse cx="300" cy="230" rx="180" ry="95" fill="#4d8a72"/><rect x="175" y="230" width="250" height="330" rx="25" fill="#75aa8b"/><ellipse cx="300" cy="230" rx="140" ry="60" fill="#c9ded0"/></svg>')).png().toBuffer();
 const jpeg = await sharp({ create: { width: 120, height: 80, channels: 3, background: '#407e64' } }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
 const bundle = await build({ stdin: { contents: "export {importImage} from './src/lib/images';", resolveDir: process.cwd() }, bundle: true, write: false, format: 'iife', globalName: 'ImageTest', platform: 'browser' });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -57,18 +57,8 @@ try {
   await form.getByLabel('높이 (mm)', { exact: true }).fill('800');
   await form.getByLabel('깊이 (mm)', { exact: true }).fill('450');
   await form.getByLabel('+ 제품 방향 이미지 올리기', { exact: true }).setInputFiles({ name: 'fixture.png', mimeType: 'image/png', buffer: fixture });
-  await form.getByRole('button', { name: '배경 수동 지우기', exact: true }).click();
-  const alpha = page.getByRole('dialog', { name: '제품 배경 수동 지우기', exact: true });
-  const alphaCanvas = alpha.locator('canvas');
-  await alphaCanvas.waitFor({ state: 'visible' });
-  const rect = await alphaCanvas.boundingBox(); assert.ok(rect);
-  await page.mouse.move(rect.x + rect.width * .1, rect.y + rect.height * .1);
-  await page.mouse.down(); await page.mouse.up();
-  await alpha.getByRole('button', { name: '한 획 취소', exact: true }).click();
-  await page.mouse.move(rect.x + rect.width * .1, rect.y + rect.height * .1);
-  await page.mouse.down(); await page.mouse.up();
-  await alpha.getByRole('button', { name: '편집 결과 적용', exact: true }).click();
-  await alpha.waitFor({ state: 'detached' });
+  assert.equal(await form.getByRole('button', { name: '배경 수동 지우기', exact: true }).count(), 0);
+  assert.equal(await form.getByRole('button', { name: '정면 사진 AI 배경 제거 테스트', exact: true }).isEnabled(), true);
   await form.getByRole('button', { name: '대표 이미지로 사용', exact: true }).click();
   await form.getByRole('button', { name: '자재 등록', exact: true }).click();
   await form.waitFor({ state: 'detached' });
@@ -85,9 +75,9 @@ try {
     const fixtureAsset = assets.find(value => value.id === fixtureVersion.views[0].assetId)!;
     const original = assets.find(value => value.id === fixtureAsset.sourceAssetId)!;
     const alphaAt = async (blob: Blob) => { const bitmap = await createImageBitmap(blob); const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height; const ctx = canvas.getContext('2d')!; ctx.drawImage(bitmap, 0, 0); bitmap.close(); return ctx.getImageData(Math.floor(canvas.width * .1), Math.floor(canvas.height * .1), 1, 1).data[3]; };
-    return { tileVersions: versions.filter(value => value.name === '테스트 직사각 타일').length, tileSize: [tileAsset.width, tileAsset.height], erasedAlpha: await alphaAt(fixtureAsset.blob), originalAlpha: await alphaAt(original.blob) };
+    return { tileVersions: versions.filter(value => value.name === '테스트 직사각 타일').length, tileSize: [tileAsset.width, tileAsset.height], uploadedAlpha: await alphaAt(fixtureAsset.blob), originalAlpha: await alphaAt(original.blob) };
   });
-  assert.deepEqual(persisted, { tileVersions: 2, tileSize: [1600, 800], erasedAlpha: 0, originalAlpha: 255 });
+  assert.deepEqual(persisted, { tileVersions: 2, tileSize: [1600, 800], uploadedAlpha: 0, originalAlpha: 0 });
   const secondTab = await context.newPage();
   await secondTab.goto('http://127.0.0.1:3000/materials');
   await secondTab.getByText('다른 탭에서 편집 중이에요.', { exact: false }).waitFor();
@@ -96,5 +86,5 @@ try {
   await mkdir('test-results', { recursive: true });
   await page.screenshot({ path: 'test-results/material-library.png', fullPage: true });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ passed: ['EXIF 6 orientation and original bytes', 'tile upload and four-point correction', 'immutable material v2', 'manual alpha erase and undo', 'original alpha preservation', 'refresh restoration', 'second-tab write lock'], persisted, screenshot: 'test-results/material-library.png' }, null, 2));
+  console.log(JSON.stringify({ passed: ['EXIF 6 orientation and original bytes', 'tile upload and four-point correction', 'immutable material v2', 'transparent product PNG upload and AI test entry', 'original alpha preservation', 'refresh restoration', 'second-tab write lock'], persisted, screenshot: 'test-results/material-library.png' }, null, 2));
 } finally { await browser.close(); }

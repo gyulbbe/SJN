@@ -66,7 +66,7 @@ async function uploadView(form: Locator, file: string | { name: string; mimeType
   return count;
 }
 
-test('제품 방향 사진 옆 AI 테스트 버튼과 기존 수동 지우기 유지 · 업로드만으로 모델 다운로드하지 않음', async ({
+test('제품 방향 사진 옆 AI 테스트 버튼만 제공 · 수동 지우기 제거 · 업로드만으로 모델 다운로드하지 않음', async ({
   page,
 }) => {
   const models: string[] = [];
@@ -80,7 +80,7 @@ test('제품 방향 사진 옆 AI 테스트 버튼과 기존 수동 지우기 �
     .toBuffer();
   await uploadView(form, { name: 'button-availability.png', mimeType: 'image/png', buffer });
   await expect(form.getByRole('button', { name: /AI 배경 제거 테스트/ })).toBeEnabled();
-  await expect(form.getByRole('button', { name: '배경 수동 지우기', exact: true })).toBeEnabled();
+  await expect(form.getByRole('button', { name: '배경 수동 지우기', exact: true })).toHaveCount(0);
   expect(models).toEqual([]);
 });
 
@@ -90,7 +90,9 @@ test.describe('실제 BiRefNet 추론', () => {
     'SJN_AI_BACKGROUND_REAL=1로 실제 모델 다운로드·추론을 실행합니다.',
   );
 
-  test('실사 원본/결과 · 배경색·확대·PNG·원본 크기·기존 알파·비파괴·캐시 시간', async ({ page }, info) => {
+  test('실사 원본/결과 · 배경색·확대·PNG·원본 크기·기존 알파·적용 전 비파괴·선택 적용·재진입·캐시 시간', async ({
+    page,
+  }, info) => {
     test.setTimeout(1_200_000);
     const sources = ['white-toilet.jpg', 'retro-desk-lamp.jpg', 'garden-chair.jpg'];
     expect(
@@ -243,15 +245,60 @@ test.describe('실제 BiRefNet 추론', () => {
         JSON.stringify({ browser, measurements, modelRequests, uploads, errors }, null, 2),
       );
       await expect.poll(() => assetManifest(page)).toEqual(before);
-      await dialog.getByRole('button', { name: /닫기/ }).click();
-      await expect(dialog).toHaveCount(0);
-      expect(
-        await form
-          .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
-          .nth(index)
-          .getAttribute('src'),
-      ).toBe(sourcePreview);
+      if (fixture === cases.at(-1)) {
+        await dialog.getByRole('button', { name: '투명 PNG 업로드', exact: true }).click();
+        await expect(dialog).toHaveCount(0);
+        await expect
+          .poll(() =>
+            form
+              .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+              .nth(index)
+              .getAttribute('src'),
+          )
+          .not.toBe(sourcePreview);
+        const afterApply = await assetManifest(page);
+        expect(afterApply.materials).toEqual(before.materials);
+        expect(afterApply.versions).toEqual(before.versions);
+      } else {
+        await dialog.getByRole('button', { name: /닫기/ }).click();
+        await expect(dialog).toHaveCount(0);
+        expect(
+          await form
+            .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+            .nth(index)
+            .getAttribute('src'),
+        ).toBe(sourcePreview);
+      }
     }
+    await form.getByRole('button', { name: '대표 이미지로 사용', exact: true }).first().click();
+    await form.getByRole('button', { name: '자재 등록', exact: true }).click();
+    await expect(form).toHaveCount(0);
+    await page.reload();
+    await page.getByRole('button', { name: '정보 수정', exact: true }).first().click();
+    const reopened = page.getByRole('dialog', { name: '자재 수정', exact: true });
+    await expect(
+      reopened.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+    ).toHaveCount(cases.length);
+    const persistedAlpha = await reopened
+      .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+      .last()
+      .evaluate(async (image: HTMLImageElement) => {
+        const bitmap = await createImageBitmap(await (await fetch(image.src)).blob());
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        const alpha = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let removed = 0,
+          retained = 0;
+        for (let i = 3; i < alpha.length; i += 4) {
+          if (alpha[i] < 16) removed++;
+          if (alpha[i] > 240) retained++;
+        }
+        return { removed, retained };
+      });
+    expect(persistedAlpha.removed).toBeGreaterThan(100);
+    expect(persistedAlpha.retained).toBeGreaterThan(100);
     await writeFile(
       info.outputPath('real-inference-measurements.json'),
       JSON.stringify({ browser, measurements, modelRequests, uploads, errors }, null, 2),

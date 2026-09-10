@@ -14,10 +14,14 @@ const seconds = (milliseconds: number) => `${(milliseconds / 1000).toFixed(2)}�
 export function BackgroundRemovalTest({
   assetId,
   direction,
+  onApply,
+  canApply = true,
   onClose,
 }: {
   assetId: string;
   direction: string;
+  onApply: (result: BackgroundRemovalResult) => Promise<void>;
+  canApply?: boolean;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -29,6 +33,9 @@ export function BackgroundRemovalTest({
   const [result, setResult] = useState<BackgroundRemovalResult>();
   const [resultUrl, setResultUrl] = useState('');
   const [busy, setBusy] = useState(true);
+  const applyingRef = useRef(false);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState('');
   const [progress, setProgress] = useState<BackgroundRemovalProgress>({
     stage: 'checking',
     message: '선택한 제품 사진을 준비하고 있어요.',
@@ -190,8 +197,27 @@ export function BackgroundRemovalTest({
     anchor.remove();
   };
   const close = () => {
+    if (applyingRef.current) return;
     clientRef.current?.dispose();
     onClose();
+  };
+  const apply = async () => {
+    if (!result || busy || !canApply || applyingRef.current) return;
+    applyingRef.current = true;
+    setApplying(true);
+    setApplyError('');
+    try {
+      await onApply(result);
+      clientRef.current?.dispose();
+      onClose();
+    } catch (reason) {
+      setApplyError(
+        reason instanceof Error ? reason.message : '이미지를 적용하지 못했어요. 다시 시도해 주세요.',
+      );
+    } finally {
+      applyingRef.current = false;
+      setApplying(false);
+    }
   };
   const downloadPercent =
     progress.stage === 'download' && progress.totalBytes && progress.loadedBytes !== undefined
@@ -214,10 +240,11 @@ export function BackgroundRemovalTest({
           <span className={styles.eyebrow}>제품 사진 · {direction}</span>
           <h2 id="background-removal-title">AI 배경 제거 테스트</h2>
           <p id="background-removal-description">
-            테스트 미리보기예요. 원본과 등록된 제품에는 적용하지 않아요.
+            결과를 확인한 뒤 투명 PNG 업로드를 누르면 이 방향의 제품 사진을 교체해요. 자재 저장 시 최종
+            반영돼요.
           </p>
         </div>
-        <button type="button" className="btn" onClick={close}>
+        <button type="button" className="btn" onClick={close} disabled={applying}>
           {busy ? '취소하고 닫기' : '닫기'}
         </button>
       </header>
@@ -417,11 +444,31 @@ export function BackgroundRemovalTest({
           </div>
         )}
       </div>
+      {applyError && (
+        <div className={styles.applyError} role="alert">
+          <strong>투명 PNG를 적용하지 못했어요.</strong>
+          <p>{applyError} 결과는 유지돼요. 투명 PNG 업로드를 눌러 다시 시도해 주세요.</p>
+        </div>
+      )}
       <footer className={styles.footer}>
-        <span>배경색은 미리보기에만 사용하고 PNG는 투명하게 저장해요.</span>
-        <button type="button" className="btn primary" disabled={!result || busy} onClick={download}>
-          투명 PNG 다운로드
-        </button>
+        <span aria-live="polite">
+          {applying
+            ? '투명 PNG를 제품 사진에 적용하고 있어요…'
+            : '배경색은 미리보기에만 사용해요. 업로드하면 선택한 방향의 사진만 교체해요.'}
+        </span>
+        <div className={styles.footerActions}>
+          <button type="button" className="btn" disabled={!result || busy || applying} onClick={download}>
+            투명 PNG 다운로드
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!result || busy || applying || !canApply}
+            onClick={apply}
+          >
+            투명 PNG 업로드
+          </button>
+        </div>
       </footer>
     </dialog>
   );

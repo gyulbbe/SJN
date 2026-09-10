@@ -9,6 +9,8 @@ export async function resolveBackgroundRemovalInput(
 ): Promise<{ asset: AssetRecord; sourceLabel: string }> {
   const selected = await assets.get(assetId);
   if (selected.kind === 'original') return { asset: selected, sourceLabel: '업로드 원본' };
+  if (selected.derivation === 'ai-alpha')
+    return { asset: selected, sourceLabel: 'AI 배경 제거를 적용한 사진' };
   if (selected.derivation === 'manual-alpha')
     return { asset: selected, sourceLabel: '수동 배경 지우기를 적용한 사진' };
   if (selected.derivation === 'rectified') return { asset: selected, sourceLabel: '보정한 사진' };

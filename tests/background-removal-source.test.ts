@@ -3,19 +3,35 @@ import { resolveBackgroundRemovalInput } from '../src/lib/background-removal/sou
 import type { AssetRecord } from '../src/lib/types';
 
 const original: AssetRecord = {
-  id: 'original', ownerId: 'local', name: 'product.png', mime: 'image/png', size: 3,
-  width: 3200, height: 2400, kind: 'original', createdAt: '', blob: new Blob(['raw']),
+  id: 'original',
+  ownerId: 'local',
+  name: 'product.png',
+  mime: 'image/png',
+  size: 3,
+  width: 3200,
+  height: 2400,
+  kind: 'original',
+  createdAt: '',
+  blob: new Blob(['raw']),
 };
 const preview: AssetRecord = {
-  ...original, id: 'preview', name: 'product.png · 편집용', kind: 'product',
-  width: 2048, height: 1536, sourceAssetId: original.id, derivation: 'upload-preview',
+  ...original,
+  id: 'preview',
+  name: 'product.png · 편집용',
+  kind: 'product',
+  width: 2048,
+  height: 1536,
+  sourceAssetId: original.id,
+  derivation: 'upload-preview',
 };
 function reader(selected: AssetRecord) {
-  return { get: vi.fn(async (id: string) => {
-    if (id === selected.id) return selected;
-    if (id === original.id) return original;
-    throw new Error('missing');
-  }) };
+  return {
+    get: vi.fn(async (id: string) => {
+      if (id === selected.id) return selected;
+      if (id === original.id) return original;
+      throw new Error('missing');
+    }),
+  };
 }
 
 describe('background removal source resolution', () => {
@@ -29,6 +45,20 @@ describe('background removal source resolution', () => {
   it('recognizes legacy unedited previews by their exact original name', async () => {
     const legacy = { ...preview, derivation: undefined };
     expect((await resolveBackgroundRemovalInput(legacy.id, reader(legacy))).asset).toBe(original);
+  });
+  it('retains applied AI transparency and full resolution when rerun', async () => {
+    const applied: AssetRecord = {
+      ...original,
+      id: 'ai-result',
+      kind: 'product',
+      sourceAssetId: preview.id,
+      derivation: 'ai-alpha',
+    };
+    const assets = reader(applied);
+    const result = await resolveBackgroundRemovalInput(applied.id, assets);
+    expect(result.asset).toBe(applied);
+    expect(result.sourceLabel).toBe('AI 배경 제거를 적용한 사진');
+    expect(assets.get).toHaveBeenCalledTimes(1);
   });
   it('retains manual alpha even if a source original exists', async () => {
     const manual: AssetRecord = { ...preview, derivation: 'manual-alpha' };

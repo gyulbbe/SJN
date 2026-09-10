@@ -302,6 +302,24 @@
   color: #7b8a80;
   line-height: 1.6;
 }
+.footerActions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.applyError {
+  margin: 0 24px 12px;
+  padding: 12px;
+  color: #8e4a3d;
+  background: #fff7f4;
+  border: 1px solid #e6c3bc;
+  border-radius: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.applyError p {
+  margin-top: 6px;
+}
 @media (max-width: 600px) {
   .dialog {
     width: 98vw;
@@ -376,6 +394,14 @@
   .footer {
     padding: 12px 13px;
     gap: 10px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .footerActions > button {
+    flex: 1;
+  }
+  .applyError {
+    margin: 0 13px 10px;
   }
   .footer span {
     font-size: 10px;

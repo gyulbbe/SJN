@@ -75,6 +75,7 @@ async function startTest(form: Locator) {
 async function assertNoResult(page: Page) {
   await expect(aiDialog(page).getByTestId('background-removal-result')).toHaveCount(0);
   await expect(aiDialog(page).getByRole('button', { name: '투명 PNG 다운로드', exact: true })).toBeDisabled();
+  await expect(aiDialog(page).getByRole('button', { name: '투명 PNG 업로드', exact: true })).toBeDisabled();
 }
 
 test('모델 네트워크 실패는 이유·재시도 표시 · 기존 사진과 자재 데이터 보존', async ({ page, context }) => {
@@ -102,7 +103,7 @@ test('모델 네트워크 실패는 이유·재시도 표시 · 기존 사진과
   await expect(aiDialog(page)).toHaveCount(0);
   expect(await previewSource(form)).toBe(preview);
   await expect(form.getByLabel('상품명')).toHaveValue('배경 제거 실패 검증 제품');
-  await expect(form.getByRole('button', { name: '배경 수동 지우기', exact: true })).toBeEnabled();
+  await expect(form.getByRole('button', { name: '배경 수동 지우기', exact: true })).toHaveCount(0);
 });
 
 test('실제 모델 요청 대기 중 중복 방지 · Escape/닫기 취소 · 늦은 실패로 결과 창 재생성 안 함', async ({
@@ -178,99 +179,15 @@ test('Web Worker 미지원 환경 안내·재시도와 모바일 닫기 · 모�
     .getByRole('button', { name: '투명 PNG 다운로드', exact: true })
     .boundingBox();
   expect(footerButton!.y + footerButton!.height).toBeLessThanOrEqual(844);
+  const uploadButton = await dialog
+    .getByRole('button', { name: '투명 PNG 업로드', exact: true })
+    .boundingBox();
+  expect(uploadButton!.x + uploadButton!.width).toBeLessThanOrEqual(390);
+  expect(uploadButton!.y + uploadButton!.height).toBeLessThanOrEqual(844);
   await dialog.screenshot({ path: info.outputPath('unsupported-worker-mobile.png') });
   expect(requests).toBe(0);
   expect(await persistentManifest(page)).toEqual(before);
   await page.keyboard.press('Escape');
   await expect(aiDialog(page)).toHaveCount(0);
-  await expect(form.getByRole('button', { name: '배경 수동 지우기', exact: true })).toBeEnabled();
-});
-
-test('수동 지우기 실제 획·적용 후 AI 입력은 원본 대신 편집된 투명 사진을 유지', async ({ page, context }) => {
-  await page.addInitScript(() =>
-    Object.defineProperty(globalThis, 'Worker', { configurable: true, value: undefined }),
-  );
-  let requests = 0;
-  await context.route(modelUrl, async (route) => {
-    requests++;
-    await route.abort('internetdisconnected');
-  });
-  const form = await openUploadedProduct(page);
-  const uploadPreview = await previewSource(form);
-  await form.getByRole('button', { name: '배경 수동 지우기', exact: true }).click();
-  const manual = page.getByRole('dialog', { name: '제품 배경 수동 지우기', exact: true });
-  const canvas = manual.getByLabel('배경 제거 브러시 편집 화면', { exact: true });
-  await expect(canvas).toBeVisible();
-  const rect = await canvas.boundingBox();
-  await page.mouse.move(rect!.x + rect!.width * 0.25, rect!.y + rect!.height * 0.5);
-  await page.mouse.down();
-  await page.mouse.move(rect!.x + rect!.width * 0.45, rect!.y + rect!.height * 0.5, { steps: 4 });
-  await page.mouse.up();
-  await expect(manual.getByRole('button', { name: '한 획 취소', exact: true })).toBeEnabled();
-  await manual.getByRole('button', { name: '편집 결과 적용', exact: true }).click();
-  await expect(manual).toHaveCount(0);
-  await expect.poll(() => previewSource(form)).not.toBe(uploadPreview);
-
-  const edited = await page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const assets = await new Promise<
-      { id: string; sourceAssetId?: string; derivation?: string; blob: Blob; width: number; height: number }[]
-    >((resolve, reject) => {
-      const request = db.transaction('assets').objectStore('assets').getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    db.close();
-    const asset = assets.find((item) => item.derivation === 'manual-alpha');
-    if (!asset) throw new Error('수동 지우기 결과에 manual-alpha 메타데이터가 없습니다.');
-    const original = assets.find((item) => item.id === asset.sourceAssetId);
-    if (!original) throw new Error('수동 편집 결과의 업로드 원본을 찾을 수 없습니다.');
-    const digest = async (blob: Blob) =>
-      Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), (byte) =>
-        byte.toString(16).padStart(2, '0'),
-      ).join('');
-    const bitmap = await createImageBitmap(asset.blob);
-    const pixels = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const ctx = pixels.getContext('2d')!;
-    ctx.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    return {
-      width: asset.width,
-      height: asset.height,
-      derivation: asset.derivation,
-      removedAlpha: ctx.getImageData(20, 24, 1, 1).data[3],
-      retainedAlpha: ctx.getImageData(60, 2, 1, 1).data[3],
-      digest: await digest(asset.blob),
-      originalDigest: await digest(original.blob),
-    };
-  });
-  expect(edited.derivation).toBe('manual-alpha');
-  expect(edited.removedAlpha).toBe(0);
-  expect(edited.retainedAlpha).toBe(255);
-  expect(edited.digest).not.toBe(edited.originalDigest);
-  const afterManual = await persistentManifest(page);
-  await startTest(form);
-  const dialog = aiDialog(page);
-  await expect(dialog.getByRole('alert')).toContainText('Web Worker를 지원하지 않아요');
-  await expect(dialog.getByText('수동 배경 지우기를 적용한 사진', { exact: true })).toBeVisible();
-  const originalInput = dialog.getByTestId('background-removal-original');
-  await expect(originalInput).toBeVisible();
-  const input = await originalInput.evaluate(async (image: HTMLImageElement) => {
-    const blob = await (await fetch(image.src)).blob();
-    const digest = Array.from(
-      new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())),
-      (byte) => byte.toString(16).padStart(2, '0'),
-    ).join('');
-    return { digest, width: image.naturalWidth, height: image.naturalHeight };
-  });
-  expect(input).toEqual({ digest: edited.digest, width: edited.width, height: edited.height });
-  await assertNoResult(page);
-  expect(requests).toBe(0);
-  expect(await persistentManifest(page)).toEqual(afterManual);
-  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
-  await expect(form.getByRole('button', { name: '배경 수동 지우기', exact: true })).toBeEnabled();
+  await expect(form.getByRole('button', { name: '배경 수동 지우기', exact: true })).toHaveCount(0);
 });
