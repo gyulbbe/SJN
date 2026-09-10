@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, defaultClientConditions } from 'vite';
 import vinext from 'vinext';
 import { cloudflare } from '@cloudflare/vite-plugin';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +7,14 @@ import { cloudflareLocalRoutes } from './build/cloudflare-local';
 // The initial Workers deployment uses browser storage only.
 export default defineConfig({
   define: { 'process.env.NEXT_PUBLIC_STORAGE_MODE': JSON.stringify('local') },
+  // The runtime's pinned CDN paths are set in the AI worker; do not emit unused WASM assets.
+  environments: {
+    client: { resolve: { conditions: [...defaultClientConditions, 'onnxruntime-web-use-extern-wasm'] } },
+  },
   // vinext folds typeof window to "object" for clients; Web Workers have no window.
   worker: {
+    // The background-removal runtime is imported lazily inside its module worker.
+    format: 'es',
     plugins: () => [
       {
         name: 'gongganmiri-worker-environment',

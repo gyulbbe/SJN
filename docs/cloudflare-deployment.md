@@ -23,6 +23,20 @@ npm run test:cloudflare
 
 테스트는 Chrome을 사용하고 8787 포트에서 Workers 서버를 시작한다. 기본 공간 생성·저장·새로고침, 사진 분석 자산, 비활성 서버 API를 확인한다.
 
+## AI 배경 제거 테스트의 브라우저 실행
+
+제품 사진 미리보기의 AI 테스트는 Cloudflare AI나 별도 서버를 사용하지 않습니다. 브라우저의 모듈 Worker에서 ONNX 추론을 실행하고, 테스트 결과도 서버에 저장하지 않습니다. 모델은 고정 Hugging Face 리비전에서, ONNX WASM 실행 파일은 버전이 고정된 jsDelivr 주소에서 처음 실행할 때 다운로드합니다. 이 두 외부 호스트를 차단하면 테스트 창에 다운로드 실패를 안내합니다.
+
+Vite는 Worker를 ES 모듈로 빌드하고, client 환경의 기본 resolve 조건에 `onnxruntime-web-use-extern-wasm`을 추가합니다. 실제 CDN 경로를 사용하는 실행 파일이 배포 파일에 중복 포함되는 것을 막습니다. 기존 TensorFlow Worker의 환경 보정도 유지합니다. 상세 버전·라이선스·조건은 [AI 테스트 문서](ai-background-removal.md)에 기록합니다.
+
+`npm run build:vinext` 후 다음 명령으로 배포용 산출물의 실제 AI 테스트를 실행할 수 있습니다. 공개 검증 사진을 먼저 준비해야 하며 모델 다운로드가 발생합니다.
+
+```powershell
+$env:SJN_AI_BACKGROUND_TARGET = 'cloudflare'
+$env:SJN_AI_BACKGROUND_REAL = '1'
+npm run test:background-removal
+```
+
 ## GitHub main 자동 배포
 
 코드와 `package-lock.json`을 함께 커밋하고 GitHub `main`에 반영한다. Cloudflare의 **Workers & Pages → Create application → Import a repository**에서 GitHub `gyulbbe/SJN`을 연결한다.

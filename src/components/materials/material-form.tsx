@@ -15,6 +15,7 @@ import {
 } from '@/lib/types';
 import { AssetImage, useAsset } from './asset-image';
 import { ImagePreparer } from './image-preparer';
+import { BackgroundRemovalTest } from './background-removal-test';
 import { useAccess } from '@/components/app-provider';
 import { useSharedCatalogAdmin } from './shared-access';
 import styles from './materials.module.css';
@@ -153,6 +154,7 @@ export function MaterialForm({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [preparing, setPreparing] = useState<{ assetId: string; mode: 'crop' | 'alpha'; index: number }>();
+  const [backgroundTest, setBackgroundTest] = useState<{ assetId: string; direction: string }>();
   const set = <K extends keyof MaterialInput>(key: K, value: MaterialInput[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
   const setPricing = <K extends keyof MaterialPricing>(key: K, value: MaterialPricing[K]) =>
@@ -742,6 +744,17 @@ export function MaterialForm({
                       <button
                         type="button"
                         className="btn"
+                        disabled={busy || uploading || !!backgroundTest}
+                        aria-label={`${view.direction} 사진 AI 배경 제거 테스트`}
+                        onClick={() =>
+                          setBackgroundTest({ assetId: view.assetId, direction: view.direction })
+                        }
+                      >
+                        AI 배경 제거 테스트
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
                         onClick={() => setPreparing({ assetId: view.assetId, mode: 'alpha', index })}
                       >
                         배경 수동 지우기
@@ -956,6 +969,9 @@ export function MaterialForm({
           </div>
         </footer>
       </form>
+      {backgroundTest && (
+        <BackgroundRemovalTest {...backgroundTest} onClose={() => setBackgroundTest(undefined)} />
+      )}
       {preparing && (
         <ImagePreparer
           {...preparing}

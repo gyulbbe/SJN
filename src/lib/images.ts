@@ -161,6 +161,7 @@ export async function importImage(
       height: size.height,
       kind: kind === 'original' ? 'preview' : kind,
       sourceAssetId: original.id,
+      derivation: 'upload-preview',
       createdAt: new Date().toISOString(),
       blob,
     };

@@ -237,6 +237,7 @@ export function ImagePreparer({
         mode === 'crop' ? 'texture' : 'product',
         assetSourceRef.current,
       );
+      result.derivation = mode === 'crop' ? 'rectified' : 'manual-alpha';
       await getRepositories().assets.put(result);
       onSaved(result.id);
     } catch (reason) {

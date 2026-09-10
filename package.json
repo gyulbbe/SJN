@@ -23,7 +23,8 @@
     "build:vinext": "vinext build",
     "start:vinext": "wrangler dev --config dist/server/wrangler.json --port 8787 --persist-to .wrangler/state",
     "deploy:vinext": "vinext-cloudflare deploy --config dist/server/wrangler.json",
-    "test:cloudflare": "playwright test --config playwright.cloudflare.config.ts"
+    "test:cloudflare": "playwright test --config playwright.cloudflare.config.ts",
+    "test:background-removal": "playwright test --config playwright.background-removal.config.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",
@@ -31,20 +32,22 @@
     "@tensorflow/tfjs-backend-wasm": "4.22.0",
     "@tensorflow/tfjs-converter": "4.22.0",
     "@tensorflow/tfjs-core": "4.22.0",
+    "@vinext/cloudflare": "1.0.0-beta.7",
     "idb": "^8.0.0",
     "lucide-react": "^0.577.0",
     "next": "16.3.4",
+    "onnxruntime-web": "1.29.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-server-dom-webpack": "19.2.8",
     "sharp": "^0.35.4",
     "three": "0.185.1",
-    "zod": "^4.0.0",
-    "zustand": "^5.0.0",
     "vinext": "1.0.0-beta.9",
-    "@vinext/cloudflare": "1.0.0-beta.7",
-    "react-server-dom-webpack": "19.2.8"
+    "zod": "^4.0.0",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "1.54.4",
     "@playwright/test": "^1.58.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.0.0",
@@ -52,6 +55,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.183.0",
     "@vitejs/plugin-react": "6.1.1",
+    "@vitejs/plugin-rsc": "0.5.34",
     "esbuild": "0.28.2",
     "eslint": "^9.0.0",
     "eslint-config-next": "16.3.4",
@@ -59,10 +63,8 @@
     "prettier": "3.9.6",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0",
     "vite": "8.2.2",
-    "@vitejs/plugin-rsc": "0.5.34",
-    "@cloudflare/vite-plugin": "1.54.4",
+    "vitest": "^3.2.0",
     "wrangler": "4.129.0"
   },
   "type": "module"
