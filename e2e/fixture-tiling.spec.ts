@@ -146,12 +146,11 @@ async function registerProduct(page: Page) {
   await dialog.getByLabel('가로 (mm)', { exact: true }).fill('600');
   await dialog.getByLabel('높이 (mm)', { exact: true }).fill('800');
   await dialog
-    .getByLabel('+ 제품 방향 이미지 올리기', { exact: true })
+    .getByLabel('+ 제품 이미지 올리기', { exact: true })
     .setInputFiles({ name: 'new-2d-basin.png', mimeType: 'image/png', buffer: png });
   await expect(
     dialog.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
   ).toBeVisible();
-  await dialog.getByRole('button', { name: '대표 이미지로 사용', exact: true }).click();
   await dialog.getByRole('button', { name: '자재 등록', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.getByRole('button', { name: '위생도기', exact: true }).click();

@@ -1,0 +1,38 @@
+/** Alpha bounds in the original input coordinate system; never infer a missing background. */
+export function foregroundBounds(data: Uint8ClampedArray, width: number, height: number) {
+  let minX = width,
+    minY = height,
+    maxX = -1,
+    maxY = -1,
+    clear = 0;
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha < 16) clear++;
+      if (alpha > 32) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  if (maxX < minX || maxY < minY)
+    throw new Error('제품이 보이지 않는 투명 이미지예요. 다른 사진을 선택해 주세요.');
+  if (clear < width * height * 0.01)
+    throw new Error('먼저 AI 배경 제거로 제품의 배경을 투명하게 만든 뒤 입체화 생성을 실행해 주세요.');
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+export function rgbNchw(data: Uint8ClampedArray, width: number, height: number) {
+  const n = width * height;
+  const out = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) out[c * n + i] = data[i * 4 + c] / 255;
+  return out;
+}
+/** ViT output [1,768,1025] -> transformer input [1,1025,768]. */
+export function transposeTokens(data: Float32Array, channels = 768, tokens = 1025) {
+  if (data.length !== channels * tokens) throw new Error('AI 이미지 특징의 크기가 모델과 맞지 않아요.');
+  const out = new Float32Array(data.length);
+  for (let c = 0; c < channels; c++)
+    for (let t = 0; t < tokens; t++) out[t * channels + c] = data[c * tokens + t];
+  return out;
+}

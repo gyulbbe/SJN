@@ -79,10 +79,10 @@ export function materialReferences(
     ...new Set(
       [
         version.coverAssetId,
-        ...version.imageAssetIds,
+        ...(version.imageAssetIds ?? []),
         ...version.textureAssetIds,
-        ...version.views.map((v) => v.assetId),
-      ].filter(Boolean),
+        ...version.views.flatMap((v) => [v.assetId, v.product3d?.meshAssetId, v.product3d?.inputAssetId]),
+      ].filter((id): id is string => !!id),
     ),
   ];
 }

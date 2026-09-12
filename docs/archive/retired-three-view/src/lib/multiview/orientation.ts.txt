@@ -1,0 +1,279 @@
+import type { ReconstructedMesh } from './geometry';
+
+export interface FrontOrientationOptions {
+  /** Original TripoSR image camera azimuth, NOT a user-supplied left/front/right guess. */
+  sourceYawDegrees?: number;
+}
+
+export interface FrontOrientationEstimate {
+  /** Camera azimuth viewing the estimated front, in TripoSR +Z-up coordinates. */
+  yawDegrees: number;
+  /** Heuristic evidence strength in [0, 1], not a calibrated probability. */
+  confidence: number;
+  /** Symmetric objects, poor reconstructions, and side-on sources need visual confirmation. */
+  ambiguous: boolean;
+  /** Robust reflection mismatch as a fraction of the object's bounding diameter. */
+  symmetryError: number;
+  /** Relative advantage over a different symmetry axis at least 25 degrees away. */
+  runnerUpGap: number;
+  /** Absolute cosine of the angle to the source camera; zero cannot distinguish front/back. */
+  sourceFacingMargin: number;
+}
+
+const SAMPLE_COUNT = 12_000;
+const DEGREES = Math.PI / 180;
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const normalizedYaw = (degrees: number) => ((((degrees + 180) % 360) + 360) % 360) - 180;
+const axisDistance = (a: number, b: number) => Math.abs(((((a - b + 270) % 180) + 180) % 180) - 90);
+
+type Sample = { positions: Float32Array; colors: Float32Array; hasColors: boolean };
+
+/** Surface area sampling avoids bias from tetrahedral tessellation or tiny dense details. */
+function sampleSurface(mesh: ReconstructedMesh): Sample {
+  const { positions, indices, colors } = mesh;
+  if (!positions.length || positions.length % 3 || !indices.length || indices.length % 3) {
+    throw new Error('정면을 찾을 수 있는 제품 형상 데이터가 없습니다.');
+  }
+  if (colors && colors.length !== positions.length)
+    throw new Error('제품 형상의 색상 데이터가 올바르지 않습니다.');
+  for (const value of positions)
+    if (!Number.isFinite(value)) throw new Error('제품 형상에 유효하지 않은 좌표가 있습니다.');
+  if (colors)
+    for (const value of colors)
+      if (!Number.isFinite(value)) throw new Error('제품 형상에 유효하지 않은 색상이 있습니다.');
+  const areas = new Float64Array(indices.length / 3);
+  let area = 0;
+  let centerX = 0;
+  let centerY = 0;
+  let centerZ = 0;
+  for (let i = 0; i < indices.length; i += 3) {
+    const a = indices[i] * 3;
+    const b = indices[i + 1] * 3;
+    const c = indices[i + 2] * 3;
+    if (a >= positions.length || b >= positions.length || c >= positions.length)
+      throw new Error('제품 형상의 면 데이터가 올바르지 않습니다.');
+    const ux = positions[b] - positions[a];
+    const uy = positions[b + 1] - positions[a + 1];
+    const uz = positions[b + 2] - positions[a + 2];
+    const vx = positions[c] - positions[a];
+    const vy = positions[c + 1] - positions[a + 1];
+    const vz = positions[c + 2] - positions[a + 2];
+    const triangleArea = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+    area += triangleArea;
+    areas[i / 3] = area;
+    centerX += (triangleArea * (positions[a] + positions[b] + positions[c])) / 3;
+    centerY += (triangleArea * (positions[a + 1] + positions[b + 1] + positions[c + 1])) / 3;
+    centerZ += (triangleArea * (positions[a + 2] + positions[b + 2] + positions[c + 2])) / 3;
+  }
+  if (area < 1e-12) throw new Error('제품 형상의 면적이 너무 작아 정면을 찾을 수 없습니다.');
+  centerX /= area;
+  centerY /= area;
+  centerZ /= area;
+  let radius = 0;
+  for (let i = 0; i < positions.length; i += 3) {
+    radius = Math.max(
+      radius,
+      Math.hypot(positions[i] - centerX, positions[i + 1] - centerY, positions[i + 2] - centerZ),
+    );
+  }
+  const sampledPositions = new Float32Array(SAMPLE_COUNT * 3);
+  const sampledColors = new Float32Array(SAMPLE_COUNT * 3);
+  // Deterministic sampling keeps rerenders and small rigid rotations stable.
+  let state = 0x6d2b79f5;
+  const random = () => {
+    state = Math.imul(state ^ (state >>> 15), 1 | state);
+    state ^= state + Math.imul(state ^ (state >>> 7), 61 | state);
+    return ((state ^ (state >>> 14)) >>> 0) / 4294967296;
+  };
+  let triangle = 0;
+  for (let sample = 0; sample < SAMPLE_COUNT; sample++) {
+    const target = (area * (sample + 0.5)) / SAMPLE_COUNT;
+    while (triangle < areas.length - 1 && areas[triangle] < target) triangle++;
+    const a = indices[triangle * 3] * 3;
+    const b = indices[triangle * 3 + 1] * 3;
+    const c = indices[triangle * 3 + 2] * 3;
+    let u = random();
+    let v = random();
+    if (u + v > 1) {
+      u = 1 - u;
+      v = 1 - v;
+    }
+    const w = 1 - u - v;
+    const center = [centerX, centerY, centerZ];
+    for (let axis = 0; axis < 3; axis++) {
+      sampledPositions[sample * 3 + axis] =
+        (positions[a + axis] * w + positions[b + axis] * u + positions[c + axis] * v - center[axis]) /
+        (radius * 2);
+      sampledColors[sample * 3 + axis] = colors
+        ? colors[a + axis] * w + colors[b + axis] * u + colors[c + axis] * v
+        : 0;
+    }
+  }
+  return { positions: sampledPositions, colors: sampledColors, hasColors: !!colors };
+}
+
+/** Exact nearest surface sample search, bounded to a small area-weighted point cloud. */
+class SurfaceTree {
+  private readonly point: number[] = [];
+  private readonly left: number[] = [];
+  private readonly right: number[] = [];
+  private readonly axis: number[] = [];
+  private readonly root: number;
+  private queryX = 0;
+  private queryY = 0;
+  private queryZ = 0;
+  nearestIndex = 0;
+  nearestSquared = Infinity;
+
+  constructor(private readonly positions: Float32Array) {
+    const build = (ids: number[], depth: number): number => {
+      if (!ids.length) return -1;
+      const axis = depth % 3;
+      ids.sort((a, b) => positions[a * 3 + axis] - positions[b * 3 + axis]);
+      const middle = ids.length >>> 1;
+      const node = this.point.length;
+      this.point.push(ids[middle]);
+      this.axis.push(axis);
+      this.left.push(-1);
+      this.right.push(-1);
+      this.left[node] = build(ids.slice(0, middle), depth + 1);
+      this.right[node] = build(ids.slice(middle + 1), depth + 1);
+      return node;
+    };
+    this.root = build(
+      Array.from({ length: positions.length / 3 }, (_, i) => i),
+      0,
+    );
+  }
+
+  query(x: number, y: number, z: number) {
+    this.queryX = x;
+    this.queryY = y;
+    this.queryZ = z;
+    this.nearestSquared = Infinity;
+    this.visit(this.root);
+  }
+
+  private visit(node: number): void {
+    if (node < 0) return;
+    const point = this.point[node];
+    const offset = point * 3;
+    const dx = this.queryX - this.positions[offset];
+    const dy = this.queryY - this.positions[offset + 1];
+    const dz = this.queryZ - this.positions[offset + 2];
+    const squared = dx * dx + dy * dy + dz * dz;
+    if (squared < this.nearestSquared) {
+      this.nearestSquared = squared;
+      this.nearestIndex = point;
+    }
+    const distance = this.axis[node] === 0 ? dx : this.axis[node] === 1 ? dy : dz;
+    this.visit(distance < 0 ? this.left[node] : this.right[node]);
+    if (distance * distance < this.nearestSquared)
+      this.visit(distance < 0 ? this.right[node] : this.left[node]);
+  }
+}
+
+type Candidate = { yaw: number; offset: number; score: number; geometry: number };
+
+/**
+ * Finds the product's bilateral plane from the reconstructed IMAGE, never a fixed
+ * +/-45-degree preset. A reflected surface should match both geometry and material.
+ * This is a shape-based estimate: rotationally symmetric products have no unique
+ * semantic front, and a rear-only/side-only photo cannot settle the front/back sign.
+ * Run in the inference worker; input arrays are read-only and no model is downloaded.
+ */
+export function estimateFrontOrientation(
+  mesh: ReconstructedMesh,
+  options: FrontOrientationOptions = {},
+): FrontOrientationEstimate {
+  const sourceYaw = options.sourceYawDegrees ?? 0;
+  if (!Number.isFinite(sourceYaw)) throw new Error('원본 사진의 촬영 방향이 올바르지 않습니다.');
+  const sample = sampleSurface(mesh);
+  const tree = new SurfaceTree(sample.positions);
+  const errors = new Float32Array(3_000);
+  const evaluate = (yaw: number, offset: number, stride: number): Candidate => {
+    const normalX = -Math.sin(yaw * DEGREES);
+    const normalY = Math.cos(yaw * DEGREES);
+    let count = 0;
+    let colorError = 0;
+    for (let point = 0; point < SAMPLE_COUNT; point += stride) {
+      const i = point * 3;
+      const x = sample.positions[i];
+      const y = sample.positions[i + 1];
+      const reflection = 2 * (x * normalX + y * normalY - offset);
+      tree.query(x - reflection * normalX, y - reflection * normalY, sample.positions[i + 2]);
+      errors[count++] = Math.sqrt(tree.nearestSquared);
+      if (sample.hasColors) {
+        const j = tree.nearestIndex * 3;
+        // Chroma carries material evidence; illumination differences carry little weight.
+        const r = sample.colors[i] - sample.colors[j];
+        const g = sample.colors[i + 1] - sample.colors[j + 1];
+        const b = sample.colors[i + 2] - sample.colors[j + 2];
+        colorError += Math.min(0.3, Math.abs(r - g) + Math.abs(b - g) + Math.abs(r + g + b) * 0.05);
+      }
+    }
+    const sorted = errors.subarray(0, count).sort();
+    const retained = Math.max(1, Math.floor(count * 0.85));
+    let geometry = 0;
+    for (let i = 0; i < retained; i++) geometry += sorted[i];
+    geometry /= retained;
+    return { yaw, offset, geometry, score: geometry + (colorError / count) * 0.015 };
+  };
+  const coarse: Candidate[] = [];
+  for (let yaw = -90; yaw < 90; yaw += 6) {
+    let best = evaluate(yaw, 0, 12);
+    for (const offset of [-0.035, 0.035]) {
+      const candidate = evaluate(yaw, offset, 12);
+      if (candidate.score < best.score) best = candidate;
+    }
+    coarse.push(best);
+  }
+  coarse.sort((a, b) => a.score - b.score);
+  const seeds = [coarse[0], coarse.find((candidate) => axisDistance(candidate.yaw, coarse[0].yaw) >= 25)!];
+  const refined = seeds
+    .map((seed) => {
+      let best = evaluate(seed.yaw, seed.offset, 8);
+      for (let yaw = seed.yaw - 6; yaw <= seed.yaw + 6; yaw++) {
+        for (let step = -2; step <= 2; step++) {
+          const candidate = evaluate(yaw, seed.offset + step * 0.01, 8);
+          if (candidate.score < best.score) best = candidate;
+        }
+      }
+      // Compare all finalists with the same sample count, not their earlier coarse score.
+      return evaluate(best.yaw, best.offset, 4);
+    })
+    .sort((a, b) => a.score - b.score);
+  let best = refined[0];
+  const fineSeed = best;
+  for (let step = -4; step <= 4; step++) {
+    for (let offset = -2; offset <= 2; offset++) {
+      const candidate = evaluate(fineSeed.yaw + step * 0.25, fineSeed.offset + offset * 0.003, 4);
+      if (candidate.score < best.score) best = candidate;
+    }
+  }
+  const alternatives = [
+    refined[1],
+    ...coarse
+      .filter((candidate) => axisDistance(candidate.yaw, best.yaw) >= 25)
+      .slice(0, 2)
+      .map((candidate) => evaluate(candidate.yaw, candidate.offset, 4)),
+  ].filter((candidate) => axisDistance(candidate.yaw, best.yaw) >= 25);
+  const runnerUp = Math.min(...alternatives.map((candidate) => candidate.score));
+  const runnerUpGap = clamp((runnerUp - best.score) / Math.max(best.score, 0.002), 0, 1);
+  let yawDegrees = normalizedYaw(best.yaw);
+  // The original image camera sees the front-facing hemisphere. This resolves ONLY
+  // the 180-degree sign after measuring the axis; it never changes that measured axis.
+  if (Math.cos((yawDegrees - sourceYaw) * DEGREES) < 0) yawDegrees = normalizedYaw(yawDegrees + 180);
+  const sourceFacingMargin = Math.abs(Math.cos((yawDegrees - sourceYaw) * DEGREES));
+  const quality = clamp(1 - best.geometry / 0.055, 0, 1);
+  const separation = clamp(runnerUpGap / 0.45, 0, 1);
+  const confidence = clamp(quality * separation * clamp(sourceFacingMargin / 0.35, 0, 1), 0, 1);
+  return {
+    yawDegrees,
+    confidence,
+    ambiguous: confidence < 0.45 || sourceFacingMargin < 0.15,
+    symmetryError: best.geometry,
+    runnerUpGap,
+    sourceFacingMargin,
+  };
+}

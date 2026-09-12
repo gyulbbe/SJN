@@ -1,0 +1,107 @@
+[
+  {
+    "originalPath": "src/components/materials/multiview-generator.tsx",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\components\\materials\\multiview-generator.tsx.txt",
+    "sha256": "3F704CF979A393D00A6D970A72C42CD9B1697150916B9D793132DCBEDFA5EFD3"
+  },
+  {
+    "originalPath": "src/components/materials/multiview-generator.module.css",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\components\\materials\\multiview-generator.module.css.txt",
+    "sha256": "8BA99B6E59C7CF351BF4CC28C826761977CA0FACB051F440835CA92C79AD004B"
+  },
+  {
+    "originalPath": "tests/multiview-cache.test.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\tests\\multiview-cache.test.ts.txt",
+    "sha256": "B2F5D5ABF605904C56F00CDD4161964CDEFC43239D055C695DFE325D5868206C"
+  },
+  {
+    "originalPath": "tests/multiview-pixels.test.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\tests\\multiview-pixels.test.ts.txt",
+    "sha256": "C66D393A0B2321235A23B091D44F492DFC22A0E5546CB17FE8D3E25237376415"
+  },
+  {
+    "originalPath": "tests/multiview-geometry.unit.test.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\tests\\multiview-geometry.unit.test.ts.txt",
+    "sha256": "D9D6A09B0DD593E37DDEDBECEAEB08B8A70B713F8E5D1C7B0C066B6186D320E4"
+  },
+  {
+    "originalPath": "tests/multiview-client.test.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\tests\\multiview-client.test.ts.txt",
+    "sha256": "BF867A7304AA3FC20A92215368076C574C7374A78920E9379C31732643418F25"
+  },
+  {
+    "originalPath": "tests/multiview-orientation.test.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\tests\\multiview-orientation.test.ts.txt",
+    "sha256": "646C09E69DF6CBE80AA1B514456406B3F8D96E80CC4641482F052FFBE27F4979"
+  },
+  {
+    "originalPath": "e2e/front-alignment.spec.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\e2e\\front-alignment.spec.ts.txt",
+    "sha256": "47DD3367D25E54FF87BA1E3075CC788816CD8B8B54C7CB2D383E324635FAEFF3"
+  },
+  {
+    "originalPath": "e2e/multiview.spec.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\e2e\\multiview.spec.ts.txt",
+    "sha256": "3077E061EE4329689197683E9A6F041C5880AB69B4FAE573976D5B895B64AA37"
+  },
+  {
+    "originalPath": "e2e/multiview-quality.spec.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\e2e\\multiview-quality.spec.ts.txt",
+    "sha256": "8033851ADA03A4E295359D1D4688377A1DAAF3657CBC4F876BEEE98300716FDC"
+  },
+  {
+    "originalPath": "playwright.front-alignment.config.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\playwright.front-alignment.config.ts.txt",
+    "sha256": "D875C8312C5263A8271736E797EB7E3E871CDD646EC2209C6D16106E6E9F8935"
+  },
+  {
+    "originalPath": "playwright.multiview.config.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\playwright.multiview.config.ts.txt",
+    "sha256": "04F887A4DEFC0497989917BE086FC9CAAAD45AE1D0C0901F131BE306EECE79B8"
+  },
+  {
+    "originalPath": "src/lib/multiview/client.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\client.ts.txt",
+    "sha256": "AC6BF00463051F7017B3D7BDA17EC919C5B753CDB8B0554698B22F3CEBED7F22"
+  },
+  {
+    "originalPath": "src/lib/multiview/geometry.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\geometry.ts.txt",
+    "sha256": "40443AA97AC274F1B11A4A4C504A667EBA9D4241D0C42E6DA7488EE8F1BE35AD"
+  },
+  {
+    "originalPath": "src/lib/multiview/model-cache.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\model-cache.ts.txt",
+    "sha256": "FD170BF5822E1BD34D28A98D82E482248A9FD6B48F353B0AF712751A474BF582"
+  },
+  {
+    "originalPath": "src/lib/multiview/model.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\model.ts.txt",
+    "sha256": "B31A46580122B5AF1026B9FB85498501094EEF146B13705B89A0A569E8F24985"
+  },
+  {
+    "originalPath": "src/lib/multiview/orientation.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\orientation.ts.txt",
+    "sha256": "14072DCB227271D30B98D406F4C7165B8889A6C7F78500D0160465D415FDCFC3"
+  },
+  {
+    "originalPath": "src/lib/multiview/pixels.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\pixels.ts.txt",
+    "sha256": "8775B8C176D4DCC0D3230FB3DDBAA6FAEF428B3D1956558DE351AC346BA87763"
+  },
+  {
+    "originalPath": "src/lib/multiview/render.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\render.ts.txt",
+    "sha256": "B64F02115ED67FA7D4CC46E13DD90AA6CE53C2FB62019446DE2EE7D987B1DB0E"
+  },
+  {
+    "originalPath": "src/lib/multiview/types.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\types.ts.txt",
+    "sha256": "0E5A74DFA408805A8D7AEAA6486BB8C9CCC6FA0C610AD70AC9DE40846E1BF0EB"
+  },
+  {
+    "originalPath": "src/lib/multiview/worker.ts",
+    "archivedPath": "C:\\dev\\SJN\\docs\\archive\\retired-three-view\\src\\lib\\multiview\\worker.ts.txt",
+    "sha256": "E21D6ADC8BDEFF2FE02C5BD7C5396AAFFF210A7344DCA426308DE1D04DD2C280"
+  }
+]

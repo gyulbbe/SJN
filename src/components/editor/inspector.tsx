@@ -10,6 +10,8 @@ import ReconstructionProperties from '@/components/reconstruction/reconstruction
 import { getRepositories } from '@/lib/repositories';
 import { DEFAULT_COLOR, type ColorAdjust, type MaterialVersion } from '@/lib/types';
 import { useAccess } from '../app-provider';
+import { AssetImage } from '../materials/asset-image';
+import styles from './inspector-angles.module.css';
 export function Range({
   label,
   value,
@@ -136,6 +138,7 @@ export default function Inspector({
     };
     try {
       const asset = await getRepositories().assets.get(view.assetId);
+      if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
       if (!currentFixture()) return;
       if (
         !Number.isFinite(asset.width) ||
@@ -391,26 +394,54 @@ export default function Inspector({
           <>
             <section className="property-section">
               <h4>{fixture.name}</h4>
-              <label className="field">
-                촬영 방향
-                <select
-                  className="input"
-                  aria-label="제품 촬영 방향"
-                  value={pendingView ?? fixture.viewIndex}
-                  disabled={fixture.locked}
-                  aria-busy={pendingView !== null}
-                  onChange={(e) => void changeFixtureView(+e.target.value)}
-                >
-                  {material?.views.map((v, i) => (
-                    <option key={i} value={i}>
-                      {v.direction}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className={styles.heading}>
+                <span>제품 각도</span>
+                <span className={styles.count}>{material?.views.length ?? 0}개 사진</span>
+              </div>
+              <p className={styles.hint}>사진을 누르면 현재 배치의 각도만 바뀌어요.</p>
+              <div
+                role="group"
+                aria-label="제품 촬영 방향"
+                aria-busy={pendingView !== null}
+                className={styles.grid}
+              >
+                {material?.views.map((view, index) => {
+                  const selected = fixture.viewIndex === index;
+                  const pending = pendingView === index;
+                  const name = view.direction || `각도 ${index + 1}`;
+                  return (
+                    <button
+                      key={`${index}:${view.assetId}`}
+                      type="button"
+                      className={`${styles.angle} ${selected ? styles.selected : ''}`}
+                      data-testid={`fixture-view-${index}`}
+                      aria-label={`${name} 각도 선택`}
+                      aria-pressed={selected}
+                      aria-busy={pending}
+                      disabled={fixture.locked || !!st.draft}
+                      onClick={() => void changeFixtureView(index)}
+                    >
+                      <span className={styles.image}>
+                        <AssetImage
+                          assetId={view.assetId}
+                          alt={`${name} 제품 사진`}
+                          className={styles.photo}
+                        />
+                      </span>
+                      <span className={styles.caption}>
+                        <span className={styles.name}>{name}</span>
+                        <span className={`${styles.state} ${pending ? styles.pending : ''}`}>
+                          {pending ? '불러오는 중…' : selected ? '사용 중' : '선택'}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {!material?.views.length && <p className={styles.hint}>등록된 각도 사진이 없어요.</p>}
               {pendingView !== null && (
                 <p role="status" className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                  제품 방향 이미지를 준비하고 있어요…
+                  선택한 각도 사진을 준비하고 있어요…
                 </p>
               )}
               {viewError && (
@@ -569,7 +600,7 @@ export default function Inspector({
                 </div>
               </div>
               <p className="muted" style={{ fontSize: 10, marginTop: 10 }}>
-                제품의 실제 3D 회전이 아닙니다. 다른 방향은 등록된 촬영 이미지를 선택해 주세요.
+                제품의 실제 3D 회전이 아닙니다. 다른 각도는 위의 제품 사진을 선택해 주세요.
               </p>
             </section>
             <section className="property-section">

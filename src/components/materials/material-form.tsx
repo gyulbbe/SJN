@@ -1,9 +1,19 @@
 'use client';
 
-import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { useState, useRef, useEffect, type ChangeEvent, type FormEvent } from 'react';
 import { getRepositories } from '@/lib/repositories';
 import { importImage, makeAsset } from '@/lib/images';
 import type { BackgroundRemovalResult } from '@/lib/background-removal/types';
+import type { Product3dApplication } from '@/lib/product3d/types';
+import {
+  prepareProductReplacement,
+  replaceProductPhoto,
+  addProductPhoto,
+  renameProductPhoto,
+  removeProductPhoto,
+  productViewName,
+  MAX_PRODUCT_VIEWS,
+} from '@/lib/product3d/apply';
 import { defaultMaterialPricing, QUOTE_UNIT_LABELS } from '@/lib/quote';
 import { packagingCoverage } from '@/lib/material-usage';
 import type { MaterialPricing, QuoteUnit } from '@/lib/quote-types';
@@ -17,6 +27,8 @@ import {
 import { AssetImage, useAsset } from './asset-image';
 import { ImagePreparer } from './image-preparer';
 import { BackgroundRemovalTest } from './background-removal-test';
+import { Product3dEditor } from './product3d-editor';
+import { AngleNameInput } from './angle-name-input';
 import { useAccess } from '@/components/app-provider';
 import { useSharedCatalogAdmin } from './shared-access';
 import styles from './materials.module.css';
@@ -35,8 +47,6 @@ const defaults: MaterialInput = {
   depthMm: 9,
   usage: 'both',
   installation: 'floor',
-  coverAssetId: '',
-  imageAssetIds: [],
   textureAssetIds: [],
   views: [],
   defaultGroutWidth: 2,
@@ -128,14 +138,12 @@ export function MaterialForm({
       ? {
           ...initial,
           pricing: { ...(initial.pricing ?? defaultMaterialPricing(initial.category)) },
-          imageAssetIds: [...initial.imageAssetIds],
           textureAssetIds: [...initial.textureAssetIds],
-          views: initial.views.map((view) => ({ ...view, anchor: { ...view.anchor } })),
+          views: structuredClone(initial.views),
         }
       : {
           ...defaults,
           pricing: defaultMaterialPricing('tile'),
-          imageAssetIds: [],
           textureAssetIds: [],
           views: [],
         },
@@ -159,6 +167,14 @@ export function MaterialForm({
     assetId: string;
     direction: string;
     index: number;
+    targetAssetId?: string;
+  }>();
+  const [productEditor, setProductEditor] = useState<{
+    assetId: string;
+    direction: string;
+    index: number;
+    blob?: Blob;
+    inputSourceAssetId?: string;
   }>();
   const set = <K extends keyof MaterialInput>(key: K, value: MaterialInput[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -201,10 +217,7 @@ export function MaterialForm({
       views: current.views.map((view, i) => (i === index ? { ...view, ...value } : view)),
     }));
 
-  const upload = async (
-    event: ChangeEvent<HTMLInputElement>,
-    target: 'cover' | 'additional' | 'texture' | 'view',
-  ) => {
+  const upload = async (event: ChangeEvent<HTMLInputElement>, target: 'texture' | 'view') => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     if (!files.length || !writable) return;
@@ -214,13 +227,10 @@ export function MaterialForm({
       for (const file of files) {
         const { preview } = await importImage(
           file,
-          target === 'texture' ? 'texture' : target === 'view' ? 'product' : 'preview',
+          target === 'texture' ? 'texture' : 'product',
           getRepositories().assets,
         );
         setForm((current) => {
-          if (target === 'cover') return { ...current, coverAssetId: preview.id };
-          if (target === 'additional')
-            return { ...current, imageAssetIds: [...current.imageAssetIds, preview.id] };
           if (target === 'texture')
             return { ...current, textureAssetIds: [...current.textureAssetIds, preview.id] };
           return {
@@ -246,7 +256,10 @@ export function MaterialForm({
   const applyBackgroundResult = async (result: BackgroundRemovalResult) => {
     if (!writable || (form.scope === 'shared' && !isAdmin))
       throw new Error('이 자재의 편집 권한이 없어요. 편집 가능한 탭에서 다시 시도해 주세요.');
-    if (!backgroundTest || form.views[backgroundTest.index]?.assetId !== backgroundTest.assetId)
+    if (
+      !backgroundTest ||
+      form.views[backgroundTest.index]?.assetId !== (backgroundTest.targetAssetId ?? backgroundTest.assetId)
+    )
       throw new Error('선택한 제품 사진이 바뀌었어요. 결과 창을 닫고 다시 선택해 주세요.');
     const { assetId, index } = backgroundTest;
     const assets = getRepositories().assets;
@@ -255,7 +268,88 @@ export function MaterialForm({
     asset.derivation = 'ai-alpha';
     // Save new PNG bytes before changing the draft; existing assets and material versions stay intact.
     await assets.put(asset);
-    setView(index, { assetId: asset.id });
+    setView(index, { assetId: asset.id, product3d: undefined });
+  };
+
+  const currentEdit = useRef({ form, productEditor, writable, isAdmin });
+  currentEdit.current = { form, productEditor, writable, isAdmin };
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const applyProductResult = async (result: Product3dApplication, mode: 'add' | 'replace', name: string) => {
+    const direction = productViewName(name);
+    const target = productEditor;
+    const assertCurrent = () => {
+      const current = currentEdit.current;
+      if (!alive.current || !current.writable || (current.form.scope === 'shared' && !current.isAdmin))
+        throw new Error('현재 이 자재를 저장할 수 없어요. 편집 권한을 확인해 주세요.');
+      if (
+        !target ||
+        current.productEditor?.assetId !== target.assetId ||
+        current.productEditor.index !== target.index ||
+        current.form.views[target.index]?.assetId !== target.assetId
+      )
+        throw new Error('선택한 제품 사진이 바뀌었어요. 결과 창을 다시 열어 주세요.');
+    };
+    assertCurrent();
+    if (mode === 'add' && currentEdit.current.form.views.length >= MAX_PRODUCT_VIEWS)
+      throw new Error(`자재 하나에 각도 사진은 최대 ${MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요.`);
+    const replacement = await prepareProductReplacement(
+      result,
+      getRepositories().assets,
+      form.installation,
+      assertCurrent,
+    );
+    assertCurrent();
+    const current = currentEdit.current.form;
+    const next =
+      mode === 'add'
+        ? addProductPhoto(current, target!.index, target!.assetId, replacement, direction)
+        : renameProductPhoto(
+            replaceProductPhoto(current, target!.index, target!.assetId, replacement),
+            target!.index,
+            direction,
+          );
+    const index = mode === 'add' ? next.views.length - 1 : target!.index;
+    const view = next.views[index];
+    const editor = { index, assetId: view.assetId, direction: view.direction };
+    // Update both refs immediately so a following interaction sees the committed form draft.
+    currentEdit.current = { ...currentEdit.current, form: next, productEditor: editor };
+    setForm(next);
+    setProductEditor(editor);
+  };
+
+  const editAngle = (action: 'select' | 'rename' | 'delete', index: number, name = '') => {
+    const current = currentEdit.current;
+    if (
+      !alive.current ||
+      (action !== 'select' && (!current.writable || (current.form.scope === 'shared' && !current.isAdmin)))
+    )
+      throw new Error('이 자재의 편집 권한이 없어요.');
+    if (!current.form.views[index]) throw new Error('선택한 각도 사진을 찾을 수 없어요.');
+    let next = current.form;
+    let selectedIndex = current.productEditor?.index;
+    if (action === 'rename') next = renameProductPhoto(next, index, name);
+    if (action === 'delete') {
+      next = removeProductPhoto(next, index);
+      if (selectedIndex !== undefined) {
+        if (selectedIndex === index) selectedIndex = Math.min(index, next.views.length - 1);
+        else if (selectedIndex > index) selectedIndex--;
+      }
+    }
+    if (action === 'select') selectedIndex = index;
+    const selected = selectedIndex !== undefined ? next.views[selectedIndex] : undefined;
+    const editor =
+      selected && selectedIndex !== undefined
+        ? { index: selectedIndex, assetId: selected.assetId, direction: selected.direction }
+        : undefined;
+    currentEdit.current = { ...current, form: next, productEditor: editor };
+    setForm(next);
+    setProductEditor(editor);
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -273,10 +367,6 @@ export function MaterialForm({
       setError('상품명을 입력해 주세요.');
       return;
     }
-    if (!form.coverAssetId) {
-      setError('목록에서 보여줄 대표 이미지를 등록해 주세요.');
-      return;
-    }
     if (
       ![form.widthMm, form.heightMm, form.depthMm].every(
         (value) => Number.isFinite(value) && value > 0 && value <= 50000,
@@ -290,7 +380,7 @@ export function MaterialForm({
       return;
     }
     if (form.category !== 'tile' && !form.views.length) {
-      setError('공간에 배치할 제품 이미지를 한 장 이상 등록해 주세요.');
+      setError('제품 이미지를 한 장 이상 등록해 주세요.');
       return;
     }
     if (
@@ -340,7 +430,10 @@ export function MaterialForm({
         brand: form.brand.trim(),
         code: form.code.trim(),
         textureAssetIds: form.category === 'tile' ? form.textureAssetIds : [],
-        views: form.category === 'tile' ? [] : form.views,
+        views:
+          form.category === 'tile'
+            ? []
+            : form.views.map((view) => ({ ...view, direction: productViewName(view.direction) })),
       };
       const repository = getRepositories().materials;
       const result = initial
@@ -354,13 +447,13 @@ export function MaterialForm({
     }
   };
 
-  const uploadInput = (target: 'cover' | 'additional' | 'texture' | 'view', label: string) => (
+  const uploadInput = (target: 'texture' | 'view', label: string) => (
     <label className={styles.uploadButton}>
       {label}
       <input
         type="file"
         accept="image/jpeg,image/png,image/webp"
-        multiple={target !== 'cover'}
+        multiple
         onChange={(event) => upload(event, target)}
         disabled={uploading || busy}
         aria-label={label}
@@ -538,62 +631,11 @@ export function MaterialForm({
             <div className={styles.sectionHeading}>
               <span>02</span>
               <div>
-                <h3>상품 소개 이미지</h3>
-                <p>목록에 보여줄 사진이에요. 아래의 시공용 텍스처·제품 이미지와 구분해요.</p>
-              </div>
-            </div>
-            <div className={styles.coverRow}>
-              <AssetImage
-                assetId={form.coverAssetId}
-                alt="자재 대표 이미지"
-                className={styles.coverPreview}
-              />
-              <div>
-                <h4>
-                  대표 이미지 <span className="muted">필수</span>
-                </h4>
-                <p className="muted">JPG · PNG · WebP / 장당 25MB, 4,000만 화소 이하</p>
-                {uploadInput('cover', form.coverAssetId ? '대표 이미지 변경' : '대표 이미지 올리기')}
-              </div>
-            </div>
-            <div className={styles.toolbar}>
-              <h4>
-                추가 이미지 <span className="muted">선택</span>
-              </h4>
-              {uploadInput('additional', '+ 추가 사진')}
-            </div>
-            {!!form.imageAssetIds.length && (
-              <div className={styles.thumbnailRow}>
-                {form.imageAssetIds.map((id, index) => (
-                  <div key={`${id}-${index}`}>
-                    <AssetImage assetId={id} alt={`추가 이미지 ${index + 1}`} />
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() =>
-                        set(
-                          'imageAssetIds',
-                          form.imageAssetIds.filter((_, i) => i !== index),
-                        )
-                      }
-                    >
-                      제외
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className={styles.formSection}>
-            <div className={styles.sectionHeading}>
-              <span>03</span>
-              <div>
-                <h3>{form.category === 'tile' ? '타일 텍스처 준비' : '공간에 배치할 제품 이미지'}</h3>
+                <h3>{form.category === 'tile' ? '타일 텍스처 준비' : '제품 이미지'}</h3>
                 <p>
                   {form.category === 'tile'
                     ? '타일 한 장의 정면 사진을 등록하세요. 여러 장이 찍혔다면 모서리 네 점으로 한 장만 선택할 수 있어요.'
-                    : '투명 배경 이미지를 권장해요. AI 배경 제거 결과를 확인하고 제품 사진으로 적용할 수 있어요.'}
+                    : '정면 사진이 있으면 먼저 보여주고, 없으면 첫 사진을 보여줘요. 배경은 AI 배경 제거로 지울 수 있어요.'}
                 </p>
               </div>
             </div>
@@ -676,13 +718,6 @@ export function MaterialForm({
                           <button
                             type="button"
                             className={styles.textButton}
-                            onClick={() => set('coverAssetId', id)}
-                          >
-                            대표 이미지로 사용
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.textButton}
                             onClick={() =>
                               set(
                                 'textureAssetIds',
@@ -701,7 +736,7 @@ export function MaterialForm({
                   <div className={styles.emptyAsset}>
                     아직 타일 텍스처가 없어요.
                     <br />
-                    <span>홍보 사진 대신 타일 무늬가 잘 보이는 사진을 올려 주세요.</span>
+                    <span>타일 무늬가 잘 보이는 사진을 올려 주세요.</span>
                   </div>
                 )}
               </>
@@ -726,11 +761,11 @@ export function MaterialForm({
                   <div className={styles.note}>
                     2D 이미지 배치 · 이미지 평면 회전을 지원해요.
                     <br />
-                    실제 3D 회전은 3D 모델 연결 후 사용할 수 있어요.
+                    360° 편집기에서 여러 각도 사진을 저장해 공간에서 골라 쓸 수 있어요.
                   </div>
                 </div>
                 <div className={styles.toolbar}>
-                  {uploadInput('view', '+ 제품 방향 이미지 올리기')}
+                  {uploadInput('view', '+ 제품 이미지 올리기')}
                   <span className="muted">정면·측면·사선 사진을 각각 등록할 수 있어요.</span>
                 </div>
                 <div className={styles.viewGrid}>
@@ -741,22 +776,12 @@ export function MaterialForm({
                         anchor={view.anchor}
                         onChange={(anchor) => setView(index, { anchor })}
                       />
-                      <label className="field">
-                        촬영 방향
-                        <select
-                          aria-label={`촬영 방향 ${index + 1}`}
-                          className="input"
-                          value={view.direction}
-                          onChange={(event) => setView(index, { direction: event.target.value })}
-                        >
-                          <option>정면</option>
-                          <option>왼쪽 측면</option>
-                          <option>오른쪽 측면</option>
-                          <option>사선</option>
-                          <option>위에서</option>
-                          <option>기타</option>
-                        </select>
-                      </label>
+                      <AngleNameInput
+                        label={`촬영 방향 ${index + 1}`}
+                        value={view.direction}
+                        onChange={(direction) => setView(index, { direction })}
+                        disabled={busy || uploading}
+                      />
                       <p className={styles.note}>
                         사진에서 {form.installation === 'wall' ? '벽 부착점' : '바닥 접점'}을 눌러 + 기준점을
                         맞추세요.
@@ -764,7 +789,7 @@ export function MaterialForm({
                       <button
                         type="button"
                         className="btn"
-                        disabled={busy || uploading || !!backgroundTest}
+                        disabled={busy || uploading || !!backgroundTest || !!productEditor}
                         aria-label={`${view.direction} 사진 AI 배경 제거 테스트`}
                         onClick={() =>
                           setBackgroundTest({ assetId: view.assetId, direction: view.direction, index })
@@ -772,23 +797,29 @@ export function MaterialForm({
                       >
                         AI 배경 제거 테스트
                       </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy || uploading || !!backgroundTest || !!productEditor}
+                        aria-label={`${view.direction} 사진 ${view.product3d ? '360° 각도 편집' : 'AI 360° 입체화'}`}
+                        onClick={() =>
+                          setProductEditor({ assetId: view.assetId, direction: view.direction, index })
+                        }
+                      >
+                        {view.product3d ? '360° 각도 편집' : 'AI 360° 입체화'}
+                      </button>
                       <div className={styles.toolbar}>
                         <button
                           type="button"
                           className={styles.textButton}
-                          onClick={() => set('coverAssetId', view.assetId)}
-                        >
-                          대표 이미지로 사용
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.textButton}
-                          onClick={() =>
-                            set(
-                              'views',
-                              form.views.filter((_, i) => i !== index),
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `‘${view.direction || '이 각도'}’ 사진을 삭제할까요? 다른 각도는 유지돼요.`,
+                              )
                             )
-                          }
+                              editAngle('delete', index);
+                          }}
                         >
                           제외
                         </button>
@@ -808,7 +839,7 @@ export function MaterialForm({
           </section>
           <section className={styles.formSection}>
             <div className={styles.sectionHeading}>
-              <span>04</span>
+              <span>03</span>
               <div>
                 <h3>단가와 포장 정보</h3>
                 <p>
@@ -986,8 +1017,40 @@ export function MaterialForm({
         <BackgroundRemovalTest
           {...backgroundTest}
           onApply={applyBackgroundResult}
+          onCreateProduct3d={(result) => {
+            setProductEditor({
+              ...backgroundTest,
+              assetId: backgroundTest.targetAssetId ?? backgroundTest.assetId,
+              inputSourceAssetId: backgroundTest.assetId,
+              blob: result.blob,
+            });
+            setBackgroundTest(undefined);
+          }}
           canApply={writable && (form.scope !== 'shared' || isAdmin)}
           onClose={() => setBackgroundTest(undefined)}
+        />
+      )}
+      {productEditor && (
+        <Product3dEditor
+          {...productEditor}
+          product3d={productEditor.blob ? undefined : form.views[productEditor.index]?.product3d}
+          views={form.views}
+          selectedViewIndex={productEditor.index}
+          onSelectView={(index) => editAngle('select', index)}
+          onRenameView={(index, name) => editAngle('rename', index, name)}
+          onDeleteView={(index) => editAngle('delete', index)}
+          onApply={applyProductResult}
+          onRemoveBackground={(sourceId) => {
+            setBackgroundTest({
+              index: productEditor.index,
+              assetId: sourceId,
+              targetAssetId: productEditor.assetId,
+              direction: productEditor.direction,
+            });
+            setProductEditor(undefined);
+          }}
+          canApply={writable && (form.scope !== 'shared' || isAdmin)}
+          onClose={() => setProductEditor(undefined)}
         />
       )}
       {preparing && (

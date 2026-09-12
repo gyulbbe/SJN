@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 const output = 'test-results/reconstruction-engine';
 const entry = await build({
   stdin: {
-    contents: `export * from './src/lib/reconstruction';export { DEFAULT_ROOM } from './src/lib/room-geometry';export { createLocalRepositories } from './src/lib/repositories/local';export { PhotoCompositor } from './src/lib/render/compositor';`,
+    contents: `export * from './src/lib/reconstruction';export { getMaterialImageAssetId } from './src/lib/material-images';export { DEFAULT_ROOM } from './src/lib/room-geometry';export { createLocalRepositories } from './src/lib/repositories/local';export { PhotoCompositor } from './src/lib/render/compositor';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -78,7 +78,8 @@ try {
     const m = (await import(base + '/index.js')) as typeof import('../src/lib/reconstruction') &
       typeof import('../src/lib/room-geometry') &
       typeof import('../src/lib/repositories/local') &
-      typeof import('../src/lib/render/compositor');
+      typeof import('../src/lib/render/compositor') &
+      typeof import('../src/lib/material-images');
     const repos = m.createLocalRepositories('reconstruction-engine-test');
     const blob = await (await fetch('/examples/bathroom.png')).blob();
     const file = new File([blob], '욕실 원본.png', { type: 'image/png' });
@@ -95,7 +96,11 @@ try {
     const mats = await repos.materials.list();
     const materials = Object.fromEntries(mats.map(({ version }) => [version.id, version]));
     const compositor = new m.PhotoCompositor();
-    const snapshot = { scene: ((value) => value.designs.find((item) => item.id === value.activeDesignId)!)(loaded).scene, beforeScene: loaded.shared.comparison!.before, materials };
+    const snapshot = {
+      scene: ((value) => value.designs.find((item) => item.id === value.activeDesignId)!)(loaded).scene,
+      beforeScene: loaded.shared.comparison!.before,
+      materials,
+    };
     await compositor.setSnapshot(snapshot, (id) => repos.assets.get(id));
     const previews: string[] = [];
     for (const mode of ['before', 'after'] as const) {
@@ -148,7 +153,7 @@ try {
     }
     for (const f of loaded.shared.comparison!.before.fixtures) {
       const mat = await repos.materials.getVersion(f.materialVersionId),
-        asset = await repos.assets.get(mat.coverAssetId);
+        asset = await repos.assets.get(m.getMaterialImageAssetId(mat)!);
       await sampleColor('photo-' + f.reconstruction!.kind, mat.color, asset.blob);
     }
     for (const kind of ['toilet', 'basin', 'bath', 'mirror', 'door', 'window'] as const) {
@@ -158,7 +163,7 @@ try {
         repositories: repos,
       });
       const mat = await repos.materials.getVersion(instance.materialVersionId),
-        asset = await repos.assets.get(mat.coverAssetId);
+        asset = await repos.assets.get(m.getMaterialImageAssetId(mat)!);
       await sampleColor(kind, mat.color, asset.blob);
       allKinds.push(kind);
       templateSizes.push(asset.size);
@@ -196,8 +201,11 @@ try {
       planes: loaded.shared.comparison!.review!.planes,
       beforeFixtures: loaded.shared.comparison!.before.fixtures.length,
       beforeTiles: loaded.shared.comparison!.before.surfaces.filter((s) => s.materialVersionId).length,
-      afterFixtures: ((value) => value.designs.find((item) => item.id === value.activeDesignId)!)(loaded).scene.fixtures.length,
-      afterTiles: ((value) => value.designs.find((item) => item.id === value.activeDesignId)!)(loaded).scene.surfaces.filter((s) => s.materialVersionId).length,
+      afterFixtures: ((value) => value.designs.find((item) => item.id === value.activeDesignId)!)(loaded)
+        .scene.fixtures.length,
+      afterTiles: ((value) => value.designs.find((item) => item.id === value.activeDesignId)!)(
+        loaded,
+      ).scene.surfaces.filter((s) => s.materialVersionId).length,
       status: loaded.shared.comparison!.status,
       emptyBeforeCreate: emptyBeforeCreate.length,
       abortName,

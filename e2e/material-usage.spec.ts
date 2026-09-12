@@ -1,6 +1,6 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import sharp from 'sharp';
-import { readFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { getActiveDesign } from '../src/lib/designs';
 import { savedProject, storedProject, selectFixture, selectSurface } from '../tests/helpers/editor-actions';
 
@@ -39,11 +39,7 @@ async function register(page: Page, category: 'tile' | 'basin' = 'tile') {
   await form.getByLabel('가로 (mm)', { exact: true }).fill('600');
   await form.getByLabel(category === 'tile' ? '세로 (mm)' : '높이 (mm)', { exact: true }).fill('600');
   await form
-    .getByLabel('대표 이미지 올리기', { exact: true })
-    .setInputFiles({ name: 'QA-material.png', mimeType: 'image/png', buffer });
-  await expect(form.getByLabel('대표 이미지 변경', { exact: true })).toBeEnabled();
-  await form
-    .getByLabel(category === 'tile' ? '+ 타일 텍스처 올리기' : '+ 제품 방향 이미지 올리기', { exact: true })
+    .getByLabel(category === 'tile' ? '+ 타일 텍스처 올리기' : '+ 제품 이미지 올리기', { exact: true })
     .setInputFiles({ name: 'QA-content.png', mimeType: 'image/png', buffer });
   if (category === 'tile') {
     await expect(form.getByRole('img', { name: '타일 텍스처 1', exact: true })).toBeVisible();
@@ -152,12 +148,13 @@ test('12㎡ 9박스 360,000원 · 수동 수량·0원·실행 취소·재진입�
   await page.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   const output = await download;
   const outputPath = info.outputPath('after.png');
-  await output.saveAs(outputPath);
-  const exported = await sharp(await readFile(outputPath))
-    .resize(64, 64)
-    .removeAlpha()
-    .raw()
-    .toBuffer();
+  // Read the real download stream: Chrome's Windows sandbox cannot copy directly into every repo path.
+  const stream = await output.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const downloaded = Buffer.concat(chunks);
+  await writeFile(outputPath, downloaded);
+  const exported = await sharp(downloaded).resize(64, 64).removeAlpha().raw().toBuffer();
   const canvas = await sharp(Buffer.from(clean.split(',')[1], 'base64'))
     .resize(64, 64)
     .removeAlpha()

@@ -88,10 +88,6 @@ async function registerTile(page: Page) {
   await form.getByLabel('가로 (mm)', { exact: true }).fill('600');
   await form.getByLabel('세로 (mm)', { exact: true }).fill('600');
   await form
-    .getByLabel('대표 이미지 올리기', { exact: true })
-    .setInputFiles({ name: 'tile.png', mimeType: 'image/png', buffer });
-  await expect(form.getByLabel('대표 이미지 변경', { exact: true })).toBeEnabled();
-  await form
     .getByLabel('+ 타일 텍스처 올리기', { exact: true })
     .setInputFiles({ name: 'texture.png', mimeType: 'image/png', buffer });
   await expect(form.getByRole('img', { name: '타일 텍스처 1', exact: true })).toBeVisible();

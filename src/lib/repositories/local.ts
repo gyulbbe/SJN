@@ -1,6 +1,8 @@
+import { getMaterialImageAssetId, stripLegacyMaterialImages } from '../material-images';
+import { decodeProductMesh, PRODUCT_MESH_MIME } from '../product3d/codec';
 import { normalizeProjectDocument, projectWriteError } from '../comparison';
 import { duplicateProjectDocument } from '../designs';
-import { storedProjectV3Schema } from '../supabase/validation';
+import { product3dReferenceSchema, storedProjectV3Schema } from '../supabase/validation';
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
   AssetRecord,
@@ -67,6 +69,33 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
   async function checkAssets(tx: WriteTransaction, ids: string[]) {
     for (const id of ids)
       if (!(await tx.objectStore('assets').get(id))) throw new StorageNotFoundError('연결된 이미지');
+  }
+  async function checkMaterialAssets(tx: WriteTransaction, input: MaterialInput) {
+    if (!getMaterialImageAssetId(input)) throw new Error('타일 텍스처 또는 제품 사진을 등록해 주세요.');
+    await checkAssets(tx, materialReferences(input));
+    const imageIds = [
+      input.coverAssetId,
+      ...(input.imageAssetIds ?? []),
+      ...input.textureAssetIds,
+      ...input.views.map((view) => view.assetId),
+    ].filter((id): id is string => !!id);
+    for (const id of imageIds) {
+      const asset = await tx.objectStore('assets').get(id);
+      if (asset?.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
+    }
+    for (const view of input.views)
+      if (view.product3d) {
+        const reference = product3dReferenceSchema.parse(view.product3d);
+        const mesh = await tx.objectStore('assets').get(reference.meshAssetId);
+        const source = await tx.objectStore('assets').get(reference.inputAssetId);
+        if (
+          mesh?.kind !== 'product-mesh' ||
+          !source ||
+          source.kind === 'product-mesh' ||
+          mesh.sourceAssetId !== source.id
+        )
+          throw new Error('입체 데이터와 입체화에 사용한 이미지 연결을 확인해 주세요.');
+      }
   }
   async function checkProject(tx: WriteTransaction, document: ProjectDocument, previous?: ProjectInput) {
     storedProjectV3Schema.parse(document);
@@ -183,8 +212,9 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
         return value;
       },
       async create(input) {
+        input = stripLegacyMaterialImages(input);
         return write(async (tx) => {
-          await checkAssets(tx, materialReferences(input));
+          await checkMaterialAssets(tx, input);
           const id = crypto.randomUUID();
           const value = version(input, id, 1);
           await tx.objectStore('versions').add(value);
@@ -200,6 +230,7 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
         });
       },
       async update(id, input, expectedVersionId) {
+        input = stripLegacyMaterialImages(input);
         return write(async (tx) => {
           const material = await tx.objectStore('materials').get(id);
           if (!material) throw new StorageNotFoundError('자재');
@@ -208,7 +239,7 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
           if (material.currentVersionId !== expectedVersionId) throw new StorageConflictError();
           const previous = await tx.objectStore('versions').get(expectedVersionId);
           if (!previous) throw new StorageNotFoundError('자재 버전');
-          await checkAssets(tx, materialReferences(input));
+          await checkMaterialAssets(tx, input);
           const value = version({ ...input, scope: material.scope }, id, previous.version + 1);
           await tx.objectStore('versions').add(value);
           await tx
@@ -228,8 +259,15 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
     },
     assets: {
       async put(asset) {
-        if (
+        if (asset.kind === 'product-mesh') {
+          if (asset.mime !== PRODUCT_MESH_MIME || !asset.sourceAssetId)
+            throw new Error('입체 데이터 형식과 원본 연결을 확인해 주세요.');
+          await decodeProductMesh(asset.blob);
+        } else if (
+          !asset.blob.size ||
           asset.blob.size > 25 * 1024 * 1024 ||
+          !Number.isSafeInteger(asset.width) ||
+          !Number.isSafeInteger(asset.height) ||
           asset.width * asset.height > 40_000_000 ||
           asset.width < 1 ||
           asset.height < 1
@@ -238,13 +276,17 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
         await write(async (tx) => {
           const existing = await tx.objectStore('assets').get(asset.id);
           if (existing) throw new StorageConflictError();
-          if (asset.sourceAssetId) await checkAssets(tx, [asset.sourceAssetId]);
+          if (asset.sourceAssetId) {
+            await checkAssets(tx, [asset.sourceAssetId]);
+            const source = await tx.objectStore('assets').get(asset.sourceAssetId);
+            if (source?.kind === 'product-mesh') throw new Error('파생 자산의 원본은 이미지여야 해요.');
+          }
           await tx.objectStore('assets').add({ ...asset, ownerId: LOCAL_OWNER, size: asset.blob.size });
         });
       },
       async get(id) {
         const value = await (await db()).get('assets', id);
-        if (!value) throw new StorageNotFoundError('이미지');
+        if (!value) throw new StorageNotFoundError('이미지 또는 입체 자료');
         return value;
       },
       async removeUnused() {

@@ -1,0 +1,825 @@
+import { chromium, expect, test } from '@playwright/test';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import sharp from 'sharp';
+import { spawn } from 'node:child_process';
+import { estimateFrontOrientation } from '../src/lib/multiview/orientation';
+
+// Opt-in, real TripoSR/WebGPU inference. No model, Worker reply, or image result is mocked.
+// This dedicated automation profile only retains model cache; it is not a user's browser profile.
+test('실제 로컬 모델: 제품 한 장 → 세 방향 재생성 · PNG · 적용 · 저장 · 재진입 · 원본 보존', async ({}, info) => {
+  test.skip(
+    process.env.SJN_MULTIVIEW_REAL !== '1',
+    'SJN_MULTIVIEW_REAL=1 requires a WebGPU GPU and downloads about 800 MiB once.',
+  );
+  const output = path.resolve(process.env.SJN_MULTIVIEW_OUTPUT ?? 'test-results/multiview-live');
+  mkdirSync(output, { recursive: true });
+  const logFile = path.join(output, 'progress.jsonl');
+  writeFileSync(logFile, '');
+  const log = (event: unknown) =>
+    appendFileSync(logFile, `${JSON.stringify({ time: new Date().toISOString(), event })}\n`);
+  const profile = path.resolve(process.env.SJN_MULTIVIEW_PROFILE ?? 'tmp/multiview-chrome-profile');
+  const downloadsPath = path.join(tmpdir(), 'sjn-multiview-downloads');
+  mkdirSync(downloadsPath, { recursive: true });
+  const context = await chromium.launchPersistentContext(profile, {
+    channel:
+      (process.env.SJN_MULTIVIEW_CHANNEL ?? process.env.SJN_MULTIVIEW_BROWSER) === 'chromium'
+        ? undefined
+        : 'chrome',
+    headless: true,
+    viewport: { width: 1600, height: 1100 },
+    acceptDownloads: true,
+    downloadsPath,
+    args: process.env.SJN_MULTIVIEW_CPU === '1' ? ['--disable-webgpu'] : [],
+  });
+  const page = context.pages()[0] ?? (await context.newPage());
+  const sampler = spawn(
+    'nvidia-smi',
+    [
+      '--query-gpu=timestamp,memory.used,memory.free,utilization.gpu,utilization.memory',
+      '--format=csv,noheader',
+      '--loop=2',
+    ],
+    { windowsHide: true },
+  );
+  sampler.stdout.on('data', (chunk) => appendFileSync(path.join(output, 'gpu-samples.csv'), chunk));
+  sampler.on('error', (error) => log({ sampler: error.message }));
+  const requests: { method: string; url: string }[] = [];
+  context.on('close', () => log('Browser context closed'));
+  page.on('close', () => log('Browser page closed'));
+  page.on('crash', () => log('Browser page crashed'));
+  const errors: string[] = [];
+  const timings: unknown[] = [];
+  const downloadedFiles: { path: string; expectedHash: string }[] = [];
+  context.on('request', (request) => {
+    if (/\.onnx(?:\?|$)/.test(request.url()) || request.method() !== 'GET') {
+      const record = { method: request.method(), url: request.url() };
+      requests.push(record);
+      log({ request: record });
+    }
+  });
+  page.on('pageerror', (error) => {
+    errors.push(error.message);
+    log({ pageError: error.message });
+  });
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') log({ console: message.text() });
+  });
+  await page.exposeFunction('recordMultiViewProgress', log);
+  await page.addInitScript(() => {
+    const NativeWorker = Worker;
+    const observer = globalThis as typeof globalThis & { recordMultiViewProgress: (value: unknown) => void };
+    class ObservedWorker extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (options?.name === 'sjn-multiview' || options?.name === 'sjn-background-removal') {
+          let previousStage = '',
+            previousTime = 0;
+          this.addEventListener('message', (event: MessageEvent) => {
+            const message = event.data;
+            if (message.type === 'progress') {
+              if (message.progress.stage !== previousStage || performance.now() - previousTime > 5000) {
+                observer.recordMultiViewProgress({ worker: options.name, ...message });
+                previousStage = message.progress.stage;
+                previousTime = performance.now();
+              }
+            } else {
+              if (message.type === 'mesh')
+                (globalThis as typeof globalThis & { sjnValidationMesh?: unknown }).sjnValidationMesh =
+                  message.mesh;
+              observer.recordMultiViewProgress({
+                worker: options.name,
+                type: message.type,
+                message: message.message,
+                timings: message.timings,
+              });
+            }
+          });
+        }
+      }
+    }
+    globalThis.Worker = ObservedWorker;
+  });
+  try {
+    await page.goto('http://127.0.0.1:3000/materials');
+    log(
+      await page.evaluate(async () => {
+        const gpu = (
+          navigator as unknown as {
+            gpu?: {
+              requestAdapter(): Promise<{
+                info: unknown;
+                features: Iterable<string>;
+                limits: { maxBufferSize: number; maxStorageBufferBindingSize: number };
+              } | null>;
+            };
+          }
+        ).gpu;
+        const adapter = await gpu?.requestAdapter();
+        return {
+          userAgent: navigator.userAgent,
+          cores: navigator.hardwareConcurrency,
+          adapter: adapter?.info,
+          features: adapter ? [...adapter.features] : [],
+          limits: adapter
+            ? {
+                maxBufferSize: adapter.limits.maxBufferSize,
+                maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+              }
+            : null,
+        };
+      }),
+    );
+    await page.getByRole('button', { name: '자재 등록', exact: true }).click();
+    let form = page.getByRole('dialog', { name: '자재 등록', exact: true });
+    const name = `실제 3방향 검증 ${Date.now()}`;
+    await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
+    await form.getByLabel('상품명').fill(name);
+    const direct = process.env.SJN_MULTIVIEW_DIRECT === '1';
+    let sourceFile = path.resolve('test-results/background-removal/fixtures/white-toilet.jpg');
+    if (direct) {
+      const root = path.resolve('test-results/background-removal-apply-real');
+      const resultDir = readdirSync(root).find((entry) => entry.startsWith('background-removal-'))!;
+      sourceFile = path.join(root, resultDir, 'white-toilet.jpg-result.png');
+    }
+    if (process.env.SJN_MULTIVIEW_INPUT) sourceFile = path.resolve(process.env.SJN_MULTIVIEW_INPUT);
+    const direction = process.env.SJN_MULTIVIEW_DIRECTION ?? '정면';
+    expect(
+      existsSync(sourceFile),
+      'Prepare actual product photograph as documented in the background-removal test.',
+    ).toBe(true);
+    await form.getByLabel('+ 제품 방향 이미지 올리기', { exact: true }).setInputFiles(sourceFile);
+    await expect(
+      form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+    ).toHaveCount(1);
+    await form.getByLabel('촬영 방향 1', { exact: true }).selectOption(direction);
+    await form.getByRole('button', { name: '대표 이미지로 사용', exact: true }).click();
+    // Save the source version first so immutability can be checked after applying all views.
+    await form.getByRole('button', { name: '자재 등록', exact: true }).click();
+    await expect(form).toHaveCount(0);
+    const card = page.locator('article').filter({ hasText: name });
+    await card.getByRole('button', { name: '정보 수정', exact: true }).click();
+    form = page.getByRole('dialog', { name: '자재 수정', exact: true });
+    const versions = () =>
+      page.evaluate(async (productName) => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open('gongganmiri-v1');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        try {
+          return await new Promise<import('../src/lib/types').MaterialVersion[]>((resolve, reject) => {
+            const request = db.transaction('versions').objectStore('versions').getAll();
+            request.onsuccess = () =>
+              resolve(
+                request.result
+                  .filter((item: { name: string }) => item.name === productName)
+                  .sort((a: { version: number }, b: { version: number }) => a.version - b.version),
+              );
+            request.onerror = () => reject(request.error);
+          });
+        } finally {
+          db.close();
+        }
+      }, name);
+    const before = await versions();
+    expect(before).toHaveLength(1);
+    if (direct) {
+      await form.getByRole('button', { name: `${direction} 사진 AI 3방향 생성`, exact: true }).click();
+    } else {
+      await form.getByRole('button', { name: `${direction} 사진 AI 배경 제거 테스트`, exact: true }).click();
+      const background = page.getByRole('dialog', { name: 'AI 배경 제거 테스트', exact: true });
+      await expect(background.getByRole('button', { name: '3방향 이미지 만들기', exact: true })).toBeEnabled({
+        timeout: 600_000,
+      });
+      await background.getByRole('button', { name: '3방향 이미지 만들기', exact: true }).click();
+    }
+    const dialog = page.getByRole('dialog', { name: 'AI 3방향 이미지 생성', exact: true });
+    await expect(dialog.getByTestId('multiview-source')).toBeVisible();
+    expect(requests.filter((request) => /triposr/.test(request.url))).toHaveLength(0);
+    await expect(dialog.getByRole('group', { name: '입력 사진의 제품 방향' })).toHaveCount(0);
+    await dialog.getByRole('button', { name: '3방향 생성 시작', exact: true }).click();
+    await expect(dialog.getByRole('button', { name: '3방향 생성 중…', exact: true })).toBeDisabled();
+    log('Real TripoSR inference started');
+    await expect
+      .poll(
+        async () => {
+          if (await dialog.getByRole('alert').count())
+            throw new Error(await dialog.getByRole('alert').innerText());
+          return await dialog.getByTestId('multiview-result-front').count();
+        },
+        { timeout: 1_500_000, intervals: [1000, 2000, 5000] },
+      )
+      .toBe(1);
+    log('Real TripoSR inference completed');
+    if (process.env.SJN_MULTIVIEW_CPU === '1')
+      await expect(dialog.getByText('세 방향 생성 · CPU', { exact: true })).toBeVisible();
+    await dialog.screenshot({ path: path.join(output, 'results-before-download.png') });
+    const meshData = await page.evaluate(async () => {
+      const mesh = (
+        globalThis as typeof globalThis & {
+          sjnValidationMesh: Record<string, Float32Array<ArrayBuffer> | Uint32Array<ArrayBuffer>>;
+        }
+      ).sjnValidationMesh;
+      const result: Record<string, string> = {};
+      for (const field of ['positions', 'indices', 'colors'])
+        result[field] = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(',')[1]);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(new Blob([mesh[field]]));
+        });
+      return result;
+    });
+    for (const [field, encoded] of Object.entries(meshData))
+      writeFileSync(path.join(output, `mesh-${field}.bin`), Buffer.from(encoded, 'base64'));
+    log('Actual inferred mesh saved');
+    for (const direction of ['left', 'front', 'right']) {
+      const encoded = await dialog
+        .getByTestId(`multiview-result-${direction}`)
+        .evaluate(async (image: HTMLImageElement) => {
+          const blob = await (await fetch(image.src)).blob();
+          return await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(',')[1]);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
+        });
+      writeFileSync(path.join(output, `${direction}-preview.png`), Buffer.from(encoded, 'base64'));
+    }
+
+    const generated: {
+      direction: string;
+      hash: string;
+      alpha: number;
+      opaque: number;
+      width: number;
+      height: number;
+    }[] = [];
+    for (const [direction, label] of [
+      ['left', '왼쪽'],
+      ['front', '정면'],
+      ['right', '오른쪽'],
+    ]) {
+      await expect(dialog.getByTestId(`multiview-result-${direction}`)).toBeVisible();
+      const filePath = path.join(output, `${direction}.png`);
+      if (process.env.SJN_MULTIVIEW_DOWNLOAD !== '0') {
+        const download = page.waitForEvent('download');
+        await dialog.getByRole('button', { name: `${label} 투명 PNG 다운로드`, exact: true }).click();
+        await (await download).saveAs(filePath);
+      } else {
+        // Explicit diagnostic mode only: prove apply/save independently of a browser download crash.
+        writeFileSync(filePath, readFileSync(path.join(output, `${direction}-preview.png`)));
+      }
+      // Browser-owned download files may remain locked on Windows until context.close().
+      // Inspect the identical in-memory PNG now, and check downloaded bytes after closing.
+      const png = readFileSync(path.join(output, `${direction}-preview.png`));
+      if (process.env.SJN_MULTIVIEW_DOWNLOAD !== '0')
+        downloadedFiles.push({
+          path: filePath,
+          expectedHash: createHash('sha256').update(png).digest('hex'),
+        });
+      const { data, info: meta } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      let alpha = 0,
+        opaque = 0;
+      for (let i = 3; i < data.length; i += 4) {
+        if (data[i] === 0) alpha++;
+        if (data[i] > 200) opaque++;
+      }
+      expect(meta.width).toBe(768);
+      expect(meta.height).toBe(768);
+      expect(alpha).toBeGreaterThan(meta.width * meta.height * 0.1);
+      expect(opaque).toBeGreaterThan(meta.width * meta.height * 0.01);
+      generated.push({
+        direction,
+        hash: createHash('sha256').update(png).digest('hex'),
+        alpha,
+        opaque,
+        width: meta.width,
+        height: meta.height,
+      });
+    }
+    expect(new Set(generated.map((view) => view.hash)).size).toBe(3);
+    expect(
+      generated.every(
+        (view) => view.hash !== createHash('sha256').update(readFileSync(sourceFile)).digest('hex'),
+      ),
+    ).toBe(true);
+    for (const color of ['체크무늬', '흰색', '검은색']) {
+      await dialog
+        .getByRole('group', { name: '3방향 결과 배경색' })
+        .getByRole('button', { name: color, exact: true })
+        .click();
+      await dialog.screenshot({ path: path.join(output, `results-${color}.png`) });
+    }
+    await dialog.getByLabel('3방향 결과 확대', { exact: true }).selectOption('200');
+    await dialog.screenshot({ path: path.join(output, 'results-zoom.png') });
+    timings.push({
+      download: await dialog.getByTestId('multiview-download-time').innerText(),
+      processing: await dialog.getByTestId('multiview-processing-time').innerText(),
+    });
+    expect(await versions()).toEqual(before);
+    await dialog.getByRole('button', { name: '3방향 모두 적용', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(
+      form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+    ).toHaveCount(3);
+    expect(await versions()).toEqual(before);
+    await form.getByRole('button', { name: '새 버전 저장', exact: true }).click();
+    await expect(form).toHaveCount(0);
+    const after = await versions();
+    expect(after).toHaveLength(2);
+    expect(after[0]).toEqual(before[0]);
+    expect(after[1].views.map((view) => view.direction)).toEqual(['왼쪽 측면', '정면', '오른쪽 측면']);
+    expect(after[1].views.every((view) => view.assetId !== before[0].views[0].assetId)).toBe(true);
+    await page.reload();
+    await page
+      .locator('article')
+      .filter({ hasText: name })
+      .getByRole('button', { name: '정보 수정', exact: true })
+      .click();
+    form = page.getByRole('dialog', { name: '자재 수정', exact: true });
+    await expect(
+      form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+    ).toHaveCount(3);
+    expect(await versions()).toEqual(after);
+    const uploads = requests.filter(
+      (request) => request.method !== 'GET' && !request.url.startsWith('http://127.0.0.1:'),
+    );
+    expect(uploads).toEqual([]);
+    expect(errors).toEqual([]);
+    writeFileSync(
+      path.join(output, 'measurements.json'),
+      JSON.stringify(
+        {
+          direct,
+          downloadsVerified: process.env.SJN_MULTIVIEW_DOWNLOAD !== '0',
+          generated,
+          timings,
+          requests,
+          errors,
+        },
+        null,
+        2,
+      ),
+    );
+    await info.attach('real-inference-measurements', {
+      path: path.join(output, 'measurements.json'),
+      contentType: 'application/json',
+    });
+  } catch (error) {
+    log({ failure: String(error) });
+    writeFileSync(
+      path.join(output, 'failure-measurements.json'),
+      JSON.stringify({ timings, requests, errors, failure: String(error) }, null, 2),
+    );
+    await page.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {});
+    throw error;
+  } finally {
+    sampler.kill();
+    await context.close();
+    for (const saved of downloadedFiles)
+      expect(createHash('sha256').update(readFileSync(saved.path)).digest('hex')).toBe(saved.expectedHash);
+  }
+});
+
+// Controlled responses below cover UI/state only; they do not count as real model validation.
+test.use({ channel: 'chrome' });
+type UIControls = { releaseBackground?: () => void; releaseMulti?: () => void; failAssetWrite?: boolean };
+async function installUIResponses(page: import('@playwright/test').Page) {
+  const png = await sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect x="16" y="8" width="32" height="48" fill="white"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
+  await page.addInitScript(
+    (bytes) => {
+      const controls = window as Window & UIControls;
+      const Original = Worker;
+      class ControlledWorker extends EventTarget {
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror = null;
+        onmessageerror = null;
+        stopped = false;
+        constructor(readonly workerName: string) {
+          super();
+        }
+        postMessage(message: { id: number }) {
+          const send = (data: unknown) => {
+            if (!this.stopped) this.onmessage?.(new MessageEvent('message', { data }));
+          };
+          if (this.workerName === 'sjn-background-removal') {
+            controls.releaseBackground = () =>
+              send({
+                type: 'result',
+                id: message.id,
+                result: {
+                  blob: new Blob([new Uint8Array(bytes)], { type: 'image/png' }),
+                  width: 64,
+                  height: 64,
+                  analysisWidth: 512,
+                  analysisHeight: 512,
+                  backend: 'wasm',
+                  precision: 'fp32',
+                  downloadMs: 0,
+                  initializationMs: 1,
+                  processingMs: 1,
+                  inferenceMs: 1,
+                  cacheSource: 'memory',
+                },
+              });
+          } else {
+            send({
+              type: 'progress',
+              id: message.id,
+              progress: { stage: 'reconstructing', message: '모의 응답 대기' },
+            });
+            controls.releaseMulti = () =>
+              send({
+                type: 'mesh',
+                id: message.id,
+                mesh: {
+                  positions: new Float32Array([0.8, 0, 0, -0.4, -0.4, 0, -0.4, 0.4, 0, -0.3, 0, 1]),
+                  indices: new Uint32Array([0, 1, 2, 0, 3, 1, 1, 3, 2, 2, 3, 0]),
+                  colors: new Float32Array([1, 1, 1, 0.8, 0.8, 0.8, 0.9, 0.9, 0.9, 1, 1, 1]),
+                },
+                orientation: {
+                  yawDegrees: -12,
+                  confidence: 0.6,
+                  ambiguous: false,
+                  symmetryError: 0.02,
+                  runnerUpGap: 0.4,
+                  sourceFacingMargin: 0.978,
+                },
+                timings: {
+                  downloadMs: 0,
+                  initializationMs: 1,
+                  processingMs: 1,
+                  cacheSource: 'cache',
+                  modelId: 'ui-controlled',
+                  modelRevision: 'ui-controlled',
+                },
+              });
+          }
+        }
+        terminate() {
+          this.stopped = true;
+        }
+      }
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: function (url: string | URL, options?: WorkerOptions) {
+          return options?.name === 'sjn-multiview' || options?.name === 'sjn-background-removal'
+            ? new ControlledWorker(options.name)
+            : new Original(url, options);
+        },
+      });
+      const add = IDBObjectStore.prototype.add;
+      IDBObjectStore.prototype.add = function (value, key) {
+        if (controls.failAssetWrite && this.name === 'assets')
+          throw new DOMException('검증용 저장 공간 부족', 'QuotaExceededError');
+        return key === undefined ? add.call(this, value) : add.call(this, value, key);
+      };
+    },
+    [...png],
+  );
+}
+async function openUIFixture(page: import('@playwright/test').Page) {
+  await installUIResponses(page);
+  await page.goto('http://127.0.0.1:3000/materials');
+  await page.getByRole('button', { name: '자재 등록', exact: true }).click();
+  const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
+  await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
+  await form.getByLabel('상품명').fill('모의 응답 3방향 UI 검증 제품');
+  const png = await sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect x="16" y="8" width="32" height="48" fill="white"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
+  await form
+    .getByLabel('+ 제품 방향 이미지 올리기', { exact: true })
+    .setInputFiles({ name: 'source.png', mimeType: 'image/png', buffer: png });
+  await expect(form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })).toHaveCount(
+    1,
+  );
+  await form.getByLabel('촬영 방향 1', { exact: true }).selectOption('왼쪽 측면');
+  await form.getByRole('button', { name: '대표 이미지로 사용', exact: true }).click();
+  return form;
+}
+
+test('모의 응답 UI: 배경 제거 결과에서 3방향 연결 · 세 방향 일괄 적용 · 저장 실패 보존·재시도 · 재진입', async ({
+  page,
+}) => {
+  const form = await openUIFixture(page);
+  const sourceUrl = await form
+    .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+    .getAttribute('src');
+  await form.getByRole('button', { name: '왼쪽 측면 사진 AI 배경 제거 테스트', exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as Window & UIControls).releaseBackground))
+    .toBe('function');
+  await page.evaluate(() => (window as Window & UIControls).releaseBackground?.());
+  const background = page.getByRole('dialog', { name: 'AI 배경 제거 테스트', exact: true });
+  await background.getByRole('button', { name: '3방향 이미지 만들기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI 3방향 이미지 생성', exact: true });
+  await expect(background).toHaveCount(0);
+  await expect(dialog.getByText('방금 배경을 제거한 결과를 바로 사용해요.', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '3방향 생성 시작', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: '3방향 생성 중…', exact: true })).toBeDisabled();
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as Window & UIControls).releaseMulti))
+    .toBe('function');
+  await page.evaluate(() => (window as Window & UIControls).releaseMulti?.());
+  await expect(dialog.getByTestId('multiview-result-front')).toBeVisible();
+  for (const label of ['왼쪽', '정면', '오른쪽']) {
+    const downloading = page.waitForEvent('download');
+    await dialog.getByRole('button', { name: `${label} 투명 PNG 다운로드`, exact: true }).click();
+    const downloaded = await downloading;
+    expect(await downloaded.failure()).toBe(null);
+    expect(downloaded.suggestedFilename()).toContain(`AI_${label}.png`);
+  }
+  expect(
+    await form
+      .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+      .getAttribute('src'),
+  ).toBe(sourceUrl);
+  await page.evaluate(() => {
+    (window as Window & UIControls).failAssetWrite = true;
+  });
+  await dialog.getByRole('button', { name: '3방향 모두 적용', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('아직 제품 사진을 교체하지 않았어요.');
+  expect(
+    await form
+      .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+      .getAttribute('src'),
+  ).toBe(sourceUrl);
+  await page.evaluate(() => {
+    (window as Window & UIControls).failAssetWrite = false;
+  });
+  await dialog.getByRole('button', { name: '3방향 모두 적용', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })).toHaveCount(
+    3,
+  );
+  for (const [index, direction] of ['왼쪽 측면', '정면', '오른쪽 측면'].entries())
+    await expect(form.getByLabel(`촬영 방향 ${index + 1}`, { exact: true })).toHaveValue(direction);
+  await form.getByRole('button', { name: '자재 등록', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await page.reload();
+  await page.getByRole('button', { name: '정보 수정', exact: true }).first().click();
+  await expect(
+    page
+      .getByRole('dialog', { name: '자재 수정', exact: true })
+      .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+  ).toHaveCount(3);
+});
+
+test('모의 응답 UI: 중복 실행 방지 · 취소 후 늦은 결과 무시 · 원본 유지', async ({ page }) => {
+  const form = await openUIFixture(page);
+  const sourceUrl = await form
+    .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+    .getAttribute('src');
+  await form.getByRole('button', { name: '왼쪽 측면 사진 AI 3방향 생성', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI 3방향 이미지 생성', exact: true });
+  await dialog.getByRole('button', { name: '3방향 생성 시작', exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as Window & UIControls).releaseMulti))
+    .toBe('function');
+  await expect(dialog.getByRole('button', { name: '3방향 생성 중…', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: '생성 취소', exact: true }).click();
+  await page.evaluate(() => (window as Window & UIControls).releaseMulti?.());
+  await expect(dialog.getByTestId('multiview-result-front')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: '3방향 모두 적용', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  expect(
+    await form
+      .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+      .getAttribute('src'),
+  ).toBe(sourceUrl);
+});
+
+// Replays an ACTUAL previously inferred mesh through the production client/render/UI.
+// It checks camera correction without another model download or inference run.
+test('실제 AI 메시 재생: 정면 보정으로 세 PNG 갱신 · 추가 Worker/모델 다운로드 없음', async ({ page }) => {
+  const meshDirectory = path.resolve(
+    process.env.SJN_MULTIVIEW_REPLAY_DIR ?? 'test-results/multiview-chair-left',
+  );
+  test.skip(
+    !existsSync(path.join(meshDirectory, 'mesh-positions.bin')),
+    '실제 메시 fixture가 없으면 먼저 opt-in 실추론 검증을 실행하세요.',
+  );
+  const encoded = Object.fromEntries(
+    ['positions', 'indices', 'colors'].map((field) => [
+      field,
+      readFileSync(path.join(meshDirectory, `mesh-${field}.bin`)).toString('base64'),
+    ]),
+  );
+  const decodeFloat = (field: string) => {
+    const bytes = Buffer.from(encoded[field], 'base64');
+    return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  };
+  const indices = Buffer.from(encoded.indices, 'base64');
+  const orientation = estimateFrontOrientation({
+    positions: decodeFloat('positions'),
+    colors: decodeFloat('colors'),
+    indices: new Uint32Array(
+      indices.buffer.slice(indices.byteOffset, indices.byteOffset + indices.byteLength),
+    ),
+  });
+  const form = await openUIFixture(page);
+  await page.evaluate(
+    ({ encoded, orientation }) => {
+      const Original = Worker;
+      const state = window as Window & { multiviewWorkerCount?: number };
+      state.multiviewWorkerCount = 0;
+      class ReplayWorker extends EventTarget {
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror = null;
+        onmessageerror = null;
+        stopped = false;
+        postMessage(message: { id: number }) {
+          const decode = (field: string) =>
+            Uint8Array.from(atob(encoded[field]), (character) => character.charCodeAt(0)).buffer;
+          queueMicrotask(() => {
+            if (!this.stopped)
+              this.onmessage?.(
+                new MessageEvent('message', {
+                  data: {
+                    type: 'mesh',
+                    id: message.id,
+                    mesh: {
+                      positions: new Float32Array(decode('positions')),
+                      indices: new Uint32Array(decode('indices')),
+                      colors: new Float32Array(decode('colors')),
+                    },
+                    orientation,
+                    timings: {
+                      downloadMs: 0,
+                      initializationMs: 0,
+                      processingMs: 0,
+                      cacheSource: 'cache',
+                      backend: 'webgpu',
+                      modelId: 'actual-mesh-replay',
+                      modelRevision: 'actual-mesh-replay',
+                    },
+                  },
+                }),
+              );
+          });
+        }
+        terminate() {
+          this.stopped = true;
+        }
+      }
+      Object.defineProperty(globalThis, 'Worker', {
+        configurable: true,
+        value: function (url: string | URL, options?: WorkerOptions) {
+          if (options?.name !== 'sjn-multiview') return new Original(url, options);
+          state.multiviewWorkerCount = (state.multiviewWorkerCount ?? 0) + 1;
+          return new ReplayWorker();
+        },
+      });
+    },
+    { encoded, orientation },
+  );
+  const models: string[] = [];
+  page.on('request', (request) => {
+    if (/\.onnx(?:\?|$)/.test(request.url())) models.push(request.url());
+  });
+  await form.getByRole('button', { name: '왼쪽 측면 사진 AI 3방향 생성', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI 3방향 이미지 생성', exact: true });
+  await dialog.getByRole('button', { name: '3방향 생성 시작', exact: true }).click();
+  await expect(dialog.getByTestId('multiview-result-front')).toBeVisible();
+  const hashes = async () =>
+    Promise.all(
+      ['left', 'front', 'right'].map(async (direction) => {
+        return dialog
+          .getByTestId(`multiview-result-${direction}`)
+          .evaluate(async (image: HTMLImageElement) => {
+            const blob = await (await fetch(image.src)).blob();
+            const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+            const bitmap = await createImageBitmap(blob);
+            const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+            const ctx = canvas.getContext('2d')!;
+            ctx.drawImage(bitmap, 0, 0);
+            bitmap.close();
+            const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let transparent = 0,
+              opaque = 0;
+            for (let i = 3; i < pixels.length; i += 4) {
+              if (pixels[i] === 0) transparent++;
+              if (pixels[i] > 200) opaque++;
+            }
+            return {
+              hash: [...new Uint8Array(digest)].map((n) => n.toString(16).padStart(2, '0')).join(''),
+              transparent,
+              opaque,
+            };
+          });
+      }),
+    );
+  await expect(dialog.getByTestId('front-orientation')).toHaveAttribute(
+    'data-yaw-degrees',
+    String(orientation.yawDegrees),
+  );
+  const before = await hashes();
+  const calibrationOutput = path.resolve('test-results/multiview-calibration');
+  mkdirSync(calibrationOutput, { recursive: true });
+  await dialog
+    .getByRole('region', { name: '정면 생성 결과 확대 보기', exact: true })
+    .screenshot({ path: path.join(calibrationOutput, 'front-0.png') });
+  const control = dialog.getByLabel('정면 각도 추가 보정', { exact: true });
+  await control.focus();
+  for (let i = 0; i < 30; i++) {
+    await control.press('ArrowRight');
+    await expect(control).toBeEnabled();
+    if (i === 14 || i === 29)
+      await dialog
+        .getByRole('region', { name: '정면 생성 결과 확대 보기', exact: true })
+        .screenshot({ path: path.join(calibrationOutput, `front-${i + 1}.png`) });
+  }
+  await expect(dialog.getByTestId('multiview-yaw-value')).toHaveText('+30°');
+  await expect(dialog.getByRole('button', { name: '3방향 모두 적용', exact: true })).toBeEnabled();
+  const after = await hashes();
+  for (let i = 0; i < 3; i++) {
+    expect(after[i].hash).not.toBe(before[i].hash);
+    expect(after[i].transparent).toBeGreaterThan(50_000);
+    expect(after[i].opaque).toBeGreaterThan(5_000);
+  }
+  expect(
+    await page.evaluate(() => (window as Window & { multiviewWorkerCount?: number }).multiviewWorkerCount),
+  ).toBe(1);
+  expect(models).toEqual([]);
+  writeFileSync(
+    path.join(calibrationOutput, 'measurements.json'),
+    JSON.stringify({ before, after, correction: 30, workers: 1, modelRequests: models }, null, 2),
+  );
+  for (let i = 0; i < 15; i++) {
+    await control.press('ArrowRight');
+    await expect(control).toBeEnabled();
+  }
+  await dialog
+    .getByRole('region', { name: '정면 생성 결과 확대 보기', exact: true })
+    .screenshot({ path: path.join(calibrationOutput, 'front-45.png') });
+  for (let i = 0; i < 15; i++) {
+    await control.press('ArrowLeft');
+    await expect(control).toBeEnabled();
+  }
+  await expect(dialog.getByTestId('multiview-yaw-value')).toHaveText('+30°');
+  await dialog.getByRole('button', { name: '3방향 모두 적용', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })).toHaveCount(
+    3,
+  );
+});
+
+test('모의 응답 UI: 각도 보정 중 닫기 · 늦은 PNG 응답 무시 · 적용 전 원본 유지', async ({ page }) => {
+  const form = await openUIFixture(page);
+  const source = await form
+    .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+    .getAttribute('src');
+  await form.getByRole('button', { name: '왼쪽 측면 사진 AI 3방향 생성', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI 3방향 이미지 생성', exact: true });
+  await dialog.getByRole('button', { name: '3방향 생성 시작', exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as Window & UIControls).releaseMulti))
+    .toBe('function');
+  await page.evaluate(() => (window as Window & UIControls).releaseMulti?.());
+  await expect(dialog.getByTestId('multiview-result-front')).toBeVisible();
+  await page.evaluate(() => {
+    const state = window as Window & { releaseCalibrationPng?: () => void };
+    const toBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
+      state.releaseCalibrationPng = () => toBlob.call(this, callback, type, quality);
+    };
+  });
+  await dialog.getByLabel('정면 각도 추가 보정', { exact: true }).press('ArrowRight');
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => typeof (window as Window & { releaseCalibrationPng?: () => void }).releaseCalibrationPng,
+      ),
+    )
+    .toBe('function');
+  await expect(dialog.getByRole('button', { name: '3방향 모두 적용', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: '취소하고 닫기', exact: true }).click();
+  await page.evaluate(() =>
+    (window as Window & { releaseCalibrationPng?: () => void }).releaseCalibrationPng?.(),
+  );
+  await expect(dialog).toHaveCount(0);
+  await expect(form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })).toHaveCount(
+    1,
+  );
+  expect(
+    await form
+      .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+      .getAttribute('src'),
+  ).toBe(source);
+});

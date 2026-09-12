@@ -50,8 +50,7 @@ export function ensureExampleTiles(repo: Repositories) {
         depthMm: 9,
         usage: 'both',
         installation: 'floor',
-        coverAssetId: asset.id,
-        imageAssetIds: [],
+
         textureAssetIds: [asset.id],
         views: [],
         defaultGroutWidth: 2,

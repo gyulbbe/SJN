@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
@@ -11,7 +14,13 @@ export default defineConfig({
     viewport: { width: 1440, height: 1000 },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    launchOptions: { args: ['--enable-webgl', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
+    launchOptions: {
+      args: ['--enable-webgl', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+      // Windows Chrome's download sandbox cannot write to every repository location.
+      ...(process.platform === 'win32'
+        ? { downloadsPath: mkdtempSync(join(tmpdir(), 'sjn-playwright-')) }
+        : {}),
+    },
   },
   webServer: {
     command: 'npm run dev',

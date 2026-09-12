@@ -69,6 +69,8 @@ export function projectRoomFixture(room: RoomDefinition, fixture: FixtureInstanc
 
 const boundsCache = new Map<string, Promise<ProductBounds>>();
 export function productContentBounds(asset: AssetRecord): Promise<ProductBounds> {
+  if (asset.kind === 'product-mesh')
+    return Promise.reject(new Error('제품 사진에는 이미지 자산이 필요해요.'));
   const cached = boundsCache.get(asset.id);
   if (cached) return cached;
   const task = (async () => {
@@ -117,6 +119,7 @@ export async function createRoomPlacement(
   asset: AssetRecord,
   face: RoomFace,
 ): Promise<RoomPlacement> {
+  if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
   return {
     face,
     u: 0.5,

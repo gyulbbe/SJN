@@ -138,13 +138,12 @@ async function openSavedProduct(page: Page) {
       .png()
       .toBuffer();
     await form
-      .getByLabel('+ 제품 방향 이미지 올리기', { exact: true })
+      .getByLabel('+ 제품 이미지 올리기', { exact: true })
       .setInputFiles({ name: `direction-${i}.png`, mimeType: 'image/png', buffer });
     await expect(previewImages(page)).toHaveCount(i + 1);
-    await expect(form.getByLabel('+ 제품 방향 이미지 올리기', { exact: true })).toBeEnabled();
+    await expect(form.getByLabel('+ 제품 이미지 올리기', { exact: true })).toBeEnabled();
   }
-  await form.getByLabel('촬영 방향 2', { exact: true }).selectOption('오른쪽 측면');
-  await form.getByRole('button', { name: '대표 이미지로 사용', exact: true }).first().click();
+  await form.getByLabel('촬영 방향 2', { exact: true }).fill('오른쪽 측면');
   await form.getByRole('button', { name: '자재 등록', exact: true }).click();
   await expect(form).toHaveCount(0);
   await page.getByRole('button', { name: '정보 수정', exact: true }).first().click();
@@ -219,7 +218,6 @@ test('모의 결과 UI: 선택 방향에만 PNG 적용 · 준비/저장 중 중�
   const versions = await productVersions(page);
   expect(versions).toHaveLength(2);
   expect(versions[0]).toEqual(beforeVersions[0]);
-  expect(versions[1].coverAssetId).toBe(versions[0].coverAssetId);
   expect(versions[1].views[0]).toEqual(versions[0].views[0]);
   expect(versions[1].views[1].assetId).not.toBe(versions[0].views[1].assetId);
   expect(versions[1].views[1].anchor).toEqual(versions[0].views[1].anchor);

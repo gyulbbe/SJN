@@ -1,3 +1,4 @@
+import type { Product3dReference } from './product3d/state-types';
 import type { MaterialUsageState } from './material-usage-types';
 import type { ReconstructionReview } from './reconstruction/types';
 import type { RoomDefinition, RoomFace, RoomPlacement } from './room-types';
@@ -83,10 +84,12 @@ export type MaterialVersion = {
   depthMm: number;
   usage: 'wall' | 'floor' | 'both';
   installation: 'floor' | 'wall' | 'embedded';
-  coverAssetId: string;
-  imageAssetIds: string[];
+  /** @deprecated Read-only compatibility for older catalogs; current images come from views/textures. */
+  coverAssetId?: string;
+  /** @deprecated Old introduction images remain referenced until their material version is removed. */
+  imageAssetIds?: string[];
   textureAssetIds: string[];
-  views: { assetId: string; direction: string; anchor: Point }[];
+  views: { assetId: string; direction: string; anchor: Point; product3d?: Product3dReference }[];
   defaultGroutWidth: number;
   defaultGroutColor: string;
   defaultPattern: 'grid' | 'brick';
@@ -100,21 +103,32 @@ export type Material = {
   scope: 'personal' | 'shared';
   updatedAt: string;
 };
-export type AssetRecord = {
+type AssetBase = {
   id: string;
   ownerId: string;
   name: string;
   mime: string;
   size: number;
-  width: number;
-  height: number;
-  kind: 'original' | 'preview' | 'texture' | 'product' | 'background' | 'thumbnail';
   sourceAssetId?: string;
-  /** Distinguishes a resized upload from a deliberately edited image. */
-  derivation?: 'upload-preview' | 'manual-alpha' | 'ai-alpha' | 'rectified';
   createdAt: string;
   blob: Blob;
 };
+export type ImageAssetRecord = AssetBase & {
+  width: number;
+  height: number;
+  kind: 'original' | 'preview' | 'texture' | 'product' | 'background' | 'thumbnail';
+  /** Distinguishes a resized upload from a deliberately edited image. */
+  derivation?: 'upload-preview' | 'manual-alpha' | 'ai-alpha' | 'ai-multiview' | 'ai-product3d' | 'rectified';
+};
+export type ProductMeshAssetRecord = AssetBase & {
+  kind: 'product-mesh';
+  mime: 'application/x-sjn-product-mesh';
+  sourceAssetId: string;
+};
+export type AssetRecord = ImageAssetRecord | ProductMeshAssetRecord;
+export function isImageAsset(asset: AssetRecord): asset is ImageAssetRecord {
+  return asset.kind !== 'product-mesh';
+}
 export type Scene = {
   room?: RoomDefinition;
   originalAssetId: string;

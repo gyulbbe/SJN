@@ -1,0 +1,155 @@
+import { describe, expect, it } from 'vitest';
+import type { ReconstructedMesh } from '../src/lib/multiview/geometry';
+import { estimateFrontOrientation } from '../src/lib/multiview/orientation';
+
+function boxes(parts: { center: number[]; size: number[] }[]): ReconstructedMesh {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const colors: number[] = [];
+  for (const { center, size } of parts) {
+    const first = positions.length / 3;
+    for (const z of [-1, 1])
+      for (const y of [-1, 1])
+        for (const x of [-1, 1]) {
+          positions.push(
+            center[0] + (x * size[0]) / 2,
+            center[1] + (y * size[1]) / 2,
+            center[2] + (z * size[2]) / 2,
+          );
+          colors.push(0.8, 0.8, 0.8);
+        }
+    for (const index of [
+      0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7,
+      5,
+    ]) {
+      indices.push(index + first);
+    }
+  }
+  return {
+    positions: new Float32Array(positions),
+    indices: new Uint32Array(indices),
+    colors: new Float32Array(colors),
+  };
+}
+
+// A front-projecting bowl/seat, high rear tank/backrest and a centered base:
+// bilateral across Y=0, deliberately NOT front/back symmetric.
+function product(): ReconstructedMesh {
+  return boxes([
+    { center: [-0.3, 0, 0.2], size: [0.18, 0.6, 0.8] },
+    { center: [0.12, 0, -0.04], size: [0.72, 0.48, 0.18] },
+    { center: [0.07, 0, -0.35], size: [0.35, 0.3, 0.5] },
+  ]);
+}
+
+function rotated(
+  mesh: ReconstructedMesh,
+  yawDegrees: number,
+  scale = 1,
+  translation = [0, 0, 0],
+): ReconstructedMesh {
+  const angle = (yawDegrees * Math.PI) / 180;
+  const positions = mesh.positions.slice();
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = mesh.positions[i] * scale;
+    const y = mesh.positions[i + 1] * scale;
+    positions[i] = x * Math.cos(angle) - y * Math.sin(angle) + translation[0];
+    positions[i + 1] = x * Math.sin(angle) + y * Math.cos(angle) + translation[1];
+    positions[i + 2] = mesh.positions[i + 2] * scale + translation[2];
+  }
+  return { ...mesh, positions };
+}
+
+function cylinder(): ReconstructedMesh {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const count = 80;
+  for (const z of [-0.5, 0.5]) {
+    for (let i = 0; i < count; i++)
+      positions.push(Math.cos((i * 2 * Math.PI) / count) * 0.4, Math.sin((i * 2 * Math.PI) / count) * 0.4, z);
+  }
+  positions.push(0, 0, -0.5, 0, 0, 0.5);
+  for (let i = 0; i < count; i++) {
+    const next = (i + 1) % count;
+    indices.push(
+      i,
+      next,
+      count + next,
+      i,
+      count + next,
+      count + i,
+      count * 2,
+      next,
+      i,
+      count * 2 + 1,
+      count + i,
+      count + next,
+    );
+  }
+  return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
+}
+
+describe('image-derived front orientation', () => {
+  it.each([-12, 9, 43, -52])(
+    'measures a %s degree angle instead of assuming the source was front-on',
+    (yaw) => {
+      const result = estimateFrontOrientation(rotated(product(), yaw));
+      expect(Math.abs(result.yawDegrees - yaw)).toBeLessThanOrEqual(1.5);
+      expect(result.ambiguous).toBe(false);
+      expect(result.confidence).toBeGreaterThan(0.5);
+    },
+  );
+
+  it('keeps the measured front under translation and scaling without mutating source arrays', () => {
+    const mesh = rotated(product(), 17, 2.3, [8.5, -12, 3]);
+    const original = {
+      positions: mesh.positions.slice(),
+      indices: mesh.indices.slice(),
+      colors: mesh.colors!.slice(),
+    };
+    const result = estimateFrontOrientation(mesh);
+    expect(Math.abs(result.yawDegrees - 17)).toBeLessThanOrEqual(1.5);
+    expect(mesh.positions).toEqual(original.positions);
+    expect(mesh.indices).toEqual(original.indices);
+    expect(mesh.colors).toEqual(original.colors);
+  });
+
+  it('uses source camera orientation only to distinguish the two ends of the measured axis', () => {
+    const mesh = rotated(product(), 28);
+    const first = estimateFrontOrientation(mesh, { sourceYawDegrees: 0 });
+    const reverse = estimateFrontOrientation(mesh, { sourceYawDegrees: 180 });
+    expect(Math.abs(first.yawDegrees - 28)).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(reverse.yawDegrees + 152)).toBeLessThanOrEqual(1.5);
+    expect(first.symmetryError).toBe(reverse.symmetryError);
+  });
+
+  it('reports side-on front/back sign uncertainty', () => {
+    const result = estimateFrontOrientation(rotated(product(), 89));
+    expect(Math.abs(Math.abs(result.yawDegrees) - 89)).toBeLessThanOrEqual(1.5);
+    expect(result.sourceFacingMargin).toBeLessThan(0.15);
+    expect(result.ambiguous).toBe(true);
+  });
+
+  it('does not claim a reliable semantic front for rotationally symmetric products', () => {
+    const result = estimateFrontOrientation(cylinder());
+    expect(result.ambiguous).toBe(true);
+    expect(result.confidence).toBeLessThan(0.45);
+    expect(result.runnerUpGap).toBeLessThan(0.2);
+  });
+
+  it('rejects malformed, non-finite and zero-area reconstructions', () => {
+    expect(() =>
+      estimateFrontOrientation({ positions: new Float32Array(), indices: new Uint32Array() }),
+    ).toThrow();
+    const mesh = product();
+    mesh.positions[0] = NaN;
+    expect(() => estimateFrontOrientation(mesh)).toThrow();
+    expect(() =>
+      estimateFrontOrientation({ positions: new Float32Array(9), indices: new Uint32Array([0, 1, 2]) }),
+    ).toThrow();
+    expect(() =>
+      estimateFrontOrientation({ ...product(), indices: new Uint32Array([0, 1, 99999]) }),
+    ).toThrow();
+    expect(() => estimateFrontOrientation(product(), { sourceYawDegrees: Infinity })).toThrow();
+  });
+});

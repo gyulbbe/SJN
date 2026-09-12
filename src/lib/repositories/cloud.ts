@@ -1,5 +1,12 @@
+import { stripLegacyMaterialImages } from '../material-images';
 import { normalizeProjectDocument } from '../comparison';
-import type { AssetRecord, MaterialVersion, ProjectInput } from '../types';
+import type {
+  AssetRecord,
+  ImageAssetRecord,
+  ProductMeshAssetRecord,
+  MaterialVersion,
+  ProjectInput,
+} from '../types';
 import type { Repositories } from './contracts';
 import { StorageConflictError } from './references';
 
@@ -39,9 +46,10 @@ export function createCloudRepositories(): Repositories {
     materials: {
       list: () => invoke('materials', 'list'),
       getVersion: (id) => invoke('materials', 'getVersion', { id }),
-      create: (input) => invoke<MaterialVersion>('materials', 'create', { input }),
+      create: (input) =>
+        invoke<MaterialVersion>('materials', 'create', { input: stripLegacyMaterialImages(input) }),
       update: (id, input, expectedVersionId) =>
-        invoke('materials', 'update', { id, input, expectedVersionId }),
+        invoke('materials', 'update', { id, input: stripLegacyMaterialImages(input), expectedVersionId }),
       setActive: (id, active) => invoke<void>('materials', 'setActive', { id, active }),
     },
     assets: {
@@ -55,7 +63,10 @@ export function createCloudRepositories(): Repositories {
         );
       },
       async get(id) {
-        const result = await responseJson<{ asset: Omit<AssetRecord, 'blob'>; url: string }>(
+        const result = await responseJson<{
+          asset: Omit<ImageAssetRecord, 'blob'> | Omit<ProductMeshAssetRecord, 'blob'>;
+          url: string;
+        }>(
           await fetch(`/api/cloud/assets?id=${encodeURIComponent(id)}`, {
             credentials: 'same-origin',
             cache: 'no-store',
@@ -63,7 +74,7 @@ export function createCloudRepositories(): Repositories {
         );
         const response = await fetch(result.url);
         if (!response.ok) throw new Error('이미지를 내려받지 못했어요.');
-        return { ...result.asset, blob: await response.blob() };
+        return { ...result.asset, blob: await response.blob() } as AssetRecord;
       },
       removeUnused: () => invoke<number>('cleanup', 'run'),
     },

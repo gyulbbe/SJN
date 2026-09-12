@@ -74,7 +74,12 @@ function workerFaultHooks() {
 
 async function injectGpuDeviceFailure(page: Page) {
   await page.addInitScript(() => {
-    const state: QaState = { injectGpuFailure: true, deviceFailures: 0, encodingBlocked: false, workerStarts: 0 };
+    const state: QaState = {
+      injectGpuFailure: true,
+      deviceFailures: 0,
+      encodingBlocked: false,
+      workerStarts: 0,
+    };
     let lastProgressKey = '';
     (window as unknown as { __sjnBackgroundCacheQa: QaState }).__sjnBackgroundCacheQa = state;
     const NativeWorker = window.Worker;
@@ -91,7 +96,10 @@ async function injectGpuDeviceFailure(page: Page) {
               const key = `${message}:${Math.floor((loadedBytes ?? 0) / (32 * 1024 * 1024))}`;
               if (key !== lastProgressKey) {
                 lastProgressKey = key;
-                console.info('[background-cache-qa]', JSON.stringify({ stage, message, loadedBytes, totalBytes }));
+                console.info(
+                  '[background-cache-qa]',
+                  JSON.stringify({ stage, message, loadedBytes, totalBytes }),
+                );
               }
             }
             if (event.data?.__sjnCacheQa === 'device-failure') state.deviceFailures++;
@@ -211,7 +219,7 @@ test('GPU 준비 실패 → 실제 CPU PNG 성공 후 FP16 정리 → GPU 복구
   await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
   await form.getByLabel('상품명').fill('실제 캐시 전환 검증');
   await form
-    .getByLabel('+ 제품 방향 이미지 올리기', { exact: true })
+    .getByLabel('+ 제품 이미지 올리기', { exact: true })
     .setInputFiles(path.resolve('test-results/background-removal/fixtures/white-toilet.jpg'));
   await expect(form.getByRole('button', { name: /AI 배경 제거 테스트/ })).toBeEnabled();
   await form.getByRole('button', { name: /AI 배경 제거 테스트/ }).click();

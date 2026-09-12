@@ -1,4 +1,5 @@
 'use client';
+import { getMaterialImageAssetId, stripLegacyMaterialImages } from '@/lib/material-images';
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
@@ -72,7 +73,11 @@ export default function MaterialManager() {
     setError('');
     try {
       // Keep immutable assets shared; later edits create new asset IDs and versions.
-      const input: MaterialInput = { ...version, name: `${version.name} (복사)`, scope: 'personal' };
+      const input: MaterialInput = stripLegacyMaterialImages({
+        ...version,
+        name: `${version.name} (복사)`,
+        scope: 'personal',
+      });
       const result = await getRepositories().materials.create(input);
       setNotice('내 자재로 복제했어요. 원래 자재에 영향을 주지 않고 수정할 수 있어요.');
       setDetail(undefined);
@@ -303,7 +308,7 @@ export default function MaterialManager() {
                   aria-label={`${row.version.name} 상세 보기`}
                 >
                   <AssetImage
-                    assetId={row.version.coverAssetId}
+                    assetId={getMaterialImageAssetId(row.version)}
                     alt={row.version.name}
                     style={{ objectFit: row.version.category === 'tile' ? 'cover' : 'contain' }}
                   />
@@ -424,7 +429,7 @@ export default function MaterialManager() {
             <div className={styles.detailGrid}>
               <AssetImage
                 className={styles.detailImage}
-                assetId={detail.version.coverAssetId}
+                assetId={getMaterialImageAssetId(detail.version)}
                 alt={detail.version.name}
               />
               <div>

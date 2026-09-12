@@ -1,3 +1,4 @@
+import { getMaterialImageAssetId } from '../material-images';
 import { materialUsageSchema } from '../material-usage-validation';
 import {
   comparisonFrameError,
@@ -332,46 +333,84 @@ export const storedProjectV3Schema = createProjectV3Schema(LEGACY_MAX_DESIGNS);
 export const storedProjectSchema = z.union([legacyProjectSchema, storedProjectV3Schema]);
 // Legacy inputs remain accepted at API boundaries and are upgraded only for a successful write.
 export const projectSchema = z.union([legacyProjectSchema, projectV3Schema]);
-export const materialInputSchema = z.object({
-  reconstruction: z.object({ version: z.literal(1), kind: z.string().min(1).max(100) }).optional(),
-  pricing: materialPricingSchema.optional(),
-  name: z.string().trim().min(1).max(200),
-  brand: z.string().max(200),
-  code: z.string().max(200),
-  category: z.enum([
-    'tile',
-    'toilet',
-    'basin',
-    'vanity',
-    'bath',
-    'shower',
-    'faucet',
-    'mirror',
-    'door',
-    'window',
-  ]),
-  scope: z.enum(['personal', 'shared']),
-  description: z.string().max(10000),
-  color: z.string().max(100),
-  finish: z.string().max(200),
-  widthMm: number.positive().max(100000),
-  heightMm: number.positive().max(100000),
-  depthMm: number.nonnegative().max(100000),
-  usage: z.enum(['wall', 'floor', 'both']),
-  installation: z.enum(['floor', 'wall', 'embedded']),
-  coverAssetId: id,
-  imageAssetIds: z.array(id).max(100),
-  textureAssetIds: z.array(id).max(100),
-  views: z.array(z.object({ assetId: id, direction: z.string().max(200), anchor: normalizedPoint })).max(100),
-  defaultGroutWidth: number.min(0).max(100),
-  defaultGroutColor: z.string().regex(/^#[0-9a-f]{6}$/i),
-  defaultPattern: z.enum(['grid', 'brick']),
-});
-export const assetMetadataSchema = z.object({
+const quaternionSchema = z
+  .tuple([number, number, number, number])
+  .refine((value) => Math.abs(Math.hypot(...value) - 1) <= 0.001, '회전값은 정규화된 quaternion이어야 해요.');
+export const product3dReferenceSchema = z
+  .object({
+    version: z.literal(1),
+    meshAssetId: id,
+    inputAssetId: id,
+    pose: z
+      .object({
+        objectQuaternion: quaternionSchema,
+        cameraQuaternion: quaternionSchema,
+        zoom: number.positive().max(100),
+      })
+      .strict(),
+    modelId: z.string().min(1).max(300),
+    modelRevision: z.string().min(1).max(300),
+  })
+  .strict();
+export const materialInputSchema = z
+  .object({
+    reconstruction: z.object({ version: z.literal(1), kind: z.string().min(1).max(100) }).optional(),
+    pricing: materialPricingSchema.optional(),
+    name: z.string().trim().min(1).max(200),
+    brand: z.string().max(200),
+    code: z.string().max(200),
+    category: z.enum([
+      'tile',
+      'toilet',
+      'basin',
+      'vanity',
+      'bath',
+      'shower',
+      'faucet',
+      'mirror',
+      'door',
+      'window',
+    ]),
+    scope: z.enum(['personal', 'shared']),
+    description: z.string().max(10000),
+    color: z.string().max(100),
+    finish: z.string().max(200),
+    widthMm: number.positive().max(100000),
+    heightMm: number.positive().max(100000),
+    depthMm: number.nonnegative().max(100000),
+    usage: z.enum(['wall', 'floor', 'both']),
+    installation: z.enum(['floor', 'wall', 'embedded']),
+    coverAssetId: id.optional(),
+    imageAssetIds: z.array(id).max(100).optional(),
+    textureAssetIds: z.array(id).max(100),
+    views: z
+      .array(
+        z.object({
+          assetId: id,
+          direction: z.string().max(200),
+          anchor: normalizedPoint,
+          product3d: product3dReferenceSchema.optional(),
+        }),
+      )
+      .max(100),
+    defaultGroutWidth: number.min(0).max(100),
+    defaultGroutColor: z.string().regex(/^#[0-9a-f]{6}$/i),
+    defaultPattern: z.enum(['grid', 'brick']),
+  })
+  .refine((input) => !!getMaterialImageAssetId(input), '타일 텍스처 또는 제품 사진을 등록해 주세요.');
+const assetMetadataBase = {
   id,
   name: z.string().min(1).max(300),
-  kind: z.enum(['original', 'preview', 'texture', 'product', 'background', 'thumbnail']),
-  sourceAssetId: id.optional(),
-  derivation: z.enum(['upload-preview', 'manual-alpha', 'ai-alpha', 'rectified']).optional(),
-});
+};
+export const assetMetadataSchema = z.discriminatedUnion('kind', [
+  z.object({
+    ...assetMetadataBase,
+    kind: z.enum(['original', 'preview', 'texture', 'product', 'background', 'thumbnail']),
+    sourceAssetId: id.optional(),
+    derivation: z
+      .enum(['upload-preview', 'manual-alpha', 'ai-alpha', 'ai-multiview', 'ai-product3d', 'rectified'])
+      .optional(),
+  }),
+  z.object({ ...assetMetadataBase, kind: z.literal('product-mesh'), sourceAssetId: id }),
+]);
 export const identifierSchema = id;

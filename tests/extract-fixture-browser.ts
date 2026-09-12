@@ -84,6 +84,7 @@ try {
     );
     const firstVersion = await repositories.materials.getVersion(first.materialVersionId);
     const firstAsset = await repositories.assets.get(firstVersion.views[0].assetId);
+    if (firstAsset.kind === 'product-mesh') throw new Error('Expected extracted image');
     const second = await lib.registerExtractedFixture(
       source,
       mask,

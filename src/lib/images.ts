@@ -1,4 +1,4 @@
-import type { AssetRecord } from './types';
+import type { ImageAssetRecord } from './types';
 import type { AssetRepository } from './repositories/contracts';
 
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -91,11 +91,11 @@ export function canvasBlob(canvas: HTMLCanvasElement, mime = 'image/png', qualit
 export async function makeAsset(
   blob: Blob,
   name: string,
-  kind: AssetRecord['kind'],
+  kind: ImageAssetRecord['kind'],
   sourceAssetId?: string,
-): Promise<AssetRecord> {
+): Promise<ImageAssetRecord> {
   const bitmap = await createImageBitmap(blob);
-  const asset: AssetRecord = {
+  const asset: ImageAssetRecord = {
     id: crypto.randomUUID(),
     ownerId: 'local',
     name,
@@ -114,9 +114,9 @@ export async function makeAsset(
 
 export async function importImage(
   file: File,
-  kind: AssetRecord['kind'],
+  kind: ImageAssetRecord['kind'],
   assets: AssetRepository,
-): Promise<{ original: AssetRecord; preview: AssetRecord }> {
+): Promise<{ original: ImageAssetRecord; preview: ImageAssetRecord }> {
   if (file.size === 0) throw new Error('빈 파일은 등록할 수 없어요.');
   if (file.size > MAX_IMAGE_BYTES) throw new Error('이미지 한 장은 25MB 이하로 올려 주세요.');
   const header = readImageHeader(new Uint8Array(await file.arrayBuffer()));
@@ -131,7 +131,7 @@ export async function importImage(
   try {
     if (bitmap.width * bitmap.height > MAX_IMAGE_PIXELS)
       throw new Error('이미지는 4,000만 화소 이하로 줄여 주세요.');
-    const original: AssetRecord = {
+    const original: ImageAssetRecord = {
       id: crypto.randomUUID(),
       ownerId: 'local',
       name: file.name,
@@ -151,7 +151,7 @@ export async function importImage(
     if (!context) throw new Error('이 브라우저에서 이미지 편집을 지원하지 않아요.');
     context.drawImage(bitmap, 0, 0, size.width, size.height);
     const blob = await canvasBlob(canvas, header.mime === 'image/jpeg' ? 'image/jpeg' : 'image/png');
-    const preview: AssetRecord = {
+    const preview: ImageAssetRecord = {
       id: crypto.randomUUID(),
       ownerId: 'local',
       name: `${file.name} · 편집용`,

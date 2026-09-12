@@ -366,6 +366,7 @@ export class PhotoCompositor {
     const promise = (async () => {
       if (!this.reader) throw new Error('이미지 저장소가 연결되지 않았습니다.');
       const record = await this.reader(id);
+      if (record.kind === 'product-mesh') throw new Error('합성 이미지 자산이 필요해요.');
       const bitmap = await createImageBitmap(record.blob, {
         imageOrientation: 'from-image',
         premultiplyAlpha: 'none',
@@ -405,7 +406,10 @@ export class PhotoCompositor {
   }
 
   private async atlasFor(material: MaterialVersion, quality: SnapshotQuality['quality'], compact = false) {
-    const ids = material.textureAssetIds.length ? material.textureAssetIds : [material.coverAssetId];
+    const ids = material.textureAssetIds.length
+      ? material.textureAssetIds
+      : [material.coverAssetId || material.imageAssetIds?.[0]].filter((id): id is string => !!id);
+    if (!ids.length) throw new Error(material.name + ': 시공할 타일 이미지를 찾지 못했습니다.');
     const key = JSON.stringify([quality, ids, compact]);
     const existing = this.atlases.get(key);
     if (existing) return existing;
@@ -709,8 +713,10 @@ export class PhotoCompositor {
       const assetId =
         material.views[fixture.viewIndex]?.assetId ||
         material.views[0]?.assetId ||
-        material.imageAssetIds[fixture.viewIndex] ||
-        material.coverAssetId;
+        material.imageAssetIds?.[fixture.viewIndex] ||
+        material.coverAssetId ||
+        material.imageAssetIds?.[0];
+      if (!assetId) throw new Error(fixture.name + ': 저장된 제품 이미지를 찾지 못했습니다.');
       const texture = await this.getTexture(
         assetId,
         quality.previewEdge === undefined ? this.maxOutputEdge : sourceEdge,

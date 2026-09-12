@@ -132,7 +132,7 @@ describe('transactional local persistence', () => {
     );
     expect(second.version).toBe(2);
     expect(second.id).not.toBe(first.id);
-    expect((await repo.materials.getVersion(first.id)).coverAssetId).toBe(firstImage.id);
+    expect((await repo.materials.getVersion(first.id)).textureAssetIds[0]).toBe(firstImage.id);
     expect(getActiveScene(await repo.projects.load(saved.id)).surfaces[0].materialVersionId).toBe(first.id);
     await expect(
       repo.materials.update(first.materialId, material(firstImage.id), first.id),

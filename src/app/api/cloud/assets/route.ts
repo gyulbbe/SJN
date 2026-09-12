@@ -1,3 +1,4 @@
+import { decodeProductMesh, PRODUCT_MESH_MIME } from '@/lib/product3d/codec';
 import { NextResponse } from 'next/server';
 import sharp, { type Metadata } from 'sharp';
 import {
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   try {
-    const { user } = await authenticated(request);
+    const { user, client } = await authenticated(request);
     if (Number(request.headers.get('content-length') ?? 0) > 26 * 1024 * 1024)
       throw new HttpError(413, '파일은 25MB 이하여야 해요.');
     const body = await boundedBody(request, 26 * 1024 * 1024);
@@ -47,31 +48,58 @@ export async function POST(request: Request) {
       throw new HttpError(413, '파일은 25MB 이하여야 해요.');
     const input = assetMetadataSchema.parse(JSON.parse(String(form.get('metadata'))));
     const bytes = Buffer.from(await file.arrayBuffer());
-    let metadata: Metadata;
-    try {
-      metadata = await sharp(bytes, {
-        limitInputPixels: 40_000_000,
-        failOn: 'warning',
-        animated: false,
-      }).metadata();
-    } catch {
-      throw new HttpError(400, '손상되었거나 너무 큰 이미지예요.');
+    let mime: string;
+    let dimensions: { width: number; height: number } | undefined;
+    if (input.sourceAssetId) {
+      const source = await client
+        .from('assets')
+        .select('metadata')
+        .eq('id', input.sourceAssetId)
+        .eq('deleting', false)
+        .maybeSingle();
+      databaseError(source.error);
+      if (!source.data || source.data.metadata.kind === 'product-mesh')
+        throw new HttpError(400, '접근 가능한 원본 이미지가 필요해요.');
     }
-    const formats: Record<string, string> = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
-    const mime = formats[metadata.format ?? ''];
-    if (
-      !mime ||
-      !metadata.width ||
-      !metadata.height ||
-      metadata.width * metadata.height > 40_000_000 ||
-      (metadata.pages ?? 1) > 1
-    )
-      throw new HttpError(400, '정지 JPG·PNG·WebP 이미지만 지원해요 (최대 4천만 화소).');
-    // A complete decode rejects truncated files and image headers hiding invalid pixel data.
-    try {
-      await sharp(bytes, { limitInputPixels: 40_000_000, failOn: 'warning' }).stats();
-    } catch {
-      throw new HttpError(400, '이미지 픽셀을 읽지 못했어요.');
+    if (input.kind === 'product-mesh') {
+      try {
+        await decodeProductMesh(file);
+      } catch {
+        throw new HttpError(400, '입체 데이터가 손상됐거나 지원하지 않는 형식이에요.');
+      }
+      mime = PRODUCT_MESH_MIME;
+    } else {
+      let metadata: Metadata;
+      try {
+        metadata = await sharp(bytes, {
+          limitInputPixels: 40_000_000,
+          failOn: 'warning',
+          animated: false,
+        }).metadata();
+      } catch {
+        throw new HttpError(400, '손상되었거나 너무 큰 이미지예요.');
+      }
+      const formats: Record<string, string> = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+      mime = formats[metadata.format ?? ''];
+      if (
+        !mime ||
+        !metadata.width ||
+        !metadata.height ||
+        metadata.width * metadata.height > 40_000_000 ||
+        (metadata.pages ?? 1) > 1
+      )
+        throw new HttpError(400, '정지 JPG·PNG·WebP 이미지만 지원해요 (최대 4천만 화소).');
+      // A complete decode rejects truncated files and image headers hiding invalid pixel data.
+      try {
+        await sharp(bytes, { limitInputPixels: 40_000_000, failOn: 'warning' }).stats();
+      } catch {
+        throw new HttpError(400, '이미지 픽셀을 읽지 못했어요.');
+      }
+      const swapped = [5, 6, 7, 8].includes(metadata.orientation ?? 1);
+      dimensions = {
+        width: (swapped ? metadata.height : metadata.width)!,
+        height: (swapped ? metadata.width : metadata.height)!,
+      };
     }
     const admin = serviceClient();
     const path = `${user.id}/${input.id}`;
@@ -79,14 +107,12 @@ export async function POST(request: Request) {
     databaseError(existing.error);
     if (existing.data)
       throw new HttpError(409, '이미 등록된 이미지 식별자예요. 새 파일로 다시 등록해 주세요.');
-    const swapped = [5, 6, 7, 8].includes(metadata.orientation ?? 1);
     const asset = {
       ...input,
       ownerId: user.id,
       mime,
       size: bytes.length,
-      width: swapped ? metadata.height : metadata.width,
-      height: swapped ? metadata.width : metadata.height,
+      ...dimensions,
       createdAt: new Date().toISOString(),
     };
     // Record cleanup intent before uploading. A process crash still leaves a retryable job.

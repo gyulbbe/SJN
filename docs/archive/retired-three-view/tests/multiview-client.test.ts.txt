@@ -1,0 +1,218 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MultiViewClient } from '../src/lib/multiview/client';
+import type { MultiViewReply, MultiViewResult } from '../src/lib/multiview/types';
+const { render } = vi.hoisted(() => ({ render: vi.fn() }));
+vi.mock('../src/lib/multiview/render', () => ({ renderThreeViews: render }));
+class TestWorker {
+  static instances: TestWorker[] = [];
+  onmessage?: (event: { data: MultiViewReply }) => void;
+  onerror?: (event: { preventDefault: () => void }) => void;
+  onmessageerror?: () => void;
+  postMessage = vi.fn();
+  terminate = vi.fn();
+  constructor() {
+    TestWorker.instances.push(this);
+  }
+  reply(data: MultiViewReply) {
+    this.onmessage?.({ data });
+  }
+}
+const timings = {
+  downloadMs: 0,
+  initializationMs: 1,
+  processingMs: 2,
+  cacheSource: 'cache' as const,
+  modelId: 'model',
+  modelRevision: 'revision',
+};
+const orientation = {
+  yawDegrees: -12.5,
+  confidence: 0.7,
+  ambiguous: false,
+  symmetryError: 0.02,
+  runnerUpGap: 0.4,
+  sourceFacingMargin: 0.976,
+};
+const mesh = {
+  positions: new Float32Array(9),
+  colors: new Float32Array(9),
+  indices: new Uint32Array([0, 1, 2]),
+};
+beforeEach(() => {
+  vi.stubGlobal('Worker', TestWorker);
+  TestWorker.instances = [];
+  render.mockReset();
+});
+afterEach(() => vi.unstubAllGlobals());
+describe('multiview worker lifecycle', () => {
+  it('uses the inferred front instead of a fixed angle chosen by the caller', async () => {
+    const views = ['front', 'left', 'right'].map((direction) => ({
+      direction,
+      blob: new Blob(['PNG']),
+      width: 768,
+      height: 768,
+      anchor: { x: 0.5, y: 0.9 },
+    }));
+    render.mockResolvedValue(views);
+    const client = new MultiViewClient();
+    const blob = new Blob(['transparent product']);
+    const job = client.run(blob, { inputDirection: 'left' }, vi.fn());
+    const worker = TestWorker.instances[0];
+    expect(worker.postMessage).toHaveBeenCalledOnce();
+    expect(worker.postMessage).toHaveBeenCalledWith({ type: 'run', id: 1, blob });
+    worker.reply({ type: 'mesh', id: 1, mesh, orientation, timings });
+    expect((await job).views).toBe(views);
+    expect(render).toHaveBeenCalledWith(
+      mesh,
+      expect.objectContaining({ inputOrientationYawOffset: orientation.yawDegrees }),
+    );
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+  it('rejects duplicate runs, cancels the worker and ignores a cancelled worker error after retry', async () => {
+    const client = new MultiViewClient();
+    const oldJob = client.run(new Blob(['p']), { inputDirection: 'front' }, vi.fn());
+    const rejected = expect(oldJob).rejects.toThrow('취소');
+    await expect(client.run(new Blob(['p']), { inputDirection: 'front' }, vi.fn())).rejects.toThrow(
+      '진행 중',
+    );
+    const old = TestWorker.instances[0];
+    client.dispose();
+    await rejected;
+    const newJob = client.run(new Blob(['p']), { inputDirection: 'right' }, vi.fn());
+    old.onerror?.({ preventDefault: vi.fn() });
+    old.onmessageerror?.();
+    render.mockResolvedValue([]);
+    TestWorker.instances[1].reply({ type: 'mesh', id: 2, mesh, orientation, timings });
+    await expect(newJob).resolves.toHaveProperty('views');
+  });
+  it('does not publish PNGs after cancellation during rendering', async () => {
+    let complete: (value: MultiViewResult['views']) => void = () => {};
+    render.mockReturnValue(
+      new Promise<MultiViewResult['views']>((resolve) => {
+        complete = resolve;
+      }),
+    );
+    const client = new MultiViewClient();
+    const job = client.run(new Blob(['p']), { inputDirection: 'front' }, vi.fn());
+    const rejected = expect(job).rejects.toThrow('취소');
+    TestWorker.instances[0].reply({ type: 'mesh', id: 1, mesh, orientation, timings });
+    const signal = render.mock.calls[0][1].signal as AbortSignal;
+    client.dispose();
+    expect(signal.aborted).toBe(true);
+    complete([]);
+    await rejected;
+  });
+  it('retries a GPU failure once in a fresh CPU worker using the same input and combines timings', async () => {
+    render.mockResolvedValue([]);
+    const client = new MultiViewClient();
+    const blob = new Blob(['transparent']);
+    const job = client.run(blob, { inputDirection: 'front' }, vi.fn());
+    const gpu = TestWorker.instances[0];
+    gpu.reply({
+      type: 'error',
+      id: 1,
+      message: 'GPU lost',
+      retryCpu: true,
+      timings: { ...timings, downloadMs: 10, cacheSource: 'network' },
+    });
+    const cpu = TestWorker.instances[1];
+    expect(gpu.terminate).toHaveBeenCalledOnce();
+    expect(cpu.postMessage).toHaveBeenCalledWith({ type: 'run', id: 1, blob, forceCpu: true });
+    gpu.reply({ type: 'error', id: 1, message: 'late GPU event' });
+    cpu.reply({ type: 'mesh', id: 1, mesh, orientation, timings: { ...timings, backend: 'wasm' } });
+    const result = await job;
+    expect(result.backend).toBe('wasm');
+    expect(result.cacheSource).toBe('network');
+    expect(result.downloadMs).toBe(10);
+    expect(result.initializationMs).toBe(2);
+  });
+  it('does not loop when the CPU attempt also fails', async () => {
+    const client = new MultiViewClient();
+    const job = client.run(new Blob(['p']), { inputDirection: 'front' }, vi.fn());
+    const rejected = expect(job).rejects.toThrow('CPU failure');
+    TestWorker.instances[0].reply({ type: 'error', id: 1, message: 'GPU failure', retryCpu: true });
+    TestWorker.instances[1].reply({ type: 'error', id: 1, message: 'CPU failure', retryCpu: true });
+    await rejected;
+    expect(TestWorker.instances).toHaveLength(2);
+    expect(TestWorker.instances[1].terminate).toHaveBeenCalledOnce();
+  });
+  it('adjusts all camera views from the same mesh without creating another worker and releases the cache on close', async () => {
+    const firstViews = [] as MultiViewResult['views'];
+    const correctedViews = [] as MultiViewResult['views'];
+    render.mockResolvedValueOnce(firstViews).mockResolvedValueOnce(correctedViews);
+    const client = new MultiViewClient();
+    const first = client.run(new Blob(['photo']), { inputDirection: 'left' }, vi.fn());
+    TestWorker.instances[0].reply({ type: 'mesh', id: 1, mesh, orientation, timings });
+    await first;
+    const corrected = await client.rerender({ inputDirection: 'left', yawAdjustmentDegrees: 30 }, vi.fn());
+    expect(corrected.views).toBe(correctedViews);
+    expect(corrected.downloadMs).toBe(0);
+    expect(TestWorker.instances).toHaveLength(1);
+    expect(render.mock.calls[1][0]).toBe(mesh);
+    expect(render.mock.calls[1][1].inputOrientationYawOffset).toBe(orientation.yawDegrees + 30);
+    await expect(
+      client.rerender({ inputDirection: 'left', yawAdjustmentDegrees: 200 }, vi.fn()),
+    ).rejects.toThrow();
+    expect(render).toHaveBeenCalledTimes(2);
+    client.dispose();
+    await expect(client.rerender({ inputDirection: 'front' }, vi.fn())).rejects.toThrow();
+  });
+  it.each(['front', 'left', 'right'] as const)(
+    'infers the same front even if the input is labelled %s',
+    async (inputDirection) => {
+      render.mockResolvedValue([]);
+      const client = new MultiViewClient();
+      const job = client.run(new Blob(['photo']), { inputDirection }, vi.fn());
+      TestWorker.instances[0].reply({ type: 'mesh', id: 1, mesh, orientation, timings });
+      expect((await job).orientation).toEqual(orientation);
+      expect(render.mock.calls[0][1].inputOrientationYawOffset).toBe(-12.5);
+      client.dispose();
+    },
+  );
+  it('needs no direction selection and applies correction relative to the inferred front', async () => {
+    render.mockResolvedValue([]);
+    const progress = vi.fn();
+    const client = new MultiViewClient();
+    const job = client.run(new Blob(['photo']), {}, progress);
+    TestWorker.instances[0].reply({
+      type: 'progress',
+      id: 1,
+      progress: { stage: 'aligning', message: '정면 분석' },
+    });
+    expect(progress).toHaveBeenCalledWith({ stage: 'aligning', message: '정면 분석' });
+    TestWorker.instances[0].reply({ type: 'mesh', id: 1, mesh, orientation, timings });
+    await job;
+    const corrected = await client.rerender({ yawAdjustmentDegrees: 2 }, progress);
+    expect(corrected.orientation).toEqual(orientation);
+    expect(render.mock.calls[1][1].inputOrientationYawOffset).toBe(-10.5);
+    expect(TestWorker.instances).toHaveLength(1);
+    client.dispose();
+  });
+  it('rejects a stale worker reply without orientation instead of silently using zero', async () => {
+    const client = new MultiViewClient();
+    const job = client.run(new Blob(['photo']), {}, vi.fn());
+    const rejected = expect(job).rejects.toThrow('정면 분석');
+    const stale = { type: 'mesh', id: 1, mesh, timings } as MultiViewReply;
+    TestWorker.instances[0].reply(stale);
+    await rejected;
+    expect(render).not.toHaveBeenCalled();
+    expect(TestWorker.instances[0].terminate).toHaveBeenCalledOnce();
+  });
+  it.each([
+    null,
+    { type: 'mesh', id: 1, mesh, orientation },
+    { type: 'mesh', id: 1, mesh, orientation: { ...orientation, confidence: NaN }, timings },
+    { type: 'mesh', id: 1, mesh, orientation, timings: { ...timings, processingMs: NaN } },
+  ])('releases a malformed result instead of leaving the interface busy', async (payload) => {
+    const client = new MultiViewClient();
+    const job = client.run(new Blob(['photo']), {}, vi.fn());
+    const rejected = expect(job).rejects.toThrow('AI');
+    TestWorker.instances[0].reply(payload as unknown as MultiViewReply);
+    await rejected;
+    expect(render).not.toHaveBeenCalled();
+    const retry = client.run(new Blob(['photo']), {}, vi.fn());
+    const cancelled = expect(retry).rejects.toThrow('취소');
+    client.dispose();
+    await cancelled;
+  });
+});

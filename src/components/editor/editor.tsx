@@ -1,4 +1,5 @@
 'use client';
+import { getMaterialImageAssetId, getPreferredProductViewIndex } from '@/lib/material-images';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -285,6 +286,7 @@ export default function Editor({ id }: { id: string }) {
   async function analyzePhoto(source: Scene, request: number) {
     const photoId = source.backgroundAssetId || source.previewAssetId;
     const asset = await getRepositories().assets.get(photoId);
+    if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
     let pending = detectedPhotos.current.get(photoId);
     if (!pending) {
       pending = (async () => {
@@ -401,8 +403,10 @@ export default function Editor({ id }: { id: string }) {
         return;
       }
       const fixtureId = previous?.id || crypto.randomUUID();
-      const view = m.views[0];
+      const viewIndex = getPreferredProductViewIndex(m);
+      const view = m.views[viewIndex];
       const asset = await getRepositories().assets.get(view.assetId);
+      if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
       if (
         useEditor.getState().project?.id !== id ||
         useEditor.getState().project?.editRevision !== captured.project?.editRevision ||
@@ -467,7 +471,7 @@ export default function Editor({ id }: { id: string }) {
           id: fixtureId,
           name: m.name,
           materialVersionId: m.id,
-          viewIndex: 0,
+          viewIndex,
           position,
           width,
           height: (((width * scene.imageWidth) / scene.imageHeight) * asset.height) / asset.width,
@@ -1056,11 +1060,7 @@ export default function Editor({ id }: { id: string }) {
                   >
                     <div className="swatch">
                       <AssetImage
-                        assetId={
-                          v.category === 'tile'
-                            ? v.textureAssetIds[0] || v.coverAssetId
-                            : v.views[0]?.assetId || v.coverAssetId
-                        }
+                        assetId={getMaterialImageAssetId(v)}
                         alt={v.name}
                         className={v.category === 'tile' ? '' : 'product-image'}
                       />

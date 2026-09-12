@@ -1,4 +1,5 @@
 'use client';
+import { getMaterialImageAssetId } from '@/lib/material-images';
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, RotateCcw, X } from 'lucide-react';
@@ -272,11 +273,7 @@ export default function MaterialUsagePanel({
     return (
       <article className="mu-row" data-testid="usage-row" aria-label={`${name} 사용 내역`} key={row.key}>
         <div className="mu-row-heading">
-          <UsageImage
-            assetId={material?.coverAssetId || material?.textureAssetIds[0] || material?.views[0]?.assetId}
-            reader={assetReader}
-            name={name}
-          />
+          <UsageImage assetId={getMaterialImageAssetId(material)} reader={assetReader} name={name} />
           <div>
             <strong>{name}</strong>
             <span>

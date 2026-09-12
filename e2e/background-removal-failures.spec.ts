@@ -17,9 +17,9 @@ async function openUploadedProduct(page: Page) {
     .png()
     .toBuffer();
   await form
-    .getByLabel('+ 제품 방향 이미지 올리기', { exact: true })
+    .getByLabel('+ 제품 이미지 올리기', { exact: true })
     .setInputFiles({ name: 'failure-only.png', mimeType: 'image/png', buffer });
-  await expect(form.getByLabel('+ 제품 방향 이미지 올리기', { exact: true })).toBeEnabled();
+  await expect(form.getByLabel('+ 제품 이미지 올리기', { exact: true })).toBeEnabled();
   await expect(
     form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
   ).toBeVisible();

@@ -1,0 +1,30 @@
+import { describe, it, expect } from 'vitest';
+import { foregroundBounds, rgbNchw, transposeTokens } from '../src/lib/multiview/pixels';
+
+describe('multiview transparent source preparation', () => {
+  it('finds asymmetric foreground without carrying transparent padding into the model crop', () => {
+    const rgba = new Uint8ClampedArray(8 * 6 * 4);
+    for (let y = 2; y < 5; y++) for (let x = 1; x < 4; x++) rgba[(y * 8 + x) * 4 + 3] = 255;
+    expect(foregroundBounds(rgba, 8, 6)).toEqual({ x: 1, y: 2, width: 3, height: 3 });
+  });
+  it('does not run reconstruction on an unremoved background or an empty image', () => {
+    expect(() => foregroundBounds(new Uint8ClampedArray(16).fill(255), 2, 2)).toThrow('배경 제거');
+    expect(() => foregroundBounds(new Uint8ClampedArray(16), 2, 2)).toThrow('제품이 보이지');
+  });
+  it('uses RGB 0..1 channels, as expected by the exported ViT, without background-removal normalization', () => {
+    const value = rgbNchw(new Uint8ClampedArray([255, 128, 0, 255, 0, 255, 128, 255]), 2, 1);
+    expect([...value.slice(0, 2)]).toEqual([1, 0]);
+    expect(value[2]).toBeCloseTo(128 / 255);
+    expect(value[3]).toBe(1);
+    expect(value[4]).toBe(0);
+    expect(value[5]).toBeCloseTo(128 / 255);
+  });
+  it('transposes channel-first image features to token-first without aliasing', () => {
+    const input = new Float32Array([1, 2, 3, 4, 5, 6]);
+    const output = transposeTokens(input, 2, 3);
+    expect([...output]).toEqual([1, 4, 2, 5, 3, 6]);
+    output[0] = 99;
+    expect(input[0]).toBe(1);
+    expect(() => transposeTokens(input, 3, 3)).toThrow('크기');
+  });
+});

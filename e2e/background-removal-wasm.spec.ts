@@ -22,7 +22,7 @@ test('WebGPU 미지원 환경에서 실제 WASM FP32 추론과 반응하는 미�
   await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
   await form.getByLabel('상품명').fill('실제 CPU 배경 제거 검사');
   await form
-    .getByLabel('+ 제품 방향 이미지 올리기', { exact: true })
+    .getByLabel('+ 제품 이미지 올리기', { exact: true })
     .setInputFiles(path.resolve('test-results/background-removal/fixtures/white-toilet.jpg'));
   await expect(form.getByRole('button', { name: /AI 배경 제거 테스트/ })).toBeEnabled();
   await form.getByRole('button', { name: /AI 배경 제거 테스트/ }).click();
@@ -34,7 +34,7 @@ test('WebGPU 미지원 환경에서 실제 WASM FP32 추론과 반응하는 미�
   await expect
     .poll(
       async () => {
-          const status = await dialog.getByRole('status').allTextContents();
+        const status = await dialog.getByRole('status').allTextContents();
         const stage = status.join(' ');
         if (stage !== lastStage) {
           lastStage = stage;

@@ -40,11 +40,7 @@ async function createProductRoom(page: Page) {
   await form.getByLabel('가로 (mm)', { exact: true }).fill('600');
   await form.getByLabel('높이 (mm)', { exact: true }).fill('800');
   await form
-    .getByLabel('대표 이미지 올리기', { exact: true })
-    .setInputFiles({ name: 'basin.png', mimeType: 'image/png', buffer: png });
-  await expect(form.getByLabel('대표 이미지 변경', { exact: true })).toBeEnabled();
-  await form
-    .getByLabel('+ 제품 방향 이미지 올리기', { exact: true })
+    .getByLabel('+ 제품 이미지 올리기', { exact: true })
     .setInputFiles({ name: 'front.png', mimeType: 'image/png', buffer: png });
   await expect(form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })).toHaveCount(
     1,
@@ -136,8 +132,14 @@ test('규격 도기 실제 드래그·원근 크기·잔상 없음·배율·방 
   const download = page.waitForEvent('download');
   await exportDialog.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   const file = await download;
-  await file.saveAs(info.outputPath('room-product.png-export.png'));
-  const meta = await sharp(info.outputPath('room-product.png-export.png')).metadata();
+  expect(await file.failure()).toBe(null);
+  // Read the downloaded bytes without copying Windows sandbox file permissions.
+  const stream = await file.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+  const png = Buffer.concat(chunks);
+  await info.attach('room-product-export', { body: png, contentType: 'image/png' });
+  const meta = await sharp(png).metadata();
   expect(meta.width).toBe(4096);
   expect(meta.height).toBe(2731);
   expect(errors).toEqual([]);

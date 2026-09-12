@@ -1,0 +1,17 @@
+/** Upstream TripoSR MIT; this ONNX export Apache-2.0. Verified 2026-09-11. */
+export const MULTIVIEW_MODEL_ID = 'dcharlot65-aurasense/triposr-onnx-web';
+export const MULTIVIEW_MODEL_REVISION = 'e23007c3ce90bb968eae014c0168981871fe2d0d';
+export const MULTIVIEW_MODEL_CACHE = 'sjn-multiview-model-v1';
+export const MULTIVIEW_RUNTIME_URL = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/';
+export const MULTIVIEW_FILES = {
+  encoder: { file: 'encoder_fp16.onnx', bytes: 173_383_497 },
+  backbone: { file: 'backbone_fp16.onnx', bytes: 666_470_899 },
+  decoder: { file: 'decoder_fp16.onnx', bytes: 97_734 },
+} as const;
+export type MultiViewModelPart = keyof typeof MULTIVIEW_FILES;
+export const MULTIVIEW_DOWNLOAD_BYTES = Object.values(MULTIVIEW_FILES).reduce((sum, f) => sum + f.bytes, 0);
+export function multiViewModelUrl(part: MultiViewModelPart) {
+  return `https://huggingface.co/${MULTIVIEW_MODEL_ID}/resolve/${MULTIVIEW_MODEL_REVISION}/${MULTIVIEW_FILES[part].file}`;
+}
+
+export const MULTIVIEW_PART_LABELS = { encoder: '사진 분석', backbone: '제품 형태 복원', decoder: '표면·색상' } as const;

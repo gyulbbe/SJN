@@ -1,0 +1,63 @@
+import type { FrontOrientationEstimate } from './orientation';
+
+export type ViewDirection = 'left' | 'front' | 'right';
+export interface MultiViewOptions {
+  /** Legacy hint, retained for callers; actual front is inferred from the mesh. */
+  inputDirection?: ViewDirection;
+  yawAdjustmentDegrees?: number;
+}
+export interface MultiViewProgress {
+  stage:
+    | 'checking'
+    | 'loading-runtime'
+    | 'download'
+    | 'initializing'
+    | 'encoding'
+    | 'reconstructing'
+    | 'geometry'
+    | 'coloring'
+    | 'aligning'
+    | 'rendering';
+  message: string;
+  loadedBytes?: number;
+  totalBytes?: number;
+  completed?: number;
+  total?: number;
+}
+export interface MultiViewMesh {
+  positions: Float32Array;
+  indices: Uint32Array;
+  colors: Float32Array;
+}
+export interface MultiViewImage {
+  direction: ViewDirection;
+  blob: Blob;
+  width: number;
+  height: number;
+  anchor: { x: number; y: number };
+}
+export interface MultiViewTimings {
+  downloadMs: number;
+  initializationMs: number;
+  processingMs: number;
+  cacheSource: 'network' | 'cache';
+  cacheNotice?: string;
+  backend?: 'webgpu' | 'wasm';
+  modelId: string;
+  modelRevision: string;
+}
+export interface MultiViewResult extends MultiViewTimings {
+  orientation: FrontOrientationEstimate;
+  views: MultiViewImage[];
+}
+export type MultiViewRequest = { type: 'run'; id: number; blob: Blob; forceCpu?: boolean };
+export type MultiViewReply =
+  | { type: 'progress'; id: number; progress: MultiViewProgress }
+  | {
+      type: 'mesh';
+      id: number;
+      mesh: MultiViewMesh;
+      orientation: FrontOrientationEstimate;
+      timings: MultiViewTimings;
+    }
+  | { type: 'error'; id: number; message: string; retryCpu?: boolean; timings?: MultiViewTimings };

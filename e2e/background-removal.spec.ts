@@ -58,11 +58,11 @@ async function uploadView(form: Locator, file: string | { name: string; mimeType
   const count = await form
     .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
     .count();
-  await form.getByLabel('+ 제품 방향 이미지 올리기', { exact: true }).setInputFiles(file);
+  await form.getByLabel('+ 제품 이미지 올리기', { exact: true }).setInputFiles(file);
   await expect(form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })).toHaveCount(
     count + 1,
   );
-  await expect(form.getByLabel('+ 제품 방향 이미지 올리기', { exact: true })).toBeEnabled();
+  await expect(form.getByLabel('+ 제품 이미지 올리기', { exact: true })).toBeEnabled();
   return count;
 }
 
@@ -270,7 +270,6 @@ test.describe('실제 BiRefNet 추론', () => {
         ).toBe(sourcePreview);
       }
     }
-    await form.getByRole('button', { name: '대표 이미지로 사용', exact: true }).first().click();
     await form.getByRole('button', { name: '자재 등록', exact: true }).click();
     await expect(form).toHaveCount(0);
     await page.reload();

@@ -1,0 +1,363 @@
+import { chromium, expect, test, type Page } from '@playwright/test';
+import { build } from 'esbuild';
+import {
+  appendFileSync,
+  createReadStream,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import path from 'node:path';
+import sharp from 'sharp';
+import type { MultiViewMesh } from '../src/lib/multiview/types';
+
+const output = path.resolve(process.env.SJN_FRONT_ALIGNMENT_OUTPUT ?? 'test-results/front-alignment');
+const fixtures = [
+  { name: 'chair', directory: 'test-results/multiview-chair-left', referenceYaw: -14 },
+  { name: 'toilet', directory: 'test-results/multiview-quality-toilet-after', referenceYaw: -7 },
+];
+const fields = ['positions', 'indices', 'colors'] as const;
+function encodedMesh(directory: string) {
+  return Object.fromEntries(
+    fields.map((field) => [
+      field,
+      readFileSync(path.join(directory, `mesh-${field}.bin`)).toString('base64'),
+    ]),
+  ) as Record<(typeof fields)[number], string>;
+}
+async function dataUrl(page: Page, selector: string) {
+  return page.locator(selector).evaluate(async (image: HTMLImageElement) => {
+    const blob = await (await fetch(image.src)).blob();
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  });
+}
+function saveImage(file: string, url: string) {
+  writeFileSync(file, Buffer.from(url.split(',')[1], 'base64'));
+}
+
+/** Saved real AI geometry replay; this test does not run TripoSR inference. */
+test('자동 정면: 실제 메시의 알려진 좌우 회전에서 정면 기준과 양쪽 뷰를 일관되게 복원', async () => {
+  test.skip(process.env.SJN_FRONT_ALIGNMENT_REPLAY !== '1', 'Opt-in saved real mesh replay.');
+  test.setTimeout(180_000);
+  mkdirSync(output, { recursive: true });
+  for (const fixture of fixtures)
+    expect(existsSync(path.join(fixture.directory, 'mesh-positions.bin'))).toBe(true);
+  const bundle = await build({
+    stdin: {
+      contents: `export { estimateFrontOrientation } from './src/lib/multiview/orientation'; export { renderThreeViews } from './src/lib/multiview/render';`,
+      resolveDir: process.cwd(),
+    },
+    bundle: true,
+    write: false,
+    format: 'iife',
+    globalName: 'FrontAlignmentQA',
+    platform: 'browser',
+  });
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  const page = await browser.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const reports = [];
+  try {
+    await page.setContent('<html><body>Saved actual AI mesh orientation replay</body></html>');
+    await page.addScriptTag({ content: bundle.outputFiles[0].text });
+    for (const fixture of fixtures) {
+      const encoded = encodedMesh(fixture.directory);
+      const report = await page.evaluate(
+        async ({ encoded, referenceYaw }) => {
+          const api = (
+            globalThis as unknown as {
+              FrontAlignmentQA: typeof import('../src/lib/multiview/orientation') &
+                typeof import('../src/lib/multiview/render');
+            }
+          ).FrontAlignmentQA;
+          const decode = (field: keyof typeof encoded) =>
+            Uint8Array.from(atob(encoded[field]), (character) => character.charCodeAt(0)).buffer;
+          const mesh: MultiViewMesh = {
+            positions: new Float32Array(decode('positions')),
+            indices: new Uint32Array(decode('indices')),
+            colors: new Float32Array(decode('colors')),
+          };
+          const asDataUrl = (blob: Blob) =>
+            new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result));
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(blob);
+            });
+          const result = [];
+          for (const rotation of [0, -12, 12, 40]) {
+            const radians = (rotation * Math.PI) / 180;
+            const positions = mesh.positions.slice();
+            for (let i = 0; i < positions.length; i += 3) {
+              const x = positions[i],
+                y = positions[i + 1];
+              positions[i] = x * Math.cos(radians) - y * Math.sin(radians);
+              positions[i + 1] = x * Math.sin(radians) + y * Math.cos(radians);
+            }
+            const rotated = { ...mesh, positions };
+            const started = performance.now();
+            const estimate = await api.estimateFrontOrientation(rotated, { sourceYawDegrees: 0 });
+            const elapsedMs = performance.now() - started;
+            const views = await api.renderThreeViews(rotated, {
+              size: 512,
+              inputOrientationYawOffset: estimate.yawDegrees,
+            });
+            result.push({
+              rotation,
+              estimate,
+              elapsedMs,
+              views: await Promise.all(
+                views.map(async (view) => ({
+                  direction: view.direction,
+                  dataUrl: await asDataUrl(view.blob),
+                })),
+              ),
+            });
+          }
+          // New source camera views are synthesized from known real AI geometry.
+          // They are later sent through REAL model inference; they are not original photographs.
+          const inputs = [];
+          for (const offset of [-12, 12, -40]) {
+            const views = await api.renderThreeViews(mesh, {
+              size: 768,
+              inputOrientationYawOffset: referenceYaw + offset,
+            });
+            inputs.push({
+              offset,
+              dataUrl: await asDataUrl(views.find((view) => view.direction === 'front')!.blob),
+            });
+          }
+          return { result, inputs };
+        },
+        { encoded, referenceYaw: fixture.referenceYaw },
+      );
+      const base = report.result[0].estimate.yawDegrees;
+      expect(
+        Math.abs(base - fixture.referenceYaw),
+        `${fixture.name}: independently viewed front reference`,
+      ).toBeLessThan(10);
+      const panels = [];
+      for (const row of report.result) {
+        const difference = ((row.estimate.yawDegrees - base - row.rotation + 540) % 360) - 180;
+        expect(Math.abs(difference), `${fixture.name}: ${row.rotation}° equivariance`).toBeLessThan(4);
+        for (const view of row.views) {
+          const file = path.join(output, `${fixture.name}-rot${row.rotation}-${view.direction}.png`);
+          saveImage(file, view.dataUrl);
+          const metadata = await sharp(file).metadata();
+          expect(metadata.hasAlpha).toBe(true);
+          if (view.direction === 'front')
+            panels.push({
+              input: await sharp(file).resize(256, 256).flatten({ background: '#eeeeee' }).png().toBuffer(),
+              left: panels.length * 256,
+              top: 30,
+            });
+        }
+      }
+      const labels = Buffer.from(
+        `<svg width="1024" height="30">${report.result.map((row, index) => `<text x="${index * 256 + 15}" y="22">input rotation ${row.rotation}; front ${row.estimate.yawDegrees.toFixed(1)}</text>`).join('')}</svg>`,
+      );
+      await sharp({ create: { width: 1024, height: 286, channels: 3, background: 'white' } })
+        .composite([...panels, { input: labels, left: 0, top: 0 }])
+        .png()
+        .toFile(path.join(output, `${fixture.name}-front-equivariance.png`));
+      for (const input of report.inputs)
+        saveImage(path.join(output, `${fixture.name}-input-${input.offset}.png`), input.dataUrl);
+      reports.push({
+        name: fixture.name,
+        referenceYaw: fixture.referenceYaw,
+        inference: false,
+        results: report.result.map(({ views, ...rest }) => ({
+          ...rest,
+          views: views.map((view) => view.direction),
+        })),
+      });
+    }
+    expect(errors).toEqual([]);
+    writeFileSync(path.join(output, 'replay-measurements.json'), JSON.stringify(reports, null, 2));
+  } finally {
+    await browser.close();
+  }
+});
+
+/** REAL model through the production UI. Only transport uses local pinned model files. */
+test('실추론: 미세 좌우 사진을 정면으로 선택해도 공통 정면을 먼저 찾고 좌우 결과 생성', async () => {
+  test.skip(
+    process.env.SJN_FRONT_ALIGNMENT_REAL !== '1',
+    'Opt-in actual model inference (large model / GPU).',
+  );
+  test.setTimeout(1_800_000);
+  mkdirSync(output, { recursive: true });
+  const inputs: { name: string; file: string; label: string; provenance: string }[] = process.env
+    .SJN_FRONT_ALIGNMENT_INPUT
+    ? [
+        {
+          name: 'photograph',
+          file: process.env.SJN_FRONT_ALIGNMENT_INPUT,
+          label: process.env.SJN_FRONT_ALIGNMENT_LABEL ?? '정면',
+          provenance: 'User-supplied photograph; precise source camera yaw unknown',
+        },
+      ]
+    : [-12, 12, -40].map((offset) => ({
+        name: `chair-${offset}`,
+        file: path.join(output, `chair-input-${offset}.png`),
+        label: offset === -40 ? '오른쪽 측면' : '정면',
+        provenance: `Synthetic camera ${offset} degrees from visually inspected front of previous real TripoSR chair mesh`,
+      }));
+  for (const input of inputs)
+    expect(
+      existsSync(input.file),
+      'Run saved mesh replay before actual inference, or set SJN_FRONT_ALIGNMENT_INPUT.',
+    ).toBe(true);
+  const modelServer = createServer((request, response) => {
+    const filename = path.basename(new URL(request.url!, 'http://localhost').pathname);
+    if (!['encoder_fp16.onnx', 'backbone_fp16.onnx', 'decoder_fp16.onnx'].includes(filename)) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'access-control-allow-origin': '*',
+    });
+    createReadStream(path.resolve('tmp/multiview-model', filename)).pipe(response);
+  });
+  await new Promise<void>((resolve) => modelServer.listen(0, '127.0.0.1', resolve));
+  const modelOrigin = `http://127.0.0.1:${(modelServer.address() as AddressInfo).port}`;
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  const context = await browser.newContext({ viewport: { width: 1500, height: 1050 } });
+  const models: string[] = [];
+  await context.route('https://huggingface.co/**/triposr-onnx-web/**', async (route) => {
+    const filename = path.basename(new URL(route.request().url()).pathname);
+    expect(['encoder_fp16.onnx', 'backbone_fp16.onnx', 'decoder_fp16.onnx']).toContain(filename);
+    models.push(filename);
+    await route.fulfill({
+      status: 307,
+      headers: { location: `${modelOrigin}/${filename}`, 'access-control-allow-origin': '*' },
+    });
+  });
+  const page = await context.newPage();
+  const observations: unknown[] = [];
+  writeFileSync(path.join(output, 'real-progress.jsonl'), '');
+  const record = (message: unknown) => {
+    observations.push(message);
+    appendFileSync(
+      path.join(output, 'real-progress.jsonl'),
+      JSON.stringify({ time: new Date().toISOString(), message }) + '\n',
+    );
+  };
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') record({ console: message.text() });
+  });
+  page.on('crash', () => record({ browser: 'page crashed' }));
+  page.on('close', () => record({ browser: 'page closed' }));
+  await page.exposeFunction('recordFrontMessage', record);
+  await page.addInitScript(() => {
+    const NativeWorker = Worker;
+    const target = globalThis as unknown as {
+      recordFrontMessage: (message: unknown) => void;
+      actualFrontMesh?: MultiViewMesh;
+    };
+    class ObservedWorker extends NativeWorker {
+      constructor(url: URL | string, options?: WorkerOptions) {
+        super(url, options);
+        if (options?.name === 'sjn-multiview')
+          this.addEventListener('message', ({ data }) => {
+            if (data.type === 'mesh') target.actualFrontMesh = data.mesh;
+            target.recordFrontMessage({
+              type: data.type,
+              progress: data.progress,
+              orientation: data.orientation,
+              timings: data.timings,
+              message: data.message,
+            });
+          });
+      }
+    }
+    globalThis.Worker = ObservedWorker;
+  });
+  const reports = [];
+  try {
+    for (const input of inputs) {
+      const caseDirectory = path.join(output, input.name);
+      mkdirSync(caseDirectory, { recursive: true });
+      await page.goto('http://127.0.0.1:3000/materials');
+      await page.getByRole('button', { name: '자재 등록', exact: true }).click();
+      const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
+      await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
+      await form.getByLabel('상품명').fill(`자동 정면 QA ${input.name}`);
+      await form.getByLabel('+ 제품 방향 이미지 올리기', { exact: true }).setInputFiles(input.file);
+      await form.getByLabel('촬영 방향 1', { exact: true }).selectOption(input.label);
+      await form.getByRole('button', { name: `${input.label} 사진 AI 3방향 생성`, exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'AI 3방향 이미지 생성', exact: true });
+      await expect(dialog.getByTestId('multiview-source')).toBeVisible();
+      const began = observations.length;
+      const started = Date.now();
+      await dialog.getByRole('button', { name: '3방향 생성 시작', exact: true }).click();
+      await expect
+        .poll(
+          async () => {
+            if (await dialog.getByRole('alert').count())
+              throw new Error(await dialog.getByRole('alert').innerText());
+            return dialog.getByTestId('multiview-result-front').count();
+          },
+          { timeout: 600_000, intervals: [1000, 2000] },
+        )
+        .toBe(1);
+      await expect(dialog.getByRole('button', { name: '3방향 모두 적용', exact: true })).toBeEnabled();
+      await expect(dialog.getByTestId('front-orientation')).toBeVisible();
+      for (const direction of ['front', 'left', 'right'])
+        saveImage(
+          path.join(caseDirectory, `${direction}.png`),
+          await dataUrl(page, `[data-testid="multiview-result-${direction}"]`),
+        );
+      const mesh = await page.evaluate(async () => {
+        const mesh = (globalThis as unknown as { actualFrontMesh: MultiViewMesh }).actualFrontMesh;
+        return Object.fromEntries(
+          await Promise.all(
+            (['positions', 'indices', 'colors'] as const).map(async (key) => {
+              const base64 = await new Promise<string>((resolve) => {
+                const r = new FileReader();
+                r.onload = () => resolve(String(r.result).split(',')[1]);
+                r.readAsDataURL(new Blob([new Uint8Array(mesh[key].buffer as ArrayBuffer)]));
+              });
+              return [key, base64];
+            }),
+          ),
+        );
+      });
+      for (const field of fields)
+        writeFileSync(path.join(caseDirectory, `mesh-${field}.bin`), Buffer.from(mesh[field], 'base64'));
+      await dialog.screenshot({ path: path.join(caseDirectory, 'ui.png') });
+      const events = observations.slice(began);
+      expect(events.some((event) => (event as { type: string }).type === 'mesh')).toBe(true);
+      expect(events.some((event) => (event as { type: string }).type === 'error')).toBe(false);
+      reports.push({
+        ...input,
+        elapsedMs: Date.now() - started,
+        events,
+        manualCorrection: 0,
+        inference: true,
+      });
+      writeFileSync(
+        path.join(output, 'real-measurements.json'),
+        JSON.stringify({ reports, modelTransports: models }, null, 2),
+      );
+      await dialog.getByRole('button', { name: '3방향 모두 적용', exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(
+        form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+      ).toHaveCount(3);
+    }
+  } finally {
+    await browser.close();
+    await new Promise<void>((resolve) => modelServer.close(() => resolve()));
+  }
+});

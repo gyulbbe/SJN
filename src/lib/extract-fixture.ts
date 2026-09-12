@@ -206,8 +206,7 @@ export async function registerExtractedFixture(
     depthMm: options.depthMm ?? 0,
     usage: 'both',
     installation: 'floor',
-    coverAssetId: asset.id,
-    imageAssetIds: [asset.id],
+
     textureAssetIds: [],
     views: [{ assetId: asset.id, direction: '원본 사진 방향', anchor: { ...extracted.anchor } }],
     defaultGroutWidth: 2,

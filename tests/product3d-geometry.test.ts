@@ -1,0 +1,269 @@
+import { describe, expect, it } from 'vitest';
+import { extractMesh, refineMeshSurface, sampleSurfaceColors } from '../src/lib/product3d/geometry';
+
+function grid(size: number, field: (x: number, y: number, z: number) => number) {
+  const values = new Float32Array(size ** 3);
+  for (let x = 0; x < size; x++)
+    for (let y = 0; y < size; y++)
+      for (let z = 0; z < size; z++) {
+        values[(x * size + y) * size + z] = field(
+          -1 + (2 * x) / (size - 1),
+          -1 + (2 * y) / (size - 1),
+          -1 + (2 * z) / (size - 1),
+        );
+      }
+  return values;
+}
+
+describe('TripoSR density isosurface', () => {
+  it('keeps xyz ij ordering and interpolates between samples instead of voxel faces', () => {
+    const mesh = extractMesh(
+      grid(6, (x, y) => x + y * 0.3),
+      undefined,
+      6,
+      1,
+      0.123,
+    );
+    expect(mesh.indices.length).toBeGreaterThan(0);
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      expect(mesh.positions[i] + mesh.positions[i + 1] * 0.3).toBeCloseTo(0.123, 6);
+      expect(Math.abs(mesh.positions[i + 2])).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('extracts a closed sphere with shared vertices and consistently outward normals', () => {
+    const mesh = extractMesh(
+      grid(20, (x, y, z) => 1 - x * x - y * y - z * z),
+      undefined,
+      20,
+      1,
+      0.6,
+    );
+    const edges = new Map<string, number>();
+    for (let i = 0; i < mesh.indices.length; i += 3) {
+      const ids = [mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]];
+      for (let e = 0; e < 3; e++) {
+        const a = ids[e],
+          b = ids[(e + 1) % 3];
+        const key = `${Math.min(a, b)}:${Math.max(a, b)}`;
+        edges.set(key, (edges.get(key) ?? 0) + 1);
+      }
+      const [a, b, c] = ids.map((id) => [...mesh.positions.slice(id * 3, id * 3 + 3)]);
+      const ab = b.map((v, axis) => v - a[axis]);
+      const ac = c.map((v, axis) => v - a[axis]);
+      const normal = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+      ];
+      expect(normal.reduce((sum, n, axis) => sum + n * a[axis], 0)).toBeGreaterThan(0);
+    }
+    expect([...edges.values()].every((uses) => uses === 2)).toBe(true);
+    expect(mesh.positions.length).toBeLessThan(mesh.indices.length);
+  });
+
+  it('interpolates RGB at the surface and preserves caller arrays', () => {
+    const density = grid(5, (x) => x);
+    const original = density.slice();
+    const colors = new Float32Array(density.length * 3);
+    for (let i = 0; i < density.length; i++) colors.set([(density[i] + 1) / 2, 0.5, 1], i * 3);
+    const mesh = extractMesh(density, colors, 5, 1, 0.25);
+    expect(mesh.colors?.length).toBe(mesh.positions.length);
+    for (let i = 0; i < mesh.colors!.length; i += 3)
+      expect([...mesh.colors!.slice(i, i + 3)]).toEqual([0.625, 0.5, 1]);
+    expect(density).toEqual(original);
+  });
+
+  it('welds exact threshold corners without zero-area triangles', () => {
+    const mesh = extractMesh(
+      grid(5, (x) => x),
+      undefined,
+      5,
+      1,
+      0,
+    );
+    const unique = new Set<string>();
+    for (let i = 0; i < mesh.positions.length; i += 3)
+      unique.add([...mesh.positions.slice(i, i + 3)].join(','));
+    expect(unique.size).toBe(mesh.positions.length / 3);
+    expect(mesh.indices.length).toBeGreaterThan(0);
+    for (let i = 0; i < mesh.positions.length; i += 3) expect(mesh.positions[i]).toBe(0);
+  });
+
+  it('returns an empty surface for a field with no threshold crossing', () => {
+    expect(extractMesh(new Float32Array(8), undefined, 2, 0.87, 25).indices.length).toBe(0);
+    expect(extractMesh(new Float32Array(8).fill(26), undefined, 2, 0.87, 25).indices.length).toBe(0);
+  });
+
+  it('rejects invalid grids and failed model numeric output', () => {
+    expect(() => extractMesh(new Float32Array(8), undefined, 2.5, 1, 25)).toThrow();
+    expect(() => extractMesh(new Float32Array(8), undefined, 2, 0, 25)).toThrow();
+    expect(() => extractMesh(new Float32Array(7), undefined, 2, 1, 25)).toThrow();
+    expect(() => extractMesh(new Float32Array(8).fill(NaN), undefined, 2, 1, 25)).toThrow();
+    expect(() => extractMesh(new Float32Array(8), new Float32Array(5), 2, 1, 25)).toThrow();
+  });
+});
+
+function queryField(field: (x: number, y: number, z: number) => number) {
+  return async (points: Float32Array) => {
+    const values = new Float32Array(points.length / 3);
+    for (let i = 0; i < values.length; i++)
+      values[i] = field(points[i * 3], points[i * 3 + 1], points[i * 3 + 2]);
+    return values;
+  };
+}
+
+describe('decoder surface refinement', () => {
+  it('converges to a nonlinear density plane and colors the final coordinates without mutating the grid or topology', async () => {
+    const field = (x: number, y: number) => 25 * Math.exp(9 * (x + 0.2 * y - 0.137));
+    const density = grid(7, field);
+    const mesh = extractMesh(density, undefined, 7, 1, 25);
+    const original = {
+      density: density.slice(),
+      positions: mesh.positions.slice(),
+      indices: mesh.indices.slice(),
+      edges: mesh.crossingEdges.slice(),
+    };
+    const progress: [number, number][] = [];
+    const positions = await refineMeshSurface(mesh, density, 7, 1, 25, queryField(field), {
+      chunkSize: 17,
+      onProgress: (completed, total) => progress.push([completed, total]),
+    });
+    let initialError = 0,
+      refinedError = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      initialError = Math.max(
+        initialError,
+        Math.abs(mesh.positions[i] + 0.2 * mesh.positions[i + 1] - 0.137),
+      );
+      refinedError = Math.max(refinedError, Math.abs(positions[i] + 0.2 * positions[i + 1] - 0.137));
+    }
+    expect(initialError).toBeGreaterThan(0.02);
+    expect(refinedError).toBeLessThan(0.002);
+    expect(progress.at(-1)).toEqual([(7 * positions.length) / 3, (7 * positions.length) / 3]);
+    expect(progress.every(([value], i) => i === 0 || value > progress[i - 1][0])).toBe(true);
+    const sampledPoints: number[] = [];
+    const colors = await sampleSurfaceColors(
+      positions,
+      async (points) => {
+        const start = sampledPoints.length;
+        const count = Math.min(points.length, positions.length - start);
+        sampledPoints.push(...points.slice(0, count));
+        expect([...points.slice(count)].every((value) => value === 0)).toBe(true);
+        return points.map((value) => (value + 1) / 2);
+      },
+      { chunkSize: 17 },
+    );
+    expect(sampledPoints).toEqual([...positions]);
+    expect(colors).toEqual(positions.map((value) => (value + 1) / 2));
+    expect(density).toEqual(original.density);
+    expect(mesh.positions).toEqual(original.positions);
+    expect(mesh.indices).toEqual(original.indices);
+    expect(mesh.crossingEdges).toEqual(original.edges);
+  });
+
+  it('refines a nonlinear sphere while preserving shared vertices and closed triangle connectivity', async () => {
+    const field = (x: number, y: number, z: number) => 25 * Math.exp(8 * (0.44 - x * x - y * y - z * z));
+    const density = grid(9, field);
+    const mesh = extractMesh(density, undefined, 9, 1, 25);
+    const positions = await refineMeshSurface(mesh, density, 9, 1, 25, queryField(field), { chunkSize: 31 });
+    const edges = new Map<string, number>();
+    for (let i = 0; i < positions.length; i += 3) {
+      expect(
+        Math.abs(Math.hypot(positions[i], positions[i + 1], positions[i + 2]) - Math.sqrt(0.44)),
+      ).toBeLessThan(0.002);
+    }
+    for (let i = 0; i < mesh.indices.length; i += 3) {
+      const triangle = mesh.indices.slice(i, i + 3);
+      for (let e = 0; e < 3; e++) {
+        const a = triangle[e],
+          b = triangle[(e + 1) % 3];
+        const key = [Math.min(a, b), Math.max(a, b)].join(':');
+        edges.set(key, (edges.get(key) ?? 0) + 1);
+      }
+    }
+    expect([...edges.values()].every((uses) => uses === 2)).toBe(true);
+    expect(positions.length).toBe(mesh.positions.length);
+  });
+
+  it('keeps exact threshold corners at the origin welded and freezes exact midpoint hits', async () => {
+    for (const crossing of [0, 0.125]) {
+      const field = (x: number) => 25 * Math.exp(3 * (x - crossing));
+      const density = grid(5, field);
+      const mesh = extractMesh(density, undefined, 5, 1, 25);
+      const positions = await refineMeshSurface(mesh, density, 5, 1, 25, queryField(field), {
+        chunkSize: 11,
+      });
+      for (let i = 0; i < positions.length; i += 3) expect(positions[i]).toBe(crossing);
+      const unique = new Set<string>();
+      for (let i = 0; i < positions.length; i += 3) unique.add([...positions.slice(i, i + 3)].join(','));
+      expect(unique.size).toBe(positions.length / 3);
+    }
+  });
+
+  it('keeps fixed batch padding finite and tolerates FP16 positive density overflow inside solid areas', async () => {
+    const field = (x: number) => 25 * Math.exp(3 * (x - 0.137));
+    const density = grid(5, field);
+    const mesh = extractMesh(density, undefined, 5, 1, 25);
+    const query = queryField((x) => (x > 0.2 ? Infinity : field(x)));
+    let batch = 0;
+    const size = 13;
+    const positions = await refineMeshSurface(
+      mesh,
+      density,
+      5,
+      1,
+      25,
+      async (points) => {
+        const offset = (batch++ % Math.ceil(mesh.positions.length / 3 / size)) * size;
+        const count = Math.min(size, mesh.positions.length / 3 - offset);
+        expect(points.length).toBe(size * 3);
+        expect([...points].every(Number.isFinite)).toBe(true);
+        expect([...points.slice(count * 3)].every((value) => value === 0)).toBe(true);
+        return query(points);
+      },
+      { chunkSize: size },
+    );
+    for (let i = 0; i < positions.length; i += 3) expect(Math.abs(positions[i] - 0.137)).toBeLessThan(0.002);
+  });
+
+  it('rejects invalid density results and invalid crossing brackets without changing the original mesh', async () => {
+    const density = grid(3, (x) => 25 * Math.exp(x));
+    const mesh = extractMesh(density, undefined, 3, 1, 25);
+    const original = mesh.positions.slice();
+    for (const invalid of [NaN, -Infinity, -1]) {
+      await expect(
+        refineMeshSurface(mesh, density, 3, 1, 25, async () => new Float32Array(5).fill(invalid), {
+          chunkSize: 5,
+        }),
+      ).rejects.toThrow('유효하지 않은 밀도');
+    }
+    await expect(
+      refineMeshSurface(mesh, density, 3, 1, 25, async () => new Float32Array(4), { chunkSize: 5 }),
+    ).rejects.toThrow('크기');
+    const badMesh = { ...mesh, crossingEdges: mesh.crossingEdges.slice() };
+    badMesh.crossingEdges[0] = density.length;
+    await expect(
+      refineMeshSurface(
+        badMesh,
+        density,
+        3,
+        1,
+        25,
+        queryField((x) => 25 * Math.exp(x)),
+      ),
+    ).rejects.toThrow('격자 경계');
+    expect(mesh.positions).toEqual(original);
+  });
+
+  it('rejects invalid colors or output shape instead of returning a partially colored mesh', async () => {
+    const positions = new Float32Array([0, 0, 0]);
+    await expect(
+      sampleSurfaceColors(positions, async () => new Float32Array(2), { chunkSize: 1 }),
+    ).rejects.toThrow('크기');
+    await expect(
+      sampleSurfaceColors(positions, async () => new Float32Array([1, NaN, 0]), { chunkSize: 1 }),
+    ).rejects.toThrow('유효하지 않은 색상');
+    expect(positions).toEqual(new Float32Array(3));
+  });
+});

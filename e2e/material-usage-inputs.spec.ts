@@ -43,9 +43,6 @@ test('자재 포장 확인, 수량·단가 Enter/blur 단일 기록과 빈 값·
     .png()
     .toBuffer();
   await form.getByLabel('상품명').fill('입력 확인 타일');
-  await form
-    .getByLabel('대표 이미지 올리기', { exact: true })
-    .setInputFiles({ name: 'tile.png', mimeType: 'image/png', buffer });
   await expect(form.getByLabel('+ 타일 텍스처 올리기', { exact: true })).toBeEnabled();
   await form
     .getByLabel('+ 타일 텍스처 올리기', { exact: true })

@@ -87,6 +87,7 @@ export async function createReconstructionAppearance(options: {
   signal?: AbortSignal;
 }): Promise<string | undefined> {
   abort(options.signal);
+  if (options.reference.kind === 'product-mesh') throw new Error('재구성 기준 사진이 필요해요.');
   const quad = reconstructionAppearanceQuad(options.candidate, options.plane);
   if (!quad) return;
   const bitmap = await createImageBitmap(options.reference.blob);

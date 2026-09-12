@@ -1,0 +1,214 @@
+import * as THREE from 'three';
+import type { ReconstructedMesh } from './geometry';
+
+export type GeneratedDirection = 'left' | 'front' | 'right';
+
+export interface RenderedProductView {
+  direction: GeneratedDirection;
+  blob: Blob;
+  width: number;
+  height: number;
+  /** Center of the projected object bottom edge, excluding transparent padding. */
+  anchor: { x: number; y: number };
+}
+
+export interface ThreeViewRenderOptions {
+  size?: number;
+  /** Camera azimuth that views the product from its actual front, in degrees. */
+  inputOrientationYawOffset?: number;
+  /** The three cameras share this elevation and a single framing. */
+  elevationDegrees?: number;
+  sideAngleDegrees?: number;
+  signal?: AbortSignal;
+  onProgress?: (completed: number, total: number) => void;
+}
+
+/** TripoSR coordinates: +z up, azimuth starts at +x and turns toward +y. */
+export function viewCameraPosition(azimuthDegrees: number, elevationDegrees: number, distance: number) {
+  const azimuth = THREE.MathUtils.degToRad(azimuthDegrees);
+  const elevation = THREE.MathUtils.degToRad(elevationDegrees);
+  return new THREE.Vector3(
+    distance * Math.cos(elevation) * Math.cos(azimuth),
+    distance * Math.cos(elevation) * Math.sin(azimuth),
+    distance * Math.sin(elevation),
+  );
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException('방향 이미지 생성을 취소했습니다.', 'AbortError');
+}
+
+function pngBlob(canvas: HTMLCanvasElement, signal?: AbortSignal): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (blob: Blob | null, error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', abort);
+      if (error) reject(error);
+      else if (blob) resolve(blob);
+      else reject(new Error('방향 이미지를 투명 PNG로 만들지 못했습니다.'));
+    };
+    const abort = () => finish(null, new DOMException('방향 이미지 생성을 취소했습니다.', 'AbortError'));
+    const timeout = setTimeout(
+      () => finish(null, new Error('투명 PNG 저장 시간이 초과되었습니다. 다시 시도해 주세요.')),
+      30_000,
+    );
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    try {
+      canvas.toBlob((blob) => finish(blob), 'image/png');
+    } catch (error) {
+      finish(null, error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+/**
+ * All three transparent PNGs are newly rendered from the SAME AI mesh. Model
+ * vertex colors already contain appearance; extra lighting would tint white
+ * ceramics or make the two sides inconsistent, so use unlit vertex colors.
+ * Does not make URLs, persist assets or modify input geometry.
+ */
+export async function renderThreeViews(
+  mesh: ReconstructedMesh,
+  options: ThreeViewRenderOptions = {},
+): Promise<RenderedProductView[]> {
+  throwIfAborted(options.signal);
+  if (
+    !mesh.positions.length ||
+    mesh.positions.length % 3 ||
+    !mesh.indices.length ||
+    mesh.indices.length % 3
+  ) {
+    throw new Error(
+      'AI가 렌더링할 수 있는 제품 형상을 만들지 못했습니다. 제품이 또렷한 사진으로 다시 시도해 주세요.',
+    );
+  }
+  if (!mesh.colors || mesh.colors.length !== mesh.positions.length) {
+    throw new Error('AI 제품 형상의 색상 데이터가 올바르지 않습니다.');
+  }
+  for (const value of mesh.positions)
+    if (!Number.isFinite(value)) throw new Error('AI 제품 형상에 유효하지 않은 좌표가 있습니다.');
+  for (const index of mesh.indices)
+    if (index >= mesh.positions.length / 3) throw new Error('AI 제품 형상의 면 데이터가 올바르지 않습니다.');
+  const size = options.size ?? 1024;
+  const front = options.inputOrientationYawOffset ?? 0;
+  const elevation = options.elevationDegrees ?? 15;
+  const sideAngle = options.sideAngleDegrees ?? 35;
+  if (
+    !Number.isInteger(size) ||
+    size < 64 ||
+    size > 2048 ||
+    !Number.isFinite(front) ||
+    !Number.isFinite(elevation) ||
+    Math.abs(elevation) > 75 ||
+    !Number.isFinite(sideAngle) ||
+    sideAngle <= 0 ||
+    sideAngle > 90
+  ) {
+    throw new Error('방향 이미지의 크기 또는 촬영 각도가 올바르지 않습니다.');
+  }
+  const canvas = document.createElement('canvas');
+  let renderer: THREE.WebGLRenderer | undefined;
+  const geometry = new THREE.BufferGeometry();
+  const material = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+    if (size > renderer.capabilities.maxTextureSize)
+      throw new Error('이 기기의 GPU가 요청한 이미지 크기를 지원하지 않습니다.');
+    renderer.setPixelRatio(1);
+    renderer.setSize(size, size, false);
+    renderer.setClearColor(0x000000, 0);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
+    geometry.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3));
+    geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    const linearColors = new Float32Array(mesh.colors.length);
+    const color = new THREE.Color();
+    for (let i = 0; i < mesh.colors.length; i += 3) {
+      if (![mesh.colors[i], mesh.colors[i + 1], mesh.colors[i + 2]].every(Number.isFinite)) {
+        throw new Error('AI 제품 형상에 유효하지 않은 색상이 있습니다.');
+      }
+      color.setRGB(
+        THREE.MathUtils.clamp(mesh.colors[i], 0, 1),
+        THREE.MathUtils.clamp(mesh.colors[i + 1], 0, 1),
+        THREE.MathUtils.clamp(mesh.colors[i + 2], 0, 1),
+        THREE.SRGBColorSpace,
+      );
+      linearColors.set([color.r, color.g, color.b], i);
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(linearColors, 3));
+    geometry.computeBoundingBox();
+    const bounds = geometry.boundingBox!;
+    const center = bounds.getCenter(new THREE.Vector3());
+    const radius = bounds.getSize(new THREE.Vector3()).length() / 2;
+    if (radius < 1e-5) throw new Error('AI 제품 형상의 크기가 너무 작습니다.');
+    const halfFrame = radius * 1.1;
+    const camera = new THREE.OrthographicCamera(
+      -halfFrame,
+      halfFrame,
+      halfFrame,
+      -halfFrame,
+      0.01,
+      radius * 10 + 1,
+    );
+    camera.up.set(0, 0, 1);
+    const scene = new THREE.Scene();
+    scene.add(new THREE.Mesh(geometry, material));
+    const views: RenderedProductView[] = [];
+    // Render the inferred front first. Both side views use that same frame.
+    // At positive camera azimuth, an object facing +x points left on screen.
+    const directions: readonly [GeneratedDirection, number][] = [
+      ['front', front],
+      ['left', front + sideAngle],
+      ['right', front - sideAngle],
+    ];
+    for (const [direction, azimuth] of directions) {
+      throwIfAborted(options.signal);
+      camera.position.copy(viewCameraPosition(azimuth, elevation, radius * 4)).add(center);
+      camera.lookAt(center);
+      camera.updateMatrixWorld();
+      renderer.render(scene, camera);
+      if (renderer.getContext().isContextLost())
+        throw new Error('제품 이미지 렌더링 중 GPU 연결이 끊겼습니다. 다시 시도해 주세요.');
+      let minX = 1;
+      let maxX = 0;
+      let bottom = 0;
+      const projected = new THREE.Vector3();
+      for (let i = 0; i < mesh.positions.length; i += 3) {
+        projected.fromArray(mesh.positions, i).project(camera);
+        const x = projected.x * 0.5 + 0.5;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        bottom = Math.max(bottom, 0.5 - projected.y * 0.5);
+      }
+      const anchor = {
+        x: THREE.MathUtils.clamp((minX + maxX) / 2, 0, 1),
+        y: THREE.MathUtils.clamp(bottom, 0, 1),
+      };
+      const blob = await pngBlob(canvas, options.signal);
+      views.push({ direction, blob, width: size, height: size, anchor });
+      options.onProgress?.(views.length, 3);
+      // Give the browser a turn between readbacks without changing framing.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    throwIfAborted(options.signal);
+    return views;
+  } finally {
+    geometry.dispose();
+    material.dispose();
+    renderer?.dispose();
+    renderer?.forceContextLoss();
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}

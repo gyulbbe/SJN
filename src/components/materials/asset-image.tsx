@@ -2,12 +2,15 @@
 
 import { useEffect, useState, type CSSProperties } from 'react';
 import { getRepositories } from '@/lib/repositories';
-import type { AssetRecord } from '@/lib/types';
+import { isImageAsset, type ImageAssetRecord } from '@/lib/types';
 
 export function useAsset(assetId?: string) {
-  const [state, setState] = useState<{ asset?: AssetRecord; url?: string; loading: boolean; error?: string }>(
-    { loading: !!assetId },
-  );
+  const [state, setState] = useState<{
+    asset?: ImageAssetRecord;
+    url?: string;
+    loading: boolean;
+    error?: string;
+  }>({ loading: !!assetId });
   useEffect(() => {
     let alive = true;
     let objectUrl: string | undefined;
@@ -17,6 +20,7 @@ export function useAsset(assetId?: string) {
         .then((repos) => repos.assets.get(assetId))
         .then((asset) => {
           if (!alive) return;
+          if (!isImageAsset(asset)) throw new Error('입체 데이터는 사진 미리보기로 열 수 없어요.');
           objectUrl = URL.createObjectURL(asset.blob);
           setState({ asset, url: objectUrl, loading: false });
         })

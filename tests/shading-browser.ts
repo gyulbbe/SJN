@@ -48,7 +48,7 @@ try {
       { x: 1, y: 1 },
       { x: 0, y: 1 },
     ];
-    const assets: Record<string, import('../src/lib/types').AssetRecord> = {};
+    const assets: Record<string, import('../src/lib/types').ImageAssetRecord> = {};
     const makeAsset = async (id: string, canvas: HTMLCanvasElement) => {
       const blob = await new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!)));
       assets[id] = {

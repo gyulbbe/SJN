@@ -1,3 +1,5 @@
+import { stripLegacyMaterialImages } from '@/lib/material-images';
+import { materialReferences } from '@/lib/repositories/references';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
@@ -54,7 +56,37 @@ export async function POST(request: Request) {
       }
       case 'create':
       case 'update': {
-        const input = materialInputSchema.parse(body.input);
+        const input = stripLegacyMaterialImages(materialInputSchema.parse(body.input));
+        const assetIds = materialReferences(input);
+        const assets = await client
+          .from('assets')
+          .select('id,metadata,source_asset_id')
+          .in('id', assetIds)
+          .eq('deleting', false);
+        databaseError(assets.error);
+        const byId = new Map((assets.data ?? []).map((asset) => [asset.id, asset]));
+        if (assetIds.some((id) => !byId.has(id)))
+          throw new HttpError(400, '접근할 수 없는 자산이 포함되어 있어요.');
+        const imageIds = [
+          input.coverAssetId,
+          ...(input.imageAssetIds ?? []),
+          ...input.textureAssetIds,
+          ...input.views.map((view) => view.assetId),
+        ].filter((id): id is string => !!id);
+        if (imageIds.some((id) => byId.get(id)?.metadata.kind === 'product-mesh'))
+          throw new HttpError(400, '제품 사진에는 이미지 자산이 필요해요.');
+        for (const view of input.views)
+          if (view.product3d) {
+            const mesh = byId.get(view.product3d.meshAssetId);
+            const source = byId.get(view.product3d.inputAssetId);
+            if (
+              mesh?.metadata.kind !== 'product-mesh' ||
+              !source ||
+              source.metadata.kind === 'product-mesh' ||
+              mesh.source_asset_id !== source.id
+            )
+              throw new HttpError(400, '입체 데이터와 입력 이미지의 연결을 확인해 주세요.');
+          }
         const id = body.operation === 'create' ? crypto.randomUUID() : identifierSchema.parse(body.id);
         const expected = body.operation === 'create' ? null : identifierSchema.parse(body.expectedVersionId);
         const { data, error } = await serviceClient().rpc('save_material', {

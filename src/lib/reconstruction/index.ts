@@ -62,7 +62,7 @@ async function materialCode(input: unknown) {
 }
 function baseMaterial(): Omit<
   MaterialInput,
-  'name' | 'code' | 'category' | 'color' | 'widthMm' | 'heightMm' | 'depthMm' | 'coverAssetId'
+  'name' | 'code' | 'category' | 'color' | 'widthMm' | 'heightMm' | 'depthMm'
 > {
   return {
     brand: '',
@@ -72,7 +72,7 @@ function baseMaterial(): Omit<
     finish: '기본 모형',
     usage: 'both',
     installation: 'floor',
-    imageAssetIds: [],
+
     textureAssetIds: [],
     views: [],
     defaultGroutWidth: 0,
@@ -170,8 +170,7 @@ export async function createReconstructionFixture(
       heightMm: params.heightMm,
       depthMm: params.depthMm,
       installation: params.face === 'floor' ? 'floor' : 'wall',
-      coverAssetId: asset.id,
-      imageAssetIds: [asset.id],
+
       views: [
         { assetId: asset.id, direction: '공간 공통 카메라', anchor: rendered?.anchor ?? { x: 0.5, y: 0.5 } },
       ],
@@ -304,8 +303,7 @@ export async function createReconstructionTile(options: {
     widthMm,
     heightMm,
     depthMm: 10,
-    coverAssetId: asset.id,
-    imageAssetIds: [asset.id],
+
     textureAssetIds: [asset.id],
     defaultGroutWidth: grout,
     defaultGroutColor: options.groutColor ?? '#bcb9b1',

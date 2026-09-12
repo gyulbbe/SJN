@@ -114,7 +114,9 @@ async function makeSurface(page: Page) {
   );
   await page.reload();
   await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await page.getByLabel('타일 적용 위치', { exact: true }).selectOption(getActiveDesign(p)!.scene.surfaces[0].id);
+  await page
+    .getByLabel('타일 적용 위치', { exact: true })
+    .selectOption(getActiveDesign(p)!.scene.surfaces[0].id);
 }
 async function setRange(locator: Locator, value: string) {
   await locator.evaluate((element, value) => {
@@ -185,10 +187,6 @@ async function registerMaterial(page: Page, category: 'tile' | 'basin') {
   await dialog
     .getByLabel(category === 'tile' ? '세로 (mm)' : '높이 (mm)', { exact: true })
     .fill(category === 'tile' ? '300' : '600');
-  await dialog
-    .getByLabel('대표 이미지 올리기', { exact: true })
-    .setInputFiles({ name: '상품.png', mimeType: 'image/png', buffer });
-  await expect(dialog.getByLabel('대표 이미지 변경', { exact: true })).toBeEnabled();
   if (category === 'tile') {
     await dialog.getByLabel('기본 줄눈 폭 (mm)', { exact: true }).fill('0');
     await dialog
@@ -196,14 +194,14 @@ async function registerMaterial(page: Page, category: 'tile' | 'basin') {
       .setInputFiles({ name: 'texture.png', mimeType: 'image/png', buffer });
     await expect(dialog.getByRole('img', { name: '타일 텍스처 1', exact: true })).toBeVisible();
   } else {
-    await dialog.getByLabel('+ 제품 방향 이미지 올리기', { exact: true }).setInputFiles([
+    await dialog.getByLabel('+ 제품 이미지 올리기', { exact: true }).setInputFiles([
       { name: 'fixture.png', mimeType: 'image/png', buffer },
       { name: 'wide-side.png', mimeType: 'image/png', buffer: await wideRedFixture() },
     ]);
     await expect(
       dialog.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
     ).toHaveCount(2);
-    await dialog.getByLabel('촬영 방향 2', { exact: true }).selectOption('왼쪽 측면');
+    await dialog.getByLabel('촬영 방향 2', { exact: true }).fill('왼쪽 측면');
     await dialog.getByLabel('기준점 X').nth(1).fill('25');
     await dialog.getByRole('spinbutton', { name: /^Y/ }).nth(1).fill('80');
   }
@@ -228,10 +226,22 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
   const placed = await savedProject(page);
   expect(getActiveDesign(placed)!.scene.fixtures).toHaveLength(1);
   const fixture = getActiveDesign(placed)!.scene.fixtures[0];
-  await page.getByLabel('제품 촬영 방향', { exact: true }).selectOption('1');
-  await expect(page.getByLabel('제품 촬영 방향', { exact: true })).toHaveAttribute('aria-busy', 'false');
+  await page.getByTestId('fixture-view-1').click();
+  await expect(page.getByRole('group', { name: '제품 촬영 방향', exact: true })).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
   const side = await savedProject(page);
   expect(getActiveDesign(side)!.scene.fixtures[0].viewIndex).toBe(1);
+  expect(getActiveDesign(side)!.scene.fixtures).toHaveLength(1);
+  expect(getActiveDesign(side)!.scene.fixtures[0].id).toBe(fixture.id);
+  expect(getActiveDesign(side)!.scene.fixtures[0].materialVersionId).toBe(fixture.materialVersionId);
+  expect(getActiveDesign(side)!.materialUsage).toEqual(getActiveDesign(placed)!.materialUsage);
+  await expect(page.getByTestId('fixture-view-1')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('fixture-view-0')).toHaveAttribute('aria-pressed', 'false');
+  await expect(
+    page.getByTestId('fixture-view-1').getByRole('img', { name: '왼쪽 측면 제품 사진', exact: true }),
+  ).toBeVisible();
   expect(getActiveDesign(side)!.scene.fixtures[0].width).toBe(fixture.width);
   expect(getActiveDesign(side)!.scene.fixtures[0].height).toBeCloseTo(
     (((fixture.width * 800) / 600) * 200) / 400,
@@ -247,10 +257,14 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
     getActiveDesign(side)!.scene.fixtures[0],
   );
   await page.getByRole('button', { name: '배치 잠금', exact: true }).click();
-  await expect(page.getByLabel('제품 촬영 방향', { exact: true })).toBeDisabled();
+  await expect(page.getByTestId('fixture-view-0')).toBeDisabled();
+  await expect(page.getByTestId('fixture-view-1')).toBeDisabled();
   await page.getByRole('button', { name: '잠금 해제', exact: true }).click();
-  await page.getByLabel('제품 촬영 방향', { exact: true }).selectOption('0');
-  await expect(page.getByLabel('제품 촬영 방향', { exact: true })).toHaveAttribute('aria-busy', 'false');
+  await page.getByTestId('fixture-view-0').click();
+  await expect(page.getByRole('group', { name: '제품 촬영 방향', exact: true })).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
   const beforeMove = await savedProject(page);
   expect(getActiveDesign(beforeMove)!.scene.fixtures[0]).toEqual(fixture);
   const sideAssetId = await page.evaluate(
@@ -283,18 +297,21 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
       return original.call(this, key);
     };
   }, sideAssetId);
-  await page.getByLabel('제품 촬영 방향', { exact: true }).selectOption('1');
+  await page.getByTestId('fixture-view-1').click();
   await expect(page.getByRole('alert').filter({ hasText: '제품 이미지 읽기 테스트 오류' })).toBeVisible();
   expect(getActiveDesign(await savedProject(page))!.scene.fixtures[0]).toEqual(fixture);
   await pauseViewMetadata(page, sideAssetId);
-  await page.getByLabel('제품 촬영 방향', { exact: true }).selectOption('1');
-  await expect(page.getByLabel('제품 촬영 방향', { exact: true })).toHaveAttribute('aria-busy', 'true');
+  await page.getByTestId('fixture-view-1').click();
+  await expect(page.getByRole('group', { name: '제품 촬영 방향', exact: true })).toHaveAttribute(
+    'aria-busy',
+    'true',
+  );
   await page.keyboard.press('Escape');
   await resumeViewMetadata(page);
   expect(getActiveDesign(await savedProject(page))!.scene.fixtures[0]).toEqual(fixture);
   await pauseViewMetadata(page, sideAssetId);
-  await page.getByLabel('제품 촬영 방향', { exact: true }).selectOption('1');
-  await page.getByLabel('제품 촬영 방향', { exact: true }).selectOption('0');
+  await page.getByTestId('fixture-view-1').click();
+  await page.getByTestId('fixture-view-0').click();
   await resumeViewMetadata(page);
   expect(getActiveDesign(await savedProject(page))!.scene.fixtures[0]).toEqual(fixture);
   const testY = fixture.position.y - fixture.height * 0.5;
@@ -326,6 +343,7 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
   await expect(other.getByTestId('editor-canvas')).toBeVisible();
   await other.locator('[data-entity="' + fixture.id + '"]').click();
   await expect(other.getByRole('button', { name: '제품 삭제', exact: true })).toBeDisabled();
+  await expect(other.getByTestId('fixture-view-1')).toBeDisabled();
   expect(getActiveDesign(await savedProject(other))!.scene).toEqual(getActiveDesign(restored)!.scene);
   await other.close();
   await page.reload();
@@ -333,10 +351,61 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
   expect(getActiveDesign(await savedProject(page))!.scene).toEqual(getActiveDesign(restored)!.scene);
   await page.locator('[data-entity="' + fixture.id + '"]').click();
   await pauseViewMetadata(page, sideAssetId);
-  await page.getByLabel('제품 촬영 방향', { exact: true }).selectOption('1');
+  await page.getByTestId('fixture-view-1').click();
   await page.getByRole('button', { name: '제품 삭제', exact: true }).click();
   await resumeViewMetadata(page);
   expect(getActiveDesign(await savedProject(page))!.scene.fixtures).toHaveLength(0);
+});
+
+test('기본 공간 각도 썸네일 전환은 제품 개수·단가·설치 위치·배율을 유지한다', async ({ page }, testInfo) => {
+  test.setTimeout(120000);
+  await page.goto('/');
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 30000 });
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  const name = await registerMaterial(page, 'basin');
+  await page.getByRole('button', { name: new RegExp(`${name}.*600`) }).click();
+  await page.getByLabel('면 가로 위치 (%)', { exact: true }).fill('31');
+  await page.getByLabel('면 깊이 위치 (%)', { exact: true }).fill('72');
+  await setRange(page.getByLabel('제품 배율', { exact: true }), '143');
+  const original = await savedProject(page);
+  const before = getActiveDesign(original)!;
+  const fixture = before.scene.fixtures[0];
+  expect(fixture.roomPlacement?.scale).toBeCloseTo(1.43, 8);
+  await expect(
+    page.getByRole('group', { name: '제품 촬영 방향', exact: true }).getByRole('button'),
+  ).toHaveCount(2);
+  await page.getByTestId('fixture-view-1').click();
+  await expect(page.getByTestId('fixture-view-1')).toHaveAttribute('aria-pressed', 'true');
+  const changed = getActiveDesign(await savedProject(page))!;
+  const next = changed.scene.fixtures[0];
+  expect(changed.scene.fixtures).toHaveLength(1);
+  expect(next.id).toBe(fixture.id);
+  expect(next.materialVersionId).toBe(fixture.materialVersionId);
+  expect(next.viewIndex).toBe(1);
+  expect(changed.materialUsage).toEqual(before.materialUsage);
+  for (const key of ['face', 'u', 'v', 'scale', 'widthMm', 'heightMm'] as const)
+    expect(next.roomPlacement?.[key]).toEqual(fixture.roomPlacement?.[key]);
+  expect(next.roomPlacement?.imageAspect).toBe(2);
+  expect(next.roomPlacement?.contentBounds).not.toEqual(fixture.roomPlacement?.contentBounds);
+  const imagesFit = await page
+    .getByRole('group', { name: '제품 촬영 방향', exact: true })
+    .locator('img')
+    .evaluateAll((images) =>
+      images.every((image) => {
+        const imageBox = image.getBoundingClientRect();
+        const frame = image.parentElement!.getBoundingClientRect();
+        return imageBox.width <= frame.width + 1 && imageBox.height <= frame.height + 1;
+      }),
+    );
+  expect(imagesFit).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('angle-thumbnails.png'), fullPage: true });
+  await page.getByRole('button', { name: '실행 취소', exact: true }).click();
+  expect(getActiveDesign(await savedProject(page))!.scene.fixtures[0]).toEqual(fixture);
+  await page.getByRole('button', { name: '다시 실행', exact: true }).click();
+  expect(getActiveDesign(await savedProject(page))!.scene.fixtures[0]).toEqual(next);
 });
 
 test('이미지 확장자를 가장한 잘못된 파일을 거절한다', async ({ page }) => {
