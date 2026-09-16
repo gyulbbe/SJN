@@ -1,5 +1,4 @@
-import MaterialManager from '@/components/materials/material-manager';
-
+import PublicCatalog from '@/components/materials/public-catalog';
 export default function MaterialsPage() {
-  return <MaterialManager />;
+  return <PublicCatalog />;
 }

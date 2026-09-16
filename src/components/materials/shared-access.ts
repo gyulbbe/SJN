@@ -1,20 +1,26 @@
 'use client';
-
 import { useEffect, useState } from 'react';
 import { useAccess } from '@/components/app-provider';
-
-/** This controls UI only. Every write also checks the administrator role on the server. */
+/** UI only. The API checks the administrator role on every mutation. */
 export function useSharedCatalogAdmin() {
-  const { mode } = useAccess();
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { mode, userId, ready } = useAccess();
+  const [role, setRole] = useState<{ scope: string; isAdmin: boolean }>();
+  const scope = JSON.stringify([mode, userId]);
   useEffect(() => {
-    if (mode !== 'supabase') return;
+    if (mode === 'local' || !ready || !userId) return;
     const controller = new AbortController();
-    fetch('/api/cloud/role', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal })
+    fetch((mode === 'd1' ? '/api/d1' : '/api/cloud') + '/role', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'X-SJN-User-Id': userId },
+      signal: controller.signal,
+    })
       .then((response) => (response.ok ? response.json() : { isAdmin: false }))
-      .then((value) => setIsAdmin(value.isAdmin === true))
+      .then((value) => {
+        if (!controller.signal.aborted) setRole({ scope, isAdmin: value.isAdmin === true });
+      })
       .catch(() => {});
     return () => controller.abort();
-  }, [mode]);
-  return mode === 'supabase' && isAdmin;
+  }, [mode, userId, ready, scope]);
+  return mode !== 'local' && role?.scope === scope && role.isAdmin;
 }

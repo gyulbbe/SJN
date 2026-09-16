@@ -1,5 +1,5 @@
 'use client';
-import { roomFaceAreaM2 } from '@/lib/room-geometry';
+import { roomSurfaceAreaM2 } from '@/lib/room-surface-areas';
 import { productContentBounds } from '@/lib/room-fixtures';
 import type { RoomFace } from '@/lib/room-types';
 import { useEffect, useRef, useState } from 'react';
@@ -61,6 +61,7 @@ export default function Inspector({
   open,
   onClose,
   onRoomResize,
+  onWallFeatures,
   onMaterialsChanged,
 }: {
   embedded?: boolean;
@@ -68,6 +69,7 @@ export default function Inspector({
   open: boolean;
   onClose: () => void;
   onRoomResize: () => void;
+  onWallFeatures?: () => void;
   onMaterialsChanged: () => Promise<void>;
 }) {
   const st = useEditor(),
@@ -257,11 +259,21 @@ export default function Inspector({
             <p className="muted" style={{ fontSize: 12 }}>
               가로 {s.room.widthMm / 1000} × 깊이 {s.room.depthMm / 1000} × 높이 {s.room.heightMm / 1000}m
               <br />
-              바닥 {((s.room.widthMm * s.room.depthMm) / 1e6).toLocaleString('ko-KR')}㎡ · 설정값 기준
+              기본 바닥 {((s.room.widthMm * s.room.depthMm) / 1e6).toLocaleString('ko-KR')}㎡ · 설정값 기준
             </p>
             <button className="btn small" onClick={onRoomResize} disabled={!!st.draft}>
               공간 크기 변경
             </button>
+            {onWallFeatures && (
+              <button
+                className="btn small"
+                onClick={onWallFeatures}
+                disabled={!!st.draft}
+                style={{ marginLeft: 8 }}
+              >
+                벽 구조 편집{s.wallFeatures?.length ? ' · ' + s.wallFeatures.length : ''}
+              </button>
+            )}
           </section>
         )}
         {st.editing === 'before' && st.project?.shared.comparison && (
@@ -283,14 +295,7 @@ export default function Inspector({
                 {s.room && surface.roomFace && surface.geometryMode === 'room' && (
                   <>
                     <br />
-                    시공 면적{' '}
-                    {(
-                      roomFaceAreaM2(s.room, surface.roomFace) *
-                      (surface.reconstructionBand
-                        ? surface.reconstructionBand.to - surface.reconstructionBand.from
-                        : 1)
-                    ).toLocaleString('ko-KR')}
-                    ㎡
+                    시공 면적 {roomSurfaceAreaM2(s, surface.id)?.toLocaleString('ko-KR') ?? '확인 필요'}㎡
                   </>
                 )}
               </p>
@@ -471,6 +476,14 @@ export default function Inspector({
                           }
                         : {}),
                     };
+                    if (
+                      clone.reconstruction?.version === 2 &&
+                      clone.roomPlacement &&
+                      clone.roomPlacement.face !== 'floor' &&
+                      s.room
+                    ) {
+                      clone.reconstruction.baseHeightMm = (1 - clone.roomPlacement.v) * s.room.heightMm;
+                    }
                     st.changeProject((project) => {
                       getEditingScene(project, st.editing).fixtures.push(clone);
                       const usage =
@@ -504,104 +517,110 @@ export default function Inspector({
                   marginTop: 16,
                 }}
               >
-                {fixture.roomPlacement ? (
+                {fixture.reconstruction?.version !== 2 && (
                   <>
-                    <label className="field">
-                      설치 면
-                      <select
-                        className="input"
-                        aria-label="제품 설치 면"
-                        value={fixture.roomPlacement.face}
-                        disabled={fixture.locked}
-                        onChange={(e) =>
-                          changeFixture((v) => {
-                            if (v.roomPlacement) v.roomPlacement.face = e.target.value as RoomFace;
-                          })
-                        }
-                      >
-                        <option value="floor">바닥</option>
-                        <option value="back">정면 벽</option>
-                        <option value="left">왼쪽 벽</option>
-                        <option value="right">오른쪽 벽</option>
-                      </select>
-                    </label>
+                    {fixture.roomPlacement ? (
+                      <>
+                        <label className="field">
+                          설치 면
+                          <select
+                            className="input"
+                            aria-label="제품 설치 면"
+                            value={fixture.roomPlacement.face}
+                            disabled={fixture.locked}
+                            onChange={(e) =>
+                              changeFixture((v) => {
+                                if (v.roomPlacement) v.roomPlacement.face = e.target.value as RoomFace;
+                              })
+                            }
+                          >
+                            <option value="floor">바닥</option>
+                            <option value="back">정면 벽</option>
+                            <option value="left">왼쪽 벽</option>
+                            <option value="right">오른쪽 벽</option>
+                          </select>
+                        </label>
+                        <Range
+                          label="제품 배율"
+                          value={fixture.roomPlacement.scale * 100}
+                          min={10}
+                          max={500}
+                          step={1}
+                          unit="%"
+                          onChange={(n) =>
+                            changeFixture((v) => {
+                              if (v.roomPlacement) v.roomPlacement.scale = n / 100;
+                            }, true)
+                          }
+                          onCommit={st.commit}
+                        />
+                        <p className="muted" style={{ fontSize: 11 }}>
+                          등록 규격 {fixture.roomPlacement.widthMm} × {fixture.roomPlacement.heightMm}mm에
+                          이미지 비율을 맞춘 2D 배치예요. 위치에 따라 원근 크기가 바뀌어요.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Range
+                          label="제품 크기"
+                          value={fixture.width}
+                          min={0.03}
+                          max={1}
+                          step={0.005}
+                          onChange={(n) =>
+                            changeFixture((v) => {
+                              v.height = n * (v.height / v.width);
+                              v.width = n;
+                            }, true)
+                          }
+                          onCommit={st.commit}
+                        />
+                      </>
+                    )}
                     <Range
-                      label="제품 배율"
-                      value={fixture.roomPlacement.scale * 100}
-                      min={10}
-                      max={500}
+                      label="이미지 평면 회전"
+                      value={fixture.rotation}
+                      min={-180}
+                      max={180}
                       step={1}
-                      unit="%"
-                      onChange={(n) =>
-                        changeFixture((v) => {
-                          if (v.roomPlacement) v.roomPlacement.scale = n / 100;
-                        }, true)
-                      }
+                      unit="°"
+                      onChange={(n) => changeFixture((v) => (v.rotation = n), true)}
                       onCommit={st.commit}
                     />
-                    <p className="muted" style={{ fontSize: 11 }}>
-                      등록 규격 {fixture.roomPlacement.widthMm} × {fixture.roomPlacement.heightMm}mm에 이미지
-                      비율을 맞춘 2D 배치예요. 위치에 따라 원근 크기가 바뀌어요.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <Range
-                      label="제품 크기"
-                      value={fixture.width}
-                      min={0.03}
-                      max={1}
-                      step={0.005}
-                      onChange={(n) =>
-                        changeFixture((v) => {
-                          v.height = n * (v.height / v.width);
-                          v.width = n;
-                        }, true)
-                      }
-                      onCommit={st.commit}
-                    />
+                    <div className="field-grid">
+                      {inputNumber(
+                        fixture.roomPlacement ? '면 가로 위치 (%)' : '기준점 가로 (%)',
+                        Math.round((fixture.roomPlacement?.u ?? fixture.position.x) * 100),
+                        (n) =>
+                          changeFixture((v) => {
+                            if (v.roomPlacement) v.roomPlacement.u = Math.max(0, Math.min(1, n / 100));
+                            else v.position.x = n / 100;
+                          }),
+                        -100,
+                      )}
+                      {inputNumber(
+                        fixture.roomPlacement
+                          ? fixture.roomPlacement.face === 'floor'
+                            ? '면 깊이 위치 (%)'
+                            : '면 세로 위치 (%)'
+                          : '기준점 세로 (%)',
+                        Math.round((fixture.roomPlacement?.v ?? fixture.position.y) * 100),
+                        (n) =>
+                          changeFixture((v) => {
+                            if (v.roomPlacement) v.roomPlacement.v = Math.max(0, Math.min(1, n / 100));
+                            else v.position.y = n / 100;
+                          }),
+                        -100,
+                      )}
+                    </div>
                   </>
                 )}
-                <Range
-                  label="이미지 평면 회전"
-                  value={fixture.rotation}
-                  min={-180}
-                  max={180}
-                  step={1}
-                  unit="°"
-                  onChange={(n) => changeFixture((v) => (v.rotation = n), true)}
-                  onCommit={st.commit}
-                />
-                <div className="field-grid">
-                  {inputNumber(
-                    fixture.roomPlacement ? '면 가로 위치 (%)' : '기준점 가로 (%)',
-                    Math.round((fixture.roomPlacement?.u ?? fixture.position.x) * 100),
-                    (n) =>
-                      changeFixture((v) => {
-                        if (v.roomPlacement) v.roomPlacement.u = Math.max(0, Math.min(1, n / 100));
-                        else v.position.x = n / 100;
-                      }),
-                    -100,
-                  )}
-                  {inputNumber(
-                    fixture.roomPlacement
-                      ? fixture.roomPlacement.face === 'floor'
-                        ? '면 깊이 위치 (%)'
-                        : '면 세로 위치 (%)'
-                      : '기준점 세로 (%)',
-                    Math.round((fixture.roomPlacement?.v ?? fixture.position.y) * 100),
-                    (n) =>
-                      changeFixture((v) => {
-                        if (v.roomPlacement) v.roomPlacement.v = Math.max(0, Math.min(1, n / 100));
-                        else v.position.y = n / 100;
-                      }),
-                    -100,
-                  )}
-                </div>
               </div>
-              <p className="muted" style={{ fontSize: 10, marginTop: 10 }}>
-                제품의 실제 3D 회전이 아닙니다. 다른 각도는 위의 제품 사진을 선택해 주세요.
-              </p>
+              {fixture.reconstruction?.version !== 2 && (
+                <p className="muted" style={{ fontSize: 10, marginTop: 10 }}>
+                  제품의 실제 3D 회전이 아닙니다. 다른 각도는 위의 제품 사진을 선택해 주세요.
+                </p>
+              )}
             </section>
             <section className="property-section">
               <h4>접지 그림자</h4>

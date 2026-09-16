@@ -5,7 +5,10 @@ import {
   mergeReconstructionPasses,
   refineCandidateFrames,
 } from '../src/lib/reconstruction/candidates';
-import type { ReconstructionCandidate } from '../src/lib/reconstruction/types';
+import {
+  hasSupportedReconstructionKind,
+  type ReconstructionCandidate,
+} from '../src/lib/reconstruction/types';
 
 function raster(width = 100, height = 100) {
   const labels = new Uint8Array(width * height).fill(1),
@@ -55,7 +58,13 @@ describe('reconstruction candidate quality', () => {
     r.rect(5, 30, 40, 90, 11);
     r.rect(70, 30, 92, 40, 48);
     const result = extractReconstructionCandidates(r);
-    expect(result.filter((c) => c.kind === 'vanity')).toEqual([]);
+    const cabinet = result.find((c) => c.detectedLabel === 'cabinet')!;
+    expect(cabinet.proposedKind).toBeUndefined();
+    expect(cabinet.requiresReview).toBe(true);
+    expect(cabinet.installation?.mode).toBe('unknown');
+    expect(cabinet.trace?.some((entry) => entry.stage === 'candidate' && entry.outcome === 'held')).toBe(
+      true,
+    );
     expect(result.filter((c) => c.kind === 'basin')).toHaveLength(1);
   });
   it('holds a narrow clipped cabinet-like basket for review instead of confidently adding another vanity', () => {
@@ -108,7 +117,11 @@ describe('reconstruction candidate quality', () => {
       true,
     );
     const result = mergeReconstructionPasses(first, second);
-    expect(result).toHaveLength(1);
+    expect(result).toHaveLength(2);
+    expect(result.find((c) => c.kind === 'window')).toMatchObject({
+      requiresReview: true,
+      reflectionOf: 'mirror-small',
+    });
     expect(result[0].kind).toBe('mirror');
     expect(result[0].bounds.left).toBeCloseTo(0.08);
     expect(result[0].bounds.right).toBeCloseTo(0.18);
@@ -152,4 +165,152 @@ describe('reconstruction candidate quality', () => {
     expect(result[0].bounds.right).toBeGreaterThan(0.4);
     expect(refineCandidateFrames([], r.rgba, 100, 100)).toEqual([]);
   });
+});
+
+it('does not discard a foreground basin solely because its bounds lie inside a mirror box', () => {
+  const mirror = candidate('mirror', 'mirror', 0.1, 0.1, 0.9, 0.9, 5);
+  const foreground = candidate('basin', 'basin', 0.3, 0.5, 0.7, 0.7, 3);
+  foreground.evidence.mirrorCompetition = 0;
+  const result = mergeReconstructionPasses([mirror, foreground], []);
+  expect(result.find((c) => c.id === 'basin')?.reflectionOf).toBeUndefined();
+  expect(result.find((c) => c.id === 'basin')?.requiresReview).not.toBe(true);
+  foreground.evidence.mirrorCompetition = 0.7;
+  expect(mergeReconstructionPasses([mirror, foreground], []).find((c) => c.id === 'basin')).toMatchObject({
+    requiresReview: true,
+    reflectionOf: 'mirror',
+  });
+});
+
+function scoredRaster() {
+  const r = raster();
+  const values = new Float32Array(r.width * r.height * 151);
+  const input = () => {
+    for (let p = 0; p < r.labels.length; p++) values[p * 151 + r.labels[p]] = r.labels[p] === 66 ? 1.2 : 3;
+    return {
+      ...r,
+      logits: {
+        values,
+        width: r.width,
+        height: r.height,
+        channels: 151,
+        cropWidth: r.width,
+        cropHeight: r.height,
+        paddedWidth: r.width,
+        paddedHeight: r.height,
+      },
+    };
+  };
+  return { ...r, input };
+}
+describe('observed support and toilet assemblies', () => {
+  it('records only a sustained narrow basin-class stem, keeping the model score unchanged', () => {
+    const r = scoredRaster();
+    r.rect(25, 15, 65, 31, 48);
+    r.rect(38, 30, 52, 78, 48);
+    const result = extractReconstructionCandidates(r.input());
+    expect(result).toHaveLength(1);
+    expect(result[0].evidence.pedestalSupport).toMatchObject({ stemWidthRatio: 0.35, coverage: 1 });
+    expect(result[0].evidence.meanMargin).toBe(3);
+    expect(result[0].installation).toBeUndefined();
+  });
+  it('does not call a thin drain pipe, a uniform narrow wall strip or a short bowl a pedestal', () => {
+    for (const variant of ['pipe', 'strip', 'bowl']) {
+      const r = scoredRaster();
+      if (variant === 'pipe') {
+        r.rect(25, 15, 65, 31, 48);
+        r.rect(44, 30, 47, 78, 48);
+      }
+      if (variant === 'strip') r.rect(40, 15, 55, 78, 48);
+      if (variant === 'bowl') r.rect(25, 30, 65, 48, 48);
+      expect(extractReconstructionCandidates(r.input())[0].evidence.pedestalSupport).toBeUndefined();
+    }
+  });
+  it('joins a mirror-labeled lid enclosed by toilet pixels and its touching bowl without inflating confidence', () => {
+    const r = scoredRaster();
+    r.rect(5, 15, 30, 52, 66);
+    r.rect(9, 20, 26, 45, 28);
+    r.rect(5, 50, 45, 68, 48);
+    const result = extractReconstructionCandidates(r.input());
+    expect(result).toHaveLength(1);
+    const assembly = result[0];
+    expect(assembly.kind).toBe('toilet');
+    expect(assembly.evidence.contextualKind).toBe('toilet-assembly');
+    expect(assembly.evidence.meanMargin).toBeCloseTo(1.2);
+    expect(assembly.evidence.contextualParts?.surroundRatio).toBe(1);
+    expect(hasSupportedReconstructionKind(assembly)).toBe(true);
+    expect(assembly.bounds).toEqual({ left: 0.05, top: 0.15, right: 0.45, bottom: 0.68 });
+    expect(assembly.trace?.at(-1)?.outcome).toBe('merged');
+  });
+  it('keeps a wall mirror and separate fixtures, including reflected toilet pixels inside the mirror', () => {
+    const r = scoredRaster();
+    r.rect(10, 5, 80, 44, 28);
+    r.rect(45, 15, 60, 36, 66);
+    r.rect(15, 60, 45, 78, 48);
+    const result = extractReconstructionCandidates(r.input());
+    expect(result.find((c) => c.kind === 'mirror')?.evidence.toiletSurround).toBeLessThan(0.5);
+    expect(result.some((c) => c.evidence.contextualKind)).toBe(false);
+    expect(result.some((c) => c.kind === 'basin')).toBe(true);
+  });
+  it('does not merge an unrelated wall mirror near a toilet or a disconnected basin below a lid', () => {
+    const r = scoredRaster();
+    r.rect(5, 15, 30, 52, 66);
+    r.rect(9, 20, 26, 45, 28);
+    r.rect(5, 60, 45, 78, 48);
+    const result = extractReconstructionCandidates(r.input());
+    expect(result).toHaveLength(3);
+    expect(result.some((c) => c.evidence.contextualKind)).toBe(false);
+  });
+  it('does not treat a forged contextual tag without measured support as sufficient evidence', () => {
+    const c = candidate('weak', 'toilet', 0, 0.3, 0.3, 0.8, 1);
+    c.evidence.contextualKind = 'toilet-assembly';
+    expect(hasSupportedReconstructionKind(c)).toBe(false);
+    c.evidence.contextualParts = { toiletPixels: 1000, bowlPixels: 1000, surroundRatio: 0.1 };
+    expect(hasSupportedReconstructionKind(c)).toBe(false);
+  });
+});
+
+describe('assembly evidence across analysis passes', () => {
+  it('does not resurrect the observed lid/bowl after a flip, while preserving an actual wall mirror', () => {
+    const r = scoredRaster();
+    r.rect(5, 15, 30, 52, 66);
+    r.rect(9, 20, 26, 45, 28);
+    r.rect(5, 50, 45, 68, 48);
+    const assembly = extractReconstructionCandidates(r.input())[0];
+    const lid = candidate('flip-lid', 'mirror', 0.09, 0.2, 0.26, 0.45, 3);
+    const bowl = candidate('flip-bowl', 'basin', 0.05, 0.5, 0.45, 0.68, 3);
+    const realMirror = candidate('wall-mirror', 'mirror', 0.5, 0.05, 0.9, 0.35, 4);
+    const result = mergeReconstructionPasses([assembly], [lid, bowl, realMirror]);
+    expect(result.map((c) => c.id)).toEqual(expect.arrayContaining([assembly.id, 'wall-mirror']));
+    expect(result).toHaveLength(2);
+    expect(result[0].requiresReview).not.toBe(true);
+    const mapped = mapCandidatePass([assembly], { left: 0.2, top: 0.1, right: 0.8, bottom: 0.9 }, true)[0];
+    expect(mapped.evidence.contextualParts?.lidBounds?.left).toBeCloseTo(0.644);
+    expect(mapped.evidence.contextualParts?.bowlBounds?.bottom).toBeCloseTo(0.644);
+    expect(assembly.evidence.contextualParts?.lidBounds?.left).toBe(0.09);
+  });
+  it('never upgrades an interrupted lower support to a pedestal', () => {
+    const r = scoredRaster();
+    r.rect(25, 15, 65, 31, 48);
+    r.rect(38, 30, 52, 50, 48);
+    r.rect(38, 65, 52, 78, 48);
+    expect(extractReconstructionCandidates(r.input()).every((c) => !c.evidence.pedestalSupport)).toBe(true);
+  });
+});
+
+it('does not let a tiny rejected fragment invalidate a measured assembly but retains whole-object conflicts', () => {
+  const r = scoredRaster();
+  r.rect(5, 15, 30, 52, 66);
+  r.rect(9, 20, 26, 45, 28);
+  r.rect(5, 50, 45, 68, 48);
+  const assembly = extractReconstructionCandidates(r.input())[0];
+  const tiny = candidate('tiny', 'toilet', 0.08, 0.6, 0.12, 0.64, 0.5);
+  tiny.requiresReview = true;
+  tiny.warning = 'small fragment';
+  const merged = mergeReconstructionPasses([assembly], [tiny]);
+  expect(merged).toHaveLength(1);
+  expect(merged[0].requiresReview).not.toBe(true);
+  const whole = candidate('whole', 'toilet', 0.05, 0.15, 0.45, 0.68, 2);
+  whole.requiresReview = true;
+  whole.warning = 'possible bin';
+  expect(mergeReconstructionPasses([assembly], [whole])[0].requiresReview).toBe(true);
 });

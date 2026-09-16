@@ -1,3 +1,4 @@
+import { useEditor } from '../src/lib/editor-store';
 import { ensureMaterialUsage } from '../src/lib/material-usage';
 import 'fake-indexeddb/auto';
 import { IDBObjectStore } from 'fake-indexeddb';
@@ -376,4 +377,262 @@ describe('v3 workspace durable storage', () => {
     expect(JSON.stringify(body)).not.toContain('blob:');
     expect(JSON.stringify(body)).not.toContain('data:image');
   });
+});
+
+it('saves lid state and its source through Before undo/redo and independent design copying', async () => {
+  const { repo, project, material } = await pricedProject();
+  const source = getActiveDesign(project)!;
+  source.scene.fixtures.push({
+    id: crypto.randomUUID(),
+    name: '변기',
+    materialVersionId: material.id,
+    viewIndex: 0,
+    position: { x: 0.5, y: 0.5 },
+    width: 0.2,
+    height: 0.3,
+    rotation: 0,
+    anchor: { x: 0.5, y: 1 },
+    locked: false,
+    occlusion: EMPTY_MASK(),
+    color: { ...DEFAULT_COLOR },
+    shadow: { x: 0, y: 0, opacity: 0, blur: 0, scale: 1 },
+    reconstruction: {
+      version: 2,
+      kind: 'toilet',
+      color: '#eeeeee',
+      widthMm: 400,
+      heightMm: 750,
+      depthMm: 680,
+      toiletLidState: 'closed',
+      provenance: { toiletLidState: 'default' },
+    },
+  });
+  project.shared.comparison = {
+    before: structuredClone(source.scene),
+    room: { ...DEFAULT_ROOM },
+    aspect: 1.5,
+    cameraVersion: 1,
+    status: 'confirmed',
+    referenceOriginalAssetId: source.scene.originalAssetId,
+    referencePreviewAssetId: source.scene.previewAssetId,
+  };
+  const st = useEditor.getState();
+  st.load(project);
+  st.setEditing('before');
+  st.changeProject((p) => {
+    const meta = p.shared.comparison!.before.fixtures[0].reconstruction!;
+    meta.toiletLidState = 'open';
+    meta.provenance!.toiletLidState = 'user';
+  });
+  const beforeMeta = () =>
+    useEditor.getState().project!.shared.comparison!.before.fixtures[0].reconstruction!;
+  expect(beforeMeta()).toMatchObject({ toiletLidState: 'open', provenance: { toiletLidState: 'user' } });
+  st.undo();
+  expect(beforeMeta().toiletLidState).toBe('closed');
+  st.redo();
+  expect(beforeMeta().toiletLidState).toBe('open');
+  st.setEditing('after');
+  const copiedId = st.copyDesign()!;
+  st.change((scene) => {
+    scene.fixtures[0].reconstruction!.toiletLidState = 'open';
+    scene.fixtures[0].reconstruction!.provenance!.toiletLidState = 'user';
+  });
+  const current = () => useEditor.getState().project!;
+  expect(
+    current().designs.find((d) => d.id === source.id)!.scene.fixtures[0].reconstruction!.toiletLidState,
+  ).toBe('closed');
+  expect(current().designs.find((d) => d.id === copiedId)!.scene.fixtures[0].id).not.toBe(
+    source.scene.fixtures[0].id,
+  );
+  st.undo();
+  expect(getActiveDesign(current())!.scene.fixtures[0].reconstruction!.toiletLidState).toBe('closed');
+  st.redo();
+  expect(getActiveDesign(current())!.scene.fixtures[0].reconstruction!.toiletLidState).toBe('open');
+  const saved = await repo.projects.create(current()),
+    loaded = await repo.projects.load(saved.id);
+  expect(loaded).toEqual(saved);
+  expect(projectV3Schema.parse(loaded).shared.comparison!.before.fixtures[0].reconstruction).toMatchObject({
+    toiletLidState: 'open',
+    provenance: { toiletLidState: 'user' },
+  });
+  expect(
+    projectV3Schema.parse(loaded).designs.find((d) => d.id === copiedId)!.scene.fixtures[0].reconstruction,
+  ).toMatchObject({ toiletLidState: 'open', provenance: { toiletLidState: 'user' } });
+});
+
+it('durably keeps raised-glass support through Before history, independent copying and schema validation', async () => {
+  const { repo, project, material } = await pricedProject();
+  const source = getActiveDesign(project)!;
+  source.scene.fixtures.push({
+    id: crypto.randomUUID(),
+    name: '유리 파티션',
+    materialVersionId: material.id,
+    viewIndex: 0,
+    position: { x: 0.5, y: 0.5 },
+    width: 0.2,
+    height: 0.3,
+    rotation: 0,
+    anchor: { x: 0.5, y: 1 },
+    locked: false,
+    occlusion: EMPTY_MASK(),
+    color: { ...DEFAULT_COLOR },
+    shadow: { x: 0, y: 0, opacity: 0, blur: 0, scale: 1 },
+    roomPlacement: {
+      face: 'floor',
+      u: 0.5,
+      v: 0.5,
+      scale: 1,
+      widthMm: 800,
+      heightMm: 1800,
+      imageAspect: 1,
+      contentBounds: { left: 0, top: 0, right: 1, bottom: 1 },
+    },
+    reconstruction: {
+      version: 2,
+      kind: 'glassPartition',
+      color: '#cccccc',
+      widthMm: 800,
+      heightMm: 1800,
+      depthMm: 8,
+      baseHeightMm: 100,
+      support: { kind: 'shower-curb', heightMm: 100, provenance: { kind: 'user', height: 'user' } },
+    },
+  });
+  project.shared.comparison = {
+    before: structuredClone(source.scene),
+    room: { ...DEFAULT_ROOM },
+    aspect: 1.5,
+    cameraVersion: 1,
+    status: 'confirmed',
+    referenceOriginalAssetId: source.scene.originalAssetId,
+    referencePreviewAssetId: source.scene.previewAssetId,
+  };
+  const st = useEditor.getState();
+  st.load(project);
+  st.setEditing('before');
+  st.changeProject((p) => {
+    const meta = p.shared.comparison!.before.fixtures[0].reconstruction!;
+    meta.baseHeightMm = 600;
+    meta.support = { kind: 'bath-rim', heightMm: 600, provenance: { kind: 'user', height: 'default' } };
+  });
+  const before = () => useEditor.getState().project!.shared.comparison!.before.fixtures[0].reconstruction!;
+  expect(before().support?.kind).toBe('bath-rim');
+  st.undo();
+  expect(before().support?.heightMm).toBe(100);
+  st.redo();
+  expect(before().support?.heightMm).toBe(600);
+  st.setEditing('after');
+  const copiedId = st.copyDesign()!;
+  st.change((scene) => {
+    const meta = scene.fixtures[0].reconstruction!;
+    meta.baseHeightMm = 200;
+    meta.support!.heightMm = 200;
+  });
+  const current = () => useEditor.getState().project!;
+  expect(
+    current().designs.find((d) => d.id === source.id)!.scene.fixtures[0].reconstruction?.support?.heightMm,
+  ).toBe(100);
+  st.undo();
+  expect(getActiveDesign(current())!.scene.fixtures[0].reconstruction?.support?.heightMm).toBe(100);
+  st.redo();
+  expect(getActiveDesign(current())!.scene.fixtures[0].reconstruction?.support?.heightMm).toBe(200);
+  const saved = await repo.projects.create(current()),
+    loaded = await repo.projects.load(saved.id);
+  expect(loaded).toEqual(saved);
+  const validated = projectV3Schema.parse(loaded);
+  expect(validated.shared.comparison!.before.fixtures[0].reconstruction?.support).toMatchObject({
+    kind: 'bath-rim',
+    heightMm: 600,
+    provenance: { height: 'default' },
+  });
+  expect(
+    validated.designs.find((d) => d.id === copiedId)!.scene.fixtures[0].reconstruction?.support?.heightMm,
+  ).toBe(200);
+  const invalid = structuredClone(loaded);
+  invalid.designs[0].scene.fixtures[0].roomPlacement!.face = 'back';
+  expect(projectV3Schema.safeParse(invalid).success).toBe(false);
+});
+
+it('retains independent pedestal shape through Before history, design copies and local reload', async () => {
+  const { repo, project, material } = await pricedProject();
+  const source = getActiveDesign(project)!;
+  source.scene.fixtures.push({
+    id: crypto.randomUUID(),
+    name: '기둥 세면대',
+    materialVersionId: material.id,
+    viewIndex: 0,
+    position: { x: 0.5, y: 0.5 },
+    width: 0.2,
+    height: 0.3,
+    rotation: 0,
+    anchor: { x: 0.5, y: 1 },
+    locked: false,
+    occlusion: EMPTY_MASK(),
+    color: { ...DEFAULT_COLOR },
+    shadow: { x: 0, y: 0, opacity: 0, blur: 0, scale: 1 },
+    reconstruction: {
+      version: 2,
+      kind: 'basin',
+      basinVariant: 'pedestal',
+      basinShape: 'rectangular',
+      color: '#eeeeee',
+      widthMm: 600,
+      heightMm: 800,
+      depthMm: 480,
+    },
+  });
+  project.shared.comparison = {
+    before: structuredClone(source.scene),
+    room: { ...DEFAULT_ROOM },
+    aspect: 1.5,
+    cameraVersion: 1,
+    status: 'confirmed',
+    referenceOriginalAssetId: source.scene.originalAssetId,
+    referencePreviewAssetId: source.scene.previewAssetId,
+  };
+  const originalReferences = projectReferences(project);
+  const editor = useEditor.getState();
+  editor.load(project);
+  editor.setEditing('before');
+  editor.changeProject((p) => {
+    const meta = p.shared.comparison!.before.fixtures[0].reconstruction!;
+    meta.pedestalShape = 'rectangular';
+    meta.provenance = { ...meta.provenance, pedestalShape: 'user' };
+  });
+  const before = () => useEditor.getState().project!.shared.comparison!.before.fixtures[0].reconstruction!;
+  expect(before()).toMatchObject({ pedestalShape: 'rectangular', provenance: { pedestalShape: 'user' } });
+  editor.undo();
+  expect(before().pedestalShape).toBeUndefined();
+  editor.redo();
+  expect(before().pedestalShape).toBe('rectangular');
+  editor.setEditing('after');
+  const copiedId = editor.copyDesign()!;
+  editor.change((scene) => {
+    const meta = scene.fixtures[0].reconstruction!;
+    meta.pedestalShape = 'round';
+    meta.provenance = { pedestalShape: 'user' };
+  });
+  const current = () => useEditor.getState().project!;
+  expect(
+    current().designs.find((d) => d.id === source.id)!.scene.fixtures[0].reconstruction?.pedestalShape,
+  ).toBeUndefined();
+  expect(current().designs.find((d) => d.id === copiedId)!.scene.fixtures[0].id).not.toBe(
+    source.scene.fixtures[0].id,
+  );
+  editor.undo();
+  expect(getActiveDesign(current())!.scene.fixtures[0].reconstruction?.pedestalShape).toBeUndefined();
+  editor.redo();
+  expect(getActiveDesign(current())!.scene.fixtures[0].reconstruction?.pedestalShape).toBe('round');
+  expect(projectReferences(current()).assets.sort()).toEqual(originalReferences.assets.sort());
+  expect(projectReferences(current()).versions.sort()).toEqual(originalReferences.versions.sort());
+  const saved = await repo.projects.create(current()),
+    loaded = await repo.projects.load(saved.id);
+  expect(loaded).toEqual(saved);
+  expect(projectV3Schema.parse(loaded).shared.comparison!.before.fixtures[0].reconstruction).toMatchObject({
+    pedestalShape: 'rectangular',
+    provenance: { pedestalShape: 'user' },
+  });
+  expect(
+    projectV3Schema.parse(loaded).designs.find((d) => d.id === copiedId)!.scene.fixtures[0].reconstruction,
+  ).toMatchObject({ pedestalShape: 'round', provenance: { pedestalShape: 'user' } });
 });

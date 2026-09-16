@@ -11,3 +11,9 @@ tmp/
 .vinext/
 .wrangler/
 .dev.vars*
+
+!.dev.vars.example
+
+# Python verification tool bytecode
+__pycache__/
+*.py[cod]

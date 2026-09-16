@@ -1,0 +1,10 @@
+# Copy this file to .dev.vars for Wrangler local bindings only. Never commit .dev.vars.
+# npm run dev / dev:vinext force local mode regardless of these values.
+APP_ENV=local
+STORAGE_MODE=auto
+# Cloud D1 mode requires Workers bindings DB and ASSET_BUCKET in wrangler.jsonc.
+# Production uses Wrangler secrets / Worker settings, not this local file.
+BETTER_AUTH_URL=
+BETTER_AUTH_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=

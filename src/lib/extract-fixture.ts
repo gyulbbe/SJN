@@ -1,3 +1,4 @@
+import { createProjectMaterial } from '@/lib/repositories/project-material';
 import { getRepositories } from './repositories';
 import type { Repositories } from './repositories/contracts';
 import { MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS } from './images';
@@ -156,7 +157,8 @@ export async function registerExtractedFixture(
   source: HTMLCanvasElement,
   mask: HTMLCanvasElement,
   options: ExtractedFixtureOptions,
-  repositories: Pick<Repositories, 'assets' | 'materials'> = getRepositories(),
+  repositories: Pick<Repositories, 'assets' | 'materials'> &
+    Partial<Pick<Repositories, 'mode'>> = getRepositories(),
 ): Promise<FixtureInstance> {
   const name = options.name.trim();
   if (!name || name.length > 200) throw new Error('제품 이름은 1~200자로 입력해 주세요.');
@@ -188,7 +190,7 @@ export async function registerExtractedFixture(
     blob: extracted.blob,
   };
   await repositories.assets.put(asset);
-  const material = await repositories.materials.create({
+  const material = await createProjectMaterial(repositories, {
     name,
     brand: '',
     code: '',

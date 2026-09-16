@@ -1,3 +1,4 @@
+import { roomSurfaceAreas } from './room-surface-areas';
 import type { MaterialPricing, QuoteDocument, QuoteLine } from './quote-types';
 import type { MaterialVersion, Scene, Surface } from './types';
 import type {
@@ -8,11 +9,9 @@ import type {
   UsageArea,
   UsageAssignment,
   UsagePriceSnapshot,
-  UsageUnit,
 } from './material-usage-types';
 
 export type { MaterialUsageState, UsagePriceSnapshot } from './material-usage-types';
-export const USAGE_UNIT_LABELS: Record<UsageUnit, string> = { m2: '㎡', box: '박스', piece: '장' };
 export const MAX_USAGE_QUANTITY = 100_000;
 export const MAX_USAGE_UNIT_PRICE = 100_000_000;
 export const PACKAGING_AREA_TOLERANCE = 0.000001;
@@ -233,6 +232,11 @@ export function ensureMaterialUsage(
 }
 
 function roomAreas(scene: Scene): Map<string, { areaM2: number | null; issue?: string }> {
+  if (
+    scene.wallFeatures !== undefined &&
+    !(Array.isArray(scene.wallFeatures) && scene.wallFeatures.length === 0)
+  )
+    return roomSurfaceAreas(scene);
   const result = new Map<string, { areaM2: number | null; issue?: string }>();
   const applicable = scene.surfaces.filter((s) => s.materialVersionId);
   for (const s of applicable) result.set(s.id, { areaM2: null, issue: '순시공 면적을 직접 입력해 주세요.' });

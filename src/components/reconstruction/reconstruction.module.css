@@ -315,3 +315,36 @@
   position: relative;
   z-index: 30;
 }
+
+.fixtureControls {
+  border: 0;
+  padding: 0;
+  margin: 12px 0;
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+.checkControl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.help {
+  font-size: 11px;
+  line-height: 1.65;
+  color: #68766f;
+}
+.provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+.provenance span {
+  font-size: 10px;
+  background: #f0f5f2;
+  color: #4f665c;
+  border-radius: 4px;
+  padding: 3px 5px;
+}

@@ -1,6 +1,6 @@
 'use client';
 import { getMaterialImageAssetId, getPreferredProductViewIndex } from '@/lib/material-images';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -20,12 +20,25 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { getRepositories } from '@/lib/repositories';
+import type { Repositories } from '@/lib/repositories';
+import {
+  cloudRecovery,
+  inspectRecovery,
+  projectContentKey,
+  recoveryKey,
+  registerStorageTransitionGuard,
+  registerAccountChangeCheckpoint,
+  type ProjectRecovery,
+  type RecoveryScope,
+} from '@/lib/storage/recovery';
+import { createSaveScheduler } from '@/lib/storage/save-scheduler';
 import MaterialUsagePanel, { flushMaterialUsageInputs } from '@/components/materials/material-usage-panel';
 import { useEditor } from '@/lib/editor-store';
 import {
   getActiveDesign,
   getActiveScene,
   createProjectFromLegacyFrame,
+  duplicateProjectDocument,
   MAX_DESIGNS,
   MAX_COMPARISON_DESIGNS,
 } from '@/lib/designs';
@@ -35,29 +48,44 @@ import DesignComparison from '@/components/designs/design-comparison';
 import { getEditingScene, projectScenes } from '@/lib/comparison';
 import ReconstructionReviewPanel from '@/components/reconstruction/reconstruction-review';
 import reconstructionStyles from '@/components/reconstruction/reconstruction.module.css';
-import { DEFAULT_COLOR, EMPTY_MASK, type Material, type MaterialVersion, type Scene } from '@/lib/types';
+import {
+  DEFAULT_COLOR,
+  EMPTY_MASK,
+  type Material,
+  type MaterialVersion,
+  type Scene,
+  type ProjectDocument,
+} from '@/lib/types';
 import { AssetImage } from '@/components/materials/asset-image';
+import { useSharedCatalogAdmin } from '@/components/materials/shared-access';
 import { MaterialForm } from '@/components/materials/material-form';
 import { useAccess } from '../app-provider';
 import CanvasWorkspace from './canvas-workspace';
 import Inspector from './inspector';
+import AiExport from './ai-export';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
 import { importImage } from '@/lib/images';
 import RoomDialog from '@/components/rooms/room-dialog';
+import RoomViewer from '@/components/rooms/room-viewer';
+import WallFeaturesDialog from '@/components/rooms/wall-features-dialog';
+import RoomCanvasWorkspace from '@/components/rooms/room-canvas-workspace';
+import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import type { RoomDefinition } from '@/lib/room-types';
 import { renderRoomBackground } from '@/lib/room-background';
-import { roomResetWarnings } from '@/lib/room-editing';
+import { projectWallFeatureResizeError, roomResetWarnings } from '@/lib/room-editing';
 import { createRoomPlacement, projectRoomFixture } from '@/lib/room-fixtures';
 import { homography, transformPoint } from '@/lib/render/math';
 import { detectSurfaces } from '@/lib/render/auto-surfaces';
 import type { RoomSegmentation } from '@/lib/segmentation';
 import { analyzeWallGeometry, applyWallGeometry } from '@/lib/render/wall-geometry';
-const pendingProjectSaves = new Map<string, Promise<void>>();
+const pendingProjectSaves = new Map<string, Promise<boolean>>();
 export default function Editor({ id }: { id: string }) {
   const st = useEditor(),
     router = useRouter(),
-    { writable, ready, mode: storageMode } = useAccess();
+    { writable, ready, mode: storageMode, userId } = useAccess();
+  const catalogAdmin = useSharedCatalogAdmin();
+  const canManageCatalog = storageMode === 'local' || catalogAdmin;
   const [catalog, setCatalog] = useState<{ material: Material; version: MaterialVersion }[]>([]),
     [materials, setMaterials] = useState<Record<string, MaterialVersion>>({}),
     [error, setError] = useState(''),
@@ -67,8 +95,10 @@ export default function Editor({ id }: { id: string }) {
     [help, setHelp] = useState(false),
     [ai, setAi] = useState(false),
     [exporting, setExporting] = useState(false),
+    [aiExporting, setAiExporting] = useState(false),
     [exportModal, setExportModal] = useState(false),
     [roomOpen, setRoomOpen] = useState(false),
+    [roomViewerOpen, setRoomViewerOpen] = useState(false),
     [referenceOpen, setReferenceOpen] = useState(false),
     [reviewOpen, setReviewOpen] = useState(true),
     [beforeCatalog, setBeforeCatalog] = useState(false),
@@ -84,7 +114,40 @@ export default function Editor({ id }: { id: string }) {
     [savingPreview, setSavingPreview] = useState(false),
     [detectionStatus, setDetectionStatus] = useState(''),
     [detectionNotice, setDetectionNotice] = useState('');
+  const [wallEditor, setWallEditor] = useState<{
+    projectId: string;
+    editRevision: number;
+    activeDesignId: string | null;
+    editing: 'before' | 'after';
+    scene: Scene;
+  } | null>(null);
+  const [recoveryStatus, setRecoveryStatus] = useState('');
+  const [recoveryPrompt, setRecoveryPrompt] = useState<{
+    record: ProjectRecovery;
+    kind: 'recoverable' | 'conflict' | 'unavailable';
+  } | null>(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryArchives, setRecoveryArchives] = useState<ProjectRecovery[]>([]);
+  const scope = useMemo<RecoveryScope | null>(
+    () =>
+      storageMode !== 'local' && userId && typeof window !== 'undefined'
+        ? { origin: window.location.origin, backend: storageMode, userId, projectId: id }
+        : null,
+    [id, storageMode, userId],
+  );
+  const scopeKey = scope ? recoveryKey(scope) : JSON.stringify(['local', id]);
+  const currentScopeKey = useRef(scopeKey);
+  currentScopeKey.current = scopeKey;
+  const session = useRef<{ key: string; repo: Repositories; dead: boolean } | null>(null);
+  const materialsRef = useRef(materials);
+  materialsRef.current = materials;
+  const recoveryPromptRef = useRef(recoveryPrompt);
+  recoveryPromptRef.current = recoveryPrompt;
+  const lastRecoveryContent = useRef('');
+  const cloudCommittedContent = useRef('');
+  const recoveryCopy = useRef<ProjectDocument | null>(null);
   const activeDesign = st.project ? getActiveDesign(st.project) : undefined;
+  const roomContext = st.project ? projectDesignPreviewRoomContext(st.project) : undefined;
   const assetReader = useCallback((assetId: string) => getRepositories().assets.get(assetId), []);
   useDesignThumbnail({
     projectId: id,
@@ -92,16 +155,19 @@ export default function Editor({ id }: { id: string }) {
     design: loaded ? (activeDesign ?? null) : null,
     materials,
     assetReader,
-    enabled: loaded && !comparisonOpen && !designsOpen && !st.draft && !detectionStatus,
+    roomContext,
+    enabled: loaded && !roomViewerOpen && !comparisonOpen && !designsOpen && !st.draft && !detectionStatus,
     delayMs: 500,
   });
   const renderer = useRef<PhotoCompositor | null>(null);
   const applyRequest = useRef(0);
   const roomRequest = useRef(0);
   const detectedPhotos = useRef(new Map<string, Promise<RoomSegmentation>>());
-  const readerId = useRef(id);
+  const lastSaveError = useRef('');
   useEffect(() => {
     setRoomOpen(false);
+    setRoomViewerOpen(false);
+    setWallEditor(null);
     const requests = roomRequest;
     return () => {
       requests.current++;
@@ -109,12 +175,13 @@ export default function Editor({ id }: { id: string }) {
   }, [id, writable]);
   useEffect(() => {
     setExportModal(false);
+    setAiExporting(false);
     setCatalogOpen(false);
     setInspectorOpen(false);
     setDetectionStatus('');
     setDetectionNotice('');
     applyRequest.current++;
-  }, [id, st.project?.activeDesignId]);
+  }, [id, scopeKey, st.project?.activeDesignId]);
   useEffect(() => {
     if (loaded && Object.keys(materials).length) useEditor.getState().initializeUsage(materials);
   }, [loaded, materials]);
@@ -143,89 +210,329 @@ export default function Editor({ id }: { id: string }) {
     if (selected) setTab(selected.kind);
   }, [st.selection, id, st.editing]);
   useEffect(() => {
-    if (!ready) return;
-    let dead = false;
-    readerId.current = id;
+    if (!ready || (storageMode !== 'local' && !scope)) return;
+    const operation = { key: scopeKey, repo: getRepositories(), dead: false };
+    session.current = operation;
     setLoaded(false);
+    setRecoveryPrompt(null);
+    setRecoveryArchives([]);
+    setRecoveryStatus('');
+    lastRecoveryContent.current = '';
+    lastSaveError.current = '';
+    cloudCommittedContent.current = '';
+    recoveryCopy.current = null;
     void (async () => {
       try {
-        const repo = getRepositories();
-        await pendingProjectSaves.get(id);
-        const project = await repo.projects.load(id);
-        const list = await repo.materials.list();
-        const versions: Record<string, MaterialVersion> = Object.fromEntries(
-          list.map((v) => [v.version.id, v.version]),
-        );
-        const scenes = projectScenes(project);
+        const repo = operation.repo;
+        await pendingProjectSaves.get(scopeKey);
+        let recovery: ProjectRecovery | undefined;
+        if (scope) {
+          try {
+            recovery = await cloudRecovery.read(scope);
+            const archives = await cloudRecovery.archives(scope);
+            if (!operation.dead) setRecoveryArchives(archives);
+          } catch (e) {
+            if (!operation.dead) setRecoveryStatus(e instanceof Error ? e.message : String(e));
+          }
+        }
+        let project: ProjectDocument;
+        let unavailable = false;
+        try {
+          project = await repo.projects.load(id);
+        } catch (e) {
+          // Cached drafts may be opened only for this already authenticated account.
+          if (!recovery) throw e;
+          project = recovery.document;
+          unavailable = true;
+        }
+        const list = await repo.materials.list().catch((e) => {
+          if (!recovery) throw e;
+          return [] as { material: Material; version: MaterialVersion }[];
+        });
+        const versions: Record<string, MaterialVersion> = {
+          ...recovery?.versions,
+          ...Object.fromEntries(list.map((v) => [v.version.id, v.version])),
+        };
+        const scenes = [...projectScenes(project), ...(recovery ? projectScenes(recovery.document) : [])];
         const ids = new Set(
           scenes
-            .flatMap((s) => [
-              ...s.surfaces.map((v) => v.materialVersionId),
-              ...s.fixtures.map((v) => v.materialVersionId),
+            .flatMap((scene) => [
+              ...scene.surfaces.map((v) => v.materialVersionId),
+              ...scene.fixtures.map((v) => v.materialVersionId),
             ])
             .filter(Boolean) as string[],
         );
         for (const v of ids) if (!versions[v]) versions[v] = await repo.materials.getVersion(v);
-        if (dead) return;
+        if (operation.dead || currentScopeKey.current !== scopeKey) return;
+        cloudCommittedContent.current = unavailable ? '' : projectContentKey(project);
         useEditor.getState().load(project);
         useEditor.getState().initializeUsage(versions);
         setCatalog(list.filter((row) => !isBuiltInExampleMaterial(row)));
         setMaterials(versions);
-        setLoaded(true);
+        if (recovery && scope) {
+          const kind = unavailable ? 'unavailable' : inspectRecovery(recovery, project);
+          if (kind === 'identical') await cloudRecovery.acknowledge(scope, recovery.document, project);
+          else setRecoveryPrompt({ record: recovery, kind });
+        }
+        if (!operation.dead) setLoaded(true);
       } catch (e) {
-        if (!dead) setError(e instanceof Error ? e.message : String(e));
+        if (!operation.dead) setError(e instanceof Error ? e.message : String(e));
       }
     })();
     return () => {
-      dead = true;
+      operation.dead = true;
     };
-  }, [id, ready, writable]);
-  const save = useCallback(async () => {
-    if (!writable) return;
-    const pending = pendingProjectSaves.get(id);
-    if (pending) {
-      await pending;
-      return;
-    }
-    const run = async () => {
-      for (;;) {
-        const state = useEditor.getState(),
-          p = state.project;
-        if (!p || p.id !== id || state.saveStatus === 'saved') return;
-        const previousSaveError = state.error;
-        state.saving();
-        try {
-          const result = await getRepositories().projects.save(structuredClone(p), p.storageRevision);
-          useEditor.getState().saved(result);
-          setError((message) => (message === previousSaveError ? '' : message));
-        } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
-          if (useEditor.getState().project?.id === id) useEditor.getState().failed(message);
-          setError(message);
-          return;
+  }, [id, ready, writable, storageMode, scope, scopeKey]);
+  const persistRecovery = useCallback(
+    async (document?: ProjectDocument) => {
+      if (!scope) return true;
+      const project = document ?? useEditor.getState().project;
+      const operation = session.current;
+      if (!project || project.id !== id || !operation || operation.key !== scopeKey) return false;
+      const content = projectContentKey(project);
+      if (content === lastRecoveryContent.current) {
+        if (!operation.dead && currentScopeKey.current === scopeKey)
+          setRecoveryStatus('이 기기에 복구본 저장됨');
+        return true;
+      }
+      try {
+        await cloudRecovery.write(scope, project, materialsRef.current);
+        if (!operation.dead && currentScopeKey.current === scopeKey) {
+          lastRecoveryContent.current = content;
+          if (useEditor.getState().project && projectContentKey(useEditor.getState().project!) === content)
+            setRecoveryStatus('이 기기에 복구본 저장됨');
         }
-        if (useEditor.getState().saveStatus !== 'dirty') return;
+        return true;
+      } catch (e) {
+        if (!operation.dead && currentScopeKey.current === scopeKey)
+          setRecoveryStatus(
+            `복구본 저장 실패 · ${e instanceof Error ? e.message : String(e)}. 현재 작업은 유지됩니다.`,
+          );
+        return false;
+      }
+    },
+    [scope, scopeKey, id],
+  );
+  const saveOnce = useCallback(async () => {
+    const operation = session.current;
+    if (!writable || !operation || operation.dead || operation.key !== scopeKey || recoveryPromptRef.current)
+      return false;
+    const pending = pendingProjectSaves.get(scopeKey);
+    if (pending) return pending;
+    const run = async () => {
+      const state = useEditor.getState(),
+        project = state.project;
+      if (!project || project.id !== id) return false;
+      if (state.saveStatus === 'saved') return true;
+      if (scope && projectContentKey(project) === cloudCommittedContent.current) {
+        await persistRecovery(project);
+        try {
+          await cloudRecovery.acknowledge(scope, project, project);
+        } catch {
+          /* Preserve the draft on IDB failure. */
+        }
+        if (!operation.dead && currentScopeKey.current === scopeKey) {
+          state.saved(project);
+          lastSaveError.current = '';
+          setError('');
+          setRecoveryStatus('');
+        }
+        return true;
+      }
+      const sent = structuredClone(project);
+      const previousSaveError = state.error;
+      state.saving();
+      if (scope) await persistRecovery(sent);
+      if (operation.dead || currentScopeKey.current !== scopeKey || getRepositories() !== operation.repo)
+        return false;
+      try {
+        const result = await operation.repo.projects.save(sent, sent.storageRevision);
+        // Persist successful server bookkeeping even if this editor has since closed.
+        if (scope) {
+          try {
+            await cloudRecovery.acknowledge(scope, sent, result);
+          } catch {
+            /* A retained recovery is safer than dropping a valid server save. */
+          }
+        }
+        if (operation.dead || currentScopeKey.current !== scopeKey || getRepositories() !== operation.repo)
+          return true;
+        cloudCommittedContent.current = projectContentKey(result);
+        useEditor.getState().saved(result);
+        if (useEditor.getState().saveStatus === 'saved') {
+          lastRecoveryContent.current = '';
+          setRecoveryStatus('');
+        }
+        const clearedSaveError = lastSaveError.current;
+        lastSaveError.current = '';
+        setError((message) => (message === previousSaveError || message === clearedSaveError ? '' : message));
+        return true;
+      } catch (e) {
+        if (operation.dead || currentScopeKey.current !== scopeKey || getRepositories() !== operation.repo)
+          return false;
+        const message = e instanceof Error ? e.message : String(e);
+        lastSaveError.current = message;
+        useEditor.getState().failed(message);
+        setError(message);
+        // A revision conflict is never resolved by changing expectedStorageRevision.
+        if (
+          scope &&
+          e instanceof Error &&
+          (e.name === 'StorageConflictError' || ('status' in e && e.status === 409))
+        ) {
+          const current = useEditor.getState().project;
+          if (current && (await persistRecovery(current))) {
+            try {
+              const record = await cloudRecovery.read(scope);
+              if (record && !operation.dead) setRecoveryPrompt({ record, kind: 'conflict' });
+            } catch {
+              /* Current editor state remains available if IndexedDB is full. */
+            }
+          }
+        }
+        return false;
       }
     };
     const promise = run();
-    pendingProjectSaves.set(id, promise);
+    pendingProjectSaves.set(scopeKey, promise);
     try {
-      await promise;
+      return await promise;
     } finally {
-      if (pendingProjectSaves.get(id) === promise) pendingProjectSaves.delete(id);
+      if (pendingProjectSaves.get(scopeKey) === promise) pendingProjectSaves.delete(scopeKey);
     }
-  }, [writable, id]);
+  }, [writable, id, scopeKey, scope, persistRecovery]);
+  const scheduler = useMemo(
+    () =>
+      createSaveScheduler(saveOnce, {
+        delayMs: scope ? 2000 : 500,
+        maxWaitMs: scope ? 15000 : 0,
+        retryOnChange: !scope,
+      }),
+    [saveOnce, scope],
+  );
+  const save = useCallback(() => scheduler.flush(), [scheduler]);
+  useEffect(() => {
+    scheduler.start();
+    return () => scheduler.dispose();
+  }, [scheduler]);
+  useEffect(() => {
+    if (st.saveStatus !== 'dirty' || !loaded || !writable || recoveryPrompt) return;
+    scheduler.changed();
+  }, [st.project, st.saveStatus, scheduler, loaded, writable, recoveryPrompt]);
+  useEffect(() => {
+    if (!scope || !loaded || !writable || recoveryPrompt || st.saveStatus === 'saved') return;
+    setRecoveryStatus('복구본 저장 대기');
+    const timer = setTimeout(() => {
+      void persistRecovery();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [scope, st.project, st.saveStatus, loaded, writable, persistRecovery, recoveryPrompt]);
   useEffect(
-    () => () => {
-      if (useEditor.getState().project?.id === id && useEditor.getState().saveStatus !== 'saved') void save();
-    },
-    [id, save],
+    () =>
+      registerStorageTransitionGuard(async () => {
+        if (!loaded || !writable) return true;
+        if (!flushMaterialUsageInputs()) return false;
+        useEditor.getState().commit();
+        if (recoveryPromptRef.current) {
+          // The untouched recovery is already durable; do not replace it while leaving.
+          return confirm('복구본은 이 계정의 기기 저장소에 보관됩니다. 지금 작업 공간을 나갈까요?');
+        }
+        if (await save()) return true;
+        if (scope && !(await persistRecovery())) return false;
+        return confirm(
+          scope
+            ? '클라우드 저장에 실패했어요. 이 기기의 복구본은 같은 계정으로 다시 열 수 있어요. 나갈까요?'
+            : '저장하지 못한 변경이 있어요. 그래도 나갈까요?',
+        );
+      }),
+    [loaded, writable, save, scope, persistRecovery],
+  );
+  useEffect(
+    () =>
+      registerAccountChangeCheckpoint(async () => {
+        if (!loaded || !scope) return;
+        const operation = session.current;
+        scheduler.dispose();
+        if (operation) operation.dead = true;
+        applyRequest.current++;
+        roomRequest.current++;
+        if (!flushMaterialUsageInputs())
+          throw new Error(
+            '입력 중인 값이 유효하지 않아 작업을 정리하지 못했어요. 이전 계정으로 돌아가 확인해 주세요.',
+          );
+        useEditor.getState().commit();
+        const current = useEditor.getState();
+        if (!recoveryPromptRef.current && current.project && current.saveStatus !== 'saved') {
+          if (!(await persistRecovery(structuredClone(current.project))))
+            throw new Error(
+              '이전 계정의 복구본을 저장하지 못했어요. 현재 메모리 작업은 보존했으며 추가 저장을 중단합니다.',
+            );
+        }
+        // Clear private pixels through CanvasWorkspace unmount and clear the shared editor store.
+        // Durable recovery/asset caches stay in their original account namespace.
+        setLoaded(false);
+        setMaterials({});
+        setCatalog([]);
+        setRecoveryPrompt(null);
+        setRecoveryArchives([]);
+        useEditor.setState({ project: null, draft: null, selection: null, saveStatus: 'saved', error: '' });
+      }),
+    [loaded, scope, scheduler, persistRecovery],
   );
   useEffect(() => {
-    if (st.saveStatus !== 'dirty' || !loaded || !writable) return;
-    const t = setTimeout(() => void save(), 500);
-    return () => clearTimeout(t);
-  }, [st.project, st.saveStatus, save, loaded, writable]);
+    if (!loaded || !writable) return;
+    const operation = session.current;
+    const onHistoryNavigation = () => {
+      if (!flushMaterialUsageInputs()) return;
+      useEditor.getState().commit();
+      void save();
+    };
+    window.addEventListener('popstate', onHistoryNavigation);
+    return () => {
+      window.removeEventListener('popstate', onHistoryNavigation);
+      const current = useEditor.getState(),
+        project = current.project;
+      if (
+        !operation ||
+        !project ||
+        project.id !== id ||
+        current.saveStatus === 'saved' ||
+        recoveryPromptRef.current
+      )
+        return;
+      const sent = structuredClone(project);
+      if (scope) {
+        // SPA history navigation cannot await an effect cleanup; start a durable local write immediately.
+        // No request is sent using a possibly changed account cookie.
+        void cloudRecovery.write(scope, sent, materialsRef.current).catch(() => {});
+        return;
+      }
+      // Preserve the previous local editor's save-on-unmount contract, scoped and serialized.
+      const pending = pendingProjectSaves.get(scopeKey);
+      const departure = (async () => {
+        try {
+          if (pending) {
+            if (!(await pending)) return false;
+            const latest = await operation.repo.projects.load(id);
+            if (projectContentKey(latest) === projectContentKey(sent)) return true;
+            if (latest.storageRevision === sent.storageRevision + 1)
+              sent.storageRevision = latest.storageRevision;
+          }
+          const saved = await operation.repo.projects.save(sent, sent.storageRevision);
+          if (useEditor.getState().project === project) useEditor.getState().saved(saved);
+          return true;
+        } catch (failure) {
+          if (useEditor.getState().project === project)
+            useEditor.getState().failed(failure instanceof Error ? failure.message : String(failure));
+          return false;
+        }
+      })();
+      pendingProjectSaves.set(scopeKey, departure);
+      void departure.finally(() => {
+        if (pendingProjectSaves.get(scopeKey) === departure) pendingProjectSaves.delete(scopeKey);
+      });
+    };
+  }, [loaded, writable, id, scope, scopeKey, save]);
   useEffect(() => {
     const before = (e: BeforeUnloadEvent) => {
       if (useEditor.getState().saveStatus !== 'saved') {
@@ -238,7 +545,7 @@ export default function Editor({ id }: { id: string }) {
   useEffect(() => {
     function key(e: KeyboardEvent) {
       if ((e.target as HTMLElement).matches('input,textarea,select,[contenteditable]')) return;
-      if (designsOpen || comparisonOpen || legacyOpen) return;
+      if (roomViewerOpen || wallEditor || designsOpen || comparisonOpen || legacyOpen) return;
       if (referenceOpen) {
         if (e.key === 'Escape') setReferenceOpen(false);
         return;
@@ -270,18 +577,99 @@ export default function Editor({ id }: { id: string }) {
     }
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [save, writable, roomOpen, referenceOpen, designsOpen, comparisonOpen, legacyOpen]);
+  }, [
+    save,
+    writable,
+    roomOpen,
+    roomViewerOpen,
+    wallEditor,
+    referenceOpen,
+    designsOpen,
+    comparisonOpen,
+    legacyOpen,
+  ]);
   const scene = st.draft || (st.project ? getEditingScene(st.project, st.editing) : undefined);
   async function leave(path: string) {
     if (!flushMaterialUsageInputs()) return;
-    await save();
-    if (useEditor.getState().saveStatus === 'dirty') await save();
-    if (
-      useEditor.getState().saveStatus === 'error' &&
-      !confirm('저장하지 못한 변경이 있어요. 그래도 나갈까요?')
-    )
-      return;
+    useEditor.getState().commit();
+    if (recoveryPromptRef.current) {
+      if (!confirm('복구본을 보관한 채 프로젝트 목록으로 나갈까요?')) return;
+    } else if (!(await save())) {
+      if (scope && !(await persistRecovery())) return;
+      if (
+        !confirm(
+          scope
+            ? '클라우드 저장에 실패했어요. 복구본은 이 기기에 보관돼요. 그래도 나갈까요?'
+            : '저장하지 못한 변경이 있어요. 그래도 나갈까요?',
+        )
+      )
+        return;
+    }
     router.push(path);
+  }
+  function downloadRecovery(record: ProjectRecovery) {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(record)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${record.document.name}-복구데이터.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  async function resolveRecovery(action: 'resume' | 'server' | 'copy') {
+    const prompt = recoveryPromptRef.current,
+      operation = session.current;
+    if (!prompt || !scope || !operation || recoveryBusy) return;
+    setRecoveryBusy(true);
+    try {
+      if (action === 'resume') {
+        if (prompt.kind === 'conflict') return;
+        const document = structuredClone(prompt.record.document);
+        useEditor.getState().load(document);
+        useEditor.setState({ saveStatus: 'dirty' });
+        setMaterials((previous) => ({ ...previous, ...prompt.record.versions }));
+        lastRecoveryContent.current = projectContentKey(document);
+        setRecoveryStatus('이 기기에 복구본 저장됨');
+        scheduler.start();
+        setRecoveryPrompt(null);
+      } else if (action === 'server') {
+        const server = await operation.repo.projects.load(id);
+        const versions = { ...materialsRef.current };
+        for (const scene of projectScenes(server)) {
+          for (const versionId of [
+            ...scene.surfaces.map((surface) => surface.materialVersionId),
+            ...scene.fixtures.map((fixture) => fixture.materialVersionId),
+          ].filter((value): value is string => !!value)) {
+            if (!versions[versionId])
+              versions[versionId] = await operation.repo.materials.getVersion(versionId);
+          }
+        }
+        if (operation.dead || currentScopeKey.current !== scopeKey) return;
+        await cloudRecovery.archive(scope, prompt.kind === 'conflict' ? 'conflict' : 'dismissed');
+        setRecoveryArchives(await cloudRecovery.archives(scope));
+        cloudCommittedContent.current = projectContentKey(server);
+        useEditor.getState().load(server);
+        setMaterials(versions);
+        scheduler.start();
+        lastSaveError.current = '';
+        setRecoveryPrompt(null);
+        setRecoveryStatus('이전 복구본은 이 기기에 별도 보관됨');
+        setError('');
+      } else {
+        // Keep a stable creation ID when retrying a lost response.
+        recoveryCopy.current ??= duplicateProjectDocument(prompt.record.document);
+        recoveryCopy.current.name = (prompt.record.document.name + ' · 복구본').slice(0, 200);
+        const copy = await operation.repo.projects.create(recoveryCopy.current);
+        if (operation.dead || currentScopeKey.current !== scopeKey) return;
+        await cloudRecovery.archive(scope, 'conflict');
+        useEditor.setState({ saveStatus: 'saved' });
+        setRecoveryPrompt(null);
+        router.push('/projects/' + copy.id);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (!operation.dead) setRecoveryBusy(false);
+    }
   }
   async function analyzePhoto(source: Scene, request: number) {
     const photoId = source.backgroundAssetId || source.previewAssetId;
@@ -509,6 +897,8 @@ export default function Editor({ id }: { id: string }) {
       roomRequest.current === request &&
       useEditor.getState().project?.id === project.id &&
       useEditor.getState().project?.editRevision === project.editRevision;
+    const structureError = projectWallFeatureResizeError(project, room);
+    if (structureError) throw new Error(structureError);
     const image = await renderRoomBackground(room);
     if (!current()) return;
     const { original, preview } = await importImage(
@@ -529,25 +919,58 @@ export default function Editor({ id }: { id: string }) {
       'Before와 모든 시안의 공간 크기·자재 수량·금액을 함께 맞췄어요. 공간 크기 설정에서 변경 직전 전체 복원을 할 수 있어요.',
     );
   }
+  async function captureExport(
+    outputFormat: 'image/png' | 'image/jpeg',
+    comparison: boolean,
+    maxEdge = 4096,
+  ): Promise<Blob> {
+    if (!scene || !st.project || (!renderer.current && !roomContext))
+      throw new Error('내보낼 공간이 아직 준비되지 않았어요.');
+    try {
+      const edge = Math.min(maxEdge, Math.max(scene.imageWidth, scene.imageHeight));
+      const w = edge,
+        h = edge;
+      const snapshot = {
+        scene: structuredClone(getActiveScene(st.project)),
+        beforeScene: structuredClone(st.project.shared.comparison?.before ?? st.project.shared.baseline),
+        materials: structuredClone(materials),
+      };
+      let blob: Blob;
+      if (roomContext) {
+        const { RoomViewerRenderer } = await import('@/lib/room-viewer/renderer');
+        const roomRenderer = new RoomViewerRenderer();
+        try {
+          await roomRenderer.setSnapshot(snapshot, assetReader, {
+            fitScenes: structuredClone(roomContext.fitScenes),
+          });
+          blob = await roomRenderer.export(roomContext.view, {
+            format: outputFormat === 'image/png' ? 'png' : 'jpeg',
+            mode: comparison ? 'compare' : 'after',
+            longEdge: edge,
+          });
+        } finally {
+          roomRenderer.dispose();
+        }
+      } else {
+        blob = await renderer.current!.exportImage(snapshot, w, h, outputFormat, comparison);
+      }
+      return blob;
+    } finally {
+      const pw = Math.min(2048, scene.imageWidth);
+      renderer.current?.render(
+        pw,
+        Math.round((pw * scene.imageHeight) / scene.imageWidth),
+        st.mode,
+        st.split,
+      );
+    }
+  }
   async function exportImage() {
-    if (!scene || !renderer.current) return;
+    if (exporting || aiExporting) return;
     setExporting(true);
     setError('');
     try {
-      const edge = Math.min(4096, Math.max(scene.imageWidth, scene.imageHeight));
-      const w = edge,
-        h = edge;
-      const blob = await renderer.current.exportImage(
-        {
-          scene: structuredClone(getActiveScene(st.project!)),
-          beforeScene: st.project!.shared.comparison?.before,
-          materials,
-        },
-        w,
-        h,
-        format,
-        compare,
-      );
+      const blob = await captureExport(format, compare);
       const url = URL.createObjectURL(blob),
         link = document.createElement('a');
       link.href = url;
@@ -555,8 +978,6 @@ export default function Editor({ id }: { id: string }) {
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       setExportModal(false);
-      const pw = Math.min(2048, scene.imageWidth);
-      renderer.current.render(pw, Math.round((pw * scene.imageHeight) / scene.imageWidth), st.mode, st.split);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -652,14 +1073,15 @@ export default function Editor({ id }: { id: string }) {
         : v.category === 'tile' && (v.usage === 'both' || v.usage === tab)) &&
       `${v.name} ${v.brand} ${v.code}`.toLowerCase().includes(search.toLowerCase()),
   );
+  const hasSaveError = st.saveStatus === 'error' || (!!scope && !!lastSaveError.current);
   const status =
     st.saveStatus === 'saved'
       ? storageMode === 'local'
         ? '이 브라우저에 저장됨'
-        : '서버에 저장됨'
+        : '클라우드에 저장됨'
       : st.saveStatus === 'saving'
         ? '저장 중…'
-        : st.saveStatus === 'error'
+        : hasSaveError
           ? '저장 실패 · 다시 시도'
           : '변경사항 저장 대기';
   const chosenSurface = scene.surfaces.find((s) => s.id === st.selection && s.kind === tab);
@@ -691,6 +1113,16 @@ export default function Editor({ id }: { id: string }) {
           <span className="save-state" data-testid="save-status">
             {status}
           </span>
+          {scope && recoveryStatus && (
+            <span className="save-state" data-testid="recovery-status">
+              {recoveryStatus}
+            </span>
+          )}
+          {hasSaveError && !error && !st.error && (
+            <button className="text-button" onClick={() => void saveWithThumbnail()}>
+              저장 다시 시도
+            </button>
+          )}
         </div>
         <div className="top-actions">
           <div className="row undo-redo">
@@ -750,6 +1182,18 @@ export default function Editor({ id }: { id: string }) {
             <Columns2 size={17} />
           </button>
           <div className="divider" />
+          <button
+            className="btn room-open-button"
+            aria-label="공간 둘러보기"
+            disabled={!!detectionStatus || !activeDesign}
+            onClick={() => {
+              if (!prepareDesignAction()) return;
+              setRoomViewerOpen(true);
+            }}
+          >
+            <Layers size={16} />
+            공간 둘러보기
+          </button>
           <button className="btn ai-button" onClick={() => setAi(true)}>
             <Sparkles size={15} />
             AI 고화질 보정<span className="badge">연결 필요</span>
@@ -820,6 +1264,34 @@ export default function Editor({ id }: { id: string }) {
           )}
         </div>
       </div>
+      {scope && recoveryArchives.length > 0 && (
+        <details style={{ padding: '4px 16px' }}>
+          <summary>보관된 복구본 {recoveryArchives.length}개</summary>
+          {recoveryArchives.map((record, index) => (
+            <div className="row" key={record.savedAt + index}>
+              <span>
+                {new Date(record.savedAt).toLocaleString()} · {record.document.name}
+              </span>
+              <button className="btn small" onClick={() => downloadRecovery(record)}>
+                복구 데이터 다운로드
+              </button>
+              <button
+                className="btn small"
+                disabled={!writable}
+                onClick={async () => {
+                  if (!flushMaterialUsageInputs()) return;
+                  useEditor.getState().commit();
+                  if (!(await save())) return;
+                  recoveryCopy.current = null;
+                  setRecoveryPrompt({ record, kind: 'conflict' });
+                }}
+              >
+                새 프로젝트로 복원
+              </button>
+            </div>
+          ))}
+        </details>
+      )}
       {st.project.shared.comparison && (
         <div className={reconstructionStyles.bar}>
           <div>
@@ -899,9 +1371,24 @@ export default function Editor({ id }: { id: string }) {
           setInspectorOpen(false);
         }}
       />
+      {roomViewerOpen && (
+        <RoomViewer
+          project={st.project}
+          materials={materials}
+          assetReader={assetReader}
+          writable={writable}
+          onView={st.setRoomView}
+          saveStatus={st.saveStatus}
+          saveError={st.error}
+          onSave={() => void save()}
+          onDesign={activateDesign}
+          onClose={() => setRoomViewerOpen(false)}
+        />
+      )}
       {comparisonOpen ? (
         <DesignComparison
           projectId={st.project.id}
+          roomContext={roomContext}
           sharedRevision={st.project.shared.revision}
           designs={st.project.comparisonDesignIds
             .map((designId) => st.project!.designs.find((d) => d.id === designId)!)
@@ -949,15 +1436,17 @@ export default function Editor({ id }: { id: string }) {
                   >
                     <X size={17} />
                   </button>
-                  <button
-                    className="icon-btn"
-                    title="자재 등록"
-                    aria-label="신규 자재 등록"
-                    disabled={!writable}
-                    onClick={() => setForm(true)}
-                  >
-                    <Plus size={17} />
-                  </button>
+                  {canManageCatalog && (
+                    <button
+                      className="icon-btn"
+                      title="자재 등록"
+                      aria-label="신규 자재 등록"
+                      disabled={!writable}
+                      onClick={() => setForm(true)}
+                    >
+                      <Plus size={17} />
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="catalog-tabs">
@@ -1073,9 +1562,11 @@ export default function Editor({ id }: { id: string }) {
                 ))}
               </div>
               <div className="catalog-footer">
-                <button className="btn" disabled={!writable} onClick={() => setForm(true)}>
-                  <Plus size={14} />내 자재 등록하기
-                </button>
+                {canManageCatalog && (
+                  <button className="btn" disabled={!writable} onClick={() => setForm(true)}>
+                    <Plus size={14} />내 자재 등록하기
+                  </button>
+                )}
                 <button className="text-button" style={{ fontSize: 11 }} onClick={() => leave('/materials')}>
                   자재 관리 열기
                   <ExternalLink size={12} />
@@ -1083,22 +1574,41 @@ export default function Editor({ id }: { id: string }) {
               </div>
             </aside>
           )}
-          <CanvasWorkspace
-            materials={materials}
-            onRenderer={onRenderer}
-            onError={onError}
-            showCatalog={() => {
-              if (st.editing === 'before') {
-                setReviewOpen((v) => !v);
-                setBeforeCatalog(false);
-              } else setCatalogOpen((v) => !v);
-              setInspectorOpen(false);
-            }}
-            showInspector={() => {
-              setInspectorOpen((v) => !v);
-              setCatalogOpen(false);
-            }}
-          />
+          {roomContext ? (
+            <RoomCanvasWorkspace
+              materials={materials}
+              assetReader={assetReader}
+              onError={onError}
+              showCatalog={() => {
+                if (st.editing === 'before') {
+                  setReviewOpen((value) => !value);
+                  setBeforeCatalog(false);
+                } else setCatalogOpen((value) => !value);
+                setInspectorOpen(false);
+              }}
+              showInspector={() => {
+                setInspectorOpen((value) => !value);
+                setCatalogOpen(false);
+              }}
+            />
+          ) : (
+            <CanvasWorkspace
+              materials={materials}
+              onRenderer={onRenderer}
+              onError={onError}
+              showCatalog={() => {
+                if (st.editing === 'before') {
+                  setReviewOpen((v) => !v);
+                  setBeforeCatalog(false);
+                } else setCatalogOpen((v) => !v);
+                setInspectorOpen(false);
+              }}
+              showInspector={() => {
+                setInspectorOpen((v) => !v);
+                setCatalogOpen(false);
+              }}
+            />
+          )}
           <div className={`usage-drawer ${inspectorOpen ? 'open' : ''}`}>
             <MaterialUsagePanel
               key={activeDesign.id}
@@ -1119,6 +1629,19 @@ export default function Editor({ id }: { id: string }) {
                   open={inspectorOpen}
                   onClose={() => setInspectorOpen(false)}
                   onRoomResize={() => setRoomOpen(true)}
+                  onWallFeatures={() => {
+                    if (!writable || !flushMaterialUsageInputs()) return;
+                    useEditor.getState().commit();
+                    const current = useEditor.getState();
+                    if (!current.project) return;
+                    setWallEditor({
+                      projectId: current.project.id,
+                      editRevision: current.project.editRevision,
+                      activeDesignId: current.project.activeDesignId,
+                      editing: current.editing,
+                      scene: structuredClone(getEditingScene(current.project, current.editing)),
+                    });
+                  }}
                   onMaterialsChanged={refresh}
                 />
               </details>
@@ -1129,6 +1652,7 @@ export default function Editor({ id }: { id: string }) {
       {designsOpen && (
         <DesignManager
           projectId={st.project.id}
+          roomContext={roomContext}
           sharedRevision={st.project.shared.revision}
           designs={st.project.designs}
           activeDesignId={st.project.activeDesignId}
@@ -1187,6 +1711,11 @@ export default function Editor({ id }: { id: string }) {
       {(error || st.error) && (
         <div role="alert" className="editor-error row between">
           <span>{error || st.error}</span>
+          {hasSaveError && !recoveryPrompt && (
+            <button className="btn small" disabled={savingPreview} onClick={() => void saveWithThumbnail()}>
+              저장 다시 시도
+            </button>
+          )}
           <button
             className="icon-btn"
             aria-label="오류 닫기"
@@ -1199,7 +1728,7 @@ export default function Editor({ id }: { id: string }) {
           </button>
         </div>
       )}
-      {form && (
+      {form && canManageCatalog && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="신규 자재 등록">
           <div className="modal-card">
             <MaterialForm
@@ -1210,6 +1739,58 @@ export default function Editor({ id }: { id: string }) {
                 setForm(false);
               }}
             />
+          </div>
+        </div>
+      )}
+      {recoveryPrompt && (
+        <div className="modal" role="dialog" aria-modal="true" aria-label="클라우드 작업 복구">
+          <div className="modal-card" style={{ maxWidth: 680 }}>
+            <h2>
+              {recoveryPrompt.kind === 'conflict'
+                ? '서버 저장본과 다른 복구본이 있어요'
+                : '이 기기에 저장한 작업이 있어요'}
+            </h2>
+            <p>
+              {new Date(recoveryPrompt.record.savedAt).toLocaleString()} ·{' '}
+              {recoveryPrompt.record.document.name}
+            </p>
+            <p>
+              {recoveryPrompt.kind === 'conflict'
+                ? '서버본과 복구본을 모두 보존해요. 복구본은 새 프로젝트로 만들 수 있고, 기존 서버본을 덮어쓰지 않아요.'
+                : recoveryPrompt.kind === 'unavailable'
+                  ? '서버 저장본을 확인하지 못했어요. 같은 계정의 기기 복구본으로 작업할 수 있어요. 연결 후 서버본과 다르면 별도 프로젝트로 복원합니다.'
+                  : '마지막 클라우드 저장 이후의 변경이 있어요. 복구본을 이어서 편집하거나 서버 저장본을 사용할 수 있어요.'}
+            </p>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+              {recoveryPrompt.kind !== 'conflict' && (
+                <button
+                  className="btn primary"
+                  disabled={recoveryBusy || !writable}
+                  onClick={() => void resolveRecovery('resume')}
+                >
+                  복구본 이어서 편집
+                </button>
+              )}
+              <button
+                className="btn"
+                disabled={recoveryBusy || !writable}
+                onClick={() => void resolveRecovery('copy')}
+              >
+                새 프로젝트로 복원
+              </button>
+              <button className="btn" disabled={recoveryBusy} onClick={() => void resolveRecovery('server')}>
+                서버 저장본 사용 · 복구본 보관
+              </button>
+              <button className="btn" onClick={() => downloadRecovery(recoveryPrompt.record)}>
+                복구 데이터 다운로드
+              </button>
+              <button className="btn" disabled={recoveryBusy} onClick={() => void leave('/')}>
+                목록으로
+              </button>
+            </div>
+            <p className="muted">
+              복구 데이터에는 장면과 자산 참조가 포함돼요. 이미지·3D 파일 자체는 별도 클라우드 자산입니다.
+            </p>
           </div>
         </div>
       )}
@@ -1280,6 +1861,34 @@ export default function Editor({ id }: { id: string }) {
           </div>
         </div>
       )}
+      {wallEditor?.scene.room && (
+        <WallFeaturesDialog
+          room={wallEditor.scene.room}
+          initial={wallEditor.scene.wallFeatures ?? []}
+          targetName={wallEditor.editing === 'before' ? '공통 Before' : (activeDesign?.name ?? 'After')}
+          onClose={() => setWallEditor(null)}
+          onApply={(features) => {
+            const current = useEditor.getState();
+            if (
+              !writable ||
+              !current.project ||
+              current.project.id !== wallEditor.projectId ||
+              current.project.editRevision !== wallEditor.editRevision ||
+              current.editing !== wallEditor.editing ||
+              current.project.activeDesignId !== wallEditor.activeDesignId ||
+              current.draft
+            )
+              throw new Error('편집 중 공간이 바뀌었어요. 창을 닫고 현재 공간에서 다시 열어 주세요.');
+            if (JSON.stringify(wallEditor.scene.wallFeatures ?? []) !== JSON.stringify(features))
+              current.change((target) => {
+                if (features.length) target.wallFeatures = structuredClone(features);
+                else delete target.wallFeatures;
+              });
+            setWallEditor(null);
+            setRoomViewerOpen(true);
+          }}
+        />
+      )}
       {roomOpen && st.project.shared.baseline.room && (
         <RoomDialog
           mode="resize"
@@ -1304,10 +1913,16 @@ export default function Editor({ id }: { id: string }) {
       )}
       {exportModal && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="이미지 내보내기">
-          <div className="modal-card" style={{ maxWidth: 470 }}>
+          <div className="modal-card" style={{ maxWidth: 1000 }}>
             <div className="modal-header">
               <h2>결과 이미지 저장</h2>
-              <button className="icon-btn" onClick={() => setExportModal(false)}>
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  setExportModal(false);
+                  setAiExporting(false);
+                }}
+              >
                 <X size={18} />
               </button>
             </div>
@@ -1344,11 +1959,29 @@ export default function Editor({ id }: { id: string }) {
             <p className="muted" style={{ fontSize: 12 }}>
               가상 시공 이미지이며 실제 색상, 치수, 설치 가능 여부는 실측 및 현장 확인이 필요합니다.
             </p>
+            <AiExport
+              key={`${scopeKey}-${activeDesign?.id}`}
+              capture={() => captureExport('image/png', false, 1024)}
+              filename={`${st.project?.name ?? '공간'}-${activeDesign?.name ?? '시안'}`}
+              userId={userId}
+              disabled={exporting}
+              onBusyChange={setAiExporting}
+            />
             <div className="modal-footer">
-              <button className="btn" onClick={() => setExportModal(false)}>
-                취소
+              <button
+                className="btn"
+                onClick={() => {
+                  setExportModal(false);
+                  setAiExporting(false);
+                }}
+              >
+                닫기
               </button>
-              <button className="btn primary" disabled={exporting} onClick={() => void exportImage()}>
+              <button
+                className="btn primary"
+                disabled={exporting || aiExporting}
+                onClick={() => void exportImage()}
+              >
                 <Download size={15} />
                 {exporting ? '이미지 만드는 중…' : '이미지 다운로드'}
               </button>

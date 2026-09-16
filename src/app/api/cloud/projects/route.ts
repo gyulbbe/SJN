@@ -11,6 +11,7 @@ import {
 } from '@/lib/supabase/server';
 import { identifierSchema, projectSchema, storedProjectSchema } from '@/lib/supabase/validation';
 import { duplicateProjectDocument } from '@/lib/designs';
+import { createProjectSummary } from '@/lib/repositories/project-summary';
 export const runtime = 'nodejs';
 export async function POST(request: Request) {
   try {
@@ -26,20 +27,17 @@ export async function POST(request: Request) {
           .order('updated_at', { ascending: false });
         databaseError(error);
         return NextResponse.json(
-          (data ?? []).map((row) => {
-            const project = normalizeProjectDocument(storedProjectSchema.parse(row.document));
-            const active = project.designs.find((design) => design.id === project.activeDesignId);
-            return {
-              id: row.id,
-              name: row.name,
-              updatedAt: row.updated_at,
-              thumbnailAssetId: project.thumbnailAssetId,
-              previewAssetId: (active?.scene ?? project.shared.baseline).previewAssetId,
-              activeDesignId: project.activeDesignId,
-              activeDesignRevision: active?.renderRevision ?? active?.revision ?? 0,
-              sharedRevision: project.shared.revision,
-            };
-          }),
+          await Promise.all(
+            (data ?? []).map(async (row) => {
+              const project = normalizeProjectDocument(storedProjectSchema.parse(row.document));
+              return {
+                ...(await createProjectSummary(project)),
+                id: row.id,
+                name: row.name,
+                updatedAt: row.updated_at,
+              };
+            }),
+          ),
         );
       }
       case 'load': {

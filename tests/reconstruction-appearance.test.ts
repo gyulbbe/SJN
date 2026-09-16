@@ -68,7 +68,7 @@ describe('observed wall appearance reconstruction', () => {
     expect(bottom.tile.color).toBe('#749790');
     expect(bottom.tile.groutColor).not.toBe(bottom.tile.color);
   });
-  it('keeps visible wall colours and a mapped window when floor corner inference is unavailable', () => {
+  it('keeps visible wall colours and the window observation without claiming an unobserved physical installation wall', () => {
     const width = 160,
       height = 160,
       rgba = new Uint8ClampedArray(width * height * 4),
@@ -96,8 +96,21 @@ describe('observed wall appearance reconstruction', () => {
     );
     expect(review.analysis).toBe('partial');
     expect(review.planes.some((p) => p.face === 'back' && p.tile.color === '#8dafab')).toBe(true);
-    expect(mapReconstructionCandidate(candidate, review)?.face).toBe('back');
-    expect(review.warnings.some((w) => w.includes('관측된 벽 색'))).toBe(true);
+    expect(review.planes.find((p) => p.face === 'back')?.geometrySource).toBe('appearance-region');
+    expect(mapReconstructionCandidate(candidate, review)).toBeUndefined();
+    expect(review.candidates[0].kind).toBe('window');
+    expect(review.candidates[0].status).toBe('unplaced');
+    expect(review.warnings.some((w) => w.includes('마감 영역'))).toBe(true);
+    const confirmed = {
+      ...candidate,
+      installation: {
+        mode: 'wall' as const,
+        wall: 'back' as const,
+        source: 'user' as const,
+        reason: '사용자가 설치 벽을 확인',
+      },
+    };
+    expect(mapReconstructionCandidate(confirmed, review)?.face).toBe('back');
     expect(mapReconstructionCandidate({ ...candidate, requiresReview: true }, review)).toBeUndefined();
   });
   it('uses the visible ceiling junctions before stronger local lamp or mirror colour boundaries', () => {
@@ -135,7 +148,7 @@ describe('observed wall appearance reconstruction', () => {
       ),
     ).toEqual([]);
   });
-  it('uses ceiling perspective and observed floor contact instead of a furniture silhouette for physical placement', () => {
+  it('aligns visible floor texture without promoting its unconfirmed depth to a physical placement', () => {
     const width = 240,
       height = 240,
       wall = new Uint8Array(width * height),
@@ -190,7 +203,15 @@ describe('observed wall appearance reconstruction', () => {
       warnings: [],
       analysis: 'partial',
     });
-    expect(mapped?.u).toBeGreaterThan(0.65);
+    expect(mapped).toBeUndefined();
+    const confirmed = mapReconstructionCandidate(candidate, {
+      version: 1,
+      planes: [{ ...aligned, confirmed: true }],
+      candidates: [candidate],
+      warnings: [],
+      analysis: 'partial',
+    });
+    expect(confirmed?.u).toBeGreaterThan(0.65);
     expect(
       alignedReconstructionFloor(
         { width, height, wall: new Uint8Array(width * height), floor },

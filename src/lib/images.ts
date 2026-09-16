@@ -119,12 +119,24 @@ export async function importImage(
 ): Promise<{ original: ImageAssetRecord; preview: ImageAssetRecord }> {
   if (file.size === 0) throw new Error('빈 파일은 등록할 수 없어요.');
   if (file.size > MAX_IMAGE_BYTES) throw new Error('이미지 한 장은 25MB 이하로 올려 주세요.');
-  const header = readImageHeader(new Uint8Array(await file.arrayBuffer()));
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await file.arrayBuffer();
+  } catch (cause) {
+    throw new Error(
+      `“${file.name}” 파일을 읽을 수 없어요. 파일이 변경됐거나 접근이 막혔을 수 있어요. 사진을 다운로드 폴더에 새 이름으로 저장한 뒤 다시 선택해 주세요. 편집 중인 프로그램이 있다면 닫아 주세요.`,
+      { cause },
+    );
+  }
+  const header = readImageHeader(new Uint8Array(bytes));
   if (file.type && file.type !== header.mime && file.type !== 'application/octet-stream')
     throw new Error('파일 내용과 확장자 형식이 달라요. JPG, PNG 또는 WebP로 다시 저장해 주세요.');
+  // Detach from the disk-backed File once. Wrapping the File itself in a Blob can
+  // retain its filesystem reference and fail if another app changes/moves it later.
+  const source = new Blob([bytes], { type: header.mime });
   let bitmap: ImageBitmap;
   try {
-    bitmap = await createImageBitmap(file);
+    bitmap = await createImageBitmap(source);
   } catch {
     throw new Error('이 이미지를 열 수 없어요. 파일이 손상되지 않았는지 확인해 주세요.');
   }
@@ -141,7 +153,7 @@ export async function importImage(
       height: bitmap.height,
       kind: 'original',
       createdAt: new Date().toISOString(),
-      blob: new Blob([file], { type: header.mime }),
+      blob: source,
     };
     const size = previewDimensions(bitmap.width, bitmap.height);
     const canvas = document.createElement('canvas');

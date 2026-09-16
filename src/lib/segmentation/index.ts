@@ -1,7 +1,21 @@
+import type { BasinComponentCapture } from '../reconstruction/basin-observations';
 import type { ReconstructionCandidate } from '../reconstruction/types';
+export type BasinPassCapture = {
+  context: string;
+  width: number;
+  height: number;
+  rgba: Uint8ClampedArray;
+  sourceRegion: ReconstructionCandidate['bounds'];
+  flipped: boolean;
+  components: BasinComponentCapture[];
+};
 /** The photograph and masks stay in this browser. Only bundled static assets are fetched. */
 export interface RoomSegmentation {
   objects?: ReconstructionCandidate[];
+  /** Explicit development capture only; never requested by ordinary editing or persisted in projects. */
+  basinDiagnostics?: { version: 1; passes: BasinPassCapture[] };
+  /** Explicit development capture of the first full-photo pass only; absent for ordinary callers. */
+  semanticLabels?: Uint8Array;
   width: number;
   height: number;
   /** Row-major masks, 0 outside / 255 inside. Coordinates cover the whole oriented photo. */
@@ -42,18 +56,112 @@ function resetWorker(reason: string) {
   pending.clear();
 }
 
+const dedicatedWorkers = new Set<Worker>();
+/** Signal-aware jobs own their worker so cancelling a lab/dialog never interrupts another consumer. */
+function segmentDedicated(
+  blob: Blob,
+  onStage: ((message: string) => void) | undefined,
+  options: {
+    signal: AbortSignal;
+    quality?: 'reconstruction';
+    timeoutMs?: number;
+    captureBasins?: boolean;
+    captureSemanticLabels?: boolean;
+  },
+): Promise<RoomSegmentation> {
+  return new Promise((resolve, reject) => {
+    let owned: Worker | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const finish = (error?: Error, result?: RoomSegmentation) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      options.signal.removeEventListener('abort', abort);
+      if (owned) {
+        owned.onmessage = null;
+        owned.onerror = null;
+        owned.onmessageerror = null;
+        owned.terminate();
+        dedicatedWorkers.delete(owned);
+      }
+      if (error) reject(error);
+      else if (result) resolve(result);
+      else reject(new Error('사진 분석 결과를 읽지 못했어요.'));
+    };
+    const abort = () => finish(new DOMException('사진 분석을 취소했어요.', 'AbortError'));
+    if (options.signal.aborted) {
+      abort();
+      return;
+    }
+    const id = ++sequence;
+    try {
+      onStage?.('브라우저 분석 엔진 준비 중');
+      owned = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
+      dedicatedWorkers.add(owned);
+      options.signal.addEventListener('abort', abort, { once: true });
+      owned.onmessage = (event: MessageEvent<SegmentationReply>) => {
+        const message = event.data;
+        if (settled || options.signal.aborted || message.id !== id) return;
+        if (message.type === 'stage') {
+          try {
+            onStage?.(message.message);
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error('사진 분석 상태를 표시하지 못했어요.'));
+          }
+        } else if (message.type === 'error') finish(new Error(message.message));
+        else finish(undefined, message.result);
+      };
+      owned.onerror = () => finish(new Error('사진 분석 엔진을 불러오지 못했어요. 다시 시도해 주세요.'));
+      owned.onmessageerror = () => finish(new Error('사진 분석 결과를 읽지 못했어요. 다시 시도해 주세요.'));
+      timer = setTimeout(
+        () =>
+          finish(
+            new Error(
+              '사진 분석 제한 시간을 넘었어요. 작은 사진으로 다시 시도하거나 브라우저 상태를 확인해 주세요.',
+            ),
+          ),
+        Math.max(1000, Math.min(15 * 60_000, options.timeoutMs ?? 15 * 60_000)),
+      );
+      if (options.signal.aborted) {
+        abort();
+        return;
+      }
+      owned.postMessage({
+        id,
+        blob,
+        quality: options.quality,
+        captureBasins: options.captureBasins,
+        captureSemanticLabels: options.captureSemanticLabels,
+      });
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error('사진 분석 엔진을 시작하지 못했어요.'));
+    }
+  });
+}
+
 export function segmentRoom(
   blob: Blob,
   onStage?: (message: string) => void,
-  options?: { quality?: 'reconstruction' },
+  options?: {
+    quality?: 'reconstruction';
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    captureBasins?: boolean;
+    captureSemanticLabels?: boolean;
+  },
 ): Promise<RoomSegmentation> {
+  if (options?.signal?.aborted)
+    return Promise.reject(new DOMException('사진 분석을 취소했어요.', 'AbortError'));
   if (typeof Worker === 'undefined')
     return Promise.reject(
       new Error('이 브라우저는 사진 자동 분석을 지원하지 않아요. 최신 Chrome 또는 Edge에서 열어 주세요.'),
     );
   if (!blob.size || blob.size > 25 * 1024 * 1024)
     return Promise.reject(new Error('분석 사진은 25 MB 이하의 이미지여야 해요.'));
-  if (pending.size >= 3) return Promise.reject(new Error('이전 사진 분석을 마친 뒤 다시 시도해 주세요.'));
+  if (pending.size + dedicatedWorkers.size >= 3)
+    return Promise.reject(new Error('이전 사진 분석을 마친 뒤 다시 시도해 주세요.'));
+  if (options?.signal) return segmentDedicated(blob, onStage, { ...options, signal: options.signal });
   if (!worker) {
     onStage?.('브라우저 분석 엔진 준비 중');
     worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
@@ -81,6 +189,12 @@ export function segmentRoom(
       120_000,
     );
     pending.set(id, { resolve, reject, onStage, timer });
-    worker!.postMessage({ id, blob, quality: options?.quality });
+    worker!.postMessage({
+      id,
+      blob,
+      quality: options?.quality,
+      captureBasins: options?.captureBasins,
+      captureSemanticLabels: options?.captureSemanticLabels,
+    });
   });
 }

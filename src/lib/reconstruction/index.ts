@@ -1,3 +1,12 @@
+import { createProjectMaterial } from '@/lib/repositories/project-material';
+import { fixtureVariantErrors, openCounterDefaults, showerVariantDefaults } from './fixture-variants';
+import { resolveProductColor } from './product-color';
+import { bathRimFixtureSupport, partitionTopFixtureSupport } from './candidate-bath-rim';
+import { hasParentGlassSupport } from './raised-glass-support';
+import { resolveBathRimPlacement } from './bath-rim';
+import { validateSourceFixture } from './source-camera';
+import { inspectStrictPlacement, StrictPlacementError } from './strict-placement';
+import type { CandidateFixturePlan } from './candidate-pipeline';
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
@@ -14,8 +23,16 @@ import { getRepositories } from '../repositories';
 import { canvasBlob, importImage, makeAsset } from '../images';
 import { createRoomSurfaces, validateRoomDimensions } from '../room-geometry';
 import { renderRoomBackground } from '../room-background';
+import {
+  prepareReconstructionTargetFrame,
+  type ReconstructionTargetFrame,
+} from './reconstruction-target-frame';
 import { createRoomPlacement, projectRoomFixture } from '../room-fixtures';
-import { segmentRoom } from '../segmentation';
+import { segmentRoom, type RoomSegmentation } from '../segmentation';
+import { runQualityPipeline, photoFingerprint } from './quality-core';
+import type { ReconstructionAnalysisProfile } from './quality-contract';
+import { withProjectAnalysisDiagnostics } from './project-diagnostics';
+import { LAB_BASELINE_REVISION } from './lab-engine';
 import { renderReconstructionTemplate, TEMPLATE_RENDERER_REVISION } from './templates';
 import {
   projectReconstructionFixture,
@@ -26,17 +43,23 @@ import {
 } from './projection';
 import { homography, transformPoint } from '../render/math';
 import { applyRoomSurfaceBand } from '../room-surface-bands';
-import { createReconstructionAppearance } from './appearance';
-import { mapReconstructionCandidate, reviewFromSegmentation } from './analysis';
+import { reviewFromSegmentation } from './analysis';
+import { inspectReconstructionCandidateMapping, isAppearancePlane } from './installation';
+import { inferToiletLidState } from './toilet-observations';
 import {
   reconstructionLabels,
-  RECONSTRUCTION_DEFAULTS,
+  reconstructionDefaults,
+  type ReconstructionStandardOptions,
   type ReconstructionKind,
   type ReconstructionReview,
   type ReconstructionCandidate,
-  type ReconstructionPlane,
 } from './types';
-export { reconstructionLabels, RECONSTRUCTION_DEFAULTS } from './types';
+export {
+  reconstructionLabels,
+  reconstructionCandidateLabel,
+  reconstructionDefaults,
+  RECONSTRUCTION_DEFAULTS,
+} from './types';
 export type {
   ReconstructionKind,
   ReconstructionReview,
@@ -45,6 +68,7 @@ export type {
 } from './types';
 export { mapReconstructionCandidate, remapReconstructionCandidates } from './analysis';
 export { projectReconstructionFixture } from './projection';
+export { inferToiletLidState } from './toilet-observations';
 
 function checkAbort(signal?: AbortSignal) {
   if (signal?.aborted) throw new DOMException('공간 재구성을 취소했어요.', 'AbortError');
@@ -80,7 +104,7 @@ function baseMaterial(): Omit<
     defaultPattern: 'grid',
   };
 }
-export type ReconstructionFixtureOptions = {
+export type ReconstructionFixtureOptions = ReconstructionStandardOptions & {
   kind: ReconstructionKind;
   room: RoomDefinition;
   face?: RoomFace;
@@ -95,18 +119,108 @@ export type ReconstructionFixtureOptions = {
   aspect?: number;
   repositories?: Repositories;
   signal?: AbortSignal;
+  /** Required when confirming a link to an existing bath. Never included in immutable material data. */
+  relatedFixtures?: readonly FixtureInstance[];
 };
 export async function createReconstructionFixture(
   options: ReconstructionFixtureOptions,
 ): Promise<FixtureInstance> {
   checkAbort(options.signal);
-  const defaults = RECONSTRUCTION_DEFAULTS[options.kind];
+  const versionNumber = options.version ?? 2;
+  const defaults = {
+    ...reconstructionDefaults(
+      options.kind,
+      options.basinVariant ?? (versionNumber === 1 && options.kind === 'basin' ? 'pedestal' : undefined),
+    ),
+    ...(options.vanityStyle === 'open-counter' ? openCounterDefaults(options.counterSupport ?? 'wall') : {}),
+    ...(options.kind === 'shower' && options.showerVariant
+      ? showerVariantDefaults(options.showerVariant)
+      : {}),
+  };
   if (!defaults || !validateRoomDimensions(options.room))
     throw new Error('기본 모형 종류와 공간 크기를 확인해 주세요.');
+  if (options.pedestalShape !== undefined && !['round', 'rectangular'].includes(options.pedestalShape))
+    throw new Error('기둥 단면 값을 확인해 주세요.');
+  // Explicit undefined is the update path for pre-field documents; new fixtures get an honest default.
+  const toiletLidState = Object.hasOwn(options, 'toiletLidState')
+    ? options.toiletLidState
+    : versionNumber === 2
+      ? defaults.toiletLidState
+      : undefined;
+  const standard: ReconstructionStandardOptions = {
+    version: versionNumber,
+    placementPolicy: options.placementPolicy,
+    support: options.support ? structuredClone(options.support) : undefined,
+    basinVariant: options.basinVariant ?? defaults.basinVariant,
+    basinShape: options.basinShape ?? defaults.basinShape,
+    pedestalShape:
+      options.kind === 'basin' && (options.basinVariant ?? defaults.basinVariant) === 'pedestal'
+        ? options.pedestalShape
+        : undefined,
+    bowlCount: options.bowlCount ?? (versionNumber === 2 ? defaults.bowlCount : undefined),
+    toiletLidState,
+    mirrorShape: options.mirrorShape,
+    showerVariant: options.showerVariant,
+    curtainHardware:
+      options.kind === 'showerCurtain' ? (options.curtainHardware ?? defaults.curtainHardware) : undefined,
+    vanityStyle: options.vanityStyle,
+    counterSupport:
+      options.vanityStyle === 'open-counter' ? (options.counterSupport ?? 'wall') : options.counterSupport,
+    bathLiningColor:
+      options.kind === 'bath' && options.bathLiningColor !== undefined
+        ? colorValue(options.bathLiningColor)
+        : undefined,
+    baseHeightMm: options.baseHeightMm ?? defaults.baseHeightMm,
+    yawDegrees: options.yawDegrees ?? defaults.yawDegrees,
+    hasFrame: options.hasFrame ?? defaults.hasFrame,
+    opacity: options.opacity ?? defaults.opacity,
+    doorCount: options.doorCount ?? defaults.doorCount,
+    shelfStyle: options.shelfStyle ?? defaults.shelfStyle,
+    sourceMaterialVersionId: options.sourceMaterialVersionId,
+    colorEvidence: options.colorEvidence ? structuredClone(options.colorEvidence) : undefined,
+    provenance: {
+      kind: 'user',
+      mounting: 'default',
+      wall: 'default',
+      position: 'default',
+      dimensions: 'default',
+      shape: 'default',
+      bowlCount: 'default',
+      appearance: options.colorEvidence?.source ?? 'default',
+      color: options.colorEvidence?.source ?? 'default',
+      ...options.provenance,
+      ...(options.showerVariant ? { showerVariant: options.provenance?.showerVariant ?? 'default' } : {}),
+      ...(options.kind === 'showerCurtain'
+        ? { curtainHardware: options.provenance?.curtainHardware ?? 'default' }
+        : {}),
+      ...(options.mirrorShape ? { mirrorShape: options.provenance?.mirrorShape ?? 'default' } : {}),
+      ...(options.vanityStyle ? { vanityStyle: options.provenance?.vanityStyle ?? 'default' } : {}),
+      ...(options.vanityStyle === 'open-counter'
+        ? { counterSupport: options.provenance?.counterSupport ?? 'default' }
+        : {}),
+      ...(options.kind === 'bath' && options.bathLiningColor !== undefined
+        ? { bathLiningColor: options.provenance?.bathLiningColor ?? 'default' }
+        : {}),
+      ...(toiletLidState ? { toiletLidState: options.provenance?.toiletLidState ?? 'default' } : {}),
+    },
+  };
+  if (options.kind !== 'showerCurtain') delete standard.provenance?.curtainHardware;
+  if (
+    options.kind === 'showerCurtain' &&
+    (versionNumber !== 2 ||
+      (options.face ?? defaults.face) !== 'floor' ||
+      (options.depthMm ?? defaults.depthMm) <= 0)
+  )
+    throw new Error('샤워 커튼은 바닥 좌표 기준의 매달림 모형이며 전체 깊이는 0보다 커야 해요.');
+  if (standard.curtainHardware !== undefined && !['rod', 'track', 'none'].includes(standard.curtainHardware))
+    throw new Error('커튼 지지 방식은 봉·레일·표시 안 함 중 선택해 주세요.');
   const params = {
+    ...standard,
     kind: options.kind,
     appearanceAssetId:
-      options.kind === 'mirror' || options.kind === 'window' ? options.appearanceAssetId : undefined,
+      versionNumber === 1 && (options.kind === 'mirror' || options.kind === 'window')
+        ? options.appearanceAssetId
+        : undefined,
     color: colorValue(options.color ?? defaults.color),
     room: options.room,
     face: options.face ?? defaults.face,
@@ -118,15 +232,106 @@ export async function createReconstructionFixture(
     depthMm: options.depthMm ?? defaults.depthMm,
     aspect: options.aspect ?? 4096 / 2731,
   };
+  const variantErrors = fixtureVariantErrors(params);
+  if (variantErrors.length) throw new Error(variantErrors.join(' '));
+  if (options.placementPolicy === 'preserve' && versionNumber === 2 && params.face !== 'floor') {
+    // Convert only a missing coordinate. Explicit height and v must agree, not overwrite each other.
+    params.baseHeightMm =
+      options.baseHeightMm ??
+      (options.v !== undefined ? (1 - options.v) * params.room.heightMm : standard.baseHeightMm);
+    if (options.v === undefined && params.baseHeightMm !== undefined)
+      params.v = 1 - params.baseHeightMm / params.room.heightMm;
+  }
+  if (options.placementPolicy === 'preserve' && !hasParentGlassSupport(params.support)) {
+    const review = inspectStrictPlacement(params.room, params);
+    if (review.status === 'held') throw new StrictPlacementError(review);
+  }
   if (
     [params.widthMm, params.heightMm, params.depthMm].some(
       (n) => !Number.isFinite(n) || n <= 0 || n > 20000,
     ) ||
     [params.u, params.v].some((n) => !Number.isFinite(n) || n < 0 || n > 1) ||
-    !['floor', 'left', 'back', 'right'].includes(params.face)
+    !['floor', 'left', 'back', 'right'].includes(params.face) ||
+    (params.baseHeightMm !== undefined &&
+      (!Number.isFinite(params.baseHeightMm) ||
+        params.baseHeightMm < 0 ||
+        params.baseHeightMm > options.room.heightMm)) ||
+    (params.yawDegrees !== undefined && !Number.isFinite(params.yawDegrees)) ||
+    (params.opacity !== undefined &&
+      (!Number.isFinite(params.opacity) || params.opacity < 0 || params.opacity > 1)) ||
+    (params.doorCount !== undefined &&
+      (!Number.isInteger(params.doorCount) || params.doorCount < 1 || params.doorCount > 6)) ||
+    (params.basinVariant !== undefined && !['wall', 'pedestal', 'vanity'].includes(params.basinVariant)) ||
+    (params.basinShape !== undefined && !['rectangular', 'round'].includes(params.basinShape)) ||
+    (params.bowlCount !== undefined && params.bowlCount !== 1 && params.bowlCount !== 2) ||
+    (params.toiletLidState !== undefined && !['open', 'closed'].includes(params.toiletLidState)) ||
+    (params.provenance?.toiletLidState !== undefined &&
+      !['default', 'inferred', 'user'].includes(params.provenance.toiletLidState)) ||
+    (params.shelfStyle !== undefined && !['solid', 'rack'].includes(params.shelfStyle))
   )
     throw new Error('모형 규격은 1–20,000mm, 면 위치는 0–100% 범위로 입력해 주세요.');
-  if (!isPlanarReconstruction(params.kind) && params.face === 'floor') {
+  if (hasParentGlassSupport(params.support)) {
+    const result = resolveBathRimPlacement(params.room, options.relatedFixtures ?? [], params);
+    if (result.status !== 'attached') {
+      const reason = result.status === 'held' ? result.reason : '욕조를 선택해 주세요.';
+      if (options.placementPolicy === 'preserve') {
+        const review = inspectStrictPlacement(params.room, params);
+        review.status = 'held';
+        review.reasons = [...new Set([...review.reasons, reason])];
+        throw new StrictPlacementError(review);
+      }
+      throw new Error(reason);
+    }
+    Object.assign(params, {
+      u: result.placement.u,
+      v: result.placement.v,
+      baseHeightMm: result.placement.baseHeightMm,
+      yawDegrees: result.placement.yawDegrees,
+      support: result.placement.support,
+    });
+    Object.assign(standard, {
+      baseHeightMm: params.baseHeightMm,
+      yawDegrees: params.yawDegrees,
+      support: params.support,
+    });
+  }
+  if (params.support || params.kind === 'showerCurtain') {
+    // An explicit support must fit as entered. Never shrink/move it to conceal an invalid height.
+    const check = validateSourceFixture(params.room, undefined, params);
+    if (!check.valid) {
+      if (options.placementPolicy === 'preserve')
+        throw new StrictPlacementError(inspectStrictPlacement(params.room, params));
+      throw new Error(check.reasons.join(' '));
+    }
+  }
+  if (options.placementPolicy === 'preserve') {
+    const review = inspectStrictPlacement(params.room, params);
+    if (review.status === 'held') throw new StrictPlacementError(review);
+  } else if (versionNumber === 2 && params.face !== 'floor') {
+    const availableWidth = params.face === 'back' ? params.room.widthMm : params.room.depthMm;
+    const scale = Math.min(1, availableWidth / params.widthMm, params.room.heightMm / params.heightMm);
+    params.widthMm *= scale;
+    params.heightMm *= scale;
+    params.depthMm *= scale;
+    const halfU = params.widthMm / availableWidth / 2;
+    params.u = Math.max(halfU, Math.min(1 - halfU, params.u));
+    params.baseHeightMm = Math.max(
+      0,
+      Math.min(
+        params.room.heightMm - params.heightMm,
+        options.baseHeightMm ??
+          (options.v !== undefined
+            ? (1 - options.v) * params.room.heightMm
+            : (standard.baseHeightMm ?? (1 - params.v) * params.room.heightMm - params.heightMm / 2)),
+      ),
+    );
+    params.v = 1 - params.baseHeightMm / params.room.heightMm;
+  } else if (
+    params.kind !== 'showerCurtain' &&
+    !params.support &&
+    !isPlanarReconstruction(params.kind) &&
+    params.face === 'floor'
+  ) {
     const fitted = fitReconstructionFootprint(params.room, params);
     params.u = fitted.u;
     params.v = fitted.v;
@@ -148,7 +353,7 @@ export async function createReconstructionFixture(
     code = await materialCode({ templateRevision: TEMPLATE_RENDERER_REVISION, ...params });
   checkAbort(options.signal);
   let version = (await repos.materials.list()).find(
-    ({ version }) => version.reconstruction?.version === 1 && version.code === code,
+    ({ version }) => version.reconstruction?.version === versionNumber && version.code === code,
   )?.version;
   checkAbort(options.signal);
   if (!version) {
@@ -160,7 +365,7 @@ export async function createReconstructionFixture(
     checkAbort(options.signal);
     if (!params.appearanceAssetId) await repos.assets.put(asset);
     checkAbort(options.signal);
-    version = await repos.materials.create({
+    version = await createProjectMaterial(repos, {
       ...baseMaterial(),
       name: `${reconstructionLabels[params.kind]} · 재구성 모형`,
       code,
@@ -169,12 +374,13 @@ export async function createReconstructionFixture(
       widthMm: params.widthMm,
       heightMm: params.heightMm,
       depthMm: params.depthMm,
-      installation: params.face === 'floor' ? 'floor' : 'wall',
+      installation:
+        params.kind === 'showerCurtain' ? 'suspended' : params.face === 'floor' ? 'floor' : 'wall',
 
       views: [
         { assetId: asset.id, direction: '공간 공통 카메라', anchor: rendered?.anchor ?? { x: 0.5, y: 0.5 } },
       ],
-      reconstruction: { version: 1, kind: params.kind },
+      reconstruction: { version: versionNumber, kind: params.kind },
     });
   }
   checkAbort(options.signal);
@@ -194,10 +400,18 @@ export async function createReconstructionFixture(
     anchor: { ...version.views[0].anchor },
     locked: false,
     roomPlacement: placement,
-    shadow: { x: 0, y: 0, opacity: params.face === 'floor' ? 0.16 : 0.025, blur: 0.008, scale: 1 },
+    shadow: {
+      x: 0,
+      y: 0,
+      opacity: params.kind === 'glassPartition' ? 0 : params.face === 'floor' ? 0.16 : 0.025,
+      blur: 0.008,
+      scale: 1,
+    },
     occlusion: EMPTY_MASK(),
     color: { ...DEFAULT_COLOR },
     reconstruction: {
+      ...standard,
+      baseHeightMm: params.baseHeightMm,
       kind: params.kind,
       orientation: params.orientation,
       appearanceAssetId: params.appearanceAssetId,
@@ -205,7 +419,7 @@ export async function createReconstructionFixture(
       widthMm: params.widthMm,
       heightMm: params.heightMm,
       depthMm: params.depthMm,
-      version: 1,
+      version: versionNumber,
     },
   };
   projectRoomFixture(params.room, fixture, params.aspect);
@@ -218,22 +432,74 @@ export async function updateReconstructionFixture(
   patch: Partial<
     Pick<
       ReconstructionFixtureOptions,
-      'kind' | 'color' | 'widthMm' | 'heightMm' | 'depthMm' | 'face' | 'u' | 'v' | 'orientation'
+      | 'kind'
+      | 'color'
+      | 'widthMm'
+      | 'heightMm'
+      | 'depthMm'
+      | 'face'
+      | 'u'
+      | 'v'
+      | 'orientation'
+      | keyof ReconstructionStandardOptions
     >
   >,
-  options: Pick<ReconstructionFixtureOptions, 'aspect' | 'repositories' | 'signal'> = {},
+  options: Pick<
+    ReconstructionFixtureOptions,
+    'aspect' | 'repositories' | 'signal' | 'relatedFixtures' | 'placementPolicy'
+  > & {
+    convertToStandard?: boolean;
+  } = {},
 ): Promise<FixtureInstance> {
   const meta = fixture.reconstruction,
     placement = fixture.roomPlacement;
   if (!meta || !placement) throw new Error('재구성 기본 모형을 선택해 주세요.');
+  const conversion = options.convertToStandard && meta.version === 1;
+  const wallBottom =
+    placement.face === 'floor'
+      ? meta.baseHeightMm
+      : (meta.baseHeightMm ??
+        Math.max(
+          0,
+          (1 - placement.v) * room.heightMm -
+            (meta.kind === 'door' ? 0 : (meta.heightMm * placement.scale) / 2),
+        ));
   const next = await createReconstructionFixture({
     ...meta,
+    toiletLidState: meta.toiletLidState,
+    // Preserve the historical implicit double-bowl vanity while editing old immutable versions.
+    ...(meta.bowlCount === undefined && (meta.kind === 'vanity' || meta.basinVariant === 'vanity')
+      ? { bowlCount: (meta.widthMm >= 1000 ? 2 : 1) as 1 | 2 }
+      : {}),
+    version: options.convertToStandard ? 2 : meta.version,
+    ...(conversion
+      ? {
+          sourceMaterialVersionId: meta.sourceMaterialVersionId ?? fixture.materialVersionId,
+          baseHeightMm: wallBottom,
+          widthMm: meta.widthMm * placement.scale,
+          heightMm: meta.heightMm * placement.scale,
+          depthMm: meta.depthMm * placement.scale,
+          basinVariant: meta.kind === 'basin' ? ('pedestal' as const) : meta.basinVariant,
+        }
+      : {}),
     kind: meta.kind as ReconstructionKind,
     room,
     face: placement.face,
     u: placement.u,
     v: placement.v,
     ...patch,
+    ...(meta.version === 2 &&
+    patch.v !== undefined &&
+    patch.baseHeightMm === undefined &&
+    (patch.face ?? placement.face) !== 'floor'
+      ? { baseHeightMm: (1 - patch.v) * room.heightMm }
+      : {}),
+    ...(meta.version === 2 &&
+    patch.baseHeightMm !== undefined &&
+    patch.v === undefined &&
+    (patch.face ?? placement.face) !== 'floor'
+      ? { v: 1 - patch.baseHeightMm / room.heightMm }
+      : {}),
     appearanceAssetId: patch.kind && patch.kind !== meta.kind ? undefined : meta.appearanceAssetId,
     ...options,
   });
@@ -244,7 +510,16 @@ export async function updateReconstructionFixture(
   next.occlusion = structuredClone(fixture.occlusion);
   next.shadow = { ...fixture.shadow };
   next.color = { ...fixture.color };
-  next.roomPlacement!.scale = placement.scale;
+  next.roomPlacement!.scale = conversion ? 1 : placement.scale;
+  if (next.reconstruction?.placementPolicy === 'preserve') {
+    const review = inspectStrictPlacement(room, {
+      ...next.reconstruction,
+      ...next.roomPlacement!,
+      kind: next.reconstruction.kind as ReconstructionKind,
+      depthMm: next.reconstruction.depthMm,
+    });
+    if (review.status === 'held') throw new StrictPlacementError(review);
+  }
   projectRoomFixture(room, next, options.aspect ?? 4096 / 2731);
   projectReconstructionFixture(room, next, options.aspect ?? 4096 / 2731);
   return next;
@@ -256,6 +531,7 @@ export async function createReconstructionTile(options: {
   heightMm?: number;
   groutWidth?: number;
   groutColor?: string;
+  pattern?: 'grid' | 'brick';
   repositories?: Repositories;
   signal?: AbortSignal;
 }): Promise<MaterialVersion> {
@@ -278,6 +554,7 @@ export async function createReconstructionTile(options: {
       heightMm,
       grout,
       groutColor: options.groutColor,
+      pattern: options.pattern ?? 'grid',
     });
   checkAbort(options.signal);
   const existing = (await repos.materials.list()).find(
@@ -294,7 +571,7 @@ export async function createReconstructionTile(options: {
   checkAbort(options.signal);
   await repos.assets.put(asset);
   checkAbort(options.signal);
-  return repos.materials.create({
+  return createProjectMaterial(repos, {
     ...baseMaterial(),
     name: `기존 ${options.kind === 'floor' ? '바닥' : '벽'} 타일 · 추정`,
     category: 'tile',
@@ -305,6 +582,7 @@ export async function createReconstructionTile(options: {
     depthMm: 10,
 
     textureAssetIds: [asset.id],
+    defaultPattern: options.pattern ?? 'grid',
     defaultGroutWidth: grout,
     defaultGroutColor: options.groutColor ?? '#bcb9b1',
     reconstruction: { version: 1, kind: 'tile' },
@@ -321,43 +599,68 @@ const physicalRanges: Record<
   mirror: { width: [200, 2000], height: [250, 2000], depth: [10, 80] },
   door: { width: [500, 1400], height: [1600, 2600], depth: [30, 120] },
   window: { width: [250, 2400], height: [250, 2200], depth: [40, 180] },
+  glassPartition: { width: [300, 1800], height: [600, 2400], depth: [4, 30] },
+  mirrorCabinet: { width: [300, 2200], height: [300, 1800], depth: [80, 350] },
+  wallShelf: { width: [150, 1600], height: [10, 200], depth: [80, 500] },
+  shower: { width: [100, 1000], height: [500, 2200], depth: [60, 600] },
+  wallCabinet: { width: [200, 2400], height: [200, 1500], depth: [80, 650] },
+  lowPartition: { width: [200, 2400], height: [100, 1800], depth: [40, 600] },
+  showerCurtain: { width: [200, 2400], height: [400, 2600], depth: [10, 120] },
 };
-function candidatePlane(candidate: ReconstructionCandidate, review: ReconstructionReview) {
-  const point = {
-    x: (candidate.bounds.left + candidate.bounds.right) / 2,
-    y: (candidate.bounds.top + candidate.bounds.bottom) / 2,
-  };
-  let best: { plane: ReconstructionPlane; score: number } | undefined;
-  for (const plane of review.planes) {
-    if (plane.face === 'floor') continue;
-    try {
-      const uv = transformPoint(homography(plane.quad), point);
-      const outside = Math.max(0, -uv.x, uv.x - 1) + Math.max(0, -uv.y, uv.y - 1);
-      if (outside > 0.35) continue;
-      const score = outside * 10 + Math.abs(uv.x - 0.5) * 0.03;
-      if (!best || score < best.score) best = { plane, score };
-    } catch {
-      /* Only evidence-supported source rectangles contribute a size. */
-    }
-  }
-  return best?.plane;
-}
 export function estimateCandidateFixture(
   candidate: ReconstructionCandidate,
   review: ReconstructionReview,
   room: RoomDefinition,
   placement: { face: RoomFace; u: number; v: number },
-): Pick<ReconstructionFixtureOptions, 'widthMm' | 'heightMm' | 'depthMm' | 'orientation' | 'u' | 'v'> {
-  const defaults = RECONSTRUCTION_DEFAULTS[candidate.kind],
-    range = physicalRanges[candidate.kind];
+): Required<
+  Pick<
+    ReconstructionFixtureOptions,
+    | 'widthMm'
+    | 'heightMm'
+    | 'depthMm'
+    | 'orientation'
+    | 'u'
+    | 'v'
+    | 'baseHeightMm'
+    | 'color'
+    | 'colorEvidence'
+    | 'provenance'
+  >
+> &
+  Pick<
+    ReconstructionFixtureOptions,
+    'basinVariant' | 'basinShape' | 'bowlCount' | 'toiletLidState' | 'bathLiningColor'
+  > {
+  const basinVariant =
+    candidate.installation?.basinVariant ??
+    (candidate.kind === 'basin' && placement.face !== 'floor' ? 'wall' : undefined);
+  const defaults = reconstructionDefaults(candidate.kind, basinVariant),
+    range =
+      candidate.kind === 'basin' && basinVariant === 'wall'
+        ? { ...physicalRanges.basin, height: [120, 300] as [number, number] }
+        : physicalRanges[candidate.kind];
   const plane =
     placement.face === 'floor'
-      ? candidatePlane(candidate, review)
+      ? review.planes.find(
+          (p) =>
+            p.face !== 'floor' &&
+            p.face === candidate.installation?.wall &&
+            (candidate.installation.source === 'user' || !isAppearancePlane(p) || p.confirmed),
+        )
       : review.planes.find((p) => p.face === placement.face);
-  const orientation: FixtureOrientation = plane?.face && plane.face !== 'floor' ? plane.face : 'back';
+  const geometryKnown = !!plane && (!isAppearancePlane(plane) || plane.confirmed);
+  const orientation: FixtureOrientation =
+    candidate.installation?.source === 'user' && candidate.installation.wall
+      ? candidate.installation.wall
+      : plane?.face && plane.face !== 'floor'
+        ? plane.face
+        : 'back';
+  // A wall homography measures points on that wall, not a freestanding body's visible box.
+  // The baseline has no calibrated volume-size observation; category sizes remain editable defaults.
+  const categoryDimensions = placement.face === 'floor' || candidate.kind === 'basin';
   let width = defaults.widthMm,
     height = defaults.heightMm;
-  if (plane)
+  if (plane && geometryKnown && !categoryDimensions)
     try {
       const inverse = homography(plane.quad);
       const b = candidate.bounds;
@@ -370,7 +673,10 @@ export function estimateCandidateFixture(
       const dx = Math.max(...corners.map((p) => p.x)) - Math.min(...corners.map((p) => p.x));
       const dy = Math.max(...corners.map((p) => p.y)) - Math.min(...corners.map((p) => p.y));
       width =
-        dx * (plane.face === 'back' ? room.widthMm : room.depthMm * (plane.depthEnd - plane.depthStart));
+        dx *
+        (plane.face === 'back'
+          ? room.widthMm * ((plane.horizontalEnd ?? 1) - (plane.horizontalStart ?? 0))
+          : room.depthMm * (plane.depthEnd - plane.depthStart));
       height = dy * room.heightMm * ((plane.verticalEnd ?? 1) - (plane.verticalStart ?? 0));
     } catch {
       /* Keep honest category estimates when the source perspective is unusable. */
@@ -379,59 +685,199 @@ export function estimateCandidateFixture(
     Math.round(Math.max(limits[0], Math.min(limits[1], n)) / 10) * 10;
   width = bounded(width, range.width);
   height = bounded(height, range.height);
-  const depth = bounded(
+  let depth = bounded(
     defaults.depthMm * Math.min(1.3, Math.max(0.75, width / defaults.widthMm)),
     range.depth,
   );
-  // The observed bottom contour is the visible front contact, while rendering uses footprint centre.
-  let { u, v } = frontContactToCentre(room, placement, depth, orientation);
-  if (placement.face === 'floor') {
-    const fitted = fitReconstructionFootprint(room, {
-      ...placement,
-      u,
-      v,
-      widthMm: width,
-      heightMm: height,
-      depthMm: depth,
-      orientation,
-    });
-    u = fitted.u;
-    v = fitted.v;
+  // A basin bounding box mixes bowl, faucet and perspective; it is not a calibrated product measurement.
+  // Keep an honest, editable default instead of stretching a wall basin to an uncertain source wall.
+  if (categoryDimensions) {
+    width = defaults.widthMm;
+    height = defaults.heightMm;
+    depth = defaults.depthMm;
   }
-  return { widthMm: width, heightMm: height, depthMm: depth, orientation, u, v };
+  // The observed bottom contour is the visible front contact, while rendering uses footprint centre.
+  const { u, v: initialV } = frontContactToCentre(room, placement, depth, orientation);
+  let v = initialV;
+  // Keep the requested estimate; bounds validation holds it instead of moving/shrinking it.
+  const baseHeightMm =
+    placement.face === 'floor'
+      ? 0
+      : !geometryKnown
+        ? (defaults.baseHeightMm ?? (candidate.kind === 'door' ? 0 : 1200))
+        : (1 - placement.v) * room.heightMm -
+          (candidate.kind === 'door' || basinVariant === 'wall' || candidate.kind === 'wallShelf'
+            ? 0
+            : height / 2);
+  if (placement.face !== 'floor') v = 1 - baseHeightMm / room.heightMm;
+  const lidObservation = inferToiletLidState(candidate);
+  const colorEvidence = resolveProductColor(candidate.kind, candidate);
+  return {
+    color: colorEvidence.color,
+    colorEvidence,
+    widthMm: width,
+    heightMm: height,
+    depthMm: depth,
+    orientation,
+    u,
+    v,
+    baseHeightMm,
+    basinVariant,
+    basinShape: candidate.evidence.basinShape?.value ?? defaults.basinShape,
+    bowlCount: candidate.evidence.bowlCount?.value ?? defaults.bowlCount,
+    toiletLidState: lidObservation?.value ?? defaults.toiletLidState,
+    ...(candidate.kind === 'bath' ? { bathLiningColor: '#eeefeb' } : {}),
+    provenance: {
+      kind: candidate.proposedKind ? 'inferred' : 'model',
+      mounting: candidate.installation?.source ?? 'inferred',
+      wall: candidate.installation?.source === 'user' ? 'user' : geometryKnown ? 'inferred' : 'default',
+      position: placement.face !== 'floor' && !geometryKnown ? 'default' : 'inferred',
+      dimensions: !geometryKnown || categoryDimensions ? 'default' : 'inferred',
+      width: !geometryKnown || categoryDimensions ? 'default' : 'inferred',
+      height: !geometryKnown || categoryDimensions ? 'default' : 'inferred',
+      depth: !geometryKnown || categoryDimensions ? 'default' : 'inferred',
+      shape: candidate.evidence.basinShape ? 'inferred' : 'default',
+      bowlCount: candidate.evidence.bowlCount ? 'inferred' : 'default',
+      ...(candidate.kind === 'toilet' ? { toiletLidState: lidObservation?.source ?? 'default' } : {}),
+      ...(candidate.kind === 'bath' ? { bathLiningColor: 'default' } : {}),
+      appearance: colorEvidence.source,
+      color: colorEvidence.source,
+    },
+  };
 }
+export type ReconstructionProjectOptions = {
+  repositories?: Repositories;
+  onStage?: (message: string) => void;
+  signal?: AbortSignal;
+  manual?: boolean;
+  onAnalysis?: (size: { width: number; height: number }) => void;
+  onRawReview?: (review: ReconstructionReview) => void;
+  onBaselineAnalysis?: (measurement: { elapsedMs: number; reused: boolean }) => void;
+  onSegmentationCandidates?: (candidates: ReconstructionCandidate[]) => void;
+  analysisProfile?: ReconstructionAnalysisProfile;
+  mogeMode?: import('./moge-browser/client').MogeExecutionMode;
+  onMogeGeometry?: (result: import('./moge-browser/client').MogeBrowserResult) => void;
+  /** Reanalysis only: preserve the existing Before/After pixel frame and camera aspect. */
+  targetFrame?: ReconstructionTargetFrame;
+  /** Lab owns its encompassing render/diagnostic lifecycle. */
+  externalDiagnostics?: boolean;
+  onQuality?: (result: Awaited<ReturnType<typeof runQualityPipeline>>) => void;
+  onQualityCheckpoint?: (name: string, value: unknown) => void;
+  onAnalysisPhase?: (phase: import('./lab-diagnostics').DiagnosticPhase) => void;
+  /** Explicit replay/hook; ordinary creation uses the same quality core. */
+  reuseAnalysis?: ReconstructionReview;
+  transformAnalysis?: (
+    review: ReconstructionReview,
+    photo: Blob,
+    image: { width: number; height: number },
+    segmentation?: RoomSegmentation,
+  ) => Promise<{ review: ReconstructionReview; plans: Record<string, CandidateFixturePlan | null> }>;
+};
 export async function createReconstructionProject(
   file: File,
   room: RoomDefinition,
-  options: {
-    repositories?: Repositories;
-    onStage?: (message: string) => void;
-    signal?: AbortSignal;
-    manual?: boolean;
-  } = {},
+  options: ReconstructionProjectOptions = {},
+): Promise<ProjectDocument> {
+  if (options.externalDiagnostics) return createReconstructionProjectImpl(file, room, options);
+  const profile = options.manual ? 'browser-basic' : (options.analysisProfile ?? 'browser-basic');
+  return withProjectAnalysisDiagnostics(file, room, profile, options.signal, (capture, diagnostic) =>
+    createReconstructionProjectImpl(file, room, {
+      ...options,
+      onStage: (message) => {
+        diagnostic.progress(message);
+        options.onStage?.(message);
+      },
+      onAnalysisPhase: (phase) => {
+        diagnostic.phase(phase);
+        options.onAnalysisPhase?.(phase);
+      },
+      onQualityCheckpoint: (name, value) => {
+        diagnostic.checkpoint(name, value);
+        options.onQualityCheckpoint?.(name, value);
+      },
+      onRawReview: (review) => {
+        capture.rawReview = structuredClone(review);
+        diagnostic.checkpoint('baselineReview', review);
+        options.onRawReview?.(review);
+      },
+      onSegmentationCandidates: (candidates) => {
+        capture.rawSegmentationCandidates = structuredClone(candidates);
+        diagnostic.checkpoint('rawSegmentationCandidates', candidates);
+        options.onSegmentationCandidates?.(candidates);
+      },
+      onQuality: (result) => {
+        capture.quality = result.evidence;
+        capture.pipeline = {
+          ...result.pipeline,
+          model: result.model,
+          modelReused: result.evidence.reused,
+          quality: result.evidence,
+        };
+        diagnostic.checkpoint('candidatePipeline', capture.pipeline);
+        options.onQuality?.(result);
+      },
+      onBaselineAnalysis: (measurement) => {
+        diagnostic.checkpoint('baselineMeasurement', measurement);
+        diagnostic.phase(profile !== 'browser-basic' ? 'candidate-model' : 'placement');
+        options.onBaselineAnalysis?.(measurement);
+      },
+    }),
+  );
+}
+async function createReconstructionProjectImpl(
+  file: File,
+  room: RoomDefinition,
+  options: ReconstructionProjectOptions,
 ): Promise<ProjectDocument> {
   if (!validateRoomDimensions(room)) throw new Error('공간 크기를 확인해 주세요.');
   const repos = options.repositories ?? getRepositories();
   checkAbort(options.signal);
+  let targetBackground: Awaited<ReturnType<typeof prepareReconstructionTargetFrame>> | undefined;
+  if (options.targetFrame) {
+    options.onStage?.('기존 비교 화면 크기 유지 가능 여부 확인 중');
+    targetBackground = await prepareReconstructionTargetFrame(room, options.targetFrame);
+    checkAbort(options.signal);
+  }
   options.onStage?.('참고 사진의 형식과 크기 확인 중');
   const reference = await importImage(file, 'original', repos.assets);
   checkAbort(options.signal);
+  if (options.onQualityCheckpoint) {
+    options.onQualityCheckpoint('photoInput', {
+      originalFingerprint: await photoFingerprint(reference.original.blob),
+      normalizedFingerprint: await photoFingerprint(reference.preview.blob),
+      originalImage: { width: reference.original.width, height: reference.original.height },
+      normalizedImage: { width: reference.preview.width, height: reference.preview.height },
+      normalization: 'importImage orientation-normalized full-frame preview',
+    });
+    checkAbort(options.signal);
+  }
   let review: ReconstructionReview = {
-    version: 1,
+    version: 2,
     analysis: 'manual',
     planes: [],
     candidates: [],
     warnings: ['직접 구성 모드예요. 원본 사진을 보면서 기존 타일과 기구를 추가해 주세요.'],
   };
-  if (!options.manual) {
-    const segmentation = await segmentRoom(
+  options.onAnalysisPhase?.('baseline');
+  let segmentationCapture: RoomSegmentation | undefined;
+  const baselineAnalysisStarted = performance.now();
+  if (options.reuseAnalysis) {
+    review = structuredClone(options.reuseAnalysis);
+  } else if (!options.manual) {
+    const runSegmentation = options.analysisProfile === 'cloud-browser-v1'
+      ? async (photo: Blob, onStage: ((message: string) => void) | undefined, settings: { signal?: AbortSignal }) => (await import('./segmentation-cache')).segmentReconstructionCached(photo, onStage, settings.signal ?? new AbortController().signal)
+      : segmentRoom;
+    const segmentation = await runSegmentation(
       reference.preview.blob,
       (message) => {
         if (!options.signal?.aborted) options.onStage?.(message);
       },
-      { quality: 'reconstruction' },
+      { quality: 'reconstruction', signal: options.signal },
     );
     checkAbort(options.signal);
+    segmentationCapture = segmentation;
+    options.onAnalysis?.({ width: segmentation.width, height: segmentation.height });
+    options.onSegmentationCandidates?.(structuredClone(segmentation.objects ?? []));
     const bitmap = await createImageBitmap(reference.preview.blob);
     try {
       const canvas = document.createElement('canvas');
@@ -449,9 +895,57 @@ export async function createReconstructionProject(
       bitmap.close();
     }
   }
+  options.onBaselineAnalysis?.({
+    elapsedMs: options.reuseAnalysis || options.manual ? 0 : performance.now() - baselineAnalysisStarted,
+    reused: !!options.reuseAnalysis,
+  });
+  options.onRawReview?.(structuredClone(review));
+  let candidatePlans: Record<string, CandidateFixturePlan | null> | undefined;
+  if (options.transformAnalysis) {
+    const transformed = await options.transformAnalysis(
+      structuredClone(review),
+      reference.preview.blob,
+      {
+        width: reference.preview.width,
+        height: reference.preview.height,
+      },
+      segmentationCapture,
+    );
+    checkAbort(options.signal);
+    review = transformed.review;
+    candidatePlans = transformed.plans;
+  } else if (!options.manual && options.analysisProfile === 'local-quality-v1') {
+    throw new Error('기존 로컬 AI 분석은 종료됐어요. 사진 분석 방식에서 AI 정밀 분석을 다시 선택해 주세요.');
+  } else if (!options.manual && options.analysisProfile === 'cloud-browser-v1') {
+    const runQuality = async (input: Parameters<typeof runQualityPipeline>[0]) =>
+      (await import('./cloud-quality')).runCloudBrowserQuality(input, { mode: options.mogeMode, onGeometry: options.onMogeGeometry });
+    const result = await runQuality({
+      baseline: structuredClone(review),
+      photo: reference.preview.blob,
+      image: { width: reference.preview.width, height: reference.preview.height },
+      room,
+      inputFingerprint: await photoFingerprint(reference.original.blob),
+      segmentation: segmentationCapture,
+      signal: options.signal ?? new AbortController().signal,
+      onStage: options.onStage,
+      onCheckpoint: options.onQualityCheckpoint,
+      onPhase: options.onAnalysisPhase,
+    });
+    checkAbort(options.signal);
+    review = result.review;
+    candidatePlans = result.plans;
+    options.onQuality?.(result);
+  }
+  review.analysisProfile ??= 'browser-basic';
+  review.analysisSummary ??= {
+    profile: review.analysisProfile,
+    revision: LAB_BASELINE_REVISION,
+    estimated: true,
+  };
   checkAbort(options.signal);
+  options.onAnalysisPhase?.('render');
   options.onStage?.('같은 구도의 비교 공간 생성 중');
-  const background = await renderRoomBackground(room);
+  const background = targetBackground ?? (await renderRoomBackground(room));
   checkAbort(options.signal);
   const generated = await importImage(
     new File([background.blob], '비교 공간 배경.png', { type: 'image/png' }),
@@ -488,6 +982,7 @@ export async function createReconstructionProject(
       const part = structuredClone(surface);
       if (index > 0) part.id = crypto.randomUUID();
       part.materialVersionId = material.id;
+      part.tile.pattern = band.tile.pattern ?? 'grid';
       part.tile.groutWidth = band.tile.groutWidth;
       part.tile.groutColor = band.tile.groutColor ?? material.defaultGroutColor;
       part.tile.shading = 0.4;
@@ -506,40 +1001,144 @@ export async function createReconstructionProject(
     before.surfaces.splice(before.surfaces.indexOf(surface), 1, ...replacements);
   }
   const aspect = scene.imageWidth / scene.imageHeight;
-  for (const candidate of review.candidates) {
+  const creationOrder =
+    candidatePlans &&
+    Object.values(candidatePlans).some((plan) => plan?.bathRimCandidate || plan?.partitionTopCandidate)
+      ? [...review.candidates].sort(
+          (a, b) =>
+            Number(b.kind === 'bath' || b.kind === 'lowPartition') -
+            Number(a.kind === 'bath' || a.kind === 'lowPartition'),
+        )
+      : review.candidates;
+  for (const candidate of creationOrder) {
     checkAbort(options.signal);
-    const placement = candidate.requiresReview ? undefined : mapReconstructionCandidate(candidate, review);
+    const customPlan = candidatePlans?.[candidate.id];
+    const mapping = candidatePlans ? undefined : inspectReconstructionCandidateMapping(candidate, review);
+    const placement = candidatePlans ? (customPlan ?? undefined) : mapping?.placement;
+    if (!placement && mapping?.provisionalPlacement) {
+      const provisional = mapping.provisionalPlacement;
+      const estimate = estimateCandidateFixture(candidate, review, room, provisional);
+      const diagnostic = inspectStrictPlacement(room, {
+        kind: candidate.kind,
+        ...provisional,
+        ...estimate,
+        provenance: { ...estimate.provenance, position: 'default' },
+      });
+      candidate.placementReview = {
+        ...diagnostic,
+        status: 'held',
+        reasons: [...mapping.reasons, ...diagnostic.reasons],
+      };
+      candidate.requiresReview = true;
+      candidate.status = 'unplaced';
+      delete candidate.fixtureId;
+      candidate.warning = candidate.placementReview.reasons.join(' ');
+    }
     if (!placement) {
       if (!candidate.requiresReview)
-        candidate.warning = '설치 면이나 접지점을 확정하지 못했어요. 위치 확인 후 직접 배치해 주세요.';
+        candidate.warning = `${reconstructionLabels[candidate.kind]}는 찾았지만 ${mapping?.reasons.join(' ') || candidate.installation?.reason || '설치 위치 확인이 필요해요.'}`;
+      candidate.trace = [
+        ...(candidate.trace ?? []),
+        {
+          stage: 'placement',
+          outcome: 'held',
+          reason: candidate.warning ?? '종류와 설치 위치를 확인해 주세요.',
+        },
+      ];
+      continue;
+    }
+    if (mapping?.placement)
+      candidate.trace = [
+        ...(candidate.trace ?? []),
+        { stage: 'placement', outcome: 'accepted', reason: mapping.reasons.join(' ') },
+      ];
+    const bathLink = customPlan?.bathRimCandidate;
+    const partitionLink = customPlan?.partitionTopCandidate;
+    const parentLink = bathLink ?? partitionLink;
+    const parentFixture = parentLink
+      ? before.fixtures.find(
+          (fixture) =>
+            fixture.id ===
+            review.candidates.find((item) => item.id === parentLink.parentCandidateId)?.fixtureId,
+        )
+      : undefined;
+    if (
+      parentLink &&
+      ((bathLink && partitionLink) ||
+        !parentFixture ||
+        parentFixture.reconstruction?.kind !== (bathLink ? 'bath' : 'lowPartition'))
+    ) {
+      candidate.requiresReview = true;
+      candidate.warning =
+        '연결한 부모 후보의 모형이 생성되지 않았거나 종류가 달라요. 원래 지지 입력을 보존하고 유리 배치를 보류해요.';
+      candidate.trace = [
+        ...(candidate.trace ?? []),
+        { stage: 'placement', outcome: 'held', reason: candidate.warning },
+      ];
       continue;
     }
     options.onStage?.(`${reconstructionLabels[candidate.kind]} 기본 모형 준비 중`);
-    const appearancePlane = review.planes.find((plane) => plane.face === placement.face);
-    const appearanceAssetId =
-      appearancePlane && (candidate.kind === 'mirror' || candidate.kind === 'window')
-        ? await createReconstructionAppearance({
-            reference: reference.preview,
-            candidate,
-            plane: appearancePlane,
-            assets: repos.assets,
-            signal: options.signal,
-          })
-        : undefined;
-    const fixture = await createReconstructionFixture({
+    let fixture: FixtureInstance;
+    try {
+      fixture = await createReconstructionFixture({
+        kind: candidate.kind,
+        room,
+        color: candidate.color,
+        ...placement,
+        ...(candidatePlans ? customPlan : estimateCandidateFixture(candidate, review, room, placement)),
+        ...(parentLink && parentFixture
+          ? {
+              support: bathLink
+                ? bathRimFixtureSupport(bathLink, parentFixture.id, customPlan!.baseHeightMm!)
+                : partitionTopFixtureSupport(partitionLink!, parentFixture.id, customPlan!.baseHeightMm!),
+              relatedFixtures: before.fixtures,
+            }
+          : {}),
+        aspect,
+        repositories: repos,
+        signal: options.signal,
+        placementPolicy: 'preserve',
+      });
+    } catch (error) {
+      if (!(error instanceof StrictPlacementError)) throw error;
+      candidate.placementReview = error.review;
+      candidate.requiresReview = true;
+      candidate.status = 'unplaced';
+      delete candidate.fixtureId;
+      candidate.warning = `${reconstructionLabels[candidate.kind]} 배치를 보류했어요. ${error.message} 원래 위치와 규격을 보존했어요.`;
+      candidate.trace = [
+        ...(candidate.trace ?? []),
+        { stage: 'placement', outcome: 'held', reason: candidate.warning },
+      ];
+      continue;
+    }
+    candidate.placementReview = inspectStrictPlacement(room, {
+      ...fixture.reconstruction!,
+      ...fixture.roomPlacement!,
       kind: candidate.kind,
-      appearanceAssetId,
-      room,
-      color: candidate.color,
-      ...placement,
-      ...estimateCandidateFixture(candidate, review, room, placement),
-      aspect,
-      repositories: repos,
-      signal: options.signal,
+      depthMm: fixture.reconstruction!.depthMm,
     });
     before.fixtures.push(fixture);
     candidate.fixtureId = fixture.id;
     candidate.status = 'placed';
+    candidate.trace = [
+      ...(candidate.trace ?? []),
+      {
+        stage: 'model',
+        outcome: 'accepted',
+        reason:
+          '사진 조각을 붙이지 않고 편집 가능한 표준 모형을 생성했어요.' +
+          (fixture.reconstruction?.basinShape
+            ? ` 볼 형태: ${fixture.reconstruction.basinShape === 'round' ? '곡면' : '사각'} (${fixture.reconstruction.provenance?.shape ?? 'default'}).`
+            : '') +
+          (fixture.reconstruction?.bowlCount
+            ? ` 볼 ${fixture.reconstruction.bowlCount}개 (${fixture.reconstruction.provenance?.bowlCount ?? 'default'}).`
+            : '') +
+          (fixture.reconstruction?.provenance?.position === 'default'
+            ? ' 설치 높이는 관측 영역을 방 전체로 환산하지 않은 수정 가능한 기본값이에요.'
+            : ''),
+      },
+    ];
   }
   checkAbort(options.signal);
   const now = new Date().toISOString();

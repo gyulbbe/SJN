@@ -1,0 +1,306 @@
+[
+  {
+    "caseId": "remote-01",
+    "targetId": "item_02",
+    "sourceReport": "test-results\\reconstruction-fifteen-rebuild\\2026-09-16T02-41-56-428Z-cloud-gemma\\full15-ui-v9-01\\attempts\\2026-09-16T06-40-14-972Z-1d92020a\\remote-01\\report-dom.json",
+    "sourceReportSha256": "2782e4901463342c34c8cee19f3f70e770c5eb71b0ab002e9dcd5f04773a9fe0",
+    "photoFingerprint": "0f8b65cd9d2bb0c7c0c970b301cfe20d37889ba06705d9c3c3d0923da6c5d4ad",
+    "detailRawText": "{\"observations\": [{\"context\": \"physical\", \"id\": \"item_02\", \"kind\": \"shower\", \"note\": \"A handheld shower head is mounted on a wall bracket with a hose connected below.\", \"observedPart\": \"handset\", \"style\": \"hand-spray\", \"visibleParts\": {\"handheldHead\": \"present\", \"hose\": \"present\", \"overheadHead\": \"absent\", \"verticalRail\": \"absent\"}} ] , \"schemaVersion\": 1}",
+    "detail": {
+      "id": "item_02",
+      "note": "A handheld shower head is mounted on a wall bracket with a hose connected below.",
+      "kind": "shower",
+      "context": "physical",
+      "style": "hand-spray",
+      "observedPart": "handset",
+      "visibleParts": {
+        "handheldHead": "present",
+        "overheadHead": "absent",
+        "verticalRail": "absent",
+        "hose": "present"
+      }
+    },
+    "installationDecision": {
+      "version": 1,
+      "policyRevision": "explicit-unfinished-services-hold-v2",
+      "candidateId": "item_02",
+      "action": "keep",
+      "reasons": [
+        "direct-recognizable-head-and-support"
+      ],
+      "before": {
+        "candidate": {
+          "id": "item_02",
+          "kind": "shower",
+          "bounds": {
+            "left": 0.383,
+            "top": 0.146,
+            "right": 0.438,
+            "bottom": 0.564
+          },
+          "mounting": "wall",
+          "wall": "unknown",
+          "basinStyle": "unknown",
+          "shape": "unknown",
+          "reflection": "physical",
+          "evidence": [
+            "handheld shower head and hose attached to wall fixture",
+            "Visible shower head and hose assembly."
+          ],
+          "uncertainty": [],
+          "provenance": {
+            "kind": "model",
+            "mounting": "model",
+            "wall": "default",
+            "shape": "default",
+            "position": "default"
+          }
+        },
+        "sourceDecisionSignature": "{\"showerDetails\":{\"modelId\":\"@cf/google/gemma-4-26b-a4b-it\",\"modelInputSha256\":\"a3fded53f2e731e3e7808074813710c38956d27d329199e8f7a9ceb46609e468\",\"modelRevision\":\"cloudflare-managed:gemma-4-26b-a4b-it:api-v1\",\"outputContract\":\"fixed-shower-detail-v1\",\"photoFingerprint\":\"0f8b65cd9d2bb0c7c0c970b301cfe20d37889ba06705d9c3c3d0923da6c5d4ad\",\"promptRevision\":1,\"rawText\":\"{\\\"observations\\\": [{\\\"context\\\": \\\"physical\\\", \\\"id\\\": \\\"item_02\\\", \\\"kind\\\": \\\"shower\\\", \\\"note\\\": \\\"A handheld shower head is mounted on a wall bracket with a hose connected below.\\\", \\\"observedPart\\\": \\\"handset\\\", \\\"style\\\": \\\"hand-spray\\\", \\\"visibleParts\\\": {\\\"handheldHead\\\": \\\"present\\\", \\\"hose\\\": \\\"present\\\", \\\"overheadHead\\\": \\\"absent\\\", \\\"verticalRail\\\": \\\"absent\\\"}} ] , \\\"schemaVersion\\\": 1}\"},\"understanding\":{\"candidates\":[{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.856,\"left\":0.626,\"right\":0.826,\"top\":0.48},\"evidence\":[\"white toilet with lid open\",\"The toilet base rests directly on the floor tiles.\",\"Visible toilet bowl and seat assembly.\"],\"id\":\"item_01\",\"kind\":\"toilet\",\"mounting\":\"floor\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.564,\"left\":0.383,\"right\":0.438,\"top\":0.146},\"evidence\":[\"handheld shower head and hose attached to wall fixture\",\"Visible shower head and hose assembly.\"],\"id\":\"item_02\",\"kind\":\"shower\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.861,\"left\":0.531,\"right\":0.617,\"top\":0.051},\"evidence\":[\"transparent glass shower screen\",\"Vertical transparent glass panel separating shower area.\"],\"id\":\"item_03\",\"kind\":\"glassPartition\",\"mounting\":\"floor\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.478,\"left\":0.287,\"right\":0.481,\"top\":0.443},\"evidence\":[\"small white shelf holding bottles\",\"Small shelf mounted on the wall holding bottles.\"],\"id\":\"item_04\",\"kind\":\"wallShelf\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.273,\"left\":0.634,\"right\":0.888,\"top\":0.203},\"evidence\":[\"metal towel rack/shelf assembly\",\"Metal towel rack/shelf mounted on the wall.\"],\"id\":\"item_05\",\"kind\":\"wallShelf\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.127,\"left\":0.207,\"right\":0.261,\"top\":0.044},\"evidence\":[\"small rectangular window\",\"Small architectural window with visible frame.\"],\"id\":\"item_06\",\"kind\":\"window\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"}],\"relations\":[],\"roomLayout\":{\"backWallQuad\":null,\"corners\":[],\"evidence\":[],\"lines\":[],\"orthogonal\":\"unknown\",\"uncertainty\":[\"설비 목록과 촬영 기하 관측은 별도예요. 이 단계는 방 모서리나 제품 접점을 추정하지 않았어요.\"]},\"schemaVersion\":1}}"
+      },
+      "proposedAfter": {
+        "candidate": {
+          "id": "item_02",
+          "kind": "shower",
+          "bounds": {
+            "left": 0.383,
+            "top": 0.146,
+            "right": 0.438,
+            "bottom": 0.564
+          },
+          "mounting": "wall",
+          "wall": "unknown",
+          "basinStyle": "unknown",
+          "shape": "unknown",
+          "reflection": "physical",
+          "evidence": [
+            "handheld shower head and hose attached to wall fixture",
+            "Visible shower head and hose assembly."
+          ],
+          "uncertainty": [],
+          "provenance": {
+            "kind": "model",
+            "mounting": "model",
+            "wall": "default",
+            "shape": "default",
+            "position": "default"
+          }
+        },
+        "placement": "preserve-existing"
+      },
+      "analysis": {
+        "receipt": {
+          "outputContract": "shower-installation-evidence-probe-v1",
+          "promptRevision": 1,
+          "inputRevision": "normalized-source-full-crop-v1",
+          "photoFingerprint": "0f8b65cd9d2bb0c7c0c970b301cfe20d37889ba06705d9c3c3d0923da6c5d4ad",
+          "normalizedFullSha256": "a3fded53f2e731e3e7808074813710c38956d27d329199e8f7a9ceb46609e468",
+          "cropSha256": "b1dd83bdc850b07e68ca49b976a1031eba974646f5113aa9b55328639dcc19d7",
+          "sourceImage": {
+            "width": 960,
+            "height": 1280
+          },
+          "fullImage": {
+            "width": 768,
+            "height": 1024
+          },
+          "cropImage": {
+            "width": 70,
+            "height": 697
+          },
+          "targetId": "item_02",
+          "targetBounds": {
+            "left": 0.383,
+            "top": 0.146,
+            "right": 0.438,
+            "bottom": 0.564
+          },
+          "cropTransform": {
+            "left": 359,
+            "top": 106,
+            "width": 70,
+            "height": 697
+          },
+          "candidateSignature": "{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.564,\"left\":0.383,\"right\":0.438,\"top\":0.146},\"evidence\":[\"handheld shower head and hose attached to wall fixture\",\"Visible shower head and hose assembly.\"],\"id\":\"item_02\",\"kind\":\"shower\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"}",
+          "sourceDecisionSignature": "{\"showerDetails\":{\"modelId\":\"@cf/google/gemma-4-26b-a4b-it\",\"modelInputSha256\":\"a3fded53f2e731e3e7808074813710c38956d27d329199e8f7a9ceb46609e468\",\"modelRevision\":\"cloudflare-managed:gemma-4-26b-a4b-it:api-v1\",\"outputContract\":\"fixed-shower-detail-v1\",\"photoFingerprint\":\"0f8b65cd9d2bb0c7c0c970b301cfe20d37889ba06705d9c3c3d0923da6c5d4ad\",\"promptRevision\":1,\"rawText\":\"{\\\"observations\\\": [{\\\"context\\\": \\\"physical\\\", \\\"id\\\": \\\"item_02\\\", \\\"kind\\\": \\\"shower\\\", \\\"note\\\": \\\"A handheld shower head is mounted on a wall bracket with a hose connected below.\\\", \\\"observedPart\\\": \\\"handset\\\", \\\"style\\\": \\\"hand-spray\\\", \\\"visibleParts\\\": {\\\"handheldHead\\\": \\\"present\\\", \\\"hose\\\": \\\"present\\\", \\\"overheadHead\\\": \\\"absent\\\", \\\"verticalRail\\\": \\\"absent\\\"}} ] , \\\"schemaVersion\\\": 1}\"},\"understanding\":{\"candidates\":[{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.856,\"left\":0.626,\"right\":0.826,\"top\":0.48},\"evidence\":[\"white toilet with lid open\",\"The toilet base rests directly on the floor tiles.\",\"Visible toilet bowl and seat assembly.\"],\"id\":\"item_01\",\"kind\":\"toilet\",\"mounting\":\"floor\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.564,\"left\":0.383,\"right\":0.438,\"top\":0.146},\"evidence\":[\"handheld shower head and hose attached to wall fixture\",\"Visible shower head and hose assembly.\"],\"id\":\"item_02\",\"kind\":\"shower\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.861,\"left\":0.531,\"right\":0.617,\"top\":0.051},\"evidence\":[\"transparent glass shower screen\",\"Vertical transparent glass panel separating shower area.\"],\"id\":\"item_03\",\"kind\":\"glassPartition\",\"mounting\":\"floor\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.478,\"left\":0.287,\"right\":0.481,\"top\":0.443},\"evidence\":[\"small white shelf holding bottles\",\"Small shelf mounted on the wall holding bottles.\"],\"id\":\"item_04\",\"kind\":\"wallShelf\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.273,\"left\":0.634,\"right\":0.888,\"top\":0.203},\"evidence\":[\"metal towel rack/shelf assembly\",\"Metal towel rack/shelf mounted on the wall.\"],\"id\":\"item_05\",\"kind\":\"wallShelf\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.127,\"left\":0.207,\"right\":0.261,\"top\":0.044},\"evidence\":[\"small rectangular window\",\"Small architectural window with visible frame.\"],\"id\":\"item_06\",\"kind\":\"window\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"}],\"relations\":[],\"roomLayout\":{\"backWallQuad\":null,\"corners\":[],\"evidence\":[],\"lines\":[],\"orthogonal\":\"unknown\",\"uncertainty\":[\"설비 목록과 촬영 기하 관측은 별도예요. 이 단계는 방 모서리나 제품 접점을 추정하지 않았어요.\"]},\"schemaVersion\":1}}",
+          "modelId": "@cf/google/gemma-4-26b-a4b-it",
+          "modelRevision": "cloudflare-managed:gemma-4-26b-a4b-it:api-v1",
+          "promptSha256": "ca7baf24d6f6bbba5b8743e900fcde97f15d21a8949f9b5e19aa7e3e12d73b82",
+          "schemaSha256": "6695a8db9f583c1b809e80acac942c50f4066b0e9eda210833c9bf9007c1a5c1",
+          "inputSha256": "afd78b1c35c0d8a80713bd21ab8c56322042b8b1973f8c5335a09f59240b074e"
+        },
+        "rawText": "{\"installationState\":\"installed-shower-hardware\",\"note\":\"The target region contains a handheld spray head body mounted on a wall bracket. A flexible metallic hose connects the bottom of the spray head to a horizontal shelf assembly. The shelf assembly features two circular control knobs. The hose curves downward and connects to the underside of the shelf.\",\"schemaVersion\":1,\"scope\":\"connected-assembly\",\"view\":\"direct\",\"visibleHardware\":{\"finishedUserControl\":\"present\",\"flexibleWaterHose\":\"present\",\"headMountOrSupport\":\"present\",\"looseServiceLoop\":\"absent\",\"recognizableSprayHeadBody\":\"present\",\"sprayOutletFace\":\"uncertain\",\"unfinishedPipeEnd\":\"absent\"}}",
+        "rawTextSha256": "c82a4e8cc6db09be60be298edbd6ae19aa5158e21084851eac14f566d467ce87",
+        "observation": {
+          "schemaVersion": 1,
+          "note": "The target region contains a handheld spray head body mounted on a wall bracket. A flexible metallic hose connects the bottom of the spray head to a horizontal shelf assembly. The shelf assembly features two circular control knobs. The hose curves downward and connects to the underside of the shelf.",
+          "visibleHardware": {
+            "recognizableSprayHeadBody": "present",
+            "sprayOutletFace": "uncertain",
+            "headMountOrSupport": "present",
+            "finishedUserControl": "present",
+            "flexibleWaterHose": "present",
+            "unfinishedPipeEnd": "absent",
+            "looseServiceLoop": "absent"
+          },
+          "view": "direct",
+          "scope": "connected-assembly",
+          "installationState": "installed-shower-hardware"
+        }
+      }
+    },
+    "note": "Saved actual v9 evidence, copied offline for policy-test design; not a new model call and not a product rule keyed by case."
+  },
+  {
+    "caseId": "remote-02",
+    "targetId": "item_05",
+    "sourceReport": "test-results\\reconstruction-fifteen-rebuild\\2026-09-16T02-41-56-428Z-cloud-gemma\\full15-ui-v9-01\\attempts\\2026-09-16T06-40-14-972Z-1d92020a\\remote-02\\report-dom.json",
+    "sourceReportSha256": "434573e94f7f08316e31b03b2e314dd22f8a3357f2ef59eddc4e68767db75540",
+    "photoFingerprint": "85bd12d8e47e416853a9b0b8abd93c0755c4368fb54893d97e92d60e50bef2d2",
+    "detailRawText": "{\"observations\":[{\"context\":\"physical\",\"id\":\"item_05\",\"kind\":\"shower\",\"note\":\"A fixed overhead shower head and its supporting arm are visible.\",\"observedPart\":\"overhead-head\",\"style\":\"overhead-set\",\"visibleParts\":{\"handheldHead\":\"absent\",\"hose\":\"absent\",\"overheadHead\":\"present\",\"verticalRail\":\"absent\"}}],\"schemaVersion\":1}",
+    "detail": {
+      "id": "item_05",
+      "note": "A fixed overhead shower head and its supporting arm are visible.",
+      "kind": "shower",
+      "context": "physical",
+      "style": "overhead-set",
+      "observedPart": "overhead-head",
+      "visibleParts": {
+        "handheldHead": "absent",
+        "overheadHead": "present",
+        "verticalRail": "absent",
+        "hose": "absent"
+      }
+    },
+    "installationDecision": {
+      "version": 1,
+      "policyRevision": "explicit-unfinished-services-hold-v2",
+      "candidateId": "item_05",
+      "action": "unchanged",
+      "reasons": [
+        "insufficient-independent-evidence"
+      ],
+      "before": {
+        "candidate": {
+          "id": "item_05",
+          "kind": "shower",
+          "bounds": {
+            "left": 0.415,
+            "top": 0.136,
+            "right": 0.523,
+            "bottom": 0.2
+          },
+          "mounting": "wall",
+          "wall": "unknown",
+          "basinStyle": "unknown",
+          "shape": "unknown",
+          "reflection": "physical",
+          "evidence": [
+            "shower head and arm visible",
+            "Visible showerhead and arm fixture."
+          ],
+          "uncertainty": [],
+          "provenance": {
+            "kind": "model",
+            "mounting": "model",
+            "wall": "default",
+            "shape": "default",
+            "position": "default"
+          }
+        },
+        "sourceDecisionSignature": "{\"showerDetails\":{\"modelId\":\"@cf/google/gemma-4-26b-a4b-it\",\"modelInputSha256\":\"0b8a5b09d82810aa55f2cd6823cff23f8aabc800de72c72dac56f315e016ae4b\",\"modelRevision\":\"cloudflare-managed:gemma-4-26b-a4b-it:api-v1\",\"outputContract\":\"fixed-shower-detail-v1\",\"photoFingerprint\":\"85bd12d8e47e416853a9b0b8abd93c0755c4368fb54893d97e92d60e50bef2d2\",\"promptRevision\":1,\"rawText\":\"{\\\"observations\\\":[{\\\"context\\\":\\\"physical\\\",\\\"id\\\":\\\"item_05\\\",\\\"kind\\\":\\\"shower\\\",\\\"note\\\":\\\"A fixed overhead shower head and its supporting arm are visible.\\\",\\\"observedPart\\\":\\\"overhead-head\\\",\\\"style\\\":\\\"overhead-set\\\",\\\"visibleParts\\\":{\\\"handheldHead\\\":\\\"absent\\\",\\\"hose\\\":\\\"absent\\\",\\\"overheadHead\\\":\\\"present\\\",\\\"verticalRail\\\":\\\"absent\\\"}}],\\\"schemaVersion\\\":1}\"},\"understanding\":{\"candidates\":[{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.914,\"left\":0.062,\"right\":0.463,\"top\":0.628},\"evidence\":[\"white toilet with visible tank and seat\",\"The toilet base rests directly on the floor tiles.\",\"Visible toilet bowl and tank assembly.\"],\"id\":\"item_01\",\"kind\":\"toilet\",\"mounting\":\"floor\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"wall\",\"bounds\":{\"bottom\":0.537,\"left\":0.058,\"right\":0.486,\"top\":0.447},\"bowlCount\":1,\"evidence\":[\"yellow basin mounted to wall\",\"Basin is attached to the wall with visible plumbing and open space below.\"],\"id\":\"item_02\",\"kind\":\"basin\",\"mounting\":\"wall\",\"provenance\":{\"bowlCount\":\"model\",\"kind\":\"model\",\"mounting\":\"geometry\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.345,\"left\":0.053,\"right\":0.347,\"top\":0},\"evidence\":[\"large mirror panel above basin area\",\"Large reflective panel on the wall.\"],\"id\":\"item_03\",\"kind\":\"mirror\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.715,\"left\":0.338,\"right\":0.642,\"top\":0.135},\"evidence\":[\"frosted glass divider for shower area\",\"Transparent vertical divider separating the shower area.\"],\"id\":\"item_04\",\"kind\":\"glassPartition\",\"mounting\":\"floor\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.2,\"left\":0.415,\"right\":0.523,\"top\":0.136},\"evidence\":[\"shower head and arm visible\",\"Visible showerhead and arm fixture.\"],\"id\":\"item_05\",\"kind\":\"shower\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.288,\"left\":0.628,\"right\":0.848,\"top\":0.096},\"evidence\":[\"wooden framed window with frosted glass\",\"Visible window with wooden frame and glazing.\"],\"id\":\"item_06\",\"kind\":\"window\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"}],\"relations\":[],\"roomLayout\":{\"backWallQuad\":null,\"corners\":[],\"evidence\":[],\"lines\":[],\"orthogonal\":\"unknown\",\"uncertainty\":[\"설비 목록과 촬영 기하 관측은 별도예요. 이 단계는 방 모서리나 제품 접점을 추정하지 않았어요.\"]},\"schemaVersion\":1}}"
+      },
+      "proposedAfter": {
+        "candidate": {
+          "id": "item_05",
+          "kind": "shower",
+          "bounds": {
+            "left": 0.415,
+            "top": 0.136,
+            "right": 0.523,
+            "bottom": 0.2
+          },
+          "mounting": "wall",
+          "wall": "unknown",
+          "basinStyle": "unknown",
+          "shape": "unknown",
+          "reflection": "physical",
+          "evidence": [
+            "shower head and arm visible",
+            "Visible showerhead and arm fixture."
+          ],
+          "uncertainty": [],
+          "provenance": {
+            "kind": "model",
+            "mounting": "model",
+            "wall": "default",
+            "shape": "default",
+            "position": "default"
+          }
+        },
+        "placement": "preserve-existing"
+      },
+      "analysis": {
+        "receipt": {
+          "outputContract": "shower-installation-evidence-probe-v1",
+          "promptRevision": 1,
+          "inputRevision": "normalized-source-full-crop-v1",
+          "photoFingerprint": "85bd12d8e47e416853a9b0b8abd93c0755c4368fb54893d97e92d60e50bef2d2",
+          "normalizedFullSha256": "0b8a5b09d82810aa55f2cd6823cff23f8aabc800de72c72dac56f315e016ae4b",
+          "cropSha256": "c6adddffd2e57dafc1d3bf7a4ebde11aaa56e877071e05cbf309bed4c826dd78",
+          "sourceImage": {
+            "width": 960,
+            "height": 1280
+          },
+          "fullImage": {
+            "width": 768,
+            "height": 1024
+          },
+          "cropImage": {
+            "width": 136,
+            "height": 108
+          },
+          "targetId": "item_05",
+          "targetBounds": {
+            "left": 0.415,
+            "top": 0.136,
+            "right": 0.523,
+            "bottom": 0.2
+          },
+          "cropTransform": {
+            "left": 382,
+            "top": 161,
+            "width": 136,
+            "height": 108
+          },
+          "candidateSignature": "{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.2,\"left\":0.415,\"right\":0.523,\"top\":0.136},\"evidence\":[\"shower head and arm visible\",\"Visible showerhead and arm fixture.\"],\"id\":\"item_05\",\"kind\":\"shower\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"}",
+          "sourceDecisionSignature": "{\"showerDetails\":{\"modelId\":\"@cf/google/gemma-4-26b-a4b-it\",\"modelInputSha256\":\"0b8a5b09d82810aa55f2cd6823cff23f8aabc800de72c72dac56f315e016ae4b\",\"modelRevision\":\"cloudflare-managed:gemma-4-26b-a4b-it:api-v1\",\"outputContract\":\"fixed-shower-detail-v1\",\"photoFingerprint\":\"85bd12d8e47e416853a9b0b8abd93c0755c4368fb54893d97e92d60e50bef2d2\",\"promptRevision\":1,\"rawText\":\"{\\\"observations\\\":[{\\\"context\\\":\\\"physical\\\",\\\"id\\\":\\\"item_05\\\",\\\"kind\\\":\\\"shower\\\",\\\"note\\\":\\\"A fixed overhead shower head and its supporting arm are visible.\\\",\\\"observedPart\\\":\\\"overhead-head\\\",\\\"style\\\":\\\"overhead-set\\\",\\\"visibleParts\\\":{\\\"handheldHead\\\":\\\"absent\\\",\\\"hose\\\":\\\"absent\\\",\\\"overheadHead\\\":\\\"present\\\",\\\"verticalRail\\\":\\\"absent\\\"}}],\\\"schemaVersion\\\":1}\"},\"understanding\":{\"candidates\":[{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.914,\"left\":0.062,\"right\":0.463,\"top\":0.628},\"evidence\":[\"white toilet with visible tank and seat\",\"The toilet base rests directly on the floor tiles.\",\"Visible toilet bowl and tank assembly.\"],\"id\":\"item_01\",\"kind\":\"toilet\",\"mounting\":\"floor\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"wall\",\"bounds\":{\"bottom\":0.537,\"left\":0.058,\"right\":0.486,\"top\":0.447},\"bowlCount\":1,\"evidence\":[\"yellow basin mounted to wall\",\"Basin is attached to the wall with visible plumbing and open space below.\"],\"id\":\"item_02\",\"kind\":\"basin\",\"mounting\":\"wall\",\"provenance\":{\"bowlCount\":\"model\",\"kind\":\"model\",\"mounting\":\"geometry\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.345,\"left\":0.053,\"right\":0.347,\"top\":0},\"evidence\":[\"large mirror panel above basin area\",\"Large reflective panel on the wall.\"],\"id\":\"item_03\",\"kind\":\"mirror\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.715,\"left\":0.338,\"right\":0.642,\"top\":0.135},\"evidence\":[\"frosted glass divider for shower area\",\"Transparent vertical divider separating the shower area.\"],\"id\":\"item_04\",\"kind\":\"glassPartition\",\"mounting\":\"floor\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.2,\"left\":0.415,\"right\":0.523,\"top\":0.136},\"evidence\":[\"shower head and arm visible\",\"Visible showerhead and arm fixture.\"],\"id\":\"item_05\",\"kind\":\"shower\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"default\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"unknown\",\"uncertainty\":[],\"wall\":\"unknown\"},{\"basinStyle\":\"unknown\",\"bounds\":{\"bottom\":0.288,\"left\":0.628,\"right\":0.848,\"top\":0.096},\"evidence\":[\"wooden framed window with frosted glass\",\"Visible window with wooden frame and glazing.\"],\"id\":\"item_06\",\"kind\":\"window\",\"mounting\":\"wall\",\"provenance\":{\"kind\":\"model\",\"mounting\":\"model\",\"position\":\"default\",\"shape\":\"model\",\"wall\":\"default\"},\"reflection\":\"physical\",\"shape\":\"rectangular\",\"uncertainty\":[],\"wall\":\"unknown\"}],\"relations\":[],\"roomLayout\":{\"backWallQuad\":null,\"corners\":[],\"evidence\":[],\"lines\":[],\"orthogonal\":\"unknown\",\"uncertainty\":[\"설비 목록과 촬영 기하 관측은 별도예요. 이 단계는 방 모서리나 제품 접점을 추정하지 않았어요.\"]},\"schemaVersion\":1}}",
+          "modelId": "@cf/google/gemma-4-26b-a4b-it",
+          "modelRevision": "cloudflare-managed:gemma-4-26b-a4b-it:api-v1",
+          "promptSha256": "ca7baf24d6f6bbba5b8743e900fcde97f15d21a8949f9b5e19aa7e3e12d73b82",
+          "schemaSha256": "6695a8db9f583c1b809e80acac942c50f4066b0e9eda210833c9bf9007c1a5c1",
+          "inputSha256": "85427a7855f382c84a14709e932f214b017839b6f5dce38c1855a0ef5d627e49"
+        },
+        "rawText": "{\"installationState\":\"installed-shower-hardware\",\"note\":\"The target region contains a curved metal pipe extending from the wall, terminating in a rounded body with a visible circular distribution face. The assembly is mounted to the wall via a straight section of pipe.\",\"schemaVersion\":1,\"scope\":\"connected-assembly\",\"view\":\"direct\",\"visibleHardware\":{\"finishedUserControl\":\"absent\",\"flexibleWaterHose\":\"absent\",\"headMountOrSupport\":\"absent\",\"looseServiceLoop\":\"absent\",\"recognizableSprayHeadBody\":\"present\",\"sprayOutletFace\":\"present\",\"unfinishedPipeEnd\":\"absent\"}}",
+        "rawTextSha256": "aa7c3e3de8365ded6ca584fbd8dada111bf78ae0426daf151c524d635b8bdfbd",
+        "observation": {
+          "schemaVersion": 1,
+          "note": "The target region contains a curved metal pipe extending from the wall, terminating in a rounded body with a visible circular distribution face. The assembly is mounted to the wall via a straight section of pipe.",
+          "visibleHardware": {
+            "recognizableSprayHeadBody": "present",
+            "sprayOutletFace": "present",
+            "headMountOrSupport": "absent",
+            "finishedUserControl": "absent",
+            "flexibleWaterHose": "absent",
+            "unfinishedPipeEnd": "absent",
+            "looseServiceLoop": "absent"
+          },
+          "view": "direct",
+          "scope": "connected-assembly",
+          "installationState": "installed-shower-hardware"
+        }
+      }
+    },
+    "note": "Saved actual v9 evidence, copied offline for policy-test design; not a new model call and not a product rule keyed by case."
+  }
+]

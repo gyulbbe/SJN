@@ -3,51 +3,74 @@ import type { RoomDefinition } from '../room-types';
 import type { RoomSegmentation } from '../segmentation';
 import { detectSurfaces } from '../render/auto-surfaces';
 import { inferWallGeometry } from '../render/wall-geometry';
+import { inferPartialBackWall } from './partial-wall-geometry';
 import { homography, inverseHomography, transformPoint, validateQuad } from '../render/math';
 import { projectRoomFixture } from '../room-fixtures';
 import { frontContactToCentre, projectReconstructionFixture } from './projection';
 import { representativeColor } from './candidates';
-import type { ReconstructionCandidate, ReconstructionPlane, ReconstructionReview } from './types';
+import { judgeCandidateInstallation, mapReconstructionCandidate, isAppearancePlane } from './installation';
+export { judgeCandidateInstallation, mapReconstructionCandidate } from './installation';
+import {
+  reconstructionCandidateLabel,
+  hasSupportedReconstructionKind,
+  type ReconstructionPlane,
+  type ReconstructionReview,
+} from './types';
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
 const median = (a: number[]) => a.sort((x, y) => x - y)[Math.floor(a.length / 2)] ?? 0;
 
-type LinePattern = { spacing: number; polarity: 1 | -1; strength: number; start: number; end: number };
-function periodicPattern(profile: number[]): LinePattern | undefined {
+type LinePattern = {
+  spacing: number;
+  polarity: 1 | -1;
+  strength: number;
+  start: number;
+  end: number;
+  peaks?: number[];
+};
+function ridgePeaks(profile: number[], polarity: 1 | -1, sparse = false) {
+  const local = profile.map((value, i) => {
+    if (!Number.isFinite(value)) return NaN;
+    const neighbors = profile
+      .slice(Math.max(0, i - 5), Math.min(profile.length, i + 6))
+      .filter(Number.isFinite);
+    return neighbors.length >= 6 ? polarity * (value - median(neighbors)) : NaN;
+  });
+  const finite = local.filter(Number.isFinite);
+  if (finite.length < 24) return { local, peaks: [] };
+  const strength = [...finite].sort((a, b) => a - b)[Math.floor(finite.length * (sparse ? 0.995 : 0.99))];
+  const noise = median(finite.map((value) => Math.abs(value)));
+  const threshold = Math.max(2.2, strength * 0.32, noise * 3.5);
+  if (strength < threshold) return { local, peaks: [] };
+  const peaks: number[] = [];
+  for (let i = 4; i < local.length - 4; i++) {
+    if (
+      !Number.isFinite(local[i]) ||
+      local[i] < threshold ||
+      local[i] < (local[i - 1] || 0) ||
+      local[i] <= (local[i + 1] || 0)
+    )
+      continue;
+    if (peaks.length && i - peaks.at(-1)! < 4) {
+      if (local[i] > local[peaks.at(-1)!]) peaks[peaks.length - 1] = i;
+    } else peaks.push(i);
+  }
+  return { local, peaks };
+}
+function periodicPattern(
+  profile: number[],
+  minimumPeaks = 4,
+  requiredPolarity?: 1 | -1,
+): LinePattern | undefined {
   if (profile.length < 64) return;
   let best: LinePattern | undefined;
-  for (const polarity of [1, -1] as const) {
-    const local = profile.map((value, i) => {
-      if (!Number.isFinite(value)) return NaN;
-      const neighbors = profile
-        .slice(Math.max(0, i - 5), Math.min(profile.length, i + 6))
-        .filter(Number.isFinite);
-      return neighbors.length >= 6 ? polarity * (value - median(neighbors)) : NaN;
-    });
-    const finite = local.filter(Number.isFinite);
-    if (finite.length < 24) continue;
-    const strength = [...finite].sort((a, b) => a - b)[Math.floor(finite.length * 0.97)];
-    const noise = median(finite.map((value) => Math.abs(value)));
-    const threshold = Math.max(2.2, strength * 0.32, noise * 3.5);
-    if (strength < threshold) continue;
-    const peaks: number[] = [];
-    for (let i = 4; i < local.length - 4; i++) {
-      if (
-        !Number.isFinite(local[i]) ||
-        local[i] < threshold ||
-        local[i] < (local[i - 1] || 0) ||
-        local[i] <= (local[i + 1] || 0)
-      )
-        continue;
-      if (peaks.length && i - peaks.at(-1)! < 4) {
-        if (local[i] > local[peaks.at(-1)!]) peaks[peaks.length - 1] = i;
-      } else peaks.push(i);
-    }
-    if (peaks.length < 4) continue;
+  for (const polarity of requiredPolarity ? [requiredPolarity] : ([1, -1] as const)) {
+    const { local, peaks } = ridgePeaks(profile, polarity);
+    if (peaks.length < minimumPeaks) continue;
     const gaps = peaks.slice(1).map((value, i) => value - peaks[i]);
     for (const initial of gaps) {
-      if (initial < 5 || initial > profile.length / 4) continue;
+      if (initial < 5 || initial > profile.length / (minimumPeaks === 3 ? 2 : 4)) continue;
       const near = gaps.filter((gap) => Math.abs(gap - initial) <= Math.max(1.5, initial * 0.16));
-      if (near.length < 3) continue;
+      if (near.length < minimumPeaks - 1) continue;
       const spacing = median(near);
       const support = gaps.filter(
         (gap) => Math.abs(gap / spacing - Math.round(gap / spacing)) < 0.2 && gap / spacing < 4,
@@ -60,6 +83,7 @@ function periodicPattern(profile: number[]): LinePattern | undefined {
         );
         best = {
           spacing: spacing / profile.length,
+          peaks: [...new Set(linked)].sort((a, b) => a - b),
           polarity,
           strength: score,
           start: Math.max(0, (Math.min(...linked) - spacing * 0.5) / profile.length),
@@ -180,10 +204,121 @@ function aggregatedPatterns(light: Float32Array, n: number, vertical: boolean) {
     }
   return patterns;
 }
+
+/** Repeated courses provide the missing evidence when a narrow wall shows only two vertical joints.
+ * Fixed full-height frames do not pass the alternating/stable phase checks on independent courses. */
+function wallCoursePattern(light: Float32Array, n: number, vertical: LinePattern) {
+  const step = vertical.spacing * n;
+  if (step < 8 || step > n / 4) return;
+  let best:
+    | {
+        horizontal: LinePattern;
+        pattern: 'grid' | 'brick';
+        joints: { x: number; y: number }[];
+        score: number;
+      }
+    | undefined;
+  for (const offset of [0.125, 0.375, 0.625, 0.875]) {
+    const courses: { row: number; y: number; peaks: number[]; values: number[] }[] = [];
+    for (let row = 0, y = step * offset; y < n; row++, y += step) {
+      const center = Math.round(y),
+        radius = Math.max(1, Math.round(step * 0.1));
+      const profile = Array.from({ length: n }, (_, x) => {
+        const samples: number[] = [];
+        for (let cy = Math.max(0, center - radius); cy <= Math.min(n - 1, center + radius); cy++) {
+          const value = light[cy * n + x];
+          if (Number.isFinite(value)) samples.push(value);
+        }
+        return samples.length >= radius ? median(samples) : NaN;
+      });
+      const { peaks, local } = ridgePeaks(profile, vertical.polarity, true);
+      if (peaks.length >= 2) courses.push({ row, y: center, peaks, values: local });
+    }
+    if (courses.length < 4) continue;
+    const gaps = courses
+      .flatMap((course) => course.peaks.flatMap((x, i) => course.peaks.slice(i + 1).map((next) => next - x)))
+      .filter((gap) => gap > n * 0.08 && gap < n * 0.75);
+    const proposals: {
+      spacing: number;
+      support: { course: (typeof courses)[number]; pairs: number[] }[];
+      score: number;
+    }[] = [];
+    for (const initial of gaps) {
+      if (proposals.some((p) => Math.abs(p.spacing - initial) < Math.max(2, initial * 0.04))) continue;
+      const support = courses.flatMap((course) => {
+        const pairs = new Set<number>();
+        for (let i = 0; i < course.peaks.length; i++)
+          for (let j = i + 1; j < course.peaks.length; j++)
+            if (Math.abs(course.peaks[j] - course.peaks[i] - initial) < Math.max(2, initial * 0.09)) {
+              pairs.add(course.peaks[i]);
+              pairs.add(course.peaks[j]);
+            }
+        return pairs.size >= 2 ? [{ course, pairs: [...pairs] }] : [];
+      });
+      if (support.length < 4 || support.length < courses.length * 0.55) continue;
+      const strength = median(support.map((s) => median(s.pairs.map((x) => s.course.values[x]))));
+      proposals.push({ spacing: initial, support, score: support.length * Math.sqrt(Math.max(0, strength)) });
+    }
+    proposals.sort((a, b) => b.score - a.score || a.spacing - b.spacing);
+    for (const proposal of proposals.slice(0, 5)) {
+      const phases = proposal.support.flatMap(({ course, pairs }) => {
+        let x = 0,
+          y = 0;
+        for (const peak of pairs) {
+          const phase = (peak / proposal.spacing) * Math.PI * 2;
+          x += Math.cos(phase);
+          y += Math.sin(phase);
+        }
+        return Math.hypot(x, y) / pairs.length > 0.65
+          ? [{ row: course.row, phase: Math.atan2(y, x) / (Math.PI * 2) }]
+          : [];
+      });
+      let brick = 0,
+        grid = 0,
+        pairs = 0,
+        adjacent = 0;
+      for (let i = 0; i < phases.length; i++)
+        for (let j = i + 1; j < phases.length; j++) {
+          const raw = Math.abs(phases[j].phase - phases[i].phase),
+            distance = Math.min(raw, 1 - raw);
+          const gap = phases[j].row - phases[i].row;
+          if (gap === 1) adjacent++;
+          pairs++;
+          if (distance < 0.15) grid++;
+          if (Math.abs(distance - (gap % 2 ? 0.5 : 0)) < 0.15) brick++;
+        }
+      if (adjacent < 3 || pairs < 6 || Math.max(brick, grid) < pairs * 0.75) continue;
+      const pattern = brick > grid ? ('brick' as const) : ('grid' as const);
+      const score = proposal.score * Math.pow(Math.max(brick, grid) / pairs, 2);
+      if (best && score <= best.score) continue;
+      best = {
+        horizontal: {
+          spacing: proposal.spacing / n,
+          polarity: vertical.polarity,
+          strength: proposal.support.length,
+          start: 0,
+          end: 1,
+        },
+        pattern,
+        score,
+        joints: proposal.support.flatMap(({ course, pairs }) => pairs.map((x) => ({ x, y: course.y }))),
+      };
+    }
+  }
+  return best;
+}
+
+export type WallTileEvidence = {
+  horizontalSupport: number;
+  verticalSupport: number;
+  verticalSpan: number;
+  coursePattern?: 'grid' | 'brick';
+};
 /** Preserve appearance even where fixtures hide most of one profile or tiles cover only half the wall. */
 export function analyzePlaneAppearanceDetails(input: AppearanceInput): {
   tile: ReconstructionPlane['tile'];
   bands?: ReconstructionPlane['bands'];
+  evidence?: WallTileEvidence;
 } {
   const { plane, room, rgba, width, height, mask } = input;
   const projection = inverseHomography(homography(plane.quad));
@@ -206,19 +341,62 @@ export function analyzePlaneAppearanceDetails(input: AppearanceInput): {
       samples.push(i);
     }
   const color = samples.length >= 8 ? representativeColor(rgba, samples) : plane.tile.color;
-  const rowPatterns = Array.from({ length: n }, (_, y) =>
-    periodicPattern(Array.from(light.subarray(y * n, (y + 1) * n))),
+  let rowPatterns = Array.from({ length: n }, (_, y) =>
+    periodicPattern(Array.from(light.subarray(y * n, (y + 1) * n)), plane.face === 'floor' ? 4 : 3),
   );
   const columnPatterns = Array.from({ length: n }, (_, x) =>
     periodicPattern(Array.from({ length: n }, (_, y) => light[y * n + x])),
   );
-  const sx =
-      (plane.face === 'floor' ? consensus(aggregatedPatterns(light, n, false), 3) : undefined) ??
-      consensus(rowPatterns, 5),
-    sy =
-      (plane.face === 'floor' ? consensus(aggregatedPatterns(light, n, true), 3) : undefined) ??
-      consensus(columnPatterns, 5);
-  if (!sx || !sy) return { tile: { ...plane.tile, color, groutWidth: 0, estimated: true } };
+  const sy =
+    (plane.face === 'floor' ? consensus(aggregatedPatterns(light, n, true), 3) : undefined) ??
+    consensus(columnPatterns, 5);
+  // A narrow wall may show only two intervals across a row. Require agreement over many
+  // rows and an independently repeated vertical axis, including the observed grout polarity.
+  if (plane.face !== 'floor' && sy)
+    rowPatterns = Array.from({ length: n }, (_, y) =>
+      periodicPattern(Array.from(light.subarray(y * n, (y + 1) * n)), 3, sy.polarity),
+    );
+  let sx =
+    (plane.face === 'floor' ? consensus(aggregatedPatterns(light, n, false), 3) : undefined) ??
+    consensus(rowPatterns, 5);
+  const observedCourses = plane.face !== 'floor' && sy ? wallCoursePattern(light, n, sy) : undefined;
+  const courses =
+    observedCourses &&
+    (!sx ||
+      sx.strength < n * 0.12 ||
+      Math.abs(observedCourses.horizontal.spacing - sx.spacing) / sx.spacing < 0.2)
+      ? observedCourses
+      : undefined;
+  if (courses) sx = courses.horizontal;
+  const evidence: WallTileEvidence = {
+    horizontalSupport: sx?.strength ?? 0,
+    verticalSupport: sy?.strength ?? 0,
+    verticalSpan: sy ? sy.end - sy.start : 0,
+    coursePattern: courses?.pattern,
+  };
+  if (!sx || !sy) {
+    const verticalJoints = sy
+      ? columnPatterns.flatMap((pattern, x) =>
+          pattern?.peaks &&
+          pattern.polarity === sy.polarity &&
+          Math.abs(pattern.spacing - sy.spacing) / sy.spacing < 0.2
+            ? pattern.peaks.map((y) => source[y * n + x]).filter((i) => i >= 0)
+            : [],
+        )
+      : [];
+    return {
+      evidence,
+      tile: {
+        ...plane.tile,
+        color,
+        groutWidth: 0,
+        estimated: true,
+        ...(verticalJoints.length >= 8
+          ? { groutColor: representativeColor(rgba, [...new Set(verticalJoints)]) }
+          : {}),
+      },
+    };
+  }
   const depth = room.depthMm * (plane.depthEnd - plane.depthStart);
   const physicalWidth =
     plane.face === 'left' || plane.face === 'right'
@@ -229,25 +407,49 @@ export function analyzePlaneAppearanceDetails(input: AppearanceInput): {
   const widthMm = Math.round((sx.spacing * physicalWidth) / 10) * 10,
     heightMm = Math.round((sy.spacing * physicalHeight) / 10) * 10;
   if (widthMm < 40 || heightMm < 40 || widthMm > 2000 || heightMm > 2000)
-    return { tile: { ...plane.tile, color, groutWidth: 0, estimated: true } };
+    return { evidence, tile: { ...plane.tile, color, groutWidth: 0, estimated: true } };
   const sorted = [...new Set(samples)].sort(
     (a, b) =>
       rgba[a * 4] + rgba[a * 4 + 1] + rgba[a * 4 + 2] - (rgba[b * 4] + rgba[b * 4 + 1] + rgba[b * 4 + 2]),
   );
-  const groutPolarity = consensus(rowPatterns, 5)?.polarity ?? sx.polarity;
+  const groutPolarity = sy.strength >= sx.strength ? sy.polarity : sx.polarity;
+  const joints: number[] = [];
+  const gather = (patterns: (LinePattern | undefined)[], expected: LinePattern, vertical: boolean) => {
+    patterns.forEach((pattern, across) => {
+      if (
+        !pattern?.peaks ||
+        pattern.polarity !== groutPolarity ||
+        Math.abs(pattern.spacing - expected.spacing) / expected.spacing > 0.2
+      )
+        return;
+      for (const position of pattern.peaks) {
+        const index = source[vertical ? position * n + across : across * n + position];
+        if (index >= 0) joints.push(index);
+      }
+    });
+  };
+  gather(rowPatterns, sx, false);
+  gather(columnPatterns, sy, true);
+  for (const point of courses?.joints ?? []) {
+    const index = source[point.y * n + point.x];
+    if (index >= 0) joints.push(index);
+  }
   const groutSamples =
-    groutPolarity > 0
-      ? sorted.slice(Math.floor(sorted.length * 0.88), Math.ceil(sorted.length * 0.98))
-      : sorted.slice(Math.floor(sorted.length * 0.02), Math.ceil(sorted.length * 0.12));
+    joints.length >= 8
+      ? [...new Set(joints)]
+      : groutPolarity > 0
+        ? sorted.slice(Math.floor(sorted.length * 0.88), Math.ceil(sorted.length * 0.98))
+        : sorted.slice(Math.floor(sorted.length * 0.02), Math.ceil(sorted.length * 0.12));
   const tile: ReconstructionPlane['tile'] = {
     color,
     widthMm,
     heightMm,
     groutWidth: 2,
+    pattern: courses?.pattern ?? 'grid',
     groutColor: representativeColor(rgba, groutSamples),
     estimated: true,
   };
-  if (plane.face === 'floor') return { tile };
+  if (plane.face === 'floor') return { tile, evidence };
   const consistentColumns = columnPatterns.filter(
     (p): p is LinePattern => !!p && Math.abs(p.spacing - sy.spacing) / sy.spacing < 0.2,
   );
@@ -258,7 +460,7 @@ export function analyzePlaneAppearanceDetails(input: AppearanceInput): {
   const supportThreshold = Math.max(3, Math.max(...support) * 0.18);
   const rowEvidence = rowPatterns.map((p, y) => {
     const count = Array.from(source.subarray(y * n, (y + 1) * n)).filter((i) => i >= 0).length;
-    return count < n * 0.12
+    return count < n * 0.3
       ? NaN
       : (p && Math.abs(p.spacing - sx.spacing) / sx.spacing < 0.22) || support[y] >= supportThreshold
         ? 1
@@ -280,7 +482,7 @@ export function analyzePlaneAppearanceDetails(input: AppearanceInput): {
       tiledBottom = b > a;
     }
   }
-  if (!bestSplit) return { tile };
+  if (!bestSplit) return { tile, evidence };
   // A cap strip may be the only exposed start of tiling while a large window hides the first rows.
   const edges: { row: number; strength: number }[] = [];
   for (let y = Math.ceil(n * 0.18); y < Math.min(n * 0.82, bestSplit); y++) {
@@ -311,6 +513,7 @@ export function analyzePlaneAppearanceDetails(input: AppearanceInput): {
   const split = Math.round((bestSplit / n) * 1000) / 1000;
   return {
     tile,
+    evidence,
     bands: [
       {
         from: 0,
@@ -533,6 +736,7 @@ export function observedWallPlanes(masks: RoomSegmentation, rgba: Uint8ClampedAr
     })
     .map((region) => ({
       id: 'observed-' + region.face,
+      geometrySource: 'appearance-region' as const,
       face: region.face,
       quad: [
         { x: region.left, y: top },
@@ -615,6 +819,64 @@ export function continueObservedWallBands(
   }
 }
 
+/** A finish match alone is insufficient: the receiving wall must expose repeated joints itself. */
+export function completeObservedWallTiles(
+  planes: ReconstructionPlane[],
+  evidence: Map<string, WallTileEvidence>,
+) {
+  const warnings: string[] = [];
+  const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const difference = (a: string, b: string) => Math.hypot(...rgb(a).map((value, i) => value - rgb(b)[i]));
+  const names = { left: '왼쪽 벽', back: '정면 벽', right: '오른쪽 벽', floor: '바닥' };
+  const donors = planes.filter((plane) => {
+    const e = evidence.get(plane.id);
+    return (
+      plane.face !== 'floor' &&
+      !plane.bands &&
+      plane.tile.groutWidth > 0 &&
+      e?.coursePattern === 'brick' &&
+      e.horizontalSupport >= 8 &&
+      e.verticalSupport >= 12
+    );
+  });
+  for (const plane of planes) {
+    if (plane.face === 'floor' || plane.bands || donors.includes(plane)) continue;
+    const e = evidence.get(plane.id);
+    if (
+      !e ||
+      e.verticalSupport < 8 ||
+      e.verticalSpan < 0.25 ||
+      e.horizontalSupport >= Math.max(12, e.verticalSupport * 0.3) ||
+      (e.coursePattern === 'grid' && e.horizontalSupport >= 10) ||
+      !plane.tile.groutColor
+    )
+      continue;
+    const donor = donors
+      .filter(
+        (other) =>
+          other.tile.groutColor &&
+          difference(plane.tile.color, other.tile.color) <= 55 &&
+          difference(plane.tile.groutColor!, other.tile.groutColor) <= 45,
+      )
+      .sort(
+        (a, b) => difference(plane.tile.color, a.tile.color) - difference(plane.tile.color, b.tile.color),
+      )[0];
+    if (!donor) continue;
+    plane.tile = {
+      ...plane.tile,
+      widthMm: donor.tile.widthMm,
+      heightMm: donor.tile.heightMm,
+      groutWidth: donor.tile.groutWidth,
+      pattern: donor.tile.pattern,
+      estimated: true,
+    };
+    warnings.push(
+      `${names[plane.face]}은 일부 줄눈만 보여 ${names[donor.face]}의 비슷한 마감과 반복을 참고해 타일 규격·배열을 추정했어요. 실제 규격은 확인해 주세요.`,
+    );
+  }
+  return warnings;
+}
+
 export function reviewFromSegmentation(
   masks: RoomSegmentation,
   rgba: Uint8ClampedArray,
@@ -631,6 +893,8 @@ export function reviewFromSegmentation(
   const planes: ReconstructionPlane[] = [];
   const make = (face: ReconstructionPlane['face'], quad: Quad): ReconstructionPlane => ({
     id: `source-${face}`,
+    // detectSurfaces supplies an uncalibrated visible patch, not four physical room corners.
+    geometrySource: face === 'floor' ? 'visible-floor-region' : 'room-boundaries',
     face,
     quad: structuredClone(quad),
     depthStart: 0,
@@ -656,7 +920,19 @@ export function reviewFromSegmentation(
     const observedWalls = observedWallPlanes(masks, rgba);
     planes.push(...observedWalls);
     if (planes[0]?.face === 'floor') planes[0] = alignedReconstructionFloor(masks, observedWalls, planes[0]);
+    const partialBack = inferPartialBackWall({ ...masks, rgba }, ceilingObservation(masks));
+    if (partialBack) {
+      const plane = make('back', partialBack.quad);
+      plane.depthEnd = 1;
+      plane.verticalStart = 0;
+      plane.verticalEnd = 1;
+      plane.geometryEvidence = partialBack.evidence;
+      const index = planes.findIndex((p) => p.face === 'back');
+      if (index < 0) planes.push(plane);
+      else planes[index] = plane;
+    }
   }
+  const appearanceEvidence = new Map<string, WallTileEvidence>();
   for (const plane of planes) {
     const appearance = analyzePlaneAppearanceDetails({
       plane,
@@ -668,10 +944,14 @@ export function reviewFromSegmentation(
     });
     plane.tile = appearance.tile;
     plane.bands = appearance.bands;
+    if (appearance.evidence) appearanceEvidence.set(plane.id, appearance.evidence);
   }
+  const appearanceWarnings = completeObservedWallTiles(planes, appearanceEvidence);
   continueObservedWallBands(planes, rgba, masks);
   const warnings = [
     ...geometry.warnings,
+    ...planes.flatMap((plane) => plane.geometryEvidence?.reasons ?? []),
+    ...appearanceWarnings,
     '사진에 보이는 깊이는 방 전체가 아니에요. 보이는 깊이 구간은 임시로 뒤쪽 65%에 맞췄어요. 제품 위치는 원본과 비교해 확인해 주세요.',
     '기구는 실제 상품 복원이 아닌 기본 모형이에요. 종류·규격·위치를 확인해 주세요.',
   ];
@@ -682,79 +962,49 @@ export function reviewFromSegmentation(
   if (!geometry.planes.length)
     warnings.push(
       planes.some((p) => p.face !== 'floor')
-        ? '벽 모서리를 정밀하게 확정하지 못했지만 관측된 벽 색과 무늬는 보존했어요. 제품 설치 위치를 원본과 비교해 확인해 주세요.'
+        ? '관측된 색과 무늬는 마감 영역으로 보존했어요. 실제 방 모서리·천장·바닥 대응을 확정하지 못한 영역은 설치 벽·높이 계산에 사용하지 않아요. 설비 목록에서 설치 벽을 확인해 주세요.'
         : '관측된 벽이 충분하지 않아 벽은 중립색으로 남겼어요. 벽 타일에서 원하는 자재를 적용해 주세요.',
     );
-  return {
-    version: 1,
+  const review: ReconstructionReview = {
+    version: 2,
     analysis: planes.length && geometry.planes.length ? 'complete' : 'partial',
     planes,
     candidates: structuredClone(masks.objects ?? []),
     warnings: [...new Set(warnings)],
   };
-}
-function inPlane(plane: ReconstructionPlane, point: Point, tolerance = 0.08) {
-  if (
-    !validateQuad(plane.quad) ||
-    plane.depthStart < 0 ||
-    plane.depthEnd > 1 ||
-    plane.depthStart >= plane.depthEnd
-  )
-    return;
-  try {
-    const uv = transformPoint(homography(plane.quad), point);
-    if (uv.x < -tolerance || uv.x > 1 + tolerance || uv.y < -tolerance || uv.y > 1 + tolerance) return;
-    return uv;
-  } catch {
-    return;
+  for (const candidate of review.candidates) {
+    if (!hasSupportedReconstructionKind(candidate) && !candidate.requiresReview) {
+      candidate.requiresReview = true;
+      candidate.warning = `${reconstructionCandidateLabel(candidate)}로 분류된 영역은 있지만 분류 근거가 약해요. 실제 설비 종류를 확인한 후 추가해 주세요.`;
+      candidate.trace = [
+        ...(candidate.trace ?? []),
+        { stage: 'candidate', outcome: 'held', reason: candidate.warning },
+      ];
+    }
+    candidate.installation = judgeCandidateInstallation(candidate, review);
+    const placement = mapReconstructionCandidate(candidate, review);
+    if (!placement && !candidate.requiresReview)
+      candidate.warning = `${reconstructionCandidateLabel(candidate)}는 찾았지만 ${candidate.installation.reason}`;
+    candidate.trace = [
+      ...(candidate.trace ?? []),
+      {
+        stage: 'installation',
+        outcome: candidate.installation.mode === 'unknown' ? 'held' : 'accepted',
+        reason: candidate.installation.reason,
+      },
+      {
+        stage: 'placement',
+        outcome: placement ? 'accepted' : 'held',
+        reason: placement
+          ? '관측된 설치 면에서 임시 위치를 계산했어요. 위치는 실측이 아니에요.'
+          : (candidate.warning ??
+            `${reconstructionCandidateLabel(candidate)}는 찾았지만 설치 위치 확인이 필요해요.`),
+      },
+    ];
+    if (!placement && !candidate.warning)
+      candidate.warning = `${reconstructionCandidateLabel(candidate)}는 찾았지만 설치 위치 확인이 필요해요.`;
   }
-}
-export function mapReconstructionCandidate(
-  candidate: ReconstructionCandidate,
-  review: ReconstructionReview,
-): { face: ReconstructionPlane['face']; u: number; v: number } | undefined {
-  // A weak semantic runner-up can be a patch of wall, especially near doors. Keep it reviewable.
-  if (candidate.requiresReview || candidate.evidence.meanMargin < 1.5) return;
-  const floorObject =
-    candidate.kind === 'toilet' ||
-    candidate.kind === 'basin' ||
-    candidate.kind === 'vanity' ||
-    candidate.kind === 'bath';
-  if (floorObject) {
-    const plane = review.planes.find((p) => p.face === 'floor');
-    const uv = plane && inPlane(plane, candidate.foot);
-    if (!plane || !uv) return;
-    return {
-      face: 'floor',
-      u:
-        (plane.horizontalStart ?? 0) +
-        clamp(uv.x) * ((plane.horizontalEnd ?? 1) - (plane.horizontalStart ?? 0)),
-      v: plane.depthStart + clamp(uv.y) * (plane.depthEnd - plane.depthStart),
-    };
-  }
-  const point =
-    candidate.kind === 'door'
-      ? candidate.foot
-      : {
-          x: (candidate.bounds.left + candidate.bounds.right) / 2,
-          y: (candidate.bounds.top + candidate.bounds.bottom) / 2,
-        };
-  const matching = review.planes
-    .filter((p) => p.face !== 'floor')
-    .map((plane) => ({ plane, uv: inPlane(plane, point, 0.01) }))
-    .filter((p) => p.uv);
-  if (matching.length !== 1) return;
-  const { plane, uv } = matching[0];
-  const v =
-    (plane.verticalStart ?? 0) + clamp(uv!.y) * ((plane.verticalEnd ?? 1) - (plane.verticalStart ?? 0));
-  const depth =
-    plane.depthStart +
-    (plane.face === 'left' ? 1 - clamp(uv!.x) : clamp(uv!.x)) * (plane.depthEnd - plane.depthStart);
-  return {
-    face: plane.face,
-    u: plane.face === 'back' ? clamp(uv!.x) : plane.face === 'left' ? 1 - depth : depth,
-    v,
-  };
+  return review;
 }
 /** Source-plane corrections relocate linked candidates; unrelated manually added objects stay as edited. */
 export function remapReconstructionCandidates(scene: Scene, review: ReconstructionReview): Scene {
@@ -776,6 +1026,26 @@ export function remapReconstructionCandidates(scene: Scene, review: Reconstructi
           )
         : placement,
     );
+    if (fixture.reconstruction?.version === 2 && placement.face !== 'floor') {
+      const source = review.planes.find((p) => p.face === placement.face);
+      if (source && isAppearancePlane(source) && !source.confirmed) {
+        fixture.roomPlacement.v = 1 - (fixture.reconstruction.baseHeightMm ?? 650) / next.room.heightMm;
+        projectReconstructionFixture(next.room, fixture, next.imageWidth / next.imageHeight);
+        continue;
+      }
+      const meta = fixture.reconstruction;
+      const bottomAnchored =
+        candidate.kind === 'door' || candidate.kind === 'basin' || candidate.kind === 'wallShelf';
+      meta.baseHeightMm = Math.max(
+        0,
+        Math.min(
+          next.room.heightMm - meta.heightMm * fixture.roomPlacement.scale,
+          (1 - placement.v) * next.room.heightMm -
+            (bottomAnchored ? 0 : (meta.heightMm * fixture.roomPlacement.scale) / 2),
+        ),
+      );
+      fixture.roomPlacement.v = 1 - meta.baseHeightMm / next.room.heightMm;
+    }
     projectRoomFixture(next.room, fixture, next.imageWidth / next.imageHeight);
     projectReconstructionFixture(next.room, fixture, next.imageWidth / next.imageHeight);
   }

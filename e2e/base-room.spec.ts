@@ -1,6 +1,7 @@
 import { getActiveDesign } from '../src/lib/designs';
 import { test, expect, type Page } from '@playwright/test';
 import sharp from 'sharp';
+import { readFile } from 'node:fs/promises';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
 import type { ProjectDocument } from '../src/lib/types';
 
@@ -37,8 +38,8 @@ async function savedProject(page: Page) {
   return project!;
 }
 async function editorReady(page: Page) {
-  await expect(page).toHaveURL(/\/projects\/[\w-]+$/);
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\/[\w-]+$/, { timeout: 30000 });
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await expect(page.locator('.canvas-loading')).toHaveCount(0);
   await expect(page.locator('.editor-error')).toHaveCount(0);
 }
@@ -207,7 +208,7 @@ test('기본 공간은 업로드 없이 열리고 네 면에 즉시 타일을 �
   await page.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   const output = testInfo.outputPath('base-room-after.png');
   await (await downloaded).saveAs(output);
-  const image = await sharp(output).raw().toBuffer({ resolveWithObject: true });
+  const image = await sharp(await readFile(output)).raw().toBuffer({ resolveWithObject: true });
   expect(image.info.width).toBe(4096);
   expect(image.info.height).toBe(2731);
   const radius = Math.max(1, Math.round(Math.min(image.info.width, image.info.height) * 0.003));

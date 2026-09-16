@@ -6,7 +6,7 @@
 
 **사진으로 비교 공간 만들기**에서는 기존 공간 사진과 치수로 Before 초안을 재구성하고, 동일한 구도의 빈 After에서 새 디자인을 시작합니다. 생성 직후 After 편집 화면이 열립니다. Before 확인·보정은 필요할 때 하고, 우측 자재 수량·금액은 현재 시안의 After에 적용한 자재만 집계합니다. 실제 제품을 복원하는 대신 수정 가능한 유사 모형을 사용합니다. [재구성 Before / After 사용법](docs/reconstructed-comparison.md)
 
-[Cloudflare 배포와 main 자동 배포 안내](docs/cloudflare-deployment.md)
+[Cloudflare 배포와 main 자동 배포 안내](docs/cloudflare-deployment.md) · [D1·R2·Google 로그인 설정](docs/cloudflare-storage-setup.md)
 
 ## 실행
 
@@ -62,7 +62,7 @@ npm run start
 
 홈의 **사진으로 비교 공간 만들기** → 사진·가로·깊이·높이 입력 → **자동 초안 만들기** → 빈 After에서 새 디자인 꾸미기 순서로 진행합니다. Before는 상단 버튼으로 비교하고, 필요하면 **기존 공간 수정**에서 보정한 뒤 상단 **After**로 돌아옵니다. 분석이 어려우면 **분석 없이 직접 구성**을 사용할 수 있습니다. **기존 공간 수정**은 After를 유지하고, **공간 크기** 변경은 양쪽에 함께 적용합니다. 참고 사진은 별도로 열며 비교 화면은 두 재구성 장면을 같은 각도로 표시합니다.
 
-자동 초안은 전체·좌우 반전 사진과 모호한 기구의 확대 영역을 실제로 다시 분석합니다. 창·거울의 원본 디테일, 세면대 하부장, 상부 도장·하부 타일 구간과 줄눈을 보존하도록 개선했습니다. 기존 재구성은 **기존 공간 수정 → 초안 보정 → 사진 다시 분석**으로 갱신할 수 있습니다. After와 자재 설정은 유지되며, 결과는 사진을 참고한 편집 가능한 추정입니다. [재구성 안내](docs/reconstructed-comparison.md).
+자동 초안은 전체·좌우 반전 사진과 모호한 기구의 확대 영역을 실제로 다시 분석합니다. 거울은 원본 반사 풍경을 붙이지 않는 중립 표준 모형으로 표현합니다. 세면대 지지 형태, 상부 도장·하부 타일 구간과 줄눈은 관측·추정값을 구분하며 원본과 대조해 보정해야 합니다. 기존 재구성은 **기존 공간 수정 → 초안 보정 → 사진 다시 분석**으로 갱신할 수 있습니다. After와 자재 설정은 유지되며, 결과는 사진을 참고한 편집 가능한 추정입니다. [재구성 안내](docs/reconstructed-comparison.md).
 
 ## 시안을 여러 개 만들고 비교하기
 
@@ -87,7 +87,7 @@ npm run start
 
 ## 구조와 저장 계약
 
-`src/lib/types.ts`의 직렬화 가능한 문서와 자산 ID가 공통 계약입니다. React/Zustand 편집기, Three.js 렌더러, IndexedDB/Supabase 저장소를 분리했습니다. 렌더러는 `RenderSnapshot`과 자산 reader만 받습니다.
+`src/lib/types.ts`의 직렬화 가능한 문서와 자산 ID가 공통 계약입니다. React/Zustand 편집기, Three.js 렌더러, IndexedDB/D1·R2/Supabase 저장소를 분리했습니다. 렌더러는 `RenderSnapshot`과 자산 reader만 받습니다.
 
 사진 좌표는 방향 정리 후 `[0,1]`, 면은 mm, 화면 줌/이동은 별도 좌표입니다. 면의 역호모그래피로 타일과 줄눈을 함께 반복합니다. 원본 색을 반투명하게 덮지 않고 새 자재 위에 저주파 명암만 적용합니다. 선택 테두리는 SVG 오버레이라 이미지 출력에 들어가지 않습니다.
 
@@ -105,20 +105,19 @@ npm run start
 
 목록 썸네일과 비교 미리보기는 별도 브라우저 캐시에만 보관합니다. 시안 생성·복사·전환·비교는 AI를 호출하거나 합성 이미지를 서버에 업로드하지 않습니다. 사용자가 누른 다운로드만 PC에 파일을 만듭니다.
 
-## Supabase 연결 준비
+## 저장소와 로그인 설정
 
-`.env.example`과 `supabase/README.md`, `supabase/migrations`에 설정 및 SQL이 있습니다. 이번 버전의 실제 검증은 로컬 모드를 기준으로 합니다. Supabase 계정 생성, 마이그레이션 적용, 이메일 인증 설정, 관리자 지정 및 실제 사용자 격리 검증은 설정 후 수행해야 합니다.
+`npm run dev`와 `npm run dev:vinext`는 설정 파일에 서버 키가 있어도 로컬 IndexedDB를 사용합니다. 배포 환경에서 `APP_ENV=production`, `STORAGE_MODE=auto`와 유효한 D1·R2 바인딩·인증 설정·마이그레이션이 모두 확인될 때 D1 클라우드 작업 공간을 엽니다. 초기 설정이 누락되거나 연결 확인에 실패하면 이유를 표시하고 로컬로 시작합니다. 작업 중인 클라우드의 저장 실패에는 저장소를 바꾸지 않습니다.
 
-```dotenv
-NEXT_PUBLIC_STORAGE_MODE=local
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
-SUPABASE_SECRET_KEY=
-```
+- **로그인:** Better Auth + Google OAuth. 계정·세션은 D1에 보관하며 관리자 권한도 서버에서 검사합니다.
+- **D1:** 프로젝트 요약·revision·자재 버전·참조 관계. **비공개 R2:** 원본 이미지·미리보기·3D 메시와 프로젝트 JSON 스냅샷. 큰 프로젝트를 D1 한 행에 넣지 않습니다.
+- **복구:** 클라우드 편집 후 500ms에 계정별 IndexedDB 복구본을 보관하고, 서버는 2초 지연·연속 편집 시 최대 15초 간격으로 저장합니다. 충돌 시 기존 서버본을 강제로 덮어쓰지 않고 별도 프로젝트 복원을 제공합니다.
+- 로컬 자료는 계정 자료와 분리하며 자동 업로드하지 않습니다. 로그인·로그아웃·로컬 전환에서 진행 중인 작업을 먼저 확정하고 보존합니다.
+- `.env.example`, `.dev.vars.example`, `wrangler.d1.example.jsonc`, `migrations/d1/`가 설정 예시와 SQL입니다. 실제 값을 넣는 곳과 순서는 [설정 가이드](docs/cloudflare-storage-setup.md)를 참고하세요. 현재 저장소의 기본 설정은 로컬이고 실제 연결·배포는 수행하지 않았습니다.
 
-서버 모드 사용 시 `NEXT_PUBLIC_STORAGE_MODE=supabase`를 명시하고 설정 후 개발 서버를 재시작합니다. 프로덕션 실행은 공개 환경변수가 빌드에 포함되므로 설정 변경 후 `npm run build`도 다시 실행합니다. 키가 있어도 자동으로 서버 모드가 되지 않으며, 실패 시 로컬로 조용히 전환하지 않습니다. 로컬 자료도 자동 업로드하지 않습니다. Secret key를 `NEXT_PUBLIC_` 변수나 브라우저 코드에 넣지 마세요.
+기존 Supabase 어댑터와 `supabase/migrations`는 유지합니다. **Node/Next 프로덕션**에서 `APP_ENV=production`, `STORAGE_MODE=supabase`를 명시하고 Supabase 환경변수를 설정하면 선택할 수 있습니다. Cloudflare 런타임에서는 D1을 사용합니다. Supabase 실제 연결과 사용자 격리 검증은 미실행입니다. 서버 secret은 `NEXT_PUBLIC_` 변수나 Git에 넣지 마세요.
 
-서버 어댑터는 이메일/비밀번호 인증, 서버 사용자 검증, 소유권/RLS, 관리자 공용 목록 권한, 비공개 Storage, 이미지 재검증, 조건부 문서 저장, 실패 업로드 정리 경로를 포함합니다. `storage.objects`를 직접 SQL로 지우지 않고 Storage API를 사용합니다.
+[구현·검증 결과와 미실행 항목](docs/cloud-storage-verification-20260914.md)
 
 ## 외부 기능과 한계
 
@@ -150,3 +149,19 @@ node --experimental-strip-types tests/design-preview-browser.ts
 ```
 
 E2E와 UI 검증은 Playwright에서 시스템 Chrome을 사용합니다. 별도 WebGL·이미지·실패 검증도 시스템 Chrome을 사용하며 `npm run dev`가 실행 중이어야 합니다. UI 검증은 Playwright가 로컬 개발 서버를 재사용하거나 시작합니다. 테스트 장면은 외부 전송 없이 로컬에서 생성됩니다. 자세한 실행 결과·환경·미실행 항목은 [다중 시안 검증](docs/designs-verification.md) 및 [기존 검증 기록](docs/verification.md), 예시 자산 정보는 [자산 출처](docs/assets.md)에 기록합니다.
+
+## 사진 재구성 테스트
+
+홈의 **사진 재구성 테스트** 또는 `/reconstruction-performance`에서 Gemma 설비 분석, 브라우저 MoGe 형상 분석, 전체 Before 생성을 검사합니다. 기존 `/reconstruction-lab` 주소도 이 화면으로 이동합니다.
+
+AI 정밀 분석은 Cloudflare Workers AI의 Gemma와 사용자 브라우저의 MoGe-2를 사용합니다. DeepLab 영역 분류도 브라우저에서 실행합니다. Qwen/Ollama와 Python·CUDA MoGe 실행 경로는 제거했습니다. 예전에 저장한 분석 결과는 그대로 보관하며, 새로 분석할 때는 현재 분석 방식을 선택합니다.
+
+설비 분석용 사진은 Cloudflare로 전송되며 Workers AI 사용량이 발생합니다. MoGe는 브라우저에서 모델을 내려받아 WebGPU로 실행하고, 지원되지 않으면 CPU 실행을 시도합니다. 브라우저 기본 분석은 별도로 선택할 수 있습니다.
+
+- [현재 실행·연결·검증 가이드](docs/reconstruction-cloud-browser-setup.md)
+- [Cloudflare AI 사용량 확인](docs/cloudflare-ai-usage.md)
+- [기존 로컬 AI 제거 범위](docs/local-ai-retirement.md)
+
+과거 날짜가 붙은 실험·비교 보고서는 당시 결과를 보존한 기록이며 현재 실행 가이드가 아닙니다.
+
+[Google 로그인·관리자 자재·D1/R2 데이터베이스 설계](docs/database-design.md) — 테이블 관계, 전체 DDL·기본 데이터, 관리자 지정 SQL, 적용 순서.

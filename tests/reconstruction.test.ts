@@ -45,6 +45,7 @@ function plane(face: ReconstructionPlane['face'] = 'floor'): ReconstructionPlane
   return {
     id: face,
     face,
+    geometrySource: 'room-boundaries',
     quad: structuredClone(unit),
     depthStart: 0.1,
     depthEnd: 0.6,

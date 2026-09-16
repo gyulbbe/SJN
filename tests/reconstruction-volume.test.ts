@@ -155,7 +155,7 @@ describe('reconstruction model dimensions and floor contact', () => {
     expect(placement.u).toBeGreaterThan(0);
     expect(placement.v).toBeLessThan(1);
   });
-  it('derives observed object dimensions from source bounds rather than always returning category defaults', () => {
+  it('keeps floor body category dimensions instead of stretching it with a background wall homography', () => {
     const review: ReconstructionReview = {
       version: 1,
       analysis: 'complete',
@@ -194,9 +194,11 @@ describe('reconstruction model dimensions and floor contact', () => {
       DEFAULT_ROOM,
       { face: 'floor', u: 0.6, v: 0.6 },
     );
-    expect(small.widthMm).toBe(720);
-    expect(large.widthMm).toBe(1680);
-    expect(small.heightMm).toBe(840);
+    expect(small.widthMm).toBe(1200);
+    expect(large.widthMm).toBe(1200);
+    expect(small.heightMm).toBe(850);
+    expect(small.provenance?.dimensions).toBe('default');
+    expect(large.provenance?.dimensions).toBe('default');
     expect(large.orientation).toBe('back');
   });
 });

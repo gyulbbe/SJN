@@ -1,5 +1,6 @@
+import { normalizeRoomView, resetRoomView, type RoomViewState } from './room-viewer/view-state';
 import { create } from 'zustand';
-import { normalizeRoomScene, resizedRoomScene } from './room-editing';
+import { normalizeRoomScene, resizedRoomScene, projectWallFeatureResizeError } from './room-editing';
 import { validateRoomDimensions } from './room-geometry';
 import { ensureMaterialUsage } from './material-usage';
 import type { MaterialUsageState } from './material-usage-types';
@@ -67,6 +68,7 @@ type EditorState = {
   undo: () => void;
   redo: () => void;
   viewport: (zoom: number, pan: Point) => void;
+  setRoomView: (view: RoomViewState) => void;
   renamed: (name: string) => void;
   quoteChanged: (quote: QuoteDocument) => void;
   saving: () => void;
@@ -276,6 +278,8 @@ export const useEditor = create<EditorState>((set, get) => {
       roomHistory:
         direction === 'past' ? { future: captureWorkspace(previous) } : { past: captureWorkspace(previous) },
     };
+    // A pre-feature checkpoint has the default view, not the current post-resize view.
+    if (snapshot.roomView === undefined) delete next.roomView;
     publish(advanceRestoredRevisions(previous, next), 'after');
     set({ selection: null, mode: 'after', tool: 'select' });
   }
@@ -465,9 +469,20 @@ export const useEditor = create<EditorState>((set, get) => {
         return;
       }
       if (same(initial.shared.baseline.room, room)) return;
+      // Validate the pending committed scene too, without committing a draft on a rejected resize.
+      const prospective = structuredClone(initial);
+      if (get().draft) setScene(prospective, get().editing, structuredClone(get().draft!));
+      const featureError = projectWallFeatureResizeError(prospective, room);
+      if (featureError) {
+        fail(featureError);
+        return;
+      }
       get().commit();
       const previous = get().project!,
         next = structuredClone(previous);
+      // A fitted photo camera refers to the old physical dimensions. Keep its record for restore,
+      // but do not silently stretch its optics to a different room.
+      if (previous.roomView?.sourceCamera) next.roomView = resetRoomView(previous.roomView, 'room-fit');
       next.shared.baseline = resizedRoomScene(previous.shared.baseline, room, assets);
       if (next.shared.comparison) {
         next.shared.comparison.before = resizedRoomScene(previous.shared.comparison!.before, room, assets);
@@ -520,6 +535,14 @@ export const useEditor = create<EditorState>((set, get) => {
       const project = get().project;
       if (project) set({ project: { ...project, viewport: { zoom, pan } }, saveStatus: 'dirty' });
     },
+    setRoomView: (input) => {
+      const project = get().project;
+      if (!project) return;
+      const roomView = normalizeRoomView(input);
+      if (same(normalizeRoomView(project.roomView), roomView)) return;
+      // A view change has no scene revision, thumbnail invalidation or undo/redo entry.
+      set({ project: { ...project, roomView }, saveStatus: 'dirty', error: '' });
+    },
     renamed: (name) => {
       get().commit();
       const previous = get().project;
@@ -539,6 +562,7 @@ export const useEditor = create<EditorState>((set, get) => {
       const unchanged =
         current.editRevision === saved.editRevision &&
         same(current.viewport, saved.viewport) &&
+        same(normalizeRoomView(current.roomView), normalizeRoomView(saved.roomView)) &&
         current.activeDesignId === saved.activeDesignId &&
         same(current.comparisonDesignIds, saved.comparisonDesignIds);
       set({

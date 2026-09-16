@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { AssetReader } from '@/lib/render/compositor';
+import { designPreviewMaterialIds } from '@/lib/render/design-preview-context';
 import {
   acquireDesignPreviewSession,
   DesignPreviewCancelled,
@@ -35,16 +36,7 @@ export function useDesignPreview(input: Input) {
   const [state, setState] = useState<State>({ status: 'idle' });
   const [retryVersion, setRetryVersion] = useState(0);
   const signature = useMemo(() => {
-    const ids = input.design
-      ? [
-          ...new Set(
-            [
-              ...input.design.scene.surfaces.map((surface) => surface.materialVersionId),
-              ...input.design.scene.fixtures.map((fixture) => fixture.materialVersionId),
-            ].filter((id): id is string => !!id),
-          ),
-        ].sort()
-      : [];
+    const ids = input.design ? designPreviewMaterialIds(input.design.scene, input.roomContext) : [];
     return JSON.stringify([
       input.projectId,
       input.sharedRevision,
@@ -53,9 +45,18 @@ export function useDesignPreview(input: Input) {
       input.design?.scene,
       input.purpose,
       input.edge,
+      input.roomContext,
       ids.map((id) => input.materials[id]),
     ]);
-  }, [input.projectId, input.sharedRevision, input.design, input.purpose, input.edge, input.materials]);
+  }, [
+    input.projectId,
+    input.sharedRevision,
+    input.design,
+    input.purpose,
+    input.edge,
+    input.materials,
+    input.roomContext,
+  ]);
   const enabled = input.enabled !== false && !!input.design;
   useEffect(() => {
     if (!enabled) return;
@@ -136,7 +137,7 @@ export type ThumbnailIdentity = Omit<DesignPreviewIdentity, 'designId' | 'revisi
 export function useCachedDesignThumbnail(identity: ThumbnailIdentity): string | undefined {
   const [value, setValue] = useState<{ key: string; url?: string }>({ key: '' });
   const key = JSON.stringify(identity);
-  const { projectId, designId, revision, sharedRevision } = identity;
+  const { projectId, designId, revision, sharedRevision, contextKey } = identity;
   useEffect(() => {
     if (!designId || revision === undefined || sharedRevision === undefined) return;
     let alive = true,
@@ -144,7 +145,13 @@ export function useCachedDesignThumbnail(identity: ThumbnailIdentity): string | 
       currentUrl: string | undefined;
     const load = async () => {
       const version = ++loadVersion;
-      const blob = await getCachedDesignThumbnail({ projectId, designId, revision, sharedRevision });
+      const blob = await getCachedDesignThumbnail({
+        projectId,
+        designId,
+        revision,
+        sharedRevision,
+        contextKey,
+      });
       if (!alive || version !== loadVersion) return;
       const next = blob ? URL.createObjectURL(blob) : undefined;
       if (currentUrl) URL.revokeObjectURL(currentUrl);
@@ -168,6 +175,6 @@ export function useCachedDesignThumbnail(identity: ThumbnailIdentity): string | 
       channel?.close();
       if (currentUrl) URL.revokeObjectURL(currentUrl);
     };
-  }, [key, projectId, designId, revision, sharedRevision]);
+  }, [key, projectId, designId, revision, sharedRevision, contextKey]);
   return value.key === key ? value.url : undefined;
 }

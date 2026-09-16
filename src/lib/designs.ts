@@ -54,6 +54,11 @@ function idMapper() {
   };
 }
 function remapScene(scene: Scene, id: (value: string) => string, seen = new WeakSet<object>()): void {
+  scene.wallFeatures?.forEach((feature) => {
+    if (seen.has(feature)) return;
+    seen.add(feature);
+    feature.id = id(feature.id);
+  });
   scene.surfaces.forEach((surface) => {
     if (seen.has(surface)) return;
     seen.add(surface);
@@ -63,6 +68,10 @@ function remapScene(scene: Scene, id: (value: string) => string, seen = new Weak
     if (seen.has(fixture)) return;
     seen.add(fixture);
     fixture.id = id(fixture.id);
+    const bathRim = fixture.reconstruction?.support?.bathRim;
+    if (bathRim) bathRim.parentFixtureId = id(bathRim.parentFixtureId);
+    const partitionTop = fixture.reconstruction?.support?.partitionTop;
+    if (partitionTop) partitionTop.parentFixtureId = id(partitionTop.parentFixtureId);
   });
 }
 /** Remap provenance without marking a previously stale quote as synchronized. */
@@ -109,7 +118,8 @@ export function copyDesignDocument(source: DesignDocument, name?: string): Desig
   remapScene(scene, id);
   const quote = source.quote ? remapQuote(source.quote, id) : undefined;
   const materialUsage = source.materialUsage ? remapMaterialUsage(source.materialUsage, id, id) : undefined;
-  if (quote && materialUsage && materialUsage.migratedQuoteId === source.quote?.id) materialUsage.migratedQuoteId = quote.id;
+  if (quote && materialUsage && materialUsage.migratedQuoteId === source.quote?.id)
+    materialUsage.migratedQuoteId = quote.id;
   return {
     id: crypto.randomUUID(),
     sourceDesignId: source.id,

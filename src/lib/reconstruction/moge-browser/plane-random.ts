@@ -1,0 +1,168 @@
+/** Deterministic NumPy 2.2.6 PCG64 sampling used by the Python plane reference.
+ * Adapted to TypeScript/BigInt from NumPy PCG64, bounded integers and Generator.choice.
+ * Copyright 2014 Melissa O'Neill; Copyright 2015 Robert Kern; NumPy Developers.
+ * MIT (PCG64) and BSD-3-Clause (NumPy); full notices: docs/licenses/moge-plane-rng.txt.
+ * This is a fixed algorithm seed, never a photo-specific rule or model weight hash.
+ */
+/*! @license
+SJN browser plane random sampling notices
+
+Files: src/lib/reconstruction/moge-browser/plane-random.ts
+Changes: TypeScript BigInt adaptation, fixed seed state, bounded semantic-grid ranges.
+NumPy source revision: v2.2.6
+https://github.com/numpy/numpy/blob/v2.2.6/numpy/random/_generator.pyx
+https://github.com/numpy/numpy/blob/v2.2.6/numpy/random/src/distributions/distributions.c
+https://github.com/numpy/numpy/blob/v2.2.6/numpy/random/src/pcg64/pcg64.h
+
+NumPy license:
+Copyright (c) 2005-2024, NumPy Developers.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above
+       copyright notice, this list of conditions and the following
+       disclaimer in the documentation and/or other materials provided
+       with the distribution.
+
+    * Neither the name of the NumPy Developers nor the names of any
+       contributors may be used to endorse or promote products derived
+       from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+PCG64 source notice (MIT relicensing retained):
+
+ * PCG64 Random Number Generation for C.
+ *
+ * Copyright 2014 Melissa O'Neill <oneill@pcg-random.org>
+ * Copyright 2015 Robert Kern <robert.kern@gmail.com>
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * For additional information about the PCG random number generation scheme,
+ * including its license and other licensing options, visit
+ *
+ *     https://www.pcg-random.org
+ *
+ * Relicensed MIT in May 2019
+ *
+ * The MIT License
+ *
+ * PCG Random Number Generation for C.
+ *
+ * Copyright 2014 Melissa O'Neill <oneill@pcg-random.org>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+ * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+ * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+ * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ 
+
+*/
+export const MOGE_PLANE_RNG = 'numpy-2.2.6-pcg64-choice-v1';
+export const MOGE_PLANE_SEED = 20260913;
+const MASK64 = (1n << 64n) - 1n;
+const MASK128 = (1n << 128n) - 1n;
+const MULTIPLIER = (2549297995355413924n << 64n) + 4865540595714422341n;
+/** np.random.PCG64(20260913).state, generated by the committed Python reference test. */
+const INITIAL_STATE = 251521670110985669480282235784962863639n;
+const INCREMENT = 36925695699716470960505498616114602631n;
+
+export class PlaneRandom {
+  private state = INITIAL_STATE;
+  private buffered32: number | undefined;
+  constructor(seed = MOGE_PLANE_SEED) {
+    if (seed !== MOGE_PLANE_SEED) throw new Error('Plane RNG seed requires a new versioned reference state.');
+  }
+  private next32(): number {
+    if (this.buffered32 !== undefined) {
+      const value = this.buffered32;
+      this.buffered32 = undefined;
+      return value;
+    }
+    this.state = (this.state * MULTIPLIER + INCREMENT) & MASK128;
+    const value = ((this.state >> 64n) ^ this.state) & MASK64;
+    const rotation = this.state >> 122n;
+    const random = ((value >> rotation) | (value << (-rotation & 63n))) & MASK64;
+    this.buffered32 = Number(random >> 32n);
+    return Number(random & 0xffffffffn);
+  }
+  /** NumPy bounded_uint64 selects its buffered Lemire uint32 path for these ranges. */
+  integer(size: number): number {
+    if (!Number.isInteger(size) || size < 1 || size > 1_048_576)
+      throw new Error('Plane random range is outside the semantic grid limit.');
+    if (size === 1) return 0;
+    const threshold = 4294967296 % size;
+    for (;;) {
+      // At most 2^52: both the product and the 32-bit remainder are exact doubles.
+      const product = this.next32() * size;
+      if (product % 4294967296 >= threshold) return Math.floor(product / 4294967296);
+    }
+  }
+  private shuffle(values: number[], first: number) {
+    for (let i = values.length - 1; i >= first; i--) {
+      const j = this.integer(i + 1);
+      [values[i], values[j]] = [values[j], values[i]];
+    }
+  }
+  /** Generator.choice(n, k, replace=False, shuffle=True), including its two algorithms. */
+  sample(ids: readonly number[], size: number): number[] {
+    const n = ids.length;
+    if (!Number.isInteger(size) || size < 0 || size > n || n > 1_048_576)
+      throw new Error('Invalid plane sample size.');
+    if (n > 10000 && size > Math.floor(n / 50)) {
+      const positions = Array.from({ length: n }, (_, i) => i);
+      this.shuffle(positions, Math.max(n - size, 1));
+      return positions.slice(n - size).map((i) => ids[i]);
+    }
+    const positions: number[] = [],
+      chosen = new Set<number>();
+    for (let j = n - size; j < n; j++) {
+      const draw = this.integer(j + 1),
+        position = chosen.has(draw) ? j : draw;
+      chosen.add(position);
+      positions.push(position);
+    }
+    this.shuffle(positions, 1);
+    return positions.map((i) => ids[i]);
+  }
+}

@@ -1,3 +1,4 @@
+import { roomSurfaceAreas } from './room-surface-areas';
 import type { MaterialPricing, QuoteDocument, QuoteLine, QuoteUnit } from './quote-types';
 import { getActiveScene } from './designs';
 import type { MaterialCategory, MaterialVersion, ProjectInput, Scene } from './types';
@@ -42,6 +43,25 @@ export function quoteSourceSignature(scene: Scene): string {
         .map((surface) => [surface.id, surface.materialVersionId!]),
     ),
     fixtures: sorted(scene.fixtures.map((fixture) => [fixture.id, fixture.materialVersionId])),
+    ...(scene.wallFeatures?.length
+      ? {
+          // Structure changes require purchasing review without modifying the saved quote snapshot.
+          wallFeatures: [...scene.wallFeatures]
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map((feature) => [
+              feature.id,
+              feature.version,
+              feature.kind,
+              feature.face,
+              feature.leftMm,
+              feature.topMm,
+              feature.widthMm,
+              feature.kind === 'closed-niche' ? feature.heightMm : null,
+              feature.depthMm,
+              feature.source,
+            ]),
+        }
+      : {}),
   });
 }
 
@@ -55,6 +75,26 @@ export function roomAreaForSurfaces(scene: Scene, surfaceIds: string[], versionI
     !bounded(room.heightMm, 6_000, 1_000)
   )
     return null;
+  if (
+    scene.wallFeatures !== undefined &&
+    !(Array.isArray(scene.wallFeatures) && scene.wallFeatures.length === 0)
+  ) {
+    const areas = roomSurfaceAreas(scene);
+    let area = 0;
+    for (const id of surfaceIds) {
+      const surface = scene.surfaces.find((item) => item.id === id);
+      const value = areas.get(id)?.areaM2;
+      if (
+        !surface ||
+        (versionId && surface.materialVersionId !== versionId) ||
+        value === null ||
+        value === undefined
+      )
+        return null;
+      area += value;
+    }
+    return area;
+  }
   const faces = new Map<string, { from: number; to: number }[]>();
   let area = 0;
   for (const id of surfaceIds) {

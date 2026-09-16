@@ -4,12 +4,22 @@
   "compatibility_date": "2026-09-07",
   "compatibility_flags": ["nodejs_compat"],
   "main": "vinext/server/fetch-handler",
+  "ai": { "binding": "AI" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sjn",
+      "database_id": "c43f3251-7795-4027-8846-f418ffc939d9",
+      "migrations_dir": "migrations/d1",
+    },
+  ],
   "assets": {
     "directory": "dist/client",
     "not_found_handling": "none",
     "binding": "ASSETS",
   },
   "vars": {
-    "NEXT_PUBLIC_STORAGE_MODE": "local",
+    "APP_ENV": "local",
+    "STORAGE_MODE": "auto",
   },
 }

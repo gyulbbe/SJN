@@ -10,6 +10,7 @@ import {
   COMPARISON_LIMIT_MESSAGE,
 } from '@/lib/designs';
 import type { AssetReader } from '@/lib/render/compositor';
+import type { DesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { deleteDesignPreviewCache } from '@/lib/render/design-preview-cache';
 import { useDesignThumbnail } from './use-design-preview';
 import styles from './designs.module.css';
@@ -23,6 +24,7 @@ export type DesignManagerProps = {
   comparisonDesignIds: string[];
   materials: Record<string, MaterialVersion>;
   assetReader: AssetReader;
+  roomContext?: DesignPreviewRoomContext;
   writable: boolean;
   onCreate: (name?: string) => Action;
   onDuplicate: (id: string) => Action;
@@ -58,7 +60,7 @@ export function trapDesignDialog(event: KeyboardEvent<HTMLElement>) {
 function Thumbnail({
   design,
   ...props
-}: Pick<DesignManagerProps, 'projectId' | 'sharedRevision' | 'materials' | 'assetReader'> & {
+}: Pick<DesignManagerProps, 'projectId' | 'sharedRevision' | 'materials' | 'assetReader' | 'roomContext'> & {
   design: DesignDocument;
 }) {
   const preview = useDesignThumbnail({ ...props, design });
@@ -220,6 +222,7 @@ export default function DesignManager(props: DesignManagerProps) {
                         sharedRevision={props.sharedRevision}
                         materials={props.materials}
                         assetReader={props.assetReader}
+                        roomContext={props.roomContext}
                         design={design}
                       />
                       {active && <span className={styles.activeBadge}>현재 편집 중</span>}

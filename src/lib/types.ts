@@ -1,6 +1,8 @@
+import type { RoomViewState } from './room-viewer/view-state';
+import type { WallFeatureV1 } from './wall-features';
 import type { Product3dReference } from './product3d/state-types';
 import type { MaterialUsageState } from './material-usage-types';
-import type { ReconstructionReview } from './reconstruction/types';
+import type { ReconstructionReview, ReconstructionStandardOptions } from './reconstruction/types';
 import type { RoomDefinition, RoomFace, RoomPlacement } from './room-types';
 import type { MaterialPricing, QuoteDocument } from './quote-types';
 export type Point = { x: number; y: number };
@@ -37,8 +39,8 @@ export type Surface = {
   color: ColorAdjust;
 };
 export type FixtureInstance = {
-  reconstruction?: {
-    version: 1;
+  reconstruction?: ReconstructionStandardOptions & {
+    version: 1 | 2;
     kind: string;
     color: string;
     widthMm: number;
@@ -64,9 +66,27 @@ export type FixtureInstance = {
   color: ColorAdjust;
 };
 export type MaterialCategory =
-  'tile' | 'toilet' | 'basin' | 'vanity' | 'bath' | 'shower' | 'faucet' | 'mirror' | 'door' | 'window';
+  | 'tile'
+  | 'toilet'
+  | 'basin'
+  | 'vanity'
+  | 'bath'
+  | 'shower'
+  | 'faucet'
+  | 'mirror'
+  | 'door'
+  | 'window'
+  | 'glassPartition'
+  | 'mirrorCabinet'
+  | 'wallShelf'
+  | 'wallCabinet'
+  | 'lowPartition'
+  | 'showerCurtain';
 export type MaterialVersion = {
-  reconstruction?: { version: 1; kind: string };
+  catalog?: import('./catalog/contract').CatalogSelection;
+  composition?: string;
+  subcategoryName?: string;
+  reconstruction?: { version: 1 | 2; kind: string };
   pricing?: MaterialPricing;
   id: string;
   materialId: string;
@@ -83,7 +103,7 @@ export type MaterialVersion = {
   heightMm: number;
   depthMm: number;
   usage: 'wall' | 'floor' | 'both';
-  installation: 'floor' | 'wall' | 'embedded';
+  installation: 'floor' | 'wall' | 'embedded' | 'suspended';
   /** @deprecated Read-only compatibility for older catalogs; current images come from views/textures. */
   coverAssetId?: string;
   /** @deprecated Old introduction images remain referenced until their material version is removed. */
@@ -131,6 +151,8 @@ export function isImageAsset(asset: AssetRecord): asset is ImageAssetRecord {
 }
 export type Scene = {
   room?: RoomDefinition;
+  /** Scene-specific, explicitly authored wall structure; absent for legacy and blank scenes. */
+  wallFeatures?: WallFeatureV1[];
   originalAssetId: string;
   previewAssetId: string;
   backgroundAssetId?: string;
@@ -141,7 +163,17 @@ export type Scene = {
   fixtures: FixtureInstance[];
   color: ColorAdjust;
 };
+/** Original local lab report and the completed user input; never a replacement for the editable scene. */
+export type LabProjectSource = {
+  version: 1;
+  runId: string;
+  inputFingerprint: string;
+  reportJson: string;
+  assetIds: string[];
+  materialVersionIds: string[];
+};
 export type ComparisonState = {
+  labSource?: LabProjectSource;
   before: Scene;
   room: RoomDefinition;
   cameraVersion: 1;
@@ -194,6 +226,8 @@ export type SharedWorkspace = BeforeFrame & {
 };
 /** A complete room-change checkpoint has no checkpoint field of its own. */
 export type WorkspaceSnapshot = {
+  /** Common viewing camera; never part of a design edit/history frame. */
+  roomView?: RoomViewState;
   shared: SharedWorkspace;
   designs: DesignDocument[];
   activeDesignId: string | null;
@@ -211,8 +245,13 @@ export type ProjectSummary = Pick<ProjectDocument, 'id' | 'name' | 'updatedAt' |
   activeDesignId: string | null;
   activeDesignRevision: number;
   sharedRevision: number;
+  designPreviewContextKey?: string;
+  /** Server-derived summary cache identity; absent in older/local summaries. */
+  designPreviewRendererRevision?: string;
 };
 export type RenderSnapshot = {
+  /** Used only by the spatial viewer; the existing frontal compositor remains unchanged. */
+  roomView?: RoomViewState;
   scene: Scene;
   beforeScene?: Scene;
   materials: Record<string, MaterialVersion>;
@@ -235,9 +274,15 @@ export const categoryLabels: Record<MaterialCategory, string> = {
   basin: '세면대',
   vanity: '하부장',
   bath: '욕조',
-  shower: '샤워부스',
+  shower: '샤워 설비',
   faucet: '수전',
   mirror: '거울',
   door: '문',
   window: '창',
+  glassPartition: '유리 파티션',
+  mirrorCabinet: '거울 수납장',
+  wallShelf: '벽 선반',
+  wallCabinet: '벽 수납장',
+  lowPartition: '낮은 칸막이',
+  showerCurtain: '샤워 커튼',
 };

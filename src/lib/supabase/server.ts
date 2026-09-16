@@ -1,4 +1,5 @@
 import 'server-only';
+import { configuredStorage } from '../storage/config';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
@@ -47,7 +48,13 @@ export async function boundedJson(request: Request) {
   return JSON.parse(new TextDecoder().decode(await boundedBody(request)));
 }
 export async function authenticated(request: Request) {
-  if (process.env.NEXT_PUBLIC_STORAGE_MODE !== 'supabase')
+  if (
+    configuredStorage({
+      APP_ENV: process.env.APP_ENV,
+      STORAGE_MODE: process.env.STORAGE_MODE,
+      NEXT_PUBLIC_STORAGE_MODE: process.env.NEXT_PUBLIC_STORAGE_MODE,
+    }).mode !== 'supabase'
+  )
     throw new HttpError(503, '서버 저장 모드가 꺼져 있어요.');
   const origin = request.headers.get('origin');
   if (request.method !== 'GET' && origin && origin !== new URL(request.url).origin)
@@ -69,6 +76,12 @@ export async function authenticated(request: Request) {
     error,
   } = await client.auth.getUser();
   if (error || !user) throw new HttpError(401, '로그인이 필요해요.');
+  const expectedUser = request.headers.get('X-SJN-User-Id');
+  if (expectedUser && expectedUser !== user.id)
+    throw new HttpError(
+      401,
+      '다른 계정으로 로그인되어 있어요. 현재 작업을 보존하고 계정을 다시 확인해 주세요.',
+    );
   return { client, user };
 }
 export function serviceClient() {

@@ -8,6 +8,7 @@ export type DesignPreviewIdentity = {
   designId: string;
   revision: number;
   sharedRevision: number;
+  contextKey?: string;
 };
 export type DesignPreviewCacheRecord = DesignPreviewIdentity & {
   key: string;
@@ -50,7 +51,8 @@ const sameIdentity = (a: DesignPreviewIdentity, b: DesignPreviewIdentity) =>
   a.projectId === b.projectId &&
   a.designId === b.designId &&
   a.revision === b.revision &&
-  a.sharedRevision === b.sharedRevision;
+  a.sharedRevision === b.sharedRevision &&
+  a.contextKey === b.contextKey;
 
 export async function readDesignPreviewCache(key: string): Promise<DesignPreviewCacheRecord | undefined> {
   try {

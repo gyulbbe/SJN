@@ -1,3 +1,4 @@
+import { hasSupportedReconstructionKind } from '../reconstruction/types';
 import {
   extractReconstructionCandidates,
   mergeReconstructionPasses,
@@ -7,7 +8,7 @@ import {
 import * as tf from '@tensorflow/tfjs-core';
 import { loadGraphModel, type GraphModel } from '@tensorflow/tfjs-converter';
 import { setThreadsCount, setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
-import type { RoomSegmentation, SegmentationReply } from './index';
+import type { RoomSegmentation, SegmentationReply, BasinPassCapture } from './index';
 import { refineWallMask } from './wall-refinement';
 
 const MODEL_URL = '/models/deeplab-ade20k/model.json';
@@ -53,7 +54,13 @@ async function getModel(id: number) {
   return model;
 }
 
-async function run(id: number, blob: Blob, context?: string): Promise<RoomSegmentation> {
+async function run(
+  id: number,
+  blob: Blob,
+  context?: string,
+  captureBasins = false,
+  captureSemanticLabels = false,
+): Promise<RoomSegmentation> {
   const report = (message: string) => stage(id, context ? `${context} · ${message}` : message);
   report('사진 크기와 방향 확인 중');
   const bitmap = await createImageBitmap(blob);
@@ -147,7 +154,24 @@ async function run(id: number, blob: Blob, context?: string): Promise<RoomSegmen
       },
     });
     report('기존 기구와 설치 위치 후보 정리 중');
+    const capture: BasinPassCapture | undefined = captureBasins
+      ? {
+          context: context ?? 'primary',
+          width,
+          height,
+          rgba: pixels.slice(),
+          sourceRegion: { left: 0, top: 0, right: 1, bottom: 1 },
+          flipped: false,
+          components: [],
+        }
+      : undefined;
     const objects = extractReconstructionCandidates({
+      ...(capture
+        ? {
+            onBasinCapture: (component: BasinPassCapture['components'][number]) =>
+              capture.components.push(component),
+          }
+        : {}),
       width,
       height,
       labels: semanticLabels,
@@ -163,7 +187,16 @@ async function run(id: number, blob: Blob, context?: string): Promise<RoomSegmen
         paddedHeight: padded[0],
       },
     });
-    return { width, height, wall: refined.wall, floor, wallRefinement: refined.stats, objects };
+    return {
+      width,
+      height,
+      wall: refined.wall,
+      floor,
+      wallRefinement: refined.stats,
+      objects,
+      ...(captureSemanticLabels ? { semanticLabels } : {}),
+      ...(capture ? { basinDiagnostics: { version: 1 as const, passes: [capture] } } : {}),
+    };
   } finally {
     bitmap.close();
     input?.dispose();
@@ -186,7 +219,16 @@ async function enhanceObjects(id: number, blob: Blob, primary: RoomSegmentation)
     flipContext.translate(flipped.width, 0);
     flipContext.scale(-1, 1);
     flipContext.drawImage(canvas, 0, 0);
-    const second = await run(id, await flipped.convertToBlob({ type: 'image/png' }), '좌우 방향 재확인');
+    const second = await run(
+      id,
+      await flipped.convertToBlob({ type: 'image/png' }),
+      '좌우 방향 재확인',
+      !!primary.basinDiagnostics,
+    );
+    for (const pass of second.basinDiagnostics?.passes ?? []) {
+      pass.flipped = true;
+      primary.basinDiagnostics!.passes.push(pass);
+    }
     let objects = mergeReconstructionPasses(
       primary.objects ?? [],
       mapCandidatePass(second.objects ?? [], { left: 0, top: 0, right: 1, bottom: 1 }, true),
@@ -194,7 +236,11 @@ async function enhanceObjects(id: number, blob: Blob, primary: RoomSegmentation)
     objects = refineCandidateFrames(objects, rgba, primary.width, primary.height);
     // A crop has less room context. It can confirm or flag a candidate, never blindly replace it.
     const uncertain = objects
-      .filter((c) => c.requiresReview || (c.evidence.meanMargin >= 0.8 && c.evidence.meanMargin < 4))
+      .filter(
+        (c) =>
+          !(c.evidence.contextualKind === 'toilet-assembly' && hasSupportedReconstructionKind(c)) &&
+          (c.requiresReview || (c.evidence.meanMargin >= 0.8 && c.evidence.meanMargin < 4)),
+      )
       .slice(0, 6);
     for (const candidate of uncertain) {
       stage(id, '혼동된 기구 확대 분석 중');
@@ -229,7 +275,16 @@ async function enhanceObjects(id: number, blob: Blob, primary: RoomSegmentation)
           crop.width,
           crop.height,
         );
-      const local = await run(id, await crop.convertToBlob({ type: 'image/png' }), '혼동된 기구 확대 확인');
+      const local = await run(
+        id,
+        await crop.convertToBlob({ type: 'image/png' }),
+        '혼동된 기구 확대 확인',
+        !!primary.basinDiagnostics,
+      );
+      for (const pass of local.basinDiagnostics?.passes ?? []) {
+        pass.sourceRegion = { ...region };
+        primary.basinDiagnostics!.passes.push(pass);
+      }
       const mapped = mapCandidatePass(local.objects ?? [], region);
       const overlap = (a: typeof b, c: typeof b) =>
         Math.max(0, Math.min(a.right, c.right) - Math.max(a.left, c.left)) *
@@ -276,14 +331,26 @@ async function enhanceObjects(id: number, blob: Blob, primary: RoomSegmentation)
   }
 }
 
-self.onmessage = (event: MessageEvent<{ id: number; blob: Blob; quality?: 'reconstruction' }>) => {
-  const { id, blob, quality } = event.data;
+self.onmessage = (
+  event: MessageEvent<{
+    id: number;
+    blob: Blob;
+    quality?: 'reconstruction';
+    captureBasins?: boolean;
+    captureSemanticLabels?: boolean;
+  }>,
+) => {
+  const { id, blob, quality, captureBasins, captureSemanticLabels } = event.data;
   queue = queue.then(async () => {
     try {
-      let result = await run(id, blob);
+      let result = await run(id, blob, undefined, captureBasins === true, captureSemanticLabels === true);
       if (quality === 'reconstruction') result = await enhanceObjects(id, blob, result);
       self.postMessage({ id, type: 'result', result } satisfies SegmentationReply, {
-        transfer: [result.wall.buffer, result.floor.buffer],
+        transfer: [
+          result.wall.buffer,
+          result.floor.buffer,
+          ...(result.semanticLabels ? [result.semanticLabels.buffer] : []),
+        ],
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : '사진 분석에 실패했어요. 다시 시도해 주세요.';

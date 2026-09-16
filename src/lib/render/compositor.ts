@@ -1,3 +1,4 @@
+import { resolvedBathRimScene, resolveBathRimFixture } from '../reconstruction/bath-rim';
 import {
   CanvasTexture,
   ClampToEdgeWrapping,
@@ -33,6 +34,7 @@ import type {
 } from '../types';
 import { fitOutput, homography, validateQuad } from './math';
 import { maskCanvas } from './mask';
+import { StandardModelRenderer, type StandardFixturePass } from './standard-model-render';
 
 export type AssetReader = (id: string) => Promise<AssetRecord>;
 export type CompareMode = 'before' | 'after' | 'split';
@@ -55,7 +57,13 @@ type TilePass = {
 };
 type ShadingField = { texture: Texture; mean: number; histogram: Uint32Array; samples: number };
 type LuminanceImage = { width: number; height: number; values: Float32Array };
-type FixturePass = { fixture: FixtureInstance; texture: Texture; occlusion: Texture; inverse?: Matrix3 };
+type FixturePass = {
+  fixture: FixtureInstance;
+  texture?: Texture;
+  occlusion: Texture;
+  inverse?: Matrix3;
+  standardKey?: string;
+};
 type PreparedScene = {
   scene: EditorScene;
   original: Texture;
@@ -142,7 +150,7 @@ const fixtureShader = `
 varying vec2 vUv;uniform sampler2D previousImage;uniform sampler2D product;uniform sampler2D occlusion;
 uniform vec2 photoSize;uniform vec2 productPosition;uniform vec2 productSize;uniform vec2 anchor;
 uniform float angle;uniform float projective;uniform mat3 inverseProduct;uniform vec4 adjustment;uniform vec2 shadowOffset;uniform float shadowOpacity;
-uniform float shadowBlur;uniform float shadowScale;
+uniform float shadowBlur;uniform float shadowScale;uniform float shadowOnly;
 ${colorFunctions}
 void main(){
   vec3 background=texture2D(previousImage,vUv).rgb;
@@ -164,9 +172,17 @@ void main(){
   }
   vec4 productColor=texture2D(product,vec2(local.x,1.-local.y));
   float inside=step(0.,local.x)*step(0.,local.y)*step(local.x,1.)*step(local.y,1.);
-  float alpha=productColor.a*inside*visibility;
+  float alpha=productColor.a*inside*visibility*(1.-shadowOnly);
   vec3 result=adjustColor(decodeSRGB(productColor.rgb),adjustment);
   gl_FragColor=vec4(mix(background,result,alpha),1.);
+}
+`;
+const standardCompositeShader = `
+varying vec2 vUv;uniform sampler2D previousImage;uniform sampler2D models;
+void main(){
+  vec4 model=texture2D(models,vUv);
+  // Three's normal blending produces premultiplied RGB in the transparent render target.
+  gl_FragColor=vec4(model.rgb+texture2D(previousImage,vUv).rgb*(1.-model.a),1.);
 }
 `;
 const outputShader = `
@@ -267,6 +283,8 @@ export class PhotoCompositor {
   private readonly backgroundMaterial = shader(backgroundShader);
   private readonly tileMaterial = shader(tileShader);
   private readonly fixtureMaterial = shader(fixtureShader);
+  private readonly standardCompositeMaterial = shader(standardCompositeShader);
+  private readonly standardModels: StandardModelRenderer;
   private readonly outputMaterial = shader(outputShader);
   private readonly copyMaterial = shader(copyShader);
   private readonly mesh: Mesh<PlaneGeometry, ShaderMaterial>;
@@ -343,6 +361,7 @@ export class PhotoCompositor {
         }),
     ) as [WebGLRenderTarget, WebGLRenderTarget];
     this.beforeTarget = this.targets[0].clone();
+    this.standardModels = new StandardModelRenderer(this.renderer);
     this.mesh = new Mesh(this.geometry, this.backgroundMaterial);
     this.mesh.frustumCulled = false;
     this.scene.add(this.mesh);
@@ -636,6 +655,7 @@ export class PhotoCompositor {
     namespace: 'before' | 'after',
     generation: number,
   ): Promise<PreparedScene | undefined> {
+    scene = resolvedBathRimScene(scene);
     const current = () => generation === this.generation && !this.disposed;
     const sourceId = quality.quality === 'export' ? scene.originalAssetId : scene.previewAssetId;
     const backgroundId = scene.backgroundAssetId || sourceId;
@@ -708,19 +728,26 @@ export class PhotoCompositor {
       });
     }
     for (const fixture of scene.fixtures) {
+      if (resolveBathRimFixture(scene, fixture).status === 'held') continue;
       const material = materials[fixture.materialVersionId];
       if (!material) throw new Error(fixture.name + ': 저장된 제품 버전을 찾지 못했습니다.');
+      const standardKey =
+        scene.room && fixture.roomPlacement && fixture.reconstruction?.version === 2
+          ? namespace + ':fixture:' + fixture.id
+          : undefined;
       const assetId =
         material.views[fixture.viewIndex]?.assetId ||
         material.views[0]?.assetId ||
         material.imageAssetIds?.[fixture.viewIndex] ||
         material.coverAssetId ||
         material.imageAssetIds?.[0];
-      if (!assetId) throw new Error(fixture.name + ': 저장된 제품 이미지를 찾지 못했습니다.');
-      const texture = await this.getTexture(
-        assetId,
-        quality.previewEdge === undefined ? this.maxOutputEdge : sourceEdge,
-      );
+      if (!standardKey && !assetId) throw new Error(fixture.name + ': 저장된 제품 이미지를 찾지 못했습니다.');
+      const texture = standardKey
+        ? undefined
+        : await this.getTexture(
+            assetId!,
+            quality.previewEdge === undefined ? this.maxOutputEdge : sourceEdge,
+          );
       if (!current()) return;
       // An invalid in-progress planar handle must not fall back to a misleading screen rectangle.
       if (fixture.projectedQuad && !validateQuad(fixture.projectedQuad)) continue;
@@ -729,6 +756,7 @@ export class PhotoCompositor {
       fixtures.push({
         fixture,
         texture,
+        standardKey,
         inverse: fixture.projectedQuad ? new Matrix3().set(...homography(fixture.projectedQuad)) : undefined,
         occlusion: this.getMask(id, fixture.occlusion, maskSize.width, maskSize.height),
       });
@@ -786,6 +814,13 @@ export class PhotoCompositor {
     if (beforeKey !== this.beforePreparedKey) this.beforeRenderedKey = '';
     this.beforePrepared = beforePrepared;
     this.beforePreparedKey = beforeKey;
+    this.standardModels.retain(
+      new Set(
+        [...afterPrepared.fixtures, ...(beforePrepared?.fixtures ?? [])].flatMap((pass) =>
+          pass.standardKey ? [pass.standardKey] : [],
+        ),
+      ),
+    );
     const liveTextures = new Set<Texture>();
     for (const prepared of [afterPrepared, beforePrepared]) {
       if (!prepared) continue;
@@ -866,11 +901,12 @@ export class PhotoCompositor {
       index = 1 - index;
       this.draw(shader, this.targets[index]);
     }
-    for (const { fixture, texture, occlusion, inverse } of fixtures) {
+    const drawFixture = ({ fixture, texture, occlusion, inverse }: FixturePass, shadowOnly = false) => {
       const shader = this.fixtureMaterial;
       const values: Record<string, unknown> = {
         previousImage: this.targets[index].texture,
-        product: texture,
+        product: texture ?? background,
+        shadowOnly: shadowOnly ? 1 : 0,
         occlusion,
         photoSize: new Vector2(scene.imageWidth / scene.imageHeight, 1),
         productPosition: new Vector2(fixture.position.x, fixture.position.y),
@@ -888,6 +924,31 @@ export class PhotoCompositor {
       Object.entries(values).forEach(([key, value]) => uniform(shader, key, value));
       index = 1 - index;
       this.draw(shader, this.targets[index]);
+    };
+    for (let cursor = 0; cursor < fixtures.length;) {
+      const pass = fixtures[cursor];
+      if (!pass.standardKey || !scene.room) {
+        drawFixture(pass);
+        cursor++;
+        continue;
+      }
+      const run: StandardFixturePass[] = [];
+      while (cursor < fixtures.length && fixtures[cursor].standardKey) {
+        const standard = fixtures[cursor++] as StandardFixturePass;
+        run.push(standard);
+        if (standard.fixture.shadow.opacity > 0) drawFixture(standard, true);
+      }
+      const models = this.standardModels.render(
+        run,
+        scene.room,
+        scene.imageWidth / scene.imageHeight,
+        this.targets[index].width,
+        this.targets[index].height,
+      );
+      uniform(this.standardCompositeMaterial, 'previousImage', this.targets[index].texture);
+      uniform(this.standardCompositeMaterial, 'models', models);
+      index = 1 - index;
+      this.draw(this.standardCompositeMaterial, this.targets[index]);
     }
     return this.targets[index].texture;
   }
@@ -920,7 +981,7 @@ export class PhotoCompositor {
     const final = this.outputMaterial;
     uniform(final, 'edited', edited);
     uniform(final, 'original', this.original);
-    uniform(final, 'beforeEdited', this.beforeTarget.texture);
+    uniform(final, 'beforeEdited', before ? this.beforeTarget.texture : this.targets[0].texture);
     uniform(final, 'hasBeforeScene', before ? 1 : 0);
     uniform(final, 'beforeAdjustment', colorVector(before?.scene.color ?? this.snapshot.scene.color));
     uniform(final, 'adjustment', colorVector(this.snapshot.scene.color));
@@ -1013,11 +1074,13 @@ export class PhotoCompositor {
       this.backgroundMaterial,
       this.tileMaterial,
       this.fixtureMaterial,
+      this.standardCompositeMaterial,
       this.outputMaterial,
       this.copyMaterial,
     ].forEach((m) => m.dispose());
     this.targets.forEach((t) => t.dispose());
     this.beforeTarget.dispose();
+    this.standardModels.dispose();
     this.textures.forEach((t) => t.dispose());
     this.masks.forEach((m) => m.texture.dispose());
     this.retiredMasks.splice(0).forEach((texture) => texture.dispose());

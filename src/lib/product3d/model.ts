@@ -9,7 +9,6 @@ export const PRODUCT3D_FILES = {
   decoder: { file: 'decoder_fp16.onnx', bytes: 97_734 },
 } as const;
 export type Product3dModelPart = keyof typeof PRODUCT3D_FILES;
-export const PRODUCT3D_DOWNLOAD_BYTES = Object.values(PRODUCT3D_FILES).reduce((sum, f) => sum + f.bytes, 0);
 export function product3dModelUrl(part: Product3dModelPart) {
   return `https://huggingface.co/${PRODUCT3D_MODEL_ID}/resolve/${PRODUCT3D_MODEL_REVISION}/${PRODUCT3D_FILES[part].file}`;
 }

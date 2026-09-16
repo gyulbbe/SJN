@@ -1,3 +1,6 @@
+import { hasParentGlassSupport } from './reconstruction/raised-glass-support';
+import { syncBathRimAttachments } from './reconstruction/bath-rim';
+import { reconstructionPositionFromPhoto, syncReconstructionHeight } from './reconstruction/position';
 import { applyRoomSurfaceBand } from './room-surface-bands';
 import { projectReconstructionFixture } from './reconstruction/projection';
 import type { Scene, Surface } from './types';
@@ -5,12 +8,16 @@ import { EMPTY_MASK } from './types';
 import type { RoomDefinition } from './room-types';
 import { createRoomSurfaces } from './room-geometry';
 import { projectRoomFixture, roomPositionFromPhoto } from './room-fixtures';
+import { validateWallFeatures, validateWallFeatureResize } from './wall-features';
+import type { ProjectDocument } from './types';
 
 function geometry(surface: Surface) {
   return JSON.stringify([surface.widthMm, surface.heightMm, surface.quad, surface.mask]);
 }
 /** Normalize only generated rooms. Photo projects retain their original editing behavior. */
 export function normalizeRoomScene(previous: Scene, next: Scene): void {
+  const featureError = validateWallFeatures(next.room, next.wallFeatures)[0];
+  if (featureError) throw new Error(featureError.message);
   if (!next.room) return;
   const aspect = next.imageWidth / next.imageHeight;
   const sameRoom =
@@ -56,6 +63,7 @@ export function normalizeRoomScene(previous: Scene, next: Scene): void {
       }
     }
   for (const fixture of next.fixtures) {
+    if (hasParentGlassSupport(fixture.reconstruction?.support)) continue;
     const before = previous.fixtures.find((f) => f.id === fixture.id);
     if (!fixture.roomPlacement) continue;
     if (
@@ -68,12 +76,16 @@ export function normalizeRoomScene(previous: Scene, next: Scene): void {
     ) {
       Object.assign(
         fixture.roomPlacement,
-        roomPositionFromPhoto(next.room, fixture.roomPlacement.face, fixture.position, aspect),
+        fixture.reconstruction?.version === 2
+          ? reconstructionPositionFromPhoto(next.room, fixture, fixture.position, aspect)
+          : roomPositionFromPhoto(next.room, fixture.roomPlacement.face, fixture.position, aspect),
       );
     }
+    syncReconstructionHeight(next.room, fixture, before);
     projectRoomFixture(next.room, fixture, aspect);
     projectReconstructionFixture(next.room, fixture, aspect);
   }
+  syncBathRimAttachments(next);
 }
 function hasMask(mask: Scene['protection']) {
   return (
@@ -102,7 +114,25 @@ export function roomResetWarnings(scene: Scene): string[] {
   if (hasMask(scene.protection)) messages.push('전체 보호 영역을 초기화해요.');
   if (hidden) messages.push(`제품 가림 영역 ${hidden}개를 초기화해요.`);
   if (scene.backgroundAssetId) messages.push('복원한 배경 대신 새 크기의 빈 방을 사용해요.');
+  if (scene.wallFeatures?.length) {
+    messages.push('벽 구조의 거리·폭·깊이는 유지해요. 새 공간 범위를 벗어나면 크기를 변경하지 않아요.');
+    if (scene.wallFeatures.some((feature) => feature.kind === 'floor-alcove'))
+      messages.push('바닥까지 열린 후퇴 공간은 새 바닥 높이까지 이어져 높이가 달라질 수 있어요.');
+  }
   return messages;
+}
+/** Call before creating resize assets. Historical scenes keep their own original room dimensions. */
+export function projectWallFeatureResizeError(project: ProjectDocument, room: RoomDefinition): string | null {
+  const scenes = [
+    { name: '기본 공간', scene: project.shared.baseline },
+    ...(project.shared.comparison ? [{ name: 'Before', scene: project.shared.comparison.before }] : []),
+    ...project.designs.map((design) => ({ name: design.name, scene: design.scene })),
+  ];
+  for (const { name, scene } of scenes) {
+    const issue = validateWallFeatureResize(scene, room)[0];
+    if (issue) return `${name}: ${issue.message}`;
+  }
+  return null;
 }
 export function resizedRoomScene(
   scene: Scene,
@@ -114,6 +144,8 @@ export function resizedRoomScene(
     imageHeight: number;
   },
 ): Scene {
+  const featureError = validateWallFeatureResize(scene, room)[0];
+  if (featureError) throw new Error(featureError.message);
   const next = structuredClone(scene);
   next.room = { ...room };
   Object.assign(next, assets);
@@ -150,8 +182,11 @@ export function resizedRoomScene(
   });
   for (const fixture of next.fixtures) {
     fixture.occlusion = EMPTY_MASK();
+    if (hasParentGlassSupport(fixture.reconstruction?.support)) continue;
+    syncReconstructionHeight(room, fixture);
     projectRoomFixture(room, fixture, assets.imageWidth / assets.imageHeight);
     projectReconstructionFixture(room, fixture, assets.imageWidth / assets.imageHeight);
   }
+  syncBathRimAttachments(next);
   return next;
 }

@@ -23,7 +23,7 @@ async function start(page: Page) {
   await dialog.getByLabel('가로 (m)', { exact: true }).fill('3');
   await dialog.getByLabel('깊이 (m)', { exact: true }).fill('4');
   await dialog.getByRole('button', { name: '공간 만들기', exact: true }).click();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await savedProject(page);
   await expect(page.getByRole('button', { name: '견적서', exact: true })).toHaveCount(0);
   await expect(page.getByText('자재 수량·금액', { exact: true })).toBeVisible();

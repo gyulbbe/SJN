@@ -5,6 +5,9 @@ import { useEditor } from '@/lib/editor-store';
 import { useAccess } from '@/components/app-provider';
 import { getRepositories } from '@/lib/repositories';
 import { createReconstructionProject } from '@/lib/reconstruction';
+import type { ReconstructionAnalysisProfile } from '@/lib/reconstruction/quality-contract';
+import AnalysisProfilePicker, { type AnalysisProfileSelection } from './analysis-profile-picker';
+import DiagnosticLogDownload from './diagnostic-log-download';
 import styles from './reconstruction.module.css';
 
 export default function ReconstructionRebuild({
@@ -17,6 +20,11 @@ export default function ReconstructionRebuild({
   const [open, setOpen] = useState(false),
     [stage, setStage] = useState(''),
     [error, setError] = useState('');
+  const [initialProfile, setInitialProfile] = useState<ReconstructionAnalysisProfile>('browser-basic');
+  const [analysis, setAnalysis] = useState<AnalysisProfileSelection>({
+    profile: 'browser-basic',
+    ready: false,
+  });
   const controller = useRef<AbortController | null>(null),
     alive = useRef(true),
     dialog = useRef<HTMLDivElement>(null);
@@ -52,7 +60,7 @@ export default function ReconstructionRebuild({
       }
       if (e.key === 'Tab') {
         const nodes = Array.from(
-          dialog.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [],
+          dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') ?? [],
         );
         if (e.shiftKey && document.activeElement === nodes[0]) {
           e.preventDefault();
@@ -76,13 +84,14 @@ export default function ReconstructionRebuild({
   }, [open]);
   async function rebuild() {
     const captured = useEditor.getState().project;
-    if (!captured?.shared.comparison || !canWrite.current || controller.current) return;
+    if (!captured?.shared.comparison || !canWrite.current || controller.current || !analysis.ready) return;
     const request = new AbortController();
     controller.current = request;
     setError('');
     setStage('원본 사진 준비 중');
     const current = () =>
       alive.current &&
+      controller.current === request &&
       !request.signal.aborted &&
       canWrite.current &&
       useEditor.getState().project?.id === captured.id &&
@@ -99,6 +108,11 @@ export default function ReconstructionRebuild({
         {
           repositories: repo,
           signal: request.signal,
+          analysisProfile: analysis.profile,
+          targetFrame: {
+            width: captured.shared.baseline.imageWidth,
+            height: captured.shared.baseline.imageHeight,
+          },
           onStage: (message) => {
             if (current()) setStage(message);
           },
@@ -130,6 +144,9 @@ export default function ReconstructionRebuild({
         style={{ width: '100%', margin: '10px 0' }}
         disabled={!writable || !!st.draft}
         onClick={() => {
+          const profile = st.project?.shared.comparison?.review?.analysisProfile ?? 'browser-basic';
+          setInitialProfile(profile);
+          setAnalysis({ profile, ready: false });
           setError('');
           setOpen(true);
         }}
@@ -158,8 +175,14 @@ export default function ReconstructionRebuild({
                   After의 디자인과 자재 수량·금액은 유지돼요. 여러 번 분석하므로 사진에 따라 시간이 걸릴 수
                   있어요.
                 </p>
+                <AnalysisProfilePicker
+                  initialProfile={initialProfile}
+                  disabled={!!stage || !writable}
+                  onChange={setAnalysis}
+                />
+                <DiagnosticLogDownload className="btn small" />
                 {stage && (
-                  <p role="status" style={{ marginTop: 18 }}>
+                  <p data-testid="reconstruction-progress" role="status" style={{ marginTop: 18 }}>
                     {stage}
                   </p>
                 )}
@@ -174,7 +197,7 @@ export default function ReconstructionRebuild({
                   </button>
                   <button
                     className="btn primary"
-                    disabled={!!stage || !writable}
+                    disabled={!!stage || !writable || !analysis.ready}
                     onClick={() => void rebuild()}
                   >
                     Before 다시 만들기

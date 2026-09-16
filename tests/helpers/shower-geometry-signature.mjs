@@ -1,0 +1,5 @@
+import{createHash}from'node:crypto';
+export function showerGeometrySignature(group){
+ const sha=a=>createHash('sha256').update(Buffer.from(a.buffer,a.byteOffset,a.byteLength)).digest('hex');
+ return group.children.map(n=>({name:n.name,type:n.type,visible:n.visible,position:n.position.toArray(),quaternion:n.quaternion.toArray(),scale:n.scale.toArray(),attributes:Object.fromEntries(Object.entries(n.geometry.attributes).sort(([a],[b])=>a.localeCompare(b)).map(([k,a])=>[k,{itemSize:a.itemSize,normalized:a.normalized,count:a.count,sha256:sha(a.array)}])),index:n.geometry.index?{count:n.geometry.index.count,sha256:sha(n.geometry.index.array)}:null,groups:n.geometry.groups,materials:(Array.isArray(n.material)?n.material:[n.material]).map(m=>({type:m.type,color:m.color?.getHexString(),emissive:m.emissive?.getHexString(),roughness:m.roughness,metalness:m.metalness,transparent:m.transparent,opacity:m.opacity,side:m.side,depthWrite:m.depthWrite,depthTest:m.depthTest,vertexColors:m.vertexColors,flatShading:m.flatShading}))}));
+}

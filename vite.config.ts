@@ -4,9 +4,8 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 import { fileURLToPath } from 'node:url';
 import { cloudflareLocalRoutes } from './build/cloudflare-local';
 
-// The initial Workers deployment uses browser storage only.
+// Storage is resolved at request time; missing production bindings block editing until repaired.
 export default defineConfig({
-  define: { 'process.env.NEXT_PUBLIC_STORAGE_MODE': JSON.stringify('local') },
   // The runtime's pinned CDN paths are set in the AI worker; do not emit unused WASM assets.
   environments: {
     client: { resolve: { conditions: [...defaultClientConditions, 'onnxruntime-web-use-extern-wasm'] } },

@@ -3,6 +3,12 @@ import type { DesignDocument, MaterialVersion, RenderSnapshot } from '../types';
 import { PhotoCompositor, type AssetReader } from './compositor';
 import { fitOutput } from './math';
 import {
+  designPreviewMaterialIds,
+  designPreviewRoomContextKey,
+  type DesignPreviewRoomContext,
+} from './design-preview-context';
+import { createRoomDesignPreviewRenderer } from './room-design-preview';
+import {
   DESIGN_RENDER_REVISION,
   readDesignPreviewCache,
   writeDesignPreviewCache,
@@ -15,6 +21,7 @@ export type DesignPreviewInput = {
   sharedRevision: number;
   design: PreviewDesign;
   materials: Record<string, MaterialVersion>;
+  roomContext?: DesignPreviewRoomContext;
   purpose?: 'thumbnail' | 'comparison';
   edge?: number;
 };
@@ -30,7 +37,7 @@ export interface DesignPreviewRenderer {
   setSnapshot(
     snapshot: RenderSnapshot,
     reader: AssetReader,
-    options?: { maxPreviewEdge?: number },
+    options?: { maxPreviewEdge?: number; roomContext?: DesignPreviewRoomContext },
   ): Promise<void>;
   render(width: number, height: number, mode?: 'after'): HTMLCanvasElement;
   exportImage(
@@ -44,6 +51,7 @@ export interface DesignPreviewRenderer {
 }
 type Dependencies = {
   createRenderer?: () => DesignPreviewRenderer;
+  createRoomRenderer?: () => DesignPreviewRenderer;
   capture?: (canvas: HTMLCanvasElement) => Promise<Blob>;
   readCache?: typeof readDesignPreviewCache;
   writeCache?: typeof writeDesignPreviewCache;
@@ -56,14 +64,14 @@ type Job = {
   reject: (error: unknown) => void;
 };
 const snapshotFor = (input: DesignPreviewInput): RenderSnapshot => {
-  const ids = new Set(
-    [
-      ...input.design.scene.surfaces.map((surface) => surface.materialVersionId),
-      ...input.design.scene.fixtures.map((fixture) => fixture.materialVersionId),
-    ].filter((id): id is string => !!id),
-  );
+  if (input.design.scene.wallFeatures?.length && !input.roomContext)
+    throw new Error('방 구조 시안에는 공통 공간 시점이 필요해요.');
+  const ids = designPreviewMaterialIds(input.design.scene, input.roomContext);
   return structuredClone({
     scene: input.design.scene,
+    ...(input.roomContext
+      ? { beforeScene: input.roomContext.beforeScene, roomView: input.roomContext.view }
+      : {}),
     materials: Object.fromEntries([...ids].sort().map((id) => [id, input.materials[id]])),
   });
 };
@@ -84,6 +92,7 @@ export async function designPreviewKey(input: DesignPreviewInput): Promise<strin
     input.purpose ?? 'thumbnail',
     designPreviewSize(input),
     snapshotFor(input),
+    ...(input.roomContext ? [await designPreviewRoomContextKey(input.roomContext)] : []),
   ]);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -114,6 +123,7 @@ export function designGrid(count: number) {
 /** One DOM/WebGL renderer with a serial queue. This is deliberately not advertised as a worker. */
 export class DesignPreviewService {
   private renderer?: DesignPreviewRenderer;
+  private rendererKind?: 'photo' | 'room';
   private queue: Job[] = [];
   private running = false;
   private disposed = false;
@@ -128,14 +138,22 @@ export class DesignPreviewService {
   ) {
     this.dependencies = {
       createRenderer: dependencies.createRenderer ?? (() => new PhotoCompositor()),
+      createRoomRenderer: dependencies.createRoomRenderer ?? createRoomDesignPreviewRenderer,
       capture: dependencies.capture ?? canvasBlob,
       readCache: dependencies.readCache ?? readDesignPreviewCache,
       writeCache: dependencies.writeCache ?? writeDesignPreviewCache,
     };
   }
-  private getRenderer() {
+  private getRenderer(context?: DesignPreviewRoomContext) {
     if (this.disposed) throw new DesignPreviewCancelled();
-    return (this.renderer ??= this.dependencies.createRenderer());
+    const kind = context ? 'room' : 'photo';
+    if (this.rendererKind !== kind) {
+      this.renderer?.dispose();
+      this.renderer = undefined;
+      this.rendererKind = kind;
+    }
+    return (this.renderer ??=
+      kind === 'room' ? this.dependencies.createRoomRenderer() : this.dependencies.createRenderer());
   }
   private remember(result: DesignPreviewResult) {
     this.memory.delete(result.key);
@@ -193,11 +211,17 @@ export class DesignPreviewService {
     }
   }
   request(channel: string, source: DesignPreviewInput): Promise<DesignPreviewResult> {
-    const snapshot = snapshotFor(source);
+    let snapshot: RenderSnapshot;
+    try {
+      snapshot = snapshotFor(source);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const input = {
       ...source,
       design: { ...source.design, scene: snapshot.scene },
       materials: snapshot.materials,
+      ...(source.roomContext ? { roomContext: structuredClone(source.roomContext) } : {}),
     };
     return this.schedule(channel, async (current) => {
       const key = await designPreviewKey(input),
@@ -215,21 +239,25 @@ export class DesignPreviewService {
         this.remember(result);
         return result;
       }
-      const renderer = this.getRenderer();
+      const renderer = this.getRenderer(input.roomContext);
       await renderer.setSnapshot(snapshot, this.reader, {
         maxPreviewEdge: Math.max(size.width, size.height),
+        ...(input.roomContext ? { roomContext: input.roomContext } : {}),
       });
       current();
       const canvas = renderer.render(size.width, size.height, 'after');
       const blob = await this.dependencies.capture(canvas);
       current();
       const result = { key, blob, width: size.width, height: size.height };
+      const contextKey = await designPreviewRoomContextKey(input.roomContext);
+      current();
       const record: DesignPreviewCacheRecord = {
         ...result,
         projectId: input.projectId,
         designId: input.design.id,
         revision: input.design.renderRevision ?? input.design.revision,
         sharedRevision: input.sharedRevision,
+        ...(contextKey ? { contextKey } : {}),
         purpose: input.purpose ?? 'thumbnail',
         rendererRevision: DESIGN_RENDER_REVISION,
         updatedAt: Date.now(),
@@ -242,9 +270,13 @@ export class DesignPreviewService {
   }
   exportDesign(channel: string, input: DesignPreviewInput): Promise<Blob> {
     const snapshot = snapshotFor(input);
+    const roomContext = input.roomContext ? structuredClone(input.roomContext) : undefined;
     return this.schedule(channel, async (current) => {
-      const renderer = this.getRenderer();
-      await renderer.setSnapshot(snapshot, this.reader, { maxPreviewEdge: 360 });
+      const renderer = this.getRenderer(roomContext);
+      await renderer.setSnapshot(snapshot, this.reader, {
+        maxPreviewEdge: 360,
+        ...(roomContext ? { roomContext } : {}),
+      });
       current();
       const blob = await renderer.exportImage(snapshot, 4096, 4096, 'image/png', false);
       current();
@@ -254,8 +286,15 @@ export class DesignPreviewService {
   exportComparison(channel: string, inputs: DesignPreviewInput[]): Promise<Blob> {
     const snapshots = inputs.map(snapshotFor),
       grid = designGrid(inputs.length);
+    const contexts = inputs.map((input) =>
+      input.roomContext ? structuredClone(input.roomContext) : undefined,
+    );
     return this.schedule(channel, async (current) => {
-      const renderer = this.getRenderer();
+      const contextKeys = await Promise.all(contexts.map(designPreviewRoomContextKey));
+      current();
+      if (contextKeys.some((key) => key !== contextKeys[0]))
+        throw new Error('같은 공통 공간 시점의 시안만 나란히 비교할 수 있어요.');
+      const renderer = this.getRenderer(contexts[0]);
       const aspect = snapshots[0].scene.imageWidth / snapshots[0].scene.imageHeight;
       if (snapshots.some(({ scene }) => Math.abs(scene.imageWidth / scene.imageHeight - aspect) > 0.00001))
         throw new Error('같은 비율의 공간만 나란히 비교할 수 있어요.');
@@ -273,38 +312,47 @@ export class DesignPreviewService {
       canvas.width = width;
       canvas.height = height;
       const context = canvas.getContext('2d');
-      if (!context) throw new Error('비교 이미지를 준비하지 못했어요.');
-      context.fillStyle = '#f3f4f2';
-      context.fillRect(0, 0, width, height);
-      for (const [index, snapshot] of snapshots.entries()) {
-        current();
-        await renderer.setSnapshot(snapshot, this.reader, { maxPreviewEdge: 360 });
-        const blob = await renderer.exportImage(
-          snapshot,
-          Math.max(cellWidth, cellHeight),
-          Math.max(cellWidth, cellHeight),
-          'image/png',
-          false,
-        );
-        current();
-        const bitmap = await createImageBitmap(blob);
-        try {
-          current();
-          context.drawImage(
-            bitmap,
-            (index % grid.columns) * cellWidth,
-            Math.floor(index / grid.columns) * cellHeight,
-            cellWidth,
-            cellHeight,
-          );
-        } finally {
-          bitmap.close();
-        }
+      if (!context) {
+        canvas.width = canvas.height = 1;
+        throw new Error('비교 이미지를 준비하지 못했어요.');
       }
-      const blob = await canvasBlob(canvas);
-      canvas.width = canvas.height = 1;
-      current();
-      return blob;
+      try {
+        context.fillStyle = '#f3f4f2';
+        context.fillRect(0, 0, width, height);
+        for (const [index, snapshot] of snapshots.entries()) {
+          current();
+          await renderer.setSnapshot(snapshot, this.reader, {
+            maxPreviewEdge: 360,
+            ...(contexts[index] ? { roomContext: contexts[index] } : {}),
+          });
+          const blob = await renderer.exportImage(
+            snapshot,
+            Math.max(cellWidth, cellHeight),
+            Math.max(cellWidth, cellHeight),
+            'image/png',
+            false,
+          );
+          current();
+          const bitmap = await createImageBitmap(blob);
+          try {
+            current();
+            context.drawImage(
+              bitmap,
+              (index % grid.columns) * cellWidth,
+              Math.floor(index / grid.columns) * cellHeight,
+              cellWidth,
+              cellHeight,
+            );
+          } finally {
+            bitmap.close();
+          }
+        }
+        const blob = await canvasBlob(canvas);
+        current();
+        return blob;
+      } finally {
+        canvas.width = canvas.height = 1;
+      }
     });
   }
   dispose() {
@@ -346,18 +394,4 @@ export function acquireDesignPreviewSession(projectId: string, reader: AssetRead
       }
     },
   };
-}
-export async function renderDesignThumbnail(
-  input: Omit<DesignPreviewInput, 'purpose' | 'edge'>,
-  reader: AssetReader,
-) {
-  const session = acquireDesignPreviewSession(input.projectId, reader);
-  try {
-    return await session.service.request('save-thumbnail:' + input.design.id, {
-      ...input,
-      purpose: 'thumbnail',
-    });
-  } finally {
-    session.release();
-  }
 }

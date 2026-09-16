@@ -1,3 +1,11 @@
+import { observeProductColor } from './product-color';
+import {
+  observeBasinShape,
+  observeBasinCount,
+  inspectBasinShape,
+  encodeBasinPixels,
+  type BasinComponentCapture,
+} from './basin-observations';
 import type { ReconstructionCandidate, ReconstructionKind } from './types';
 import type { SemanticLogits } from '../segmentation/wall-refinement';
 
@@ -58,6 +66,194 @@ function marginAt(pixel: number, label: number, width: number, height: number, l
   const result = logits.values[base + label] - other;
   return Number.isFinite(result) ? Math.max(-1000, Math.min(1000, result)) : 0;
 }
+/** Observe a sustained narrow lower stem in the same basin-class component. */
+function pedestalSupport(pixels: number[], width: number, bounds: Bounds, height: number) {
+  const y0 = Math.round(bounds.top * height),
+    y1 = Math.round(bounds.bottom * height);
+  const rows = Array.from({ length: y1 - y0 }, () => ({ left: width, right: -1, count: 0 }));
+  for (const pixel of pixels) {
+    const row = rows[Math.floor(pixel / width) - y0],
+      x = pixel % width;
+    row.left = Math.min(row.left, x);
+    row.right = Math.max(row.right, x);
+    row.count++;
+  }
+  const widths = rows.map((r) => Math.max(0, r.right - r.left + 1));
+  const upperWidths = widths
+    .slice(Math.floor(rows.length * 0.1), Math.ceil(rows.length * 0.45))
+    .filter((v) => v > 0)
+    .sort((a, b) => a - b);
+  const upper = upperWidths[Math.floor(upperWidths.length * 0.8)] ?? 0;
+  if (upper < 8 || rows.length < upper * 0.9) return;
+  const broadRows = rows.filter((r) => r.right - r.left + 1 >= upper * 0.8);
+  const centre = median(broadRows.map((r) => (r.left + r.right) / 2));
+  const start = Math.floor(rows.length * 0.45),
+    end = Math.ceil(rows.length * 0.95);
+  const stemRows = rows.slice(start, end);
+  const supported = stemRows.filter((r) => {
+    const w = Math.max(0, r.right - r.left + 1);
+    return (
+      w >= upper * 0.12 &&
+      w <= upper * 0.6 &&
+      r.count / Math.max(1, w) >= 0.65 &&
+      Math.abs((r.left + r.right) / 2 - centre) <= upper * 0.3
+    );
+  });
+  const coverage = supported.length / Math.max(1, stemRows.length);
+  if (coverage < 0.7) return;
+  return {
+    stemWidthRatio: median(supported.map((r) => r.right - r.left + 1)) / upper,
+    stemHeightRatio: (end - start) / rows.length,
+    coverage,
+  };
+}
+/** A mirror-class island inside a toilet lid has toilet pixels around its contour, unlike a wall mirror. */
+function toiletSurround(pixels: number[], input: CandidateInput, bounds: Bounds) {
+  const { width, height, labels } = input;
+  const radius = Math.max(
+    2,
+    Math.round(Math.min((bounds.right - bounds.left) * width, (bounds.bottom - bounds.top) * height) * 0.12),
+  );
+  let observed = 0,
+    surrounded = 0;
+  for (let i = 0; i < pixels.length; i += Math.max(1, Math.floor(pixels.length / 1500))) {
+    const p = pixels[i],
+      x = p % width,
+      y = Math.floor(p / width);
+    const directions = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ];
+    const edges = directions.filter(
+      ([dx, dy]) =>
+        x + dx >= 0 &&
+        x + dx < width &&
+        y + dy >= 0 &&
+        y + dy < height &&
+        labels[(y + dy) * width + x + dx] !== 28,
+    );
+    if (!edges.length) continue;
+    observed++;
+    if (
+      edges.some(([dx, dy]) => {
+        for (let d = 1; d <= radius; d++) {
+          const xx = x + dx * d,
+            yy = y + dy * d;
+          if (xx < 0 || xx >= width || yy < 0 || yy >= height) break;
+          if (labels[yy * width + xx] === 66) return true;
+        }
+        return false;
+      })
+    )
+      surrounded++;
+  }
+  return observed ? surrounded / observed : 0;
+}
+function touchesToilet(pixels: number[], input: CandidateInput) {
+  const { width, height, labels } = input;
+  const radius = Math.max(2, Math.round(Math.min(width, height) * 0.012));
+  let contacts = 0;
+  for (const p of pixels) {
+    const x = p % width,
+      y = Math.floor(p / width);
+    if (
+      [
+        [-1, 0],
+        [1, 0],
+        [0, -1],
+        [0, 1],
+      ].some(([dx, dy]) => {
+        for (let d = 1; d <= radius; d++) {
+          const xx = x + dx * d,
+            yy = y + dy * d;
+          if (xx < 0 || xx >= width || yy < 0 || yy >= height) break;
+          if (labels[yy * width + xx] === 66) return true;
+        }
+        return false;
+      })
+    )
+      contacts++;
+  }
+  return contacts >= Math.max(4, Math.min(20, pixels.length * 0.01));
+}
+function joinToiletAssemblies(
+  candidates: ReconstructionCandidate[],
+  pixels: Map<string, number[]>,
+  input: CandidateInput,
+) {
+  const consumed = new Set<string>(),
+    assemblies: ReconstructionCandidate[] = [];
+  for (const lid of candidates.filter(
+    (c) => c.kind === 'mirror' && (c.evidence.toiletSurround ?? 0) >= 0.5,
+  )) {
+    const toilet = candidates.find(
+      (c) =>
+        c.kind === 'toilet' &&
+        !c.requiresReview &&
+        !consumed.has(c.id) &&
+        c.evidence.meanMargin >= 0.8 &&
+        intersectionArea(c.bounds, lid.bounds) / Math.max(0.000001, area(lid.bounds)) >= 0.7,
+    );
+    if (!toilet) continue;
+    const t = toilet.bounds,
+      th = t.bottom - t.top;
+    const bowl = candidates
+      .filter(
+        (c) =>
+          c.kind === 'basin' &&
+          !consumed.has(c.id) &&
+          !c.evidence.pedestalSupport &&
+          c.evidence.meanMargin >= 1.5 &&
+          c.bounds.top >= (lid.bounds.top + lid.bounds.bottom) / 2 &&
+          c.bounds.top <= t.bottom + th * 0.2 &&
+          c.bounds.bottom > t.bottom + th * 0.08 &&
+          c.bounds.bottom - c.bounds.top < (c.bounds.right - c.bounds.left) * 0.9 &&
+          Math.max(0, Math.min(c.bounds.right, t.right) - Math.max(c.bounds.left, t.left)) /
+            Math.min(c.bounds.right - c.bounds.left, t.right - t.left) >=
+            0.5 &&
+          touchesToilet(pixels.get(c.id) ?? [], input),
+      )
+      .sort((a, b) => b.pixels - a.pixels)[0];
+    if (!bowl) continue;
+    const bounds = unionBounds(t, bowl.bounds);
+    consumed.add(toilet.id);
+    consumed.add(lid.id);
+    consumed.add(bowl.id);
+    assemblies.push({
+      ...toilet,
+      id: `assembly-${toilet.id}`,
+      proposedKind: 'toilet',
+      bounds,
+      foot: { ...bowl.foot },
+      pixels: toilet.pixels + lid.pixels + bowl.pixels,
+      evidence: {
+        ...toilet.evidence,
+        contextualKind: 'toilet-assembly',
+        contextualParts: {
+          toiletPixels: toilet.pixels,
+          surroundRatio: lid.evidence.toiletSurround!,
+          bowlPixels: bowl.pixels,
+          lidBounds: { ...lid.bounds },
+          bowlBounds: { ...bowl.bounds },
+        },
+      },
+      trace: [
+        ...(toilet.trace ?? []),
+        {
+          stage: 'candidate',
+          outcome: 'merged',
+          reason: `변기 분류 영역에 둘러싸인 내부 영역 ${lid.id}과 연결된 아래 세면볼 분류 ${bowl.id}를 열린 변기 한 개로 추정했어요. 원래 모델 점수는 유지해요.`,
+        },
+      ],
+      warning:
+        '뚜껑 내부와 변기 볼의 서로 다른 분류를 연결해 열린 변기로 추정했어요. 실제 종류·잘린 형태와 위치는 확인해 주세요.',
+    });
+  }
+  return candidates.filter((c) => !consumed.has(c.id)).concat(assemblies);
+}
+
 /** Bounded connected components. Only compact object summaries leave the worker. */
 export function extractReconstructionCandidates(input: {
   width: number;
@@ -65,6 +261,7 @@ export function extractReconstructionCandidates(input: {
   labels: Uint8Array;
   rgba: Uint8ClampedArray;
   logits?: SemanticLogits;
+  onBasinCapture?: (capture: BasinComponentCapture) => void;
 }): ReconstructionCandidate[] {
   const { width, height, labels, rgba, logits } = input;
   const size = width * height;
@@ -134,17 +331,88 @@ export function extractReconstructionCandidates(input: {
     const touched = left === 0 || right === width || top === 0 || bottom === height;
     const id = `object-${label}-${origin}`;
     componentPixels.set(id, Array.from(queue.subarray(0, written)));
+    const support =
+      label === 48
+        ? pedestalSupport(
+            Array.from(queue.subarray(0, written)),
+            width,
+            { left: left / width, right: right / width, top: top / height, bottom: bottom / height },
+            height,
+          )
+        : undefined;
+    const shape =
+      label === 48
+        ? observeBasinShape(
+            Array.from(queue.subarray(0, written)),
+            width,
+            height,
+            { left: left / width, right: right / width, top: top / height, bottom: bottom / height },
+            !!support,
+            rgba,
+          )
+        : undefined;
+    if (label === 48 && input.onBasinCapture) {
+      const basinPixels = Array.from(queue.subarray(0, written));
+      const bounds = { left: left / width, right: right / width, top: top / height, bottom: bottom / height };
+      input.onBasinCapture({
+        id,
+        bounds,
+        hasPedestal: !!support,
+        pixelRuns: encodeBasinPixels(basinPixels),
+        inspection: inspectBasinShape(basinPixels, width, height, bounds, !!support, true, rgba),
+      });
+    }
+    const colorEvidence = observeProductColor({
+      kind,
+      rgba,
+      width,
+      height,
+      pixels: Array.from(queue.subarray(0, written)),
+    });
     candidates.push({
       id,
       kind,
+      detectedLabel: label === 11 ? 'cabinet' : kind,
+      source: 'deeplab',
+      trace: [
+        {
+          stage: 'analysis',
+          outcome: 'accepted',
+          reason: `DeepLab ADE20K 분류 ${label}에서 연결된 영역을 찾았어요.`,
+        },
+      ],
       bounds: { left: left / width, right: right / width, top: top / height, bottom: bottom / height },
       foot: { x: median(feet), y: bottom / height },
-      color: representativeObjectColor(rgba, samples),
+      color: colorEvidence.color,
+      colorEvidence,
       pixels: written,
       evidence: {
         semanticPixels: written,
+        ...(label === 48
+          ? {
+              pedestalSupport: support,
+              basinShape: shape,
+            }
+          : {}),
+        ...(label === 28
+          ? {
+              toiletSurround: toiletSurround(Array.from(queue.subarray(0, written)), input, {
+                left: left / width,
+                right: right / width,
+                top: top / height,
+                bottom: bottom / height,
+              }),
+            }
+          : {}),
         meanMargin:
           samples.reduce((sum, p) => sum + marginAt(p, label, width, height, logits), 0) / samples.length,
+        mirrorCompetition:
+          label === 28
+            ? 0
+            : samples.filter((p) => {
+                const scores = logitsAt(p, input);
+                return scores && scores[28] >= scores[label] - 3;
+              }).length / Math.max(1, samples.length),
       },
       status: 'unplaced',
       warning: touched
@@ -231,6 +499,21 @@ function contextualCandidates(
     additions.push({
       ...cabinet,
       id: `vanity-${cabinet.id}`,
+      proposedKind: 'vanity',
+      installation: {
+        mode: 'floor',
+        basinVariant: 'vanity',
+        source: 'inferred',
+        reason: '세면볼 아래의 연결된 수납장 영역을 확인했어요.',
+      },
+      trace: [
+        ...(cabinet.trace ?? []),
+        {
+          stage: 'candidate',
+          outcome: 'merged',
+          reason: `세면볼 ${basins.map((c) => c.id).join(', ')}과 하부장 영역을 하나로 묶었어요.`,
+        },
+      ],
       bounds,
       foot: {
         x: lowest.length
@@ -240,11 +523,28 @@ function contextualCandidates(
       },
       ...(w / Math.max(0.001, h) < 0.45 && cabinet.evidence.meanMargin < 3 ? { requiresReview: true } : {}),
       pixels: cabinet.pixels + basins.reduce((sum, c) => sum + c.pixels, 0),
+      evidence: {
+        ...cabinet.evidence,
+        bowlCount: observeBasinCount(basins, cabinet),
+        ...(basins.every((b) => b.evidence.basinShape?.value === basins[0].evidence.basinShape?.value)
+          ? { basinShape: basins[0].evidence.basinShape }
+          : {}),
+      },
       warning:
         '세면볼과 하부장의 연결을 확인해 하나의 세면대 하부장으로 묶었어요. 상판 길이와 볼 개수를 확인해 주세요.',
     });
   }
-  const result = candidates.filter((c) => c.kind !== 'vanity' && !consumed.has(c.id)).concat(additions);
+  const result = candidates.filter((c) => !consumed.has(c.id)).concat(additions);
+  for (const cabinet of result.filter((c) => c.detectedLabel === 'cabinet' && !c.proposedKind)) {
+    cabinet.requiresReview = true;
+    cabinet.warning =
+      '수납장 영역은 찾았지만 하부장·거울 수납장 여부를 확인하지 못했어요. 종류와 설치 방식을 선택해 주세요.';
+    cabinet.installation = { mode: 'unknown', source: 'inferred', reason: cabinet.warning };
+    cabinet.trace = [
+      ...(cabinet.trace ?? []),
+      { stage: 'candidate', outcome: 'held', reason: cabinet.warning },
+    ];
+  }
   for (const candidate of result) {
     if (candidate.kind !== 'toilet') continue;
     const body = pixels.get(candidate.id) ?? [],
@@ -292,7 +592,7 @@ function contextualCandidates(
       candidate.warning = '작은 물체 일부가 변기로 분류됐어요. 종류를 확인한 후 배치해 주세요.';
     }
   }
-  return result;
+  return joinToiletAssemblies(result, pixels, input);
 }
 
 /** Keep each pass's actual model evidence. Agreement does not manufacture a confidence score. */
@@ -318,14 +618,30 @@ export function mergeReconstructionPasses(
       continue;
     }
     const replace =
-      candidate.evidence.meanMargin > same.evidence.meanMargin &&
+      (candidate.evidence.contextualKind === 'toilet-assembly' || !same.evidence.contextualKind) &&
+      (candidate.evidence.contextualKind === 'toilet-assembly' ||
+        candidate.evidence.meanMargin > same.evidence.meanMargin) &&
       area(candidate.bounds) >= area(same.bounds) * 0.55;
-    const review = same.requiresReview || candidate.requiresReview;
-    const warning = same.requiresReview
-      ? same.warning
-      : candidate.requiresReview
-        ? candidate.warning
-        : undefined;
+    const assembly =
+      same.evidence.contextualKind === 'toilet-assembly'
+        ? same
+        : candidate.evidence.contextualKind === 'toilet-assembly'
+          ? candidate
+          : undefined;
+    // A small competing fragment does not invalidate a separately observed whole assembly.
+    // Whole-object conflicts (including the bin guard) still require review.
+    const isObservedFragment = (c: ReconstructionCandidate) => {
+      const parts = assembly?.evidence.contextualParts;
+      if (!assembly || !parts || c === assembly || area(c.bounds) >= area(assembly.bounds) * 0.15)
+        return false;
+      return [parts.lidBounds, parts.bowlBounds].some(
+        (part) => !!part && intersectionArea(part, c.bounds) / Math.max(0.000001, area(c.bounds)) > 0.85,
+      );
+    };
+    const sameReview = same.requiresReview && !isObservedFragment(same);
+    const candidateReview = candidate.requiresReview && !isObservedFragment(candidate);
+    const review = sameReview || candidateReview;
+    const warning = sameReview ? same.warning : candidateReview ? candidate.warning : undefined;
     const envelope = same.kind === 'vanity' ? unionBounds(same.bounds, candidate.bounds) : undefined;
     if (replace) Object.assign(same, candidate, { id: same.id });
     if (envelope) {
@@ -335,19 +651,58 @@ export function mergeReconstructionPasses(
     if (review) {
       same.requiresReview = true;
       if (warning) same.warning = warning;
+    } else if (assembly) delete same.requiresReview;
+  }
+  // Match observed component envelopes across passes; an unrelated larger wall mirror is not a lid.
+  for (let i = result.length - 1; i >= 0; i--) {
+    const fragment = result[i];
+    if (fragment.kind !== 'mirror' && fragment.kind !== 'basin') continue;
+    const absorbed = result.some((assembly) => {
+      const parts = assembly.evidence.contextualParts;
+      if (assembly.evidence.contextualKind !== 'toilet-assembly' || !parts) return false;
+      const part = fragment.kind === 'mirror' ? parts.lidBounds : parts.bowlBounds;
+      return (
+        !!part &&
+        area(fragment.bounds) <= area(part) * 1.6 &&
+        intersectionArea(part, fragment.bounds) /
+          Math.max(0.000001, Math.min(area(part), area(fragment.bounds))) >
+          0.75
+      );
+    });
+    if (absorbed) result.splice(i, 1);
+  }
+  // Keep reflection suspects reviewable. Bounding-box containment alone cannot exclude a foreground basin.
+  for (const candidate of result) {
+    const mirror = result.find(
+      (other) =>
+        other !== candidate &&
+        other.kind === 'mirror' &&
+        other.evidence.meanMargin >= candidate.evidence.meanMargin &&
+        intersectionArea(other.bounds, candidate.bounds) / Math.max(0.000001, area(candidate.bounds)) > 0.8 &&
+        ((candidate.kind === 'window' && candidate.evidence.meanMargin < 2) ||
+          (candidate.evidence.mirrorCompetition ?? 0) >= 0.25),
+    );
+    if (mirror) {
+      candidate.reflectionOf = mirror.id;
+      candidate.requiresReview = true;
+      candidate.warning =
+        '거울 영역 안의 반사일 수 있어 자동 배치를 보류했어요. 실제 설비라면 확인 후 추가해 주세요.';
+      candidate.trace = [
+        ...(candidate.trace ?? []),
+        { stage: 'candidate', outcome: 'held', reason: candidate.warning },
+      ];
     }
   }
-  // A weak window-like reflection fragment inside a stronger mirror is not an extra window.
   return result
     .filter(
       (c) =>
         !result.some(
           (other) =>
             other !== c &&
-            ((other.kind === c.kind && area(other.bounds) > area(c.bounds) * 1.5) ||
-              (other.kind === 'mirror' && c.kind === 'window' && c.evidence.meanMargin < 2)) &&
+            other.kind === c.kind &&
+            area(other.bounds) > area(c.bounds) * 1.5 &&
             other.evidence.meanMargin >= c.evidence.meanMargin &&
-            intersectionArea(other.bounds, c.bounds) / area(c.bounds) > 0.65,
+            intersectionArea(other.bounds, c.bounds) / Math.max(0.000001, area(c.bounds)) > 0.65,
         ),
     )
     .sort((a, b) => b.pixels - a.pixels)
@@ -362,8 +717,55 @@ export function mapCandidatePass(
 ): ReconstructionCandidate[] {
   const w = region.right - region.left,
     h = region.bottom - region.top;
+  const mapBounds = (b: Bounds): Bounds => ({
+    left: region.left + (flip ? 1 - b.right : b.left) * w,
+    right: region.left + (flip ? 1 - b.left : b.right) * w,
+    top: region.top + b.top * h,
+    bottom: region.top + b.bottom * h,
+  });
   return candidates.map((candidate) => ({
     ...structuredClone(candidate),
+    evidence: {
+      ...structuredClone(candidate.evidence),
+      ...(candidate.evidence.basinShape?.source === 'semantic-rgb-contour'
+        ? {
+            basinShape: {
+              ...candidate.evidence.basinShape,
+              rimIntersection: {
+                x:
+                  region.left +
+                  (flip
+                    ? 1 - candidate.evidence.basinShape.rimIntersection.x
+                    : candidate.evidence.basinShape.rimIntersection.x) *
+                    w,
+                y: region.top + candidate.evidence.basinShape.rimIntersection.y * h,
+              },
+              edgeSlopes: flip
+                ? ([
+                    -candidate.evidence.basinShape.edgeSlopes[1],
+                    -candidate.evidence.basinShape.edgeSlopes[0],
+                  ] as [number, number])
+                : ([...candidate.evidence.basinShape.edgeSlopes] as [number, number]),
+              observedEdgeCoverage: flip
+                ? ([...candidate.evidence.basinShape.observedEdgeCoverage].reverse() as [number, number])
+                : ([...candidate.evidence.basinShape.observedEdgeCoverage] as [number, number]),
+            },
+          }
+        : {}),
+      ...(candidate.evidence.contextualParts
+        ? {
+            contextualParts: {
+              ...candidate.evidence.contextualParts,
+              lidBounds: candidate.evidence.contextualParts.lidBounds
+                ? mapBounds(candidate.evidence.contextualParts.lidBounds)
+                : undefined,
+              bowlBounds: candidate.evidence.contextualParts.bowlBounds
+                ? mapBounds(candidate.evidence.contextualParts.bowlBounds)
+                : undefined,
+            },
+          }
+        : {}),
+    },
     id: `${flip ? 'flip' : 'crop'}-${candidate.id}`,
     bounds: {
       left: region.left + (flip ? 1 - candidate.bounds.right : candidate.bounds.left) * w,

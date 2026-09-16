@@ -6,6 +6,9 @@ import { ImagePlus, X, ArrowRight } from 'lucide-react';
 import { DEFAULT_ROOM } from '@/lib/room-geometry';
 import { getRepositories } from '@/lib/repositories';
 import { createReconstructionProject } from '@/lib/reconstruction';
+import { useAccess } from '@/components/app-provider';
+import AnalysisProfilePicker, { type AnalysisProfileSelection } from './analysis-profile-picker';
+import DiagnosticLogDownload from './diagnostic-log-download';
 import styles from './reconstruction.module.css';
 
 export default function ReconstructionDialog({
@@ -17,6 +20,13 @@ export default function ReconstructionDialog({
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
+  const { writable } = useAccess();
+  const canWrite = useRef(writable);
+  canWrite.current = writable;
+  const [analysis, setAnalysis] = useState<AnalysisProfileSelection>({
+    profile: 'browser-basic',
+    ready: false,
+  });
   const [file, setFile] = useState<File | null>(initialFile);
   const [preview, setPreview] = useState('');
   const [width, setWidth] = useState('2.4'),
@@ -79,9 +89,11 @@ export default function ReconstructionDialog({
     v.trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= min && Number(v) <= max;
   const ready = !!file && valid(width, 0.5, 20) && valid(depth, 0.5, 20) && valid(height, 1, 6);
   async function start(manual = false) {
-    if (!ready || !file || controller.current) return;
+    if (!ready || !file || controller.current || !canWrite.current || (!manual && !analysis.ready)) return;
     const request = new AbortController();
     controller.current = request;
+    const current = () =>
+      mounted.current && controller.current === request && !request.signal.aborted && canWrite.current;
     setError('');
     setStage(manual ? '참고 사진과 빈 공간을 준비하고 있어요…' : '사진 분석을 준비하고 있어요…');
     try {
@@ -96,21 +108,22 @@ export default function ReconstructionDialog({
         {
           signal: request.signal,
           manual,
+          analysisProfile: manual ? 'browser-basic' : analysis.profile,
           onStage: (message) => {
-            if (mounted.current && !request.signal.aborted) setStage(message);
+            if (current()) setStage(message);
           },
         },
       );
-      if (!mounted.current || request.signal.aborted) return;
+      if (!current()) return;
       setStage('Before 초안을 이 브라우저에 저장하고 있어요…');
       await getRepositories().projects.create(project);
-      if (!mounted.current || request.signal.aborted) {
+      if (!current()) {
         await getRepositories().projects.remove(project.id);
         return;
       }
       onCreated(project.id);
     } catch (failure) {
-      if (mounted.current && !request.signal.aborted)
+      if (current())
         setError(
           failure instanceof Error
             ? failure.message
@@ -149,10 +162,7 @@ export default function ReconstructionDialog({
             사진 속 기존 공간은 Before로 재구성해 보관해요. 생성이 끝나면 같은 크기·같은 각도의 빈 After에서
             새 타일과 제품으로 바로 꾸밀 수 있어요. Before는 나중에 확인하거나 수정할 수 있어요.
           </p>
-          <p className="muted" style={{ fontSize: 12, marginBottom: 14 }}>
-            전체 사진과 좌우 반전, 필요한 부분 확대를 차례로 분석해요. 속도보다 원본의 배치와 특징을
-            우선하므로 사진에 따라 시간이 걸릴 수 있어요.
-          </p>
+          <AnalysisProfilePicker disabled={!!stage || !writable} onChange={setAnalysis} />
           <label className={styles.upload}>
             {preview ? (
               <Image unoptimized src={preview} width={750} height={500} alt="재구성할 기존 공간 참고 사진" />
@@ -210,11 +220,19 @@ export default function ReconstructionDialog({
             ))}
           </div>
           <div className={styles.note}>
-            사진은 브라우저 안에서 분석해요. 기존 타일의 색감과 기구 배치를 추정하며, 제품 외형은 유사
-            모형으로 표현해요. 가려진 부분과 치수는 초안에서 확인해 주세요.
+            선택한 방식으로 기존 타일의 색감과 설비 배치를 분석하고 표준 모형으로 표현해요. 가려진 부분과 실제
+            치수는 초안에서 확인해 주세요. 분석 실패 시 다른 방식으로 자동 전환하지 않아요.
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <DiagnosticLogDownload className="btn small" />
           </div>
           {stage && (
-            <p className={styles.stage} role="status" aria-live="polite">
+            <p
+              data-testid="reconstruction-progress"
+              className={styles.stage}
+              role="status"
+              aria-live="polite"
+            >
               {stage}
             </p>
           )}
@@ -228,7 +246,7 @@ export default function ReconstructionDialog({
           <button
             className="text-button"
             type="button"
-            disabled={!ready || !!stage}
+            disabled={!ready || !!stage || !writable}
             onClick={() => void start(true)}
           >
             분석 없이 직접 구성
@@ -237,7 +255,11 @@ export default function ReconstructionDialog({
             <button className="btn" type="button" onClick={onClose}>
               취소
             </button>
-            <button className="btn primary" type="submit" disabled={!ready || !!stage}>
+            <button
+              className="btn primary"
+              type="submit"
+              disabled={!ready || !!stage || !writable || !analysis.ready}
+            >
               {stage ? '초안 만드는 중…' : '자동 초안 만들기'}
               <ArrowRight size={16} />
             </button>

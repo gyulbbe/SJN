@@ -1,0 +1,29 @@
+// Configuration reference only: the normal scripts read wrangler.jsonc.
+// Merge the vars, d1_databases and r2_buckets below into that file after setup.
+// Keep secrets out of this file. See docs/cloudflare-storage-setup.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sjn",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "vinext/server/fetch-handler",
+  "assets": {
+    "directory": "dist/client",
+    "not_found_handling": "none",
+    "binding": "ASSETS",
+  },
+  "vars": {
+    "APP_ENV": "production",
+    "STORAGE_MODE": "auto",
+    "BETTER_AUTH_URL": "https://YOUR-APP.example.com",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sjn-data",
+      "database_id": "REPLACE-WITH-THE-CREATED-DATABASE-ID",
+      "migrations_dir": "migrations/d1",
+    },
+  ],
+  "r2_buckets": [{ "binding": "ASSET_BUCKET", "bucket_name": "sjn-assets" }],
+}

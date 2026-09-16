@@ -13,6 +13,7 @@ export function sceneReferences(scene: Scene) {
     versions: [
       ...scene.surfaces.map((s) => s.materialVersionId),
       ...scene.fixtures.map((f) => f.materialVersionId),
+      ...scene.fixtures.map((f) => f.reconstruction?.sourceMaterialVersionId),
     ].filter((id): id is string => !!id),
   };
 }
@@ -44,6 +45,7 @@ export function projectReferences(document: ProjectInput) {
         ...projectComparisons(document).flatMap((c) => [
           c.referenceOriginalAssetId,
           c.referencePreviewAssetId,
+          ...(c.labSource?.assetIds ?? []),
         ]),
         ...(document.thumbnailAssetId ? [document.thumbnailAssetId] : []),
         ...designs.flatMap((design) => (design.thumbnailAssetId ? [design.thumbnailAssetId] : [])),
@@ -52,6 +54,7 @@ export function projectReferences(document: ProjectInput) {
     versions: [
       ...new Set([
         ...refs.flatMap((r) => r.versions),
+        ...projectComparisons(document).flatMap((c) => c.labSource?.materialVersionIds ?? []),
         ...usageStates.flatMap((usage) =>
           usage
             ? [
@@ -105,19 +108,34 @@ export class StorageNotFoundError extends Error {
 export function isDisposableReconstructionVersion(version: MaterialVersion): boolean {
   if (
     !version.reconstruction ||
-    version.reconstruction.version !== 1 ||
+    ![1, 2].includes(version.reconstruction.version) ||
     version.version !== 1 ||
     version.scope !== 'personal' ||
     version.brand !== '' ||
     version.pricing ||
-    !/^reconstruction-v1-[0-9a-f]{64}$/.test(version.code)
+    !/^reconstruction-v[12]-[0-9a-f]{64}$/.test(version.code)
   )
     return false;
   if (version.reconstruction.kind !== version.category) return false;
   if (version.category === 'tile')
     return ['기존 바닥 타일 · 추정', '기존 벽 타일 · 추정'].includes(version.name);
   return (
-    ['toilet', 'basin', 'vanity', 'bath', 'mirror', 'door', 'window'].includes(version.category) &&
+    [
+      'toilet',
+      'basin',
+      'vanity',
+      'bath',
+      'mirror',
+      'door',
+      'window',
+      'glassPartition',
+      'mirrorCabinet',
+      'wallShelf',
+      'shower',
+      'wallCabinet',
+      'lowPartition',
+      'showerCurtain',
+    ].includes(version.category) &&
     (version.name === categoryLabels[version.category] + ' · 재구성 모형' ||
       (version.category === 'vanity' && version.name === '세면대 하부장 · 재구성 모형'))
   );

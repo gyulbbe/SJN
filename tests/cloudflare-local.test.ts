@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertCloudflareLocalMode, cloudflareLocalRouteSource } from '../build/cloudflare-local';
+import { cloudflareRuntimeSource, cloudflareLocalRouteSource } from '../build/cloudflare-local';
 
 describe('Cloudflare local API boundary', () => {
   it.each([
@@ -39,10 +39,30 @@ describe('Cloudflare local API boundary', () => {
     }
   });
 
-  it('accepts the default/local mode and rejects incompatible explicit modes', () => {
-    expect(() => assertCloudflareLocalMode(undefined)).not.toThrow();
-    expect(() => assertCloudflareLocalMode('local')).not.toThrow();
-    expect(() => assertCloudflareLocalMode('supabase')).toThrow('local 저장 모드');
-    expect(() => assertCloudflareLocalMode('')).toThrow('local 저장 모드');
+  it('does not replace retired AI routes with a working local adapter', () => {
+    for (const path of ['reconstruction/local', 'reconstruction/local/geometry', 'reconstruction-lab/engine'])
+      expect(cloudflareLocalRouteSource(`/workspace/SJN/src/app/api/${path}/route.ts`, '/workspace/SJN')).toBeNull();
+  });
+
+  it.each([
+    '/workspace/SJN/src/app/api/reconstruction/local-copy/route.ts',
+    '/workspace/other/src/app/api/reconstruction/local/geometry/route.ts',
+    '/workspace/SJN/src/app/api/reconstruction/local/geometry/page.tsx',
+  ])('does not stub a similarly named route or another checkout: %s', (id) => {
+    expect(cloudflareLocalRouteSource(id, '/workspace/SJN')).toBeNull();
+  });
+
+  it('uses request bindings and only forces local in explicit development', () => {
+    const root = '/workspace/SJN';
+    const source = cloudflareRuntimeSource(root + '/src/lib/platform/runtime.ts', root);
+    expect(source).toContain('cloudflare:workers');
+    expect(source).not.toContain("APP_ENV: 'local'");
+    expect(cloudflareRuntimeSource(root + '/src/lib/platform/runtime.ts', root, true)).toContain(
+      "APP_ENV: 'local'",
+    );
+    expect(cloudflareRuntimeSource(root + '/src/lib/platform/supabase-session.ts', root)).not.toContain(
+      'supabase/server',
+    );
+    expect(cloudflareLocalRouteSource(root + '/src/app/api/d1/assets/route.ts', root)).toBeNull();
   });
 });

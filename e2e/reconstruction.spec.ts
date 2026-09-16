@@ -59,6 +59,10 @@ async function begin(page: Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '사진으로 비교 공간 만들기', exact: true }).click();
   await expect(dialog(page)).toBeVisible();
+  // This regression suite intentionally exercises the browser DeepLab baseline.
+  await dialog(page)
+    .getByRole('radio', { name: /브라우저 기본 분석/ })
+    .check();
 }
 async function uploadReference(page: Page) {
   const buffer = await sharp({ create: { width: 640, height: 480, channels: 3, background: '#b8a58f' } })
@@ -245,9 +249,12 @@ test('직접 Before 재현 → 도기·타일 보정 → 빈 After·자재 내�
     .toBe(2);
   const beforeFixtures = (await stored(page)).project.shared.comparison!.before.fixtures;
   expect(beforeFixtures.map((fixture) => fixture.reconstruction!.kind).sort()).toEqual(['mirror', 'toilet']);
-  expect(
-    beforeFixtures.find((fixture) => fixture.reconstruction!.kind === 'mirror')!.projectedQuad,
-  ).toHaveLength(4);
+  const mirror = beforeFixtures.find((fixture) => fixture.reconstruction!.kind === 'mirror')!;
+  expect(mirror.reconstruction?.version).toBe(2);
+  expect(mirror.reconstruction?.appearanceAssetId).toBeUndefined();
+  expect(mirror.width).toBeGreaterThan(0);
+  expect(mirror.height).toBeGreaterThan(0);
+  expect(mirror.roomPlacement?.face).toBe('back');
   // The reconstruction tile picker opens properties without any manual layer/area controls.
   if (!(await page.getByRole('complementary', { name: 'Before 초안 보정' }).isVisible()))
     await page.getByRole('button', { name: '초안 보정', exact: true }).click();
@@ -341,7 +348,11 @@ test('직접 Before 재현 → 도기·타일 보정 → 빈 After·자재 내�
   const downloaded = await downloading;
   const outputPath = info.outputPath('before-after-comparison.png');
   await downloaded.saveAs(outputPath);
-  const { data: bytes, info: metadata } = await sharp(outputPath)
+  const downloadStream = await downloaded.createReadStream();
+  if (!downloadStream) throw new Error('PNG 다운로드 스트림을 읽을 수 없어요.');
+  const downloadChunks: Buffer[] = [];
+  for await (const chunk of downloadStream) downloadChunks.push(Buffer.from(chunk));
+  const { data: bytes, info: metadata } = await sharp(Buffer.concat(downloadChunks))
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
@@ -412,18 +423,23 @@ test('391px 사진 비교 생성: 필수 사진·잘못된 치수·취소·직�
   expect(getActiveDesign((await stored(page)).project)!.scene.fixtures).toEqual([]);
 });
 
-test('분석 중 취소하면 늦은 모델 결과가 새 프로젝트를 만들거나 덮어쓰지 않음', async ({ page }) => {
+test('분석 중 취소하면 전용 Worker를 종료하고 후속 수동 프로젝트를 덮어쓰지 않음', async ({ page }) => {
   test.setTimeout(120000);
   await page.addInitScript(() => {
     const original = window.Worker;
-    const state = window as unknown as { segmentationResults: number };
+    const state = window as unknown as { segmentationResults: number; terminatedWorkers: number };
     state.segmentationResults = 0;
+    state.terminatedWorkers = 0;
     window.Worker = class extends original {
       constructor(url: string | URL, options?: WorkerOptions) {
         super(url, options);
         this.addEventListener('message', (event) => {
           if (event.data?.type === 'result') state.segmentationResults++;
         });
+      }
+      terminate() {
+        state.terminatedWorkers++;
+        super.terminate();
       }
     };
   });
@@ -445,23 +461,23 @@ test('분석 중 취소하면 늦은 모델 결과가 새 프로젝트를 만들
     await dialog(page).getByTestId('reconstruction-upload').setInputFiles('public/examples/bathroom.png');
     await dialog(page).getByRole('button', { name: '자동 초안 만들기', exact: true }).click();
     await modelRequested;
-    await expect(dialog(page).getByRole('status')).toBeVisible();
+    await expect(dialog(page).getByTestId('reconstruction-progress')).toBeVisible();
     await dialog(page).getByRole('button', { name: '취소', exact: true }).click();
     await expect(dialog(page)).toHaveCount(0);
     expect((await stored(page, 'none')).projects).toEqual([]);
     release();
-    // A separate manual creation is allowed while the cancelled inference finishes locally.
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { terminatedWorkers: number }).terminatedWorkers))
+      .toBe(1);
+    // Cancellation stops the owned worker; it must not finish or affect a later manual creation.
     await page.getByRole('button', { name: '사진으로 비교 공간 만들기', exact: true }).click();
     await uploadReference(page);
     await dialog(page).getByLabel('가로 (m)', { exact: true }).fill('4');
     await dialog(page).getByRole('button', { name: '분석 없이 직접 구성', exact: true }).click();
     await ready(page);
-    await expect
-      .poll(
-        () => page.evaluate(() => (window as unknown as { segmentationResults: number }).segmentationResults),
-        { timeout: 90000 },
-      )
-      .toBe(1);
+    expect(
+      await page.evaluate(() => (window as unknown as { segmentationResults: number }).segmentationResults),
+    ).toBe(0);
     await saved(page);
     const result = await stored(page);
     expect(result.projects).toHaveLength(1);
@@ -500,13 +516,42 @@ test('기존 비교 프로젝트의 사진 재분석은 After·자재 내역을 
   expect((await stored(page)).project.editRevision).toBe(original.editRevision);
   await page.getByRole('button', { name: '사진 다시 분석', exact: true }).click();
   await rebuild.getByRole('button', { name: 'Before 다시 만들기', exact: true }).click();
-  await expect(rebuild.getByRole('status')).toBeVisible();
+  await expect(rebuild.getByTestId('reconstruction-progress')).toBeVisible();
   await expect(rebuild).toHaveCount(0, { timeout: 160000 });
   await saved(page);
   const improved = (await stored(page)).project;
   expect(getActiveDesign(improved)!.scene).toEqual(getActiveDesign(original)!.scene);
   expect(getActiveDesign(improved)!.materialUsage).toEqual(getActiveDesign(original)!.materialUsage);
-  expect(improved.shared.comparison!.before.fixtures.length).toBeGreaterThan(1);
+  await info.attach('actual-reanalysis-observations', {
+    body: JSON.stringify(improved.shared.comparison, null, 2),
+    contentType: 'application/json',
+  });
+  const reanalysis = improved.shared.comparison!.review!;
+  expect(reanalysis.analysis).not.toBe('manual');
+  expect(reanalysis.analysisProfile).toBe('browser-basic');
+  const detectedBasins = reanalysis.candidates.filter(
+    (candidate) => candidate.kind === 'basin' && candidate.source === 'deeplab',
+  );
+  expect(detectedBasins.length).toBeGreaterThan(0);
+  expect(improved.shared.comparison!.before).not.toEqual(original.shared.comparison!.before);
+  // Reanalysis replaces the draft, while detected-but-unplaced candidates retain their reasons.
+  // A fixture-count increase is not a valid success condition under physical placement validation.
+  for (const candidate of detectedBasins) {
+    if (candidate.status === 'placed')
+      expect(
+        improved.shared.comparison!.before.fixtures.some((fixture) => fixture.id === candidate.fixtureId),
+      ).toBe(true);
+    else {
+      expect(candidate.warning?.trim()).toBeTruthy();
+      expect(
+        candidate.placementReview?.status === 'held' ||
+          candidate.trace?.some((entry) => entry.outcome === 'held'),
+      ).toBe(true);
+      expect(
+        improved.shared.comparison!.before.fixtures.some((fixture) => fixture.id === candidate.fixtureId),
+      ).toBe(false);
+    }
+  }
   expect(improved.shared.comparison!.referenceOriginalAssetId).toBe(
     original.shared.comparison!.referenceOriginalAssetId,
   );

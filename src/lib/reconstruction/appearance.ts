@@ -1,9 +1,6 @@
-import type { Quad, Point, AssetRecord } from '../types';
-import type { AssetRepository } from '../repositories/contracts';
+import type { Quad } from '../types';
 import type { ReconstructionCandidate, ReconstructionPlane } from './types';
 import { homography, inverseHomography, transformPoint, validateQuad } from '../render/math';
-import { rectifyImage } from '../render/crop';
-import { makeAsset } from '../images';
 
 /** Fit an observed frame to the source wall's directions, not to a screen-aligned crop. */
 export function reconstructionAppearanceQuad(
@@ -74,39 +71,4 @@ export function reconstructionAppearanceQuad(
   const fitted = quad(params);
   if (!validateQuad(fitted) || fitted.some((p) => p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1)) return;
   return fitted;
-}
-function abort(signal?: AbortSignal) {
-  if (signal?.aborted) throw new DOMException('사진 디테일 준비를 취소했어요.', 'AbortError');
-}
-/** Keep the observed glazing/reflection and frame as a private, rectified material asset. */
-export async function createReconstructionAppearance(options: {
-  reference: AssetRecord;
-  candidate: ReconstructionCandidate;
-  plane: ReconstructionPlane;
-  assets: AssetRepository;
-  signal?: AbortSignal;
-}): Promise<string | undefined> {
-  abort(options.signal);
-  if (options.reference.kind === 'product-mesh') throw new Error('재구성 기준 사진이 필요해요.');
-  const quad = reconstructionAppearanceQuad(options.candidate, options.plane);
-  if (!quad) return;
-  const bitmap = await createImageBitmap(options.reference.blob);
-  const distance = (a: Point, b: Point) =>
-    Math.hypot((a.x - b.x) * bitmap.width, (a.y - b.y) * bitmap.height);
-  const width = Math.max(16, Math.round((distance(quad[0], quad[1]) + distance(quad[3], quad[2])) / 2));
-  const height = Math.max(16, Math.round((distance(quad[0], quad[3]) + distance(quad[1], quad[2])) / 2));
-  bitmap.close();
-  abort(options.signal);
-  const blob = await rectifyImage(options.reference.blob, quad, width, height);
-  abort(options.signal);
-  const asset = await makeAsset(
-    blob,
-    options.candidate.kind === 'window' ? '기존 창 프레임과 유리.png' : '기존 거울 프레임과 반사.png',
-    'product',
-    options.reference.id,
-  );
-  abort(options.signal);
-  await options.assets.put(asset);
-  abort(options.signal);
-  return asset.id;
 }

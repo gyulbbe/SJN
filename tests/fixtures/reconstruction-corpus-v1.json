@@ -1,0 +1,4303 @@
+{
+  "schemaVersion": 1,
+  "id": "sjn-bathroom-corpus-v1",
+  "frozenAt": "2026-09-13T03:27:24.600Z",
+  "seed": "sjn-bathroom-corpus-v1-source-only-2026-09-13",
+  "annotationBasis": "Independent Codex visual review of source photographs only, before new candidate implementation/results were inspected by this evaluator. Not human-adjudicated physical ground truth.",
+  "limits": [
+    "Approximate visible bounds, not instance segmentation masks.",
+    "Basin shape describes the visible bowl/outer ceramic form at source resolution; ambiguous cases are unknown.",
+    "Install wall is a source-view wall label, not surveyed room orientation.",
+    "Unknown values are excluded from attribute denominators; no measured mm or full camera truth exists.",
+    "Continuous double-basin vanity counts as one fixture assembly with basinCount=2.",
+    "Reflections are separate observations, never physical fixtures.",
+    "License declarations reviewed from Commons metadata; no product-photo ownership inference."
+  ],
+  "selection": {
+    "candidates": 174,
+    "sourcePreviewsReviewed": 72,
+    "licensedPhotographs": 36,
+    "development": 24,
+    "heldout": 12,
+    "method": "Coverage-based source-only selection, then deterministic group SHA256 split; related Mid-City views forced into development to avoid group leakage.",
+    "excluded": [
+      {
+        "sourcePage": "https://commons.wikimedia.org/wiki/File:1930s_bathroom.jpg",
+        "reason": "Found historical photo album; original photographer unknown despite Flickr CC BY label. Replaced before evaluation freeze with own-work Bergen bathroom photograph."
+      }
+    ],
+    "privateUserPhotos": "Supplemental local regression only, outside this licensed corpus; never redistributed.",
+    "syntheticPhotos": "Excluded from real-photo corpus; existing generated demo may remain a separate rendering regression."
+  },
+  "metricPolicy": {
+    "boundsFormat": "normalized [left, top, right, bottom] after orientation",
+    "matching": "maximum-total-IoU one-to-one class-agnostic assignment, minimum IoU 0.25; high-uncertainty glass bounds excluded from localization score but presence/attributes still reviewed",
+    "minimumIoU": 0.25,
+    "unknown": "Do not coerce to a known label; abstentions reported separately.",
+    "failures": "Errors/invalid JSON/cancelled runs retained and reported separately; no successful-subset-only adoption claim.",
+    "prohibited": "No arbitrary composite accuracy; no manual edits counted as AI success; no photo-specific app rules."
+  },
+  "cases": [
+    {
+      "id": "bath-01",
+      "split": "development",
+      "groupId": "commons-8974583",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 8974583,
+        "page": "https://commons.wikimedia.org/wiki/File:Tallink-Interior-Bathroom.JPG",
+        "title": "File:Tallink-Interior-Bathroom.JPG",
+        "author": "Dmitry G",
+        "credit": "Own work",
+        "license": "Public domain",
+        "licenseUrl": null,
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/d/d5/Tallink-Interior-Bathroom.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "e3bded0062396abeb7c9b959c883b92c1ee80cc1",
+        "originalBytes": 3216007,
+        "originalWidth": 2736,
+        "originalHeight": 3648,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d5/Tallink-Interior-Bathroom.JPG/1280px-Tallink-Interior-Bathroom.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-01.jpg",
+        "sha256": "2a0cc2b0644236139e9f16a7b4be71b586baeaebaf6f7e905ee38103b6649502",
+        "width": 750,
+        "height": 1000,
+        "bytes": 98513,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "narrow",
+          "curtain",
+          "partial",
+          "wall-hung-toilet"
+        ],
+        "geometry": "narrow cabin; floor visible but rear wall partly covered",
+        "fixtures": [
+          {
+            "id": "bath-01-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.27,
+              0.67,
+              0.5,
+              0.87
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "closed"
+          },
+          {
+            "id": "bath-01-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "shelf",
+            "bounds": [
+              0.218,
+              0.475,
+              0.31,
+              0.516
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "unknown",
+            "notes": "Small wire shelf, not the counter below."
+          },
+          {
+            "id": "bath-01-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "door",
+            "bounds": [
+              0.76,
+              0,
+              1,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.18,
+              0.11,
+              0.294,
+              0.66
+            ],
+            "notes": "Clipped counter and dark panel; a basin bowl or mirror cannot be confirmed."
+          }
+        ],
+        "negatives": [
+          "Curtain is not a glass partition."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-02",
+      "split": "development",
+      "groupId": "commons-18670913",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 18670913,
+        "page": "https://commons.wikimedia.org/wiki/File:Mary_Plantation_House_Upstairs_Interior_Bathroom_Bathtub.JPG",
+        "title": "File:Mary Plantation House Upstairs Interior Bathroom Bathtub.JPG",
+        "author": "Infrogmation of New Orleans",
+        "credit": "Photo by Infrogmation of New Orleans",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/b/b6/Mary_Plantation_House_Upstairs_Interior_Bathroom_Bathtub.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "0048592d33160230b49b6e2ef3d6e07797b181ff",
+        "originalBytes": 5595693,
+        "originalWidth": 3000,
+        "originalHeight": 4000,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b6/Mary_Plantation_House_Upstairs_Interior_Bathroom_Bathtub.JPG/1280px-Mary_Plantation_House_Upstairs_Interior_Bathroom_Bathtub.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-02.jpg",
+        "sha256": "f9054b2aa3d3c1a9f52f99188e894acd253bb1a6cc5f740c1a233a7eb36b4690",
+        "width": 750,
+        "height": 1000,
+        "bytes": 165221,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "bath",
+          "reflection",
+          "daylight"
+        ],
+        "geometry": "two visible walls; floor cropped",
+        "fixtures": [
+          {
+            "id": "bath-02-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0,
+              0.663,
+              0.973,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "rectangular"
+          },
+          {
+            "id": "bath-02-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.238,
+              0.105,
+              0.691,
+              0.692
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-02-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.684,
+              0.11,
+              1,
+              0.667
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown"
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "window",
+            "bounds": [
+              0.732,
+              0.217,
+              0.99,
+              0.645
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-02-r1",
+            "reflectorId": "bath-02-f3"
+          }
+        ],
+        "relations": [],
+        "ignore": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-03",
+      "split": "development",
+      "groupId": "commons-22113523",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 22113523,
+        "page": "https://commons.wikimedia.org/wiki/File:Marston_House_-_interior_bathroom..JPG",
+        "title": "File:Marston House - interior bathroom..JPG",
+        "author": "Photojack53",
+        "credit": "Own work",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/f/fd/Marston_House_-_interior_bathroom..JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "ecd39064c0f84984a7f707163c675d310773d9e0",
+        "originalBytes": 2735525,
+        "originalWidth": 4000,
+        "originalHeight": 3000,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fd/Marston_House_-_interior_bathroom..JPG/1280px-Marston_House_-_interior_bathroom..JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-03.jpg",
+        "sha256": "8b21567f82abe481e96797eb1db4a61dae94ef35728bfaa5c84d34aaa01e1ed6",
+        "width": 1000,
+        "height": 750,
+        "bytes": 107209,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "pedestal",
+          "rectangular-basin",
+          "partial"
+        ],
+        "geometry": "rear/right wall corner; lower pedestal and floor partly cropped",
+        "fixtures": [
+          {
+            "id": "bath-03-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.21,
+              0.443,
+              0.816,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "rectangular",
+            "basinVariant": "pedestal",
+            "notes": "Wide ceramic pedestal is visible below the bowl; do not classify as wall-hung from the upper bowl alone."
+          },
+          {
+            "id": "bath-03-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0,
+              0,
+              0.709,
+              0.12
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown",
+            "acceptableKinds": [
+              "mirror",
+              "mirrorCabinet"
+            ],
+            "notes": "Mirrored upper panels are visible; cabinet depth is not established."
+          },
+          {
+            "id": "bath-03-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.864,
+              0,
+              1,
+              0.165
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.19,
+              0.18,
+              0.536,
+              0.438
+            ],
+            "notes": "Recessed soap holders are not protruding wall shelves."
+          }
+        ],
+        "reflections": [],
+        "relations": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-04",
+      "split": "heldout",
+      "groupId": "commons-29533776",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 29533776,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_at_Norbulingka.jpg",
+        "title": "File:Bathroom at Norbulingka.jpg",
+        "author": "Maris Burbergs",
+        "credit": "Self-photographed",
+        "license": "CC BY 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/1/16/Bathroom_at_Norbulingka.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "988d10b8d2bc2b055a373e7175a2673b5df0ebc0",
+        "originalBytes": 4974445,
+        "originalWidth": 3872,
+        "originalHeight": 2592,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/Bathroom_at_Norbulingka.jpg/1280px-Bathroom_at_Norbulingka.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-04.jpg",
+        "sha256": "2da4eb3a802509d5a9d506eb377b3a4798aa0349aa6f9334b7b8b50227c53244",
+        "width": 1000,
+        "height": 670,
+        "bytes": 152370,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "bath",
+          "wall-basin",
+          "warm-light",
+          "partial"
+        ],
+        "geometry": "back and right walls visible; left bath wall returns",
+        "fixtures": [
+          {
+            "id": "bath-04-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0,
+              0.373,
+              0.325,
+              0.988
+            ],
+            "mounting": "floor",
+            "installationWall": "left",
+            "shape": "rectangular"
+          },
+          {
+            "id": "bath-04-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.529,
+              0.274,
+              0.672,
+              0.663
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "unknown"
+          },
+          {
+            "id": "bath-04-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.727,
+              0.577,
+              1,
+              1
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "rectangular",
+            "basinVariant": "wall"
+          },
+          {
+            "id": "bath-04-f4",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.735,
+              0,
+              0.939,
+              0.57
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.401,
+              0.141,
+              0.513,
+              0.385
+            ],
+            "notes": "Rear service recess/box is not confidently a mirror or storage cabinet."
+          },
+          {
+            "bounds": [
+              0.926,
+              0,
+              1,
+              0.31
+            ],
+            "notes": "Upper right reflected/trim region is too cropped to identify."
+          }
+        ],
+        "reflections": [],
+        "relations": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-05",
+      "split": "development",
+      "groupId": "commons-76241240",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 76241240,
+        "page": "https://commons.wikimedia.org/wiki/File:Toilet_and_Bathroom.jpg",
+        "title": "File:Toilet and Bathroom.jpg",
+        "author": "Gaurav Dhwaj Khadka",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/5/52/Toilet_and_Bathroom.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "d54deb21cda0d3834f94285e4e2d9fbb5f4e8fbd",
+        "originalBytes": 4263145,
+        "originalWidth": 4032,
+        "originalHeight": 3024,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/52/Toilet_and_Bathroom.jpg/1280px-Toilet_and_Bathroom.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-05.jpg",
+        "sha256": "ecb856ca4590866cf11b3f854220d76b59c4a1dee1c27f4ccda3838ea73a4c0b",
+        "width": 1000,
+        "height": 750,
+        "bytes": 88084,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "open-toilet",
+          "unfinished",
+          "occlusion"
+        ],
+        "geometry": "corner visible; bathtub support and front edge cropped",
+        "fixtures": [
+          {
+            "id": "bath-05-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.041,
+              0.225,
+              0.359,
+              0.925
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "open"
+          },
+          {
+            "id": "bath-05-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.37,
+              0.535,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "rectangular"
+          }
+        ],
+        "reflections": [],
+        "relations": [],
+        "ignore": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-06",
+      "split": "development",
+      "groupId": "commons-84987723",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 84987723,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom,_Westin_Canal_Place_-_New_Orleans.jpg",
+        "title": "File:Bathroom, Westin Canal Place - New Orleans.jpg",
+        "author": "TravelingOtter",
+        "credit": "https://www.flickr.com/photos/travelingotter/2627150884/",
+        "license": "CC BY-SA 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/6/66/Bathroom%2C_Westin_Canal_Place_-_New_Orleans.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "c7889cdbe61f1ac4e7d3273da512d043558eecdb",
+        "originalBytes": 3419561,
+        "originalWidth": 3888,
+        "originalHeight": 2592,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/Bathroom%2C_Westin_Canal_Place_-_New_Orleans.jpg/1280px-Bathroom%2C_Westin_Canal_Place_-_New_Orleans.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-06.jpg",
+        "sha256": "80cc9eab6912a0640248851ea2717d3f43dece94ee108fea7e512d32b02302ba",
+        "width": 1000,
+        "height": 666,
+        "bytes": 113925,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "vanity",
+          "closed-toilet",
+          "warm-light",
+          "occlusion"
+        ],
+        "geometry": "toilet alcove separated from vanity wall; floor visible",
+        "fixtures": [
+          {
+            "id": "bath-06-f1",
+            "partial": false,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.294,
+              0.658,
+              0.478,
+              0.971
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "closed"
+          },
+          {
+            "id": "bath-06-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.483,
+              0.475,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "unknown",
+            "basinVariant": "vanity",
+            "basinCount": 1,
+            "notes": "Continuous countertop and open lower shelving; bowl aperture is not visible."
+          },
+          {
+            "id": "bath-06-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.647,
+              0,
+              1,
+              0.449
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-06-f4",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.555,
+              0.291,
+              0.655,
+              0.436
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "round"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.057,
+              0,
+              0.269,
+              0.422
+            ],
+            "notes": "Framed picture is artwork, not a mirror."
+          }
+        ],
+        "negatives": [
+          "Do not interpret the framed artwork as a mirror."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-07",
+      "split": "development",
+      "groupId": "commons-85798289",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 85798289,
+        "page": "https://commons.wikimedia.org/wiki/File:University_Medical_Center_New_Orleans_bathroom_02.jpg",
+        "title": "File:University Medical Center New Orleans bathroom 02.jpg",
+        "author": "Infrogmation of New Orleans",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/8/85/University_Medical_Center_New_Orleans_bathroom_02.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "e7b6e10944286e1991927f5704896d6d21561163",
+        "originalBytes": 17033424,
+        "originalWidth": 3888,
+        "originalHeight": 5184,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/85/University_Medical_Center_New_Orleans_bathroom_02.jpg/1280px-University_Medical_Center_New_Orleans_bathroom_02.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-07.jpg",
+        "sha256": "0ecb75cf7c8ec8d13507f6265dc53c518beed779a9827988239a4076076886bf",
+        "width": 750,
+        "height": 1000,
+        "bytes": 178586,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "wall-basin",
+          "half-pedestal",
+          "reflection",
+          "bin-negative"
+        ],
+        "geometry": "two walls and floor visible",
+        "fixtures": [
+          {
+            "id": "bath-07-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.463,
+              0.297,
+              0.914,
+              0.662
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "rectangular",
+            "basinVariant": "wall",
+            "notes": "Ceramic shroud terminates above the floor; not a floor pedestal."
+          },
+          {
+            "id": "bath-07-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.631,
+              0,
+              1,
+              0.339
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          }
+        ],
+        "negatives": [
+          "Left metal waste bin and reflected bin are not toilets or basins."
+        ],
+        "reflections": [],
+        "relations": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-08",
+      "split": "heldout",
+      "groupId": "commons-100081253",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 100081253,
+        "page": "https://commons.wikimedia.org/wiki/File:Dirty_residential_bathroom_in_America.jpg",
+        "title": "File:Dirty residential bathroom in America.jpg",
+        "author": "Yitzilitt",
+        "credit": "Self-photographed",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/8/83/Dirty_residential_bathroom_in_America.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "64d6b78061edf96c9285ba341ec146398c6ffd3c",
+        "originalBytes": 3382989,
+        "originalWidth": 4032,
+        "originalHeight": 3024,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/83/Dirty_residential_bathroom_in_America.jpg/1280px-Dirty_residential_bathroom_in_America.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-08.jpg",
+        "sha256": "5f1fefdde09414ea719a9c2d224f91bd8c9a7610c1d75f8fcdb71df442cc916c",
+        "width": 1000,
+        "height": 750,
+        "bytes": 174201,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "open-toilet",
+          "vanity",
+          "clutter",
+          "downward-view"
+        ],
+        "geometry": "floor visible; wall junctions and mirror mostly cropped",
+        "fixtures": [
+          {
+            "id": "bath-08-f1",
+            "partial": false,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.226,
+              0.115,
+              0.512,
+              0.932
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "toiletLid": "open"
+          },
+          {
+            "id": "bath-08-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.531,
+              0.097,
+              1,
+              0.839
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "round",
+            "basinVariant": "vanity",
+            "basinCount": 1
+          },
+          {
+            "id": "bath-08-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0,
+              0.159,
+              0.142,
+              0.827
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.561,
+              0,
+              1,
+              0.073
+            ],
+            "notes": "Only a very thin upper reflective strip is visible; mirror extent cannot be annotated."
+          }
+        ],
+        "negatives": [
+          "Clutter and paper must not create extra fixtures."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-09",
+      "split": "development",
+      "groupId": "mid-city-new-orleans-bart-everson",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 101113305,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_Mid-City_New_Orleans_-_Time_to_reglaze_the_Tub%3F.jpg",
+        "title": "File:Bathroom Mid-City New Orleans - Time to reglaze the Tub?.jpg",
+        "author": "Bart Everson",
+        "credit": "https://www.flickr.com/photos/editor/3798158181/",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/9/9c/Bathroom_Mid-City_New_Orleans_-_Time_to_reglaze_the_Tub%3F.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "613cfde14bea00048b7f244f15238ea4db941e46",
+        "originalBytes": 2523009,
+        "originalWidth": 2048,
+        "originalHeight": 1536,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9c/Bathroom_Mid-City_New_Orleans_-_Time_to_reglaze_the_Tub%3F.jpg/1280px-Bathroom_Mid-City_New_Orleans_-_Time_to_reglaze_the_Tub%3F.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-09.jpg",
+        "sha256": "e1f001f8750c672d34c6c8b2a4e246234ae537026700129edee573e69da93976",
+        "width": 1000,
+        "height": 750,
+        "bytes": 224326,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "wall-basin",
+          "mirror-cabinet",
+          "bath",
+          "occlusion",
+          "partial"
+        ],
+        "geometry": "rear/right corner visible; foreground door frame",
+        "fixtures": [
+          {
+            "id": "bath-09-f1",
+            "partial": false,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.128,
+              0.525,
+              0.764,
+              0.956
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "round"
+          },
+          {
+            "id": "bath-09-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.598,
+              0.501,
+              0.89,
+              0.98
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "rectangular",
+            "basinVariant": "wall",
+            "notes": "Separate exposed plumbing is visible; basin body is wall mounted."
+          },
+          {
+            "id": "bath-09-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirrorCabinet",
+            "bounds": [
+              0.797,
+              0,
+              0.98,
+              0.502
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown",
+            "notes": "Wood cabinet has visible side depth, framed mirrored door and lower ledge."
+          },
+          {
+            "id": "bath-09-f4",
+            "partial": true,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.244,
+              0,
+              0.635,
+              0.203
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-09-f5",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.151,
+              0.854,
+              0.255,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "toiletLid": "closed",
+            "notes": "Only a small seat/rim fragment is visible; mounting is unknown."
+          },
+          {
+            "id": "bath-09-f6",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "door",
+            "bounds": [
+              0,
+              0,
+              0.174,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.797,
+              0,
+              0.98,
+              0.502
+            ],
+            "notes": "Reflection contents are indistinct; exclude exact reflected-object identification."
+          }
+        ],
+        "reflections": [],
+        "relations": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-10",
+      "split": "development",
+      "groupId": "commons-101113323",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 101113323,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_2_-_Olivier_House,_New_Orleans.jpg",
+        "title": "File:Bathroom 2 - Olivier House, New Orleans.jpg",
+        "author": "Paul Schultz",
+        "credit": "https://www.flickr.com/photos/pasfam/2334600235/",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Bathroom_2_-_Olivier_House%2C_New_Orleans.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "619cd7933aa2ba814ac0db27f59a9e04f4ec1056",
+        "originalBytes": 1296924,
+        "originalWidth": 2592,
+        "originalHeight": 3888,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9a/Bathroom_2_-_Olivier_House%2C_New_Orleans.jpg/1280px-Bathroom_2_-_Olivier_House%2C_New_Orleans.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-10.jpg",
+        "sha256": "09f8acb875f36bc99986e90caf3d0b00e7b07c80bbff9877d69ca5473ab307c3",
+        "width": 667,
+        "height": 1000,
+        "bytes": 223216,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "vanity",
+          "reflection",
+          "warm-light",
+          "partial"
+        ],
+        "geometry": "floor barely visible; room corners unclear",
+        "fixtures": [
+          {
+            "id": "bath-10-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.294,
+              0.503,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "round",
+            "basinVariant": "vanity",
+            "basinCount": 1
+          },
+          {
+            "id": "bath-10-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.69,
+              0.065,
+              1,
+              0.543
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0,
+              0.026,
+              0.487,
+              0.686
+            ],
+            "notes": "Curtain hides any window; no confirmed window instance."
+          }
+        ],
+        "negatives": [
+          "Reflected curtain and vase are not extra physical fixtures."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-11",
+      "split": "development",
+      "groupId": "mid-city-new-orleans-bart-everson",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 101114415,
+        "page": "https://commons.wikimedia.org/wiki/File:Painted_Bathroom_-_Mid-City_New_Orleans.jpg",
+        "title": "File:Painted Bathroom - Mid-City New Orleans.jpg",
+        "author": "Bart Everson",
+        "credit": "https://www.flickr.com/photos/editor/2673349664/",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/b/b0/Painted_Bathroom_-_Mid-City_New_Orleans.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "7552a924ec6650cf5917954ec1a761690c441107",
+        "originalBytes": 2347069,
+        "originalWidth": 3264,
+        "originalHeight": 2448,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Painted_Bathroom_-_Mid-City_New_Orleans.jpg/1280px-Painted_Bathroom_-_Mid-City_New_Orleans.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-11.jpg",
+        "sha256": "3555349cd08faeb6d33fb8c47296ba03538be1eb191eeea2b161927a88cb67c3",
+        "width": 1000,
+        "height": 750,
+        "bytes": 167592,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "shelf",
+          "cropped-toilet",
+          "small-fixture"
+        ],
+        "geometry": "wall corner visible; lower floor mostly cropped",
+        "fixtures": [
+          {
+            "id": "bath-11-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "shelf",
+            "bounds": [
+              0.263,
+              0.153,
+              0.524,
+              0.496
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "unknown",
+            "notes": "One hanging multi-tier shelf unit."
+          },
+          {
+            "id": "bath-11-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.565,
+              0.737,
+              0.824,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "notes": "Tank only; seat state and mounting cannot be confirmed."
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0,
+              0,
+              0.09,
+              0.997
+            ],
+            "notes": "Door frame/opening without enough door leaf to classify."
+          }
+        ],
+        "negatives": [
+          "Towel rail and fan are not wall shelves or fixtures in scope."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-12",
+      "split": "heldout",
+      "groupId": "commons-114666273",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 114666273,
+        "page": "https://commons.wikimedia.org/wiki/File:Coaster_Bathroom_Interior.jpg",
+        "title": "File:Coaster Bathroom Interior.jpg",
+        "author": "Mds08011",
+        "credit": "Own work",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/6/6e/Coaster_Bathroom_Interior.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "78c151dcad0401963c3daac3a31e50a501740ab9",
+        "originalBytes": 2240272,
+        "originalWidth": 4032,
+        "originalHeight": 3024,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6e/Coaster_Bathroom_Interior.jpg/1280px-Coaster_Bathroom_Interior.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-12.jpg",
+        "sha256": "20b63fb2c96ca1be9c275f7748a2466bf80328190f3f26caec26105e7265a943",
+        "width": 1000,
+        "height": 750,
+        "bytes": 152599,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "open-toilet",
+          "nonrectangular",
+          "small-basin",
+          "metal"
+        ],
+        "geometry": "train cabin and floor; non-rectangular built-in sanitary assembly",
+        "fixtures": [
+          {
+            "id": "bath-12-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.341,
+              0.361,
+              0.605,
+              0.768
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "open"
+          },
+          {
+            "id": "bath-12-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.22,
+              0.442,
+              0.338,
+              0.706
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "round",
+            "basinVariant": "wall"
+          },
+          {
+            "id": "bath-12-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "door",
+            "bounds": [
+              0.003,
+              0,
+              0.25,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.193,
+              0,
+              0.39,
+              0.325
+            ],
+            "notes": "Upper access panel may look reflective; no confirmed mirror."
+          }
+        ],
+        "negatives": [
+          "Right metal service cabinet is not a mirror cabinet."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-13",
+      "split": "development",
+      "groupId": "commons-116757501",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 116757501,
+        "page": "https://commons.wikimedia.org/wiki/File:Red_modern_bathroom_interior._(51528276166).jpg",
+        "title": "File:Red modern bathroom interior. (51528276166).jpg",
+        "author": "Nenad Stojkovic",
+        "credit": "Red modern bathroom interior.",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/1/1a/Red_modern_bathroom_interior._%2851528276166%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "8f88c4b64e7f57feaf49d4b1a6e1e6af46ec19be",
+        "originalBytes": 16187458,
+        "originalWidth": 6016,
+        "originalHeight": 4016,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1a/Red_modern_bathroom_interior._%2851528276166%29.jpg/1280px-Red_modern_bathroom_interior._%2851528276166%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-13.jpg",
+        "sha256": "a97052b28b640b6ce10b257a69bb9d5aa2f839616d01ef08fec958946d1ff8ba",
+        "width": 1000,
+        "height": 667,
+        "bytes": 138559,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "glass",
+          "vanity",
+          "round-basin",
+          "closed-toilet",
+          "colored-light"
+        ],
+        "geometry": "two walls and floor; shower enclosure in corner",
+        "fixtures": [
+          {
+            "id": "bath-13-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.128,
+              0.488,
+              0.341,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "closed"
+          },
+          {
+            "id": "bath-13-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "glassPartition",
+            "bounds": [
+              0.374,
+              0,
+              0.727,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "framed": true
+          },
+          {
+            "id": "bath-13-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.646,
+              0.574,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "round",
+            "basinVariant": "vanity",
+            "basinCount": 1
+          },
+          {
+            "id": "bath-13-f4",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.764,
+              0,
+              1,
+              0.328
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "round"
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "toilet",
+            "bounds": [
+              0.414,
+              0.628,
+              0.474,
+              0.776
+            ],
+            "notes": "Faint toilet reflection in shower glass; not a toilet inside the shower.",
+            "id": "bath-13-r1",
+            "reflectorId": "bath-13-f2"
+          }
+        ],
+        "relations": [
+          {
+            "from": "bath-13-f2",
+            "to": "bath-13-f1",
+            "relation": "reflects"
+          }
+        ],
+        "ignore": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-14",
+      "split": "development",
+      "groupId": "commons-121307144",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 121307144,
+        "page": "https://commons.wikimedia.org/wiki/File:Hamilton_Hume_Motor_Inn_bathroom_interior_2009-09-08.jpg",
+        "title": "File:Hamilton Hume Motor Inn bathroom interior 2009-09-08.jpg",
+        "author": "Tangerineduel",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/4/43/Hamilton_Hume_Motor_Inn_bathroom_interior_2009-09-08.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "b9ec11658094ba850096bed3bf542e371b407ebf",
+        "originalBytes": 3642927,
+        "originalWidth": 2736,
+        "originalHeight": 3648,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/43/Hamilton_Hume_Motor_Inn_bathroom_interior_2009-09-08.jpg/1280px-Hamilton_Hume_Motor_Inn_bathroom_interior_2009-09-08.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-14.jpg",
+        "sha256": "ab82367f746e75cbd04cde15ddfee8fc9ef59eb69f6af4bc7cbef94eecc73e82",
+        "width": 750,
+        "height": 1000,
+        "bytes": 163708,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "curtain",
+          "cropped-basin",
+          "window"
+        ],
+        "geometry": "shower corner visible; foreground basin cropped",
+        "fixtures": [
+          {
+            "id": "bath-14-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.551,
+              0,
+              0.814,
+              0.237
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-14-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0,
+              0.716,
+              0.3,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "round",
+            "basinVariant": "unknown",
+            "notes": "Bowl is present but support structure is outside the frame."
+          }
+        ],
+        "negatives": [
+          "Shower curtain must not be identified as transparent glass."
+        ],
+        "reflections": [],
+        "relations": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-15",
+      "split": "development",
+      "groupId": "commons-121645383",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 121645383,
+        "page": "https://commons.wikimedia.org/wiki/File:The_1950s_bathroom,_Lotherton_Hall.jpg",
+        "title": "File:The 1950s bathroom, Lotherton Hall.jpg",
+        "author": "Richard Avery",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/b/bf/The_1950s_bathroom%2C_Lotherton_Hall.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "5a7f01623a8109d89b6845e7a8168840d1747bfe",
+        "originalBytes": 7821475,
+        "originalWidth": 4000,
+        "originalHeight": 3000,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bf/The_1950s_bathroom%2C_Lotherton_Hall.jpg/1280px-The_1950s_bathroom%2C_Lotherton_Hall.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-15.jpg",
+        "sha256": "8c3fd8db3344e7e810c89c3bb5239e53588226d08ffc8ebb76455f7936e8735b",
+        "width": 1000,
+        "height": 750,
+        "bytes": 185277,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "console-basin",
+          "shelf",
+          "bath",
+          "daylight"
+        ],
+        "geometry": "rear/right wall and floor visible; room alcove on left",
+        "fixtures": [
+          {
+            "id": "bath-15-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.207,
+              0.538,
+              0.468,
+              0.759
+            ],
+            "mounting": "floor",
+            "installationWall": "left",
+            "shape": "round"
+          },
+          {
+            "id": "bath-15-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.605,
+              0.572,
+              0.723,
+              0.827
+            ],
+            "mounting": "unknown",
+            "installationWall": "right",
+            "shape": "rectangular",
+            "basinVariant": "unknown",
+            "notes": "Visible narrow metal legs: console basin, not a ceramic pedestal or vanity cabinet. Requested taxonomy has no dedicated console class."
+          },
+          {
+            "id": "bath-15-f3",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "shelf",
+            "bounds": [
+              0.718,
+              0.431,
+              0.994,
+              0.677
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-15-f4",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.506,
+              0.195,
+              0.694,
+              0.603
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.374,
+              0.27,
+              0.453,
+              0.4
+            ],
+            "notes": "Framed artwork, not a mirror."
+          }
+        ],
+        "negatives": [
+          "Console legs must not be reported as a recognized ceramic pedestal."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-16",
+      "split": "heldout",
+      "groupId": "commons-138126934",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 138126934,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_of_Khan_Pool_Suite_in_Amantaka_luxury_Resort_%26_Hotel_in_Luang_Prabang_Laos.jpg",
+        "title": "File:Bathroom of Khan Pool Suite in Amantaka luxury Resort & Hotel in Luang Prabang Laos.jpg",
+        "author": "Basile Morin",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7d/Bathroom_of_Khan_Pool_Suite_in_Amantaka_luxury_Resort_%26_Hotel_in_Luang_Prabang_Laos.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "5f9fe4e849fd7b5d62a7e043fa9f14c1aac772ac",
+        "originalBytes": 5282532,
+        "originalWidth": 5768,
+        "originalHeight": 3845,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7d/Bathroom_of_Khan_Pool_Suite_in_Amantaka_luxury_Resort_%26_Hotel_in_Luang_Prabang_Laos.jpg/1280px-Bathroom_of_Khan_Pool_Suite_in_Amantaka_luxury_Resort_%26_Hotel_in_Luang_Prabang_Laos.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-16.jpg",
+        "sha256": "7f08c64ebbb98f82847d5ad17dc5c661bbf0b3bd1e66e11d91e3a4a769a8bc53",
+        "width": 1000,
+        "height": 666,
+        "bytes": 124745,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "two-vanities",
+          "round-basin",
+          "reflection",
+          "multi-space"
+        ],
+        "geometry": "multiple connected spaces; a single rectangular room is not a verified fit",
+        "fixtures": [
+          {
+            "id": "bath-16-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.026,
+              0.551,
+              0.366,
+              0.952
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "round",
+            "basinVariant": "vanity",
+            "basinCount": 1
+          },
+          {
+            "id": "bath-16-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.645,
+              0.551,
+              0.959,
+              0.95
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "round",
+            "basinVariant": "vanity",
+            "basinCount": 1
+          },
+          {
+            "id": "bath-16-f3",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.176,
+              0.13,
+              0.314,
+              0.585
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-16-f4",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.697,
+              0.136,
+              0.823,
+              0.585
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-16-f5",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.292,
+              0.4,
+              0.355,
+              0.493
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "round"
+          },
+          {
+            "id": "bath-16-f6",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.463,
+              0.513,
+              0.539,
+              0.604
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "rectangular",
+            "notes": "Small but actual tub at the far end of the corridor."
+          },
+          {
+            "id": "bath-16-f7",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.466,
+              0.404,
+              0.534,
+              0.531
+            ],
+            "mounting": "wall",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.409,
+              0.311,
+              0.446,
+              0.47
+            ],
+            "notes": "Small corridor reflective panel is not sufficiently resolved."
+          },
+          {
+            "bounds": [
+              0.545,
+              0.235,
+              0.609,
+              0.639
+            ],
+            "notes": "Corridor glazed opening cannot confidently be classified as door versus window."
+          }
+        ],
+        "negatives": [
+          "Do not fit the entire multi-space view as an accurately measured one-box room."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-17",
+      "split": "development",
+      "groupId": "commons-146630085",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 146630085,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_in_Tallinn_2.jpg",
+        "title": "File:Bathroom in Tallinn 2.jpg",
+        "author": "Dmitry G",
+        "credit": "File:Bathroom_in_Tallinn.JPG",
+        "license": "Public domain",
+        "licenseUrl": null,
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/1/14/Bathroom_in_Tallinn_2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "999478b29dd24c7bbff3225c7bf3a61bd38ffe22",
+        "originalBytes": 2589587,
+        "originalWidth": 3648,
+        "originalHeight": 2736,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/14/Bathroom_in_Tallinn_2.jpg/1280px-Bathroom_in_Tallinn_2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-17.jpg",
+        "sha256": "054d1c0d5fd3e5e077a9a9d9570b5ed8b30a0395cf8161d947534493941f1d03",
+        "width": 1000,
+        "height": 750,
+        "bytes": 142260,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "wall-basin",
+          "bath",
+          "downward-view"
+        ],
+        "geometry": "wall and floor junctions visible; close crop",
+        "fixtures": [
+          {
+            "id": "bath-17-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.04,
+              0.235,
+              0.484,
+              0.568
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "round",
+            "basinVariant": "wall"
+          },
+          {
+            "id": "bath-17-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.487,
+              0.347,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "rectangular"
+          }
+        ],
+        "reflections": [],
+        "relations": [],
+        "ignore": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-18",
+      "split": "development",
+      "groupId": "commons-168790735",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 168790735,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom,_Interior_of_apartment_in_Brisbane,_2025,_08.jpg",
+        "title": "File:Bathroom, Interior of apartment in Brisbane, 2025, 08.jpg",
+        "author": "Chris Olszewski",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/7/79/Bathroom%2C_Interior_of_apartment_in_Brisbane%2C_2025%2C_08.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "6f6bd0362c54c73a1e4be5cc4abf76faa7eccd2f",
+        "originalBytes": 2090161,
+        "originalWidth": 3926,
+        "originalHeight": 2944,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/79/Bathroom%2C_Interior_of_apartment_in_Brisbane%2C_2025%2C_08.jpg/1280px-Bathroom%2C_Interior_of_apartment_in_Brisbane%2C_2025%2C_08.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-18.jpg",
+        "sha256": "10af2d23ed9c29e5bf55f00c88761513c66179a8f13f28744c427fe482c6fa16",
+        "width": 1000,
+        "height": 750,
+        "bytes": 127413,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "glass",
+          "double-basin",
+          "vanity",
+          "reflection",
+          "shelf"
+        ],
+        "geometry": "large wall mirror; shower enclosure on left",
+        "fixtures": [
+          {
+            "id": "bath-18-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "glassPartition",
+            "bounds": [
+              0.3,
+              0,
+              0.435,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "framed": true
+          },
+          {
+            "id": "bath-18-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.535,
+              0.535,
+              1,
+              1
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "rectangular",
+            "basinVariant": "vanity",
+            "basinCount": 2,
+            "notes": "One continuous floating vanity with two physical basins."
+          },
+          {
+            "id": "bath-18-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.579,
+              0,
+              1,
+              0.628
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-18-f4",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "shelf",
+            "bounds": [
+              0.245,
+              0.574,
+              0.297,
+              0.62
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "unknown",
+            "notes": "Small actual shower shelf behind the glass."
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "glassPartition",
+            "bounds": [
+              0.69,
+              0.339,
+              0.862,
+              0.608
+            ],
+            "notes": "The white framed box inside the large mirror is a reflected shower enclosure, not a mirror cabinet.",
+            "id": "bath-18-r1",
+            "reflectorId": "bath-18-f3"
+          }
+        ],
+        "relations": [
+          {
+            "from": "bath-18-f1",
+            "to": "bath-18-f4",
+            "relation": "inFrontOf"
+          }
+        ],
+        "negatives": [
+          "No confirmed mirror cabinet despite reflected framed shower."
+        ],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-19",
+      "split": "development",
+      "groupId": "commons-170751516",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 170751516,
+        "page": "https://commons.wikimedia.org/wiki/File:2025.01.02_Bialystok_Hotel_Branicki_Interior_of_Bathroom_01.jpg",
+        "title": "File:2025.01.02 Bialystok Hotel Branicki Interior of Bathroom 01.jpg",
+        "author": "Tess Mattew",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/6/65/2025.01.02_Bialystok_Hotel_Branicki_Interior_of_Bathroom_01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "65263529723c9f04729c644f465a6e1563a0e18c",
+        "originalBytes": 2583222,
+        "originalWidth": 3000,
+        "originalHeight": 4000,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/65/2025.01.02_Bialystok_Hotel_Branicki_Interior_of_Bathroom_01.jpg/1280px-2025.01.02_Bialystok_Hotel_Branicki_Interior_of_Bathroom_01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-19.jpg",
+        "sha256": "0f745f0e7365a85738aa463074b2a1907e0250b857378735fd2633fe6fc6f9cf",
+        "width": 750,
+        "height": 1000,
+        "bytes": 162374,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "vanity",
+          "bath",
+          "small-mirror",
+          "warm-light"
+        ],
+        "geometry": "left/back corner; bath behind vanity",
+        "fixtures": [
+          {
+            "id": "bath-19-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.028,
+              0.631,
+              0.627,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "left",
+            "shape": "round",
+            "basinVariant": "vanity",
+            "basinCount": 1
+          },
+          {
+            "id": "bath-19-f2",
+            "partial": true,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.588,
+              0.697,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "rectangular"
+          },
+          {
+            "id": "bath-19-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.14,
+              0,
+              0.44,
+              0.636
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-19-f4",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.443,
+              0.372,
+              0.482,
+              0.515
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "round"
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "mirror",
+            "bounds": [
+              0.35,
+              0.351,
+              0.397,
+              0.451
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-19-r1",
+            "reflectorId": "bath-19-f3"
+          }
+        ],
+        "relations": [],
+        "ignore": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-20",
+      "split": "heldout",
+      "groupId": "commons-183651019",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 183651019,
+        "page": "https://commons.wikimedia.org/wiki/File:Seattle_-_Hofius_House_interior_44_-_a_bathroom_sink.jpg",
+        "title": "File:Seattle - Hofius House interior 44 - a bathroom sink.jpg",
+        "author": "Photo by Joe Mabel",
+        "credit": "Photograph by Joe Mabel",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/d/d9/Seattle_-_Hofius_House_interior_44_-_a_bathroom_sink.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "3268b49924936807d7399489100fed09a6420fe1",
+        "originalBytes": 14466136,
+        "originalWidth": 4000,
+        "originalHeight": 6000,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d9/Seattle_-_Hofius_House_interior_44_-_a_bathroom_sink.jpg/1280px-Seattle_-_Hofius_House_interior_44_-_a_bathroom_sink.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-20.jpg",
+        "sha256": "f344ab7d372e352c9ef4a4726714ab94e91e109049e0e8baad1649dfbd5feafe",
+        "width": 667,
+        "height": 1000,
+        "bytes": 95046,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "cropped-basin",
+          "mirror",
+          "door",
+          "warm-light"
+        ],
+        "geometry": "door opening and single sink wall; floor partly visible",
+        "fixtures": [
+          {
+            "id": "bath-20-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.216,
+              0.626,
+              0.994,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "round",
+            "basinVariant": "unknown",
+            "notes": "Short support fragment is cropped; a full pedestal cannot be confirmed."
+          },
+          {
+            "id": "bath-20-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.601,
+              0,
+              1,
+              0.411
+            ],
+            "mounting": "wall",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "notes": "Flat mirror has mounting clips; no cabinet body is visible."
+          },
+          {
+            "id": "bath-20-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "door",
+            "bounds": [
+              0.095,
+              0.03,
+              0.361,
+              0.634
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "unknown",
+            "bounds": [
+              0.632,
+              0.159,
+              1,
+              0.4
+            ],
+            "notes": "Shower curtain reflection is visible; not a window or cabinet.",
+            "id": "bath-20-r1",
+            "reflectorId": "bath-20-f2"
+          }
+        ],
+        "negatives": [
+          "Do not call a clip-mounted flat mirror a confirmed cabinet."
+        ],
+        "relations": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-21",
+      "split": "development",
+      "groupId": "commons-192167693",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 192167693,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_interior_at_Dead_Lakes_Park.jpg",
+        "title": "File:Bathroom interior at Dead Lakes Park.jpg",
+        "author": "The Bushranger",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/3/3f/Bathroom_interior_at_Dead_Lakes_Park.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "bf3ba68d0a7409a2f11bdf7a3a1a1c022eb4ca4e",
+        "originalBytes": 1536253,
+        "originalWidth": 3264,
+        "originalHeight": 2448,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3f/Bathroom_interior_at_Dead_Lakes_Park.jpg/1280px-Bathroom_interior_at_Dead_Lakes_Park.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-21.jpg",
+        "sha256": "cdcbc73e4d176063252063d3fa27c0e15e0a66e4b95773737045228a8793428c",
+        "width": 1000,
+        "height": 750,
+        "bytes": 110909,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "cropped-basin",
+          "mirror",
+          "low-light"
+        ],
+        "geometry": "back/left wall corner; floor not visible",
+        "fixtures": [
+          {
+            "id": "bath-21-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.297,
+              0.724,
+              0.654,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "round",
+            "basinVariant": "unknown",
+            "notes": "Support is outside the frame; wall-hung versus pedestal is unknown."
+          },
+          {
+            "id": "bath-21-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.421,
+              0,
+              0.684,
+              0.609
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          }
+        ],
+        "negatives": [
+          "Soap and paper dispensers are not shelves or cabinets."
+        ],
+        "reflections": [],
+        "relations": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-22",
+      "split": "heldout",
+      "groupId": "commons-33524913",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 33524913,
+        "page": "https://commons.wikimedia.org/wiki/File:Hotel_Barcelona_Catedral_Bathroom_2010.JPG",
+        "title": "File:Hotel Barcelona Catedral Bathroom 2010.JPG",
+        "author": "Patrick Pelletier",
+        "credit": "Own work",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/5/54/Hotel_Barcelona_Catedral_Bathroom_2010.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "ffcc377adefaebd86b89fc2ee12e20b9bb80a932",
+        "originalBytes": 1021544,
+        "originalWidth": 1536,
+        "originalHeight": 2048,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/54/Hotel_Barcelona_Catedral_Bathroom_2010.JPG/1280px-Hotel_Barcelona_Catedral_Bathroom_2010.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-22.jpg",
+        "sha256": "d0698ca6841eac7c870359d43257cc01a81c3c98e76e88e6ed3e02acca3f48e6",
+        "width": 750,
+        "height": 1000,
+        "bytes": 123249,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "rectangular-basin",
+          "floating-counter",
+          "reflection"
+        ],
+        "geometry": "tight corner view; floor partly visible",
+        "fixtures": [
+          {
+            "id": "bath-22-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.284,
+              0.535,
+              0.79,
+              0.761
+            ],
+            "mounting": "wall",
+            "installationWall": "unknown",
+            "shape": "rectangular",
+            "basinVariant": "unknown",
+            "notes": "Bowl sits across a floating counter; wall bowl versus integrated vanity classification is ambiguous."
+          },
+          {
+            "id": "bath-22-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.089,
+              0,
+              0.701,
+              0.49
+            ],
+            "mounting": "wall",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0,
+              0,
+              0.176,
+              1
+            ],
+            "notes": "Foreground edge/opening is too clipped to classify as a door leaf."
+          }
+        ],
+        "negatives": [
+          "Reflected hair dryer is not another physical appliance in scope."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-23",
+      "split": "development",
+      "groupId": "commons-39124697",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 39124697,
+        "page": "https://commons.wikimedia.org/wiki/File:Phoenix_bathroom_Residence_Inn_Marriott_hotel_with_towels_and_shower.JPG",
+        "title": "File:Phoenix bathroom Residence Inn Marriott hotel with towels and shower.JPG",
+        "author": "Tomwsulcer",
+        "credit": "Own work",
+        "license": "CC0",
+        "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a4/Phoenix_bathroom_Residence_Inn_Marriott_hotel_with_towels_and_shower.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "226bcce644d1984ad1eb7cefd38e01c62fe7e88d",
+        "originalBytes": 556201,
+        "originalWidth": 2592,
+        "originalHeight": 1944,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a4/Phoenix_bathroom_Residence_Inn_Marriott_hotel_with_towels_and_shower.JPG/1280px-Phoenix_bathroom_Residence_Inn_Marriott_hotel_with_towels_and_shower.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-23.jpg",
+        "sha256": "a2235bd765e5f93e6325f0063d4e5b05f2209ab5b64f04dc28ff9bcf1e62421b",
+        "width": 1000,
+        "height": 750,
+        "bytes": 132608,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "bath",
+          "closed-toilet",
+          "curtain",
+          "partial"
+        ],
+        "geometry": "small rectangular alcove behind doorway",
+        "fixtures": [
+          {
+            "id": "bath-23-f1",
+            "partial": true,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.12,
+              0.615,
+              0.58,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "rectangular"
+          },
+          {
+            "id": "bath-23-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.571,
+              0.651,
+              0.874,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "unknown",
+            "toiletLid": "closed"
+          },
+          {
+            "id": "bath-23-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "door",
+            "bounds": [
+              0,
+              0,
+              0.157,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "negatives": [
+          "Shower curtain is not glass; framed upper right picture is not mirror."
+        ],
+        "reflections": [],
+        "relations": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-24",
+      "split": "development",
+      "groupId": "commons-58734147",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 58734147,
+        "page": "https://commons.wikimedia.org/wiki/File:Cedar_Point%27s_Express_Hotel_bathroom_(34173339541).jpg",
+        "title": "File:Cedar Point's Express Hotel bathroom (34173339541).jpg",
+        "author": "Ken Srail from North Olmsted, OH",
+        "credit": "2017-04-27-Cedar-Point-Express-Media-016",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/6/63/Cedar_Point%27s_Express_Hotel_bathroom_%2834173339541%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "c7ae6a64d3773553967830827575f4187ca1464e",
+        "originalBytes": 470295,
+        "originalWidth": 2100,
+        "originalHeight": 1400,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/63/Cedar_Point%27s_Express_Hotel_bathroom_%2834173339541%29.jpg/1280px-Cedar_Point%27s_Express_Hotel_bathroom_%2834173339541%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-24.jpg",
+        "sha256": "5f77cd618b7e91eaab49793f3c936c01d2dc1b47c3fe6483b8d6e24aa4e3172d",
+        "width": 1000,
+        "height": 666,
+        "bytes": 82961,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "vanity",
+          "closed-toilet",
+          "reflection",
+          "wide-angle"
+        ],
+        "geometry": "back/right walls and floor visible",
+        "fixtures": [
+          {
+            "id": "bath-24-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.178,
+              0.552,
+              0.663,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "round",
+            "basinVariant": "vanity",
+            "basinCount": 1
+          },
+          {
+            "id": "bath-24-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.693,
+              0.65,
+              0.855,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "unknown",
+            "toiletLid": "closed"
+          },
+          {
+            "id": "bath-24-f3",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.313,
+              0.203,
+              0.505,
+              0.619
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-24-f4",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "door",
+            "bounds": [
+              0,
+              0,
+              0.18,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "door",
+            "bounds": [
+              0.337,
+              0.337,
+              0.39,
+              0.589
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-24-r1",
+            "reflectorId": "bath-24-f3"
+          }
+        ],
+        "relations": [],
+        "ignore": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-25",
+      "split": "development",
+      "groupId": "commons-94276271",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 94276271,
+        "page": "https://commons.wikimedia.org/wiki/File:Hotel_bathroom_at_Quality_Hotel_Grand,_Bor%C3%A5s.jpg",
+        "title": "File:Hotel bathroom at Quality Hotel Grand, Borås.jpg",
+        "author": "JIP",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/7/79/Hotel_bathroom_at_Quality_Hotel_Grand%2C_Bor%C3%A5s.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "a819511e5b534562fe930519aaa701d48cc4cbc0",
+        "originalBytes": 6372239,
+        "originalWidth": 4608,
+        "originalHeight": 3456,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/79/Hotel_bathroom_at_Quality_Hotel_Grand%2C_Bor%C3%A5s.jpg/1280px-Hotel_bathroom_at_Quality_Hotel_Grand%2C_Bor%C3%A5s.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-25.jpg",
+        "sha256": "96c6728d75a81f52059f16cc76ca7daa46a693dcf7fa32365da19ad21d7f1b8c",
+        "width": 1000,
+        "height": 750,
+        "bytes": 98733,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "reflection",
+          "mirror-only-glass",
+          "cropped-vanity",
+          "multiple-mirror"
+        ],
+        "geometry": "mirror wraps across walls; physical room boundaries are partly hidden",
+        "fixtures": [
+          {
+            "id": "bath-25-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.279,
+              0.81,
+              0.7,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "rectangular",
+            "basinVariant": "vanity",
+            "basinCount": 1
+          },
+          {
+            "id": "bath-25-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.189,
+              0.217,
+              0.758,
+              0.89
+            ],
+            "mounting": "wall",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "notes": "Continuous multi-panel reflective installation; count as one unit."
+          },
+          {
+            "id": "bath-25-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0,
+              0.388,
+              0.1,
+              0.564
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "round"
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "basin",
+            "bounds": [
+              0.242,
+              0.674,
+              0.459,
+              0.825
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-25-r1",
+            "reflectorId": "bath-25-f2"
+          },
+          {
+            "kind": "basin",
+            "bounds": [
+              0.479,
+              0.692,
+              0.638,
+              0.821
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-25-r2",
+            "reflectorId": "bath-25-f2"
+          },
+          {
+            "kind": "glassPartition",
+            "bounds": [
+              0.452,
+              0.296,
+              0.732,
+              0.707
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-25-r3",
+            "reflectorId": "bath-25-f2"
+          },
+          {
+            "kind": "door",
+            "bounds": [
+              0.195,
+              0.259,
+              0.269,
+              0.735
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-25-r4",
+            "reflectorId": "bath-25-f2"
+          }
+        ],
+        "negatives": [
+          "Shower enclosure and door are visible only in mirror; do not add physical duplicates."
+        ],
+        "relations": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-26",
+      "split": "development",
+      "groupId": "commons-94839245",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 94839245,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_at_La_Fonda_Hotel_(14909619835).jpg",
+        "title": "File:Bathroom at La Fonda Hotel (14909619835).jpg",
+        "author": "McLevn",
+        "credit": "Bathroom at La Fonda Hotel",
+        "license": "CC BY-SA 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/5/59/Bathroom_at_La_Fonda_Hotel_%2814909619835%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "30b5f9d5d1e5193251ab4543a5afc6ac5f48640a",
+        "originalBytes": 7701604,
+        "originalWidth": 3769,
+        "originalHeight": 2906,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/59/Bathroom_at_La_Fonda_Hotel_%2814909619835%29.jpg/1280px-Bathroom_at_La_Fonda_Hotel_%2814909619835%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-26.jpg",
+        "sha256": "35da67d4609c639cc933617765048e1db1ff220f2e3fa8cdc9705fdbe0f213cc",
+        "width": 1000,
+        "height": 771,
+        "bytes": 326708,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "double-basin",
+          "vanity",
+          "patterned-wall",
+          "mirror"
+        ],
+        "geometry": "left/back corner; floor and vanity supports cropped",
+        "fixtures": [
+          {
+            "id": "bath-26-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.09,
+              0.73,
+              1,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "round",
+            "basinVariant": "vanity",
+            "basinCount": 2,
+            "notes": "One continuous tiled counter with two basins."
+          },
+          {
+            "id": "bath-26-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.333,
+              0.255,
+              0.456,
+              0.725
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-26-f3",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.548,
+              0.156,
+              0.77,
+              0.78
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0,
+              0.756,
+              0.124,
+              1
+            ],
+            "notes": "Very cropped white sanitary item on left: basin versus urinal cannot be confirmed."
+          }
+        ],
+        "negatives": [
+          "Bright panel on left wall is a light, not a confirmed window."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-27",
+      "split": "heldout",
+      "groupId": "commons-117679877",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 117679877,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathtub_in_bathroom_of_premier_room_in_Buddha_bar_hotel_Prague_-_image_2.jpg",
+        "title": "File:Bathtub in bathroom of premier room in Buddha bar hotel Prague - image 2.jpg",
+        "author": "Pittigrilli",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/2/28/Bathtub_in_bathroom_of_premier_room_in_Buddha_bar_hotel_Prague_-_image_2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "b373dc27e7043bfe8f95c7e2817449ca94f1e761",
+        "originalBytes": 2099257,
+        "originalWidth": 4032,
+        "originalHeight": 1800,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/28/Bathtub_in_bathroom_of_premier_room_in_Buddha_bar_hotel_Prague_-_image_2.jpg/1280px-Bathtub_in_bathroom_of_premier_room_in_Buddha_bar_hotel_Prague_-_image_2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-27.jpg",
+        "sha256": "8bda7a80777091a09361f002765feaea3dff53bc2c7268e573b1aa5784f74448",
+        "width": 1000,
+        "height": 446,
+        "bytes": 91843,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "bath",
+          "backlight",
+          "partial"
+        ],
+        "geometry": "low close view; walls mostly outside frame",
+        "fixtures": [
+          {
+            "id": "bath-27-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.178,
+              0.278,
+              0.877,
+              0.843
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "round"
+          },
+          {
+            "id": "bath-27-f2",
+            "partial": true,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0,
+              0,
+              0.87,
+              0.323
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          }
+        ],
+        "reflections": [],
+        "relations": [],
+        "ignore": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-28",
+      "split": "development",
+      "groupId": "commons-121201075",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 121201075,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_@_Shangri-La_Hotel,_Taipei_2017.jpg",
+        "title": "File:Bathroom @ Shangri-La Hotel, Taipei 2017.jpg",
+        "author": "Kanesue",
+        "credit": "https://www.flickr.com/photos/kanesue/36648654923/",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/0/0c/Bathroom_%40_Shangri-La_Hotel%2C_Taipei_2017.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "0b1d769e7c78d5633ae6e5c1f79ba1b09db33183",
+        "originalBytes": 2710003,
+        "originalWidth": 4032,
+        "originalHeight": 3024,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/Bathroom_%40_Shangri-La_Hotel%2C_Taipei_2017.jpg/1280px-Bathroom_%40_Shangri-La_Hotel%2C_Taipei_2017.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-28.jpg",
+        "sha256": "843583ddaa5ee3531713a80eeb9b34c320aafed14739c64d5215c3a0557f0e99",
+        "width": 1000,
+        "height": 750,
+        "bytes": 248099,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "bath",
+          "daylight",
+          "dark-tile"
+        ],
+        "geometry": "back/right corner and floor visible",
+        "fixtures": [
+          {
+            "id": "bath-28-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.097,
+              0.551,
+              0.808,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "rectangular"
+          },
+          {
+            "id": "bath-28-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.07,
+              0,
+              0.572,
+              0.608
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.9,
+              0,
+              1,
+              0.833
+            ],
+            "notes": "Right dark glazed panel is too clipped to distinguish door, glass, or reflective trim."
+          }
+        ],
+        "negatives": [
+          "Window highlight on marble wall is not an independent mirror."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-29",
+      "split": "development",
+      "groupId": "commons-139590312",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 139590312,
+        "page": "https://commons.wikimedia.org/wiki/File:Hotel_Pohjanhovi_Standard_Twin_bathroom_a.jpg",
+        "title": "File:Hotel Pohjanhovi Standard Twin bathroom a.jpg",
+        "author": "Htm",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/4/41/Hotel_Pohjanhovi_Standard_Twin_bathroom_a.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "f0b273cfdb9bc1d11f8959f84c519fed9d87c56d",
+        "originalBytes": 10870465,
+        "originalWidth": 3305,
+        "originalHeight": 4958,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/Hotel_Pohjanhovi_Standard_Twin_bathroom_a.jpg/1280px-Hotel_Pohjanhovi_Standard_Twin_bathroom_a.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-29.jpg",
+        "sha256": "281eeb4117f241162a4614f9f574c30ec28c1bb90012c8827eacdb0e2943825a",
+        "width": 667,
+        "height": 1000,
+        "bytes": 70849,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "shelf",
+          "cropped-toilet",
+          "narrow",
+          "low-light"
+        ],
+        "geometry": "walk-in shower alcove; foreground countertop and toilet cropped",
+        "fixtures": [
+          {
+            "id": "bath-29-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "shelf",
+            "bounds": [
+              0.338,
+              0.376,
+              0.516,
+              0.488
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-29-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0,
+              0.853,
+              0.321,
+              1
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "notes": "Only tank visible; seat and floor mounting are unknown."
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.817,
+              0.749,
+              1,
+              1
+            ],
+            "notes": "Only countertop visible; no confirmed basin bowl."
+          },
+          {
+            "bounds": [
+              0.316,
+              0.05,
+              0.37,
+              0.953
+            ],
+            "notes": "Bright vertical edge does not establish a glass partition."
+          }
+        ],
+        "negatives": [
+          "Towel ladder is not a shelf; glass existence cannot be inferred just from the vertical wall edge."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-30",
+      "split": "development",
+      "groupId": "commons-317885",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 317885,
+        "page": "https://commons.wikimedia.org/wiki/File:Modern_Ofuro.jpg",
+        "title": "File:Modern Ofuro.jpg",
+        "author": "MC MasterChef",
+        "credit": "Own work",
+        "license": "CC BY-SA 2.5",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.5",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/6/64/Modern_Ofuro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "40d6c356028b7dd4e0fbadc551dcd6d4a737b6cb",
+        "originalBytes": 362909,
+        "originalWidth": 778,
+        "originalHeight": 1000,
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/6/64/Modern_Ofuro.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-30.jpg",
+        "sha256": "f0d16d1d019f2fc5688addccbb50e1ddcc1305291ba71a1971571205f8541378",
+        "width": 778,
+        "height": 1000,
+        "bytes": 71921,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "deep-bath",
+          "small-space",
+          "low-light"
+        ],
+        "geometry": "Japanese unit bath with floor and back/right walls visible",
+        "fixtures": [
+          {
+            "id": "bath-30-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.302,
+              0.438,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "rectangular"
+          }
+        ],
+        "negatives": [
+          "Recessed bath service panel and bucket are not mirror cabinet or basin."
+        ],
+        "reflections": [],
+        "relations": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-31",
+      "split": "heldout",
+      "groupId": "commons-46569744",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 46569744,
+        "page": "https://commons.wikimedia.org/wiki/File:A_modern_styled_hotel_bathroom.jpg",
+        "title": "File:A modern styled hotel bathroom.jpg",
+        "author": "Tim36272",
+        "credit": "Own work",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/4/4f/A_modern_styled_hotel_bathroom.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "dbb186a80af4c1f06b16917a239654d7373246ae",
+        "originalBytes": 5360968,
+        "originalWidth": 5110,
+        "originalHeight": 6194,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4f/A_modern_styled_hotel_bathroom.jpg/1280px-A_modern_styled_hotel_bathroom.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-31.jpg",
+        "sha256": "1729a9bbb1234f5278233c37700b0dc1080a203c69d848a6f789afe07db73e77",
+        "width": 825,
+        "height": 1000,
+        "bytes": 144640,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "glass",
+          "closed-toilet",
+          "wide-angle",
+          "shelf",
+          "nonrectangular"
+        ],
+        "geometry": "curved enclosure and arched opening; one-box geometry is not verified",
+        "fixtures": [
+          {
+            "id": "bath-31-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.126,
+              0.639,
+              0.279,
+              0.861
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "closed"
+          },
+          {
+            "id": "bath-31-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "glassPartition",
+            "bounds": [
+              0.283,
+              0.366,
+              0.643,
+              0.948
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "framed": true
+          },
+          {
+            "id": "bath-31-f3",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "shelf",
+            "bounds": [
+              0.404,
+              0.538,
+              0.472,
+              0.592
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-31-f4",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "door",
+            "bounds": [
+              0.896,
+              0.344,
+              1,
+              0.892
+            ],
+            "mounting": "unknown",
+            "installationWall": "unknown",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0,
+              0.613,
+              0.032,
+              0.68
+            ],
+            "notes": "Tiny clipped fixture on far left; exact class is unknown."
+          }
+        ],
+        "relations": [
+          {
+            "from": "bath-31-f2",
+            "to": "bath-31-f3",
+            "relation": "inFrontOf"
+          }
+        ],
+        "reflections": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-32",
+      "split": "heldout",
+      "groupId": "commons-128081579",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 128081579,
+        "page": "https://commons.wikimedia.org/wiki/File:Small_Bathroom_Renovation_in_Wellington.jpg",
+        "title": "File:Small Bathroom Renovation in Wellington.jpg",
+        "author": "Smtzzz",
+        "credit": "Southern Plumbing",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/Small_Bathroom_Renovation_in_Wellington.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "bbc79e007b99a81a12b16c1eb1906b28739e3676",
+        "originalBytes": 1183815,
+        "originalWidth": 3024,
+        "originalHeight": 4032,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a7/Small_Bathroom_Renovation_in_Wellington.jpg/1280px-Small_Bathroom_Renovation_in_Wellington.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-32.jpg",
+        "sha256": "c095a41059fa7543528c98ade584fd13b7f52c176d88bab3e943a6e091591c5f",
+        "width": 750,
+        "height": 1000,
+        "bytes": 155105,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "glass",
+          "open-toilet",
+          "bath",
+          "wide-angle"
+        ],
+        "geometry": "back/right corner; bathtub and edge-on clear partition on left",
+        "fixtures": [
+          {
+            "id": "bath-32-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0,
+              0.583,
+              0.377,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "left",
+            "shape": "rectangular"
+          },
+          {
+            "id": "bath-32-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "high",
+            "kind": "glassPartition",
+            "bounds": [
+              0.12,
+              0.176,
+              0.405,
+              0.71
+            ],
+            "mounting": "unknown",
+            "installationWall": "left",
+            "shape": "unknown",
+            "framed": false,
+            "notes": "Edge-on over-bath glass; left extent is difficult to distinguish from background."
+          },
+          {
+            "id": "bath-32-f3",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.674,
+              0.527,
+              0.962,
+              0.766
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "open"
+          }
+        ],
+        "relations": [
+          {
+            "from": "bath-32-f2",
+            "to": "bath-32-f1",
+            "relation": "inFrontOf"
+          }
+        ],
+        "negatives": [
+          "Dark green inset wall tiles are not a window."
+        ],
+        "reflections": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-33",
+      "split": "development",
+      "groupId": "commons-172334671",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 172334671,
+        "page": "https://commons.wikimedia.org/wiki/File:Contemporary_bathroom.jpg",
+        "title": "File:Contemporary bathroom.jpg",
+        "author": "OKJaguar",
+        "credit": "Own work",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Contemporary_bathroom.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "88cd10e83dfc4c97dee1282104603a8297f78ceb",
+        "originalBytes": 1643817,
+        "originalWidth": 2349,
+        "originalHeight": 2910,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9a/Contemporary_bathroom.jpg/1280px-Contemporary_bathroom.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-33.jpg",
+        "sha256": "7f40209f32c4335e46b9f9cd8a32ca8b682f52d6b3528d2851c64feec98cd986",
+        "width": 807,
+        "height": 1000,
+        "bytes": 204442,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "glass",
+          "vanity",
+          "bath",
+          "dark-wall",
+          "door",
+          "window"
+        ],
+        "geometry": "multiple depth planes; wide-angle view of large bathroom",
+        "fixtures": [
+          {
+            "id": "bath-33-f1",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0,
+              0.377,
+              0.21,
+              0.946
+            ],
+            "mounting": "floor",
+            "installationWall": "left",
+            "shape": "unknown",
+            "basinVariant": "vanity",
+            "basinCount": "unknown",
+            "notes": "Continuous vanity is clear, exact bowl count and shape are cropped."
+          },
+          {
+            "id": "bath-33-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0,
+              0.046,
+              0.09,
+              0.383
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "unknown",
+            "acceptableKinds": [
+              "mirror",
+              "mirrorCabinet"
+            ]
+          },
+          {
+            "id": "bath-33-f3",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "glassPartition",
+            "bounds": [
+              0.448,
+              0.064,
+              0.857,
+              0.649
+            ],
+            "mounting": "floor",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "framed": false
+          },
+          {
+            "id": "bath-33-f4",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0.577,
+              0.477,
+              1,
+              0.997
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "rectangular"
+          },
+          {
+            "id": "bath-33-f5",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "door",
+            "bounds": [
+              0.281,
+              0.141,
+              0.413,
+              0.55
+            ],
+            "mounting": "unknown",
+            "installationWall": "back",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-33-f6",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0.93,
+              0,
+              1,
+              0.358
+            ],
+            "mounting": "wall",
+            "installationWall": "right",
+            "shape": "unknown"
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0.52,
+              0.221,
+              0.659,
+              0.292
+            ],
+            "notes": "Recessed shower niche is not a protruding shelf."
+          }
+        ],
+        "relations": [
+          {
+            "from": "bath-33-f4",
+            "to": "bath-33-f3",
+            "relation": "inFrontOf"
+          }
+        ],
+        "reflections": [],
+        "negatives": []
+      }
+    },
+    {
+      "id": "bath-34",
+      "split": "heldout",
+      "groupId": "commons-5186850",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 5186850,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroomcabinet2.jpg",
+        "title": "File:Bathroomcabinet2.jpg",
+        "author": "Yvwv",
+        "credit": "Own work",
+        "license": "Public domain",
+        "licenseUrl": null,
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/e/e7/Bathroomcabinet2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "44c1195ce04a0575c3faf08fe23900788ce327cb",
+        "originalBytes": 1059836,
+        "originalWidth": 1536,
+        "originalHeight": 2048,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e7/Bathroomcabinet2.jpg/1280px-Bathroomcabinet2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-34.jpg",
+        "sha256": "359343dfe59187435ae99cad329b5421178694f34d91982508894e2686a611bc",
+        "width": 750,
+        "height": 1000,
+        "bytes": 100145,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "mirror-cabinet",
+          "closeup",
+          "reflection",
+          "no-floor"
+        ],
+        "geometry": "cabinet closeup; room geometry and physical dimensions unavailable",
+        "fixtures": [
+          {
+            "id": "bath-34-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirrorCabinet",
+            "bounds": [
+              0.315,
+              0.07,
+              0.926,
+              0.973
+            ],
+            "mounting": "wall",
+            "installationWall": "unknown",
+            "shape": "unknown",
+            "notes": "Visible white cabinet box behind mirrored door establishes depth."
+          }
+        ],
+        "ignore": [
+          {
+            "bounds": [
+              0,
+              0,
+              0.215,
+              1
+            ],
+            "notes": "Clipped adjacent reflective panel and cabinet reflection cannot be separated reliably."
+          }
+        ],
+        "negatives": [
+          "No floor-based placement should be claimed from this crop."
+        ],
+        "reflections": [],
+        "relations": []
+      }
+    },
+    {
+      "id": "bath-35",
+      "split": "heldout",
+      "groupId": "commons-67534450",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 67534450,
+        "page": "https://commons.wikimedia.org/wiki/File:Bathroom_in_hotel_in_Bergen,_Norway._2016-03-16._hand_wash_basin_sink,_mirror,_toilet,_shower_cabinet,_etc_(low_view)._Also_wall_and_floor_tiles.jpg",
+        "title": "File:Bathroom in hotel in Bergen, Norway. 2016-03-16. hand wash basin sink, mirror, toilet, shower cabinet, etc (low view). Also wall and floor tiles.jpg",
+        "author": "Wolfmann",
+        "credit": "Own work",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/0/09/Bathroom_in_hotel_in_Bergen%2C_Norway._2016-03-16._hand_wash_basin_sink%2C_mirror%2C_toilet%2C_shower_cabinet%2C_etc_%28low_view%29._Also_wall_and_floor_tiles.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "fe6508630eb45073dca91186a54973c0e252b022",
+        "originalBytes": 2190673,
+        "originalWidth": 4032,
+        "originalHeight": 3024,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/09/Bathroom_in_hotel_in_Bergen%2C_Norway._2016-03-16._hand_wash_basin_sink%2C_mirror%2C_toilet%2C_shower_cabinet%2C_etc_%28low_view%29._Also_wall_and_floor_tiles.jpg/1280px-Bathroom_in_hotel_in_Bergen%2C_Norway._2016-03-16._hand_wash_basin_sink%2C_mirror%2C_toilet%2C_shower_cabinet%2C_etc_%28low_view%29._Also_wall_and_floor_tiles.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-35.jpg",
+        "sha256": "01f965ed492fae72aeb249b6ee39da3693aff8035ef4550ba8e10e5b4fa746cb",
+        "width": 1000,
+        "height": 750,
+        "bytes": 147781,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "wall-basin",
+          "open-toilet",
+          "glass",
+          "upward-view",
+          "reflection"
+        ],
+        "geometry": "low camera upward; back/right corner and a small floor strip visible",
+        "fixtures": [
+          {
+            "id": "bath-35-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.074,
+              0.463,
+              0.376,
+              0.721
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "round",
+            "basinVariant": "wall"
+          },
+          {
+            "id": "bath-35-f2",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.415,
+              0.506,
+              0.651,
+              0.994
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "open"
+          },
+          {
+            "id": "bath-35-f3",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "glassPartition",
+            "bounds": [
+              0.697,
+              0,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "right",
+            "shape": "unknown",
+            "framed": true
+          },
+          {
+            "id": "bath-35-f4",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.021,
+              0,
+              0.367,
+              0.371
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown"
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "window",
+            "bounds": [
+              0.035,
+              0.251,
+              0.199,
+              0.356
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-35-r1",
+            "reflectorId": "bath-35-f4"
+          }
+        ],
+        "negatives": [
+          "Waste bin below sink is not a second toilet; reflected window is not directly visible."
+        ],
+        "relations": [],
+        "ignore": []
+      }
+    },
+    {
+      "id": "bath-36",
+      "split": "heldout",
+      "groupId": "commons-16170513",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "pageId": 16170513,
+        "page": "https://commons.wikimedia.org/wiki/File:Pink_and_black_bathroom.jpg",
+        "title": "File:Pink and black bathroom.jpg",
+        "author": "Downtowngal",
+        "credit": "Own work",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+        "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7a/Pink_and_black_bathroom.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+        "originalSha1": "fdaeb00e1ca0771b4b626bc13de885577ac2823b",
+        "originalBytes": 3400577,
+        "originalWidth": 2929,
+        "originalHeight": 4060,
+        "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7a/Pink_and_black_bathroom.jpg/1280px-Pink_and_black_bathroom.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+        "metadataCheckedAt": "2026-09-13",
+        "provenance": "Official file-page imageinfo/extmetadata; own-work or credited photographer/source; photograph visually inspected. Commons license declaration is not an independent copyright warranty."
+      },
+      "input": {
+        "path": "test-results/reconstruction-corpus/inputs/bath-36.jpg",
+        "sha256": "3b5270cc891acf21b58e04a8a39b04b68d948f395381a2e81d93b7e77daf4e62",
+        "width": 722,
+        "height": 1000,
+        "bytes": 153374,
+        "mime": "image/jpeg",
+        "normalization": "Commons preview; EXIF auto-orient; fit inside 1000x1000 without upscaling; JPEG quality 88. Frozen bytes, not source-original resolution."
+      },
+      "roomMm": {
+        "width": 2400,
+        "depth": 2400,
+        "height": 2400,
+        "basis": "controlled identical evaluation input; not measured room dimensions"
+      },
+      "annotation": {
+        "tags": [
+          "pedestal",
+          "rectangular-basin",
+          "closed-toilet",
+          "bath",
+          "reflection"
+        ],
+        "geometry": "back/left corner; floor visible and right toilet partly cropped",
+        "fixtures": [
+          {
+            "id": "bath-36-f1",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "basin",
+            "bounds": [
+              0.398,
+              0.486,
+              0.848,
+              0.811
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "rectangular",
+            "basinVariant": "pedestal",
+            "notes": "Pink ceramic pedestal visible in front of separate black plumbing."
+          },
+          {
+            "id": "bath-36-f2",
+            "partial": true,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "toilet",
+            "bounds": [
+              0.518,
+              0.543,
+              1,
+              1
+            ],
+            "mounting": "floor",
+            "installationWall": "back",
+            "shape": "unknown",
+            "toiletLid": "closed"
+          },
+          {
+            "id": "bath-36-f3",
+            "partial": false,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "bath",
+            "bounds": [
+              0,
+              0.608,
+              0.55,
+              0.927
+            ],
+            "mounting": "floor",
+            "installationWall": "left",
+            "shape": "rectangular"
+          },
+          {
+            "id": "bath-36-f4",
+            "partial": true,
+            "occluded": true,
+            "boundsUncertainty": "approximate",
+            "kind": "window",
+            "bounds": [
+              0,
+              0,
+              0.344,
+              0.403
+            ],
+            "mounting": "wall",
+            "installationWall": "left",
+            "shape": "unknown"
+          },
+          {
+            "id": "bath-36-f5",
+            "partial": false,
+            "occluded": false,
+            "boundsUncertainty": "approximate",
+            "kind": "mirror",
+            "bounds": [
+              0.423,
+              0,
+              0.8,
+              0.385
+            ],
+            "mounting": "wall",
+            "installationWall": "back",
+            "shape": "unknown",
+            "acceptableKinds": [
+              "mirror",
+              "mirrorCabinet"
+            ],
+            "notes": "Reflective panels are clear; storage box depth and door hardware are not sufficiently certain."
+          }
+        ],
+        "reflections": [
+          {
+            "kind": "window",
+            "bounds": [
+              0.628,
+              0.042,
+              0.794,
+              0.333
+            ],
+            "notes": "Visible only in a reflective surface.",
+            "id": "bath-36-r1",
+            "reflectorId": "bath-36-f5"
+          }
+        ],
+        "relations": [],
+        "ignore": [],
+        "negatives": []
+      }
+    }
+  ]
+}

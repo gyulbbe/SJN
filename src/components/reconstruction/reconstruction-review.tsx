@@ -1,19 +1,37 @@
 'use client';
 
+import {
+  confirmedPlacementProvenance,
+  inspectStrictPlacement,
+  StrictPlacementError,
+  type PlacementReview,
+} from '@/lib/reconstruction/strict-placement';
+import { reconstructionReviewSchema } from '@/lib/supabase/validation';
+import { resolveProductColor } from '@/lib/reconstruction/product-color';
+import { resolveBathRimFixture } from '@/lib/reconstruction/bath-rim';
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { AssetImage } from '@/components/materials/asset-image';
 import { useEditor } from '@/lib/editor-store';
 import { getEditingScene } from '@/lib/comparison';
-import { createReconstructionFixture, remapReconstructionCandidates } from '@/lib/reconstruction';
+import {
+  createReconstructionFixture,
+  mapReconstructionCandidate,
+  inferToiletLidState,
+  estimateCandidateFixture,
+} from '@/lib/reconstruction';
 import {
   reconstructionLabels,
+  reconstructionCandidateLabel,
+  reconstructionDefaults,
+  type ReconstructionStandardOptions,
   type ReconstructionCandidate,
   type ReconstructionKind,
 } from '@/lib/reconstruction/types';
 import { useAccess } from '@/components/app-provider';
 import styles from './reconstruction.module.css';
 import ReconstructionRebuild from './reconstruction-rebuild';
+import { ReviewPlacementPicker } from './review-placement-picker';
 
 export default function ReconstructionReviewPanel({
   open,
@@ -34,6 +52,15 @@ export default function ReconstructionReviewPanel({
     comparison = project?.shared.comparison,
     review = comparison?.review;
   const [busy, setBusy] = useState(false);
+  const [candidateKinds, setCandidateKinds] = useState<Record<string, ReconstructionKind>>({});
+  const [candidateVariants, setCandidateVariants] = useState<Record<string, 'wall' | 'pedestal' | 'vanity'>>(
+    {},
+  );
+  const [placementBases, setPlacementBases] = useState<Record<string, PlacementReview['requested']>>({});
+  const [placementEdits, setPlacementEdits] = useState<Record<string, Partial<PlacementReview['requested']>>>(
+    {},
+  );
+  const [confirmedPresets, setConfirmedPresets] = useState<Record<string, boolean>>({});
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -43,7 +70,84 @@ export default function ReconstructionReviewPanel({
   }, []);
   if (!project || !comparison) return null;
   const scene = st.draft || getEditingScene(project, st.editing);
-  async function add(kind: ReconstructionKind, candidate?: ReconstructionCandidate) {
+  function resetPlacement(
+    candidate: ReconstructionCandidate,
+    kind: ReconstructionKind,
+    basinVariant?: ReconstructionStandardOptions['basinVariant'],
+  ) {
+    if (!comparison) return;
+    const defaults = reconstructionDefaults(kind, basinVariant);
+    const baseHeightMm = defaults.baseHeightMm ?? 0;
+    setPlacementBases((all) => ({
+      ...all,
+      [candidate.id]: {
+        kind,
+        face: defaults.face,
+        u: 0.5,
+        v: defaults.face === 'floor' ? 0.5 : 1 - baseHeightMm / comparison.room.heightMm,
+        widthMm: defaults.widthMm,
+        heightMm: defaults.heightMm,
+        depthMm: defaults.depthMm,
+        baseHeightMm,
+        yawDegrees: defaults.yawDegrees ?? 0,
+        orientation: defaults.face === 'floor' ? 'back' : defaults.face,
+        support: undefined,
+        provenance: {
+          position: 'default',
+          dimensions: 'default',
+          width: 'default',
+          height: 'default',
+          depth: 'default',
+          shape: 'default',
+        },
+      },
+    }));
+    setPlacementEdits((all) => ({ ...all, [candidate.id]: {} }));
+    setConfirmedPresets((all) => ({ ...all, [candidate.id]: false }));
+  }
+  function initialPlacement(
+    candidate: ReconstructionCandidate,
+    kind: ReconstructionKind,
+    basinVariant?: ReconstructionStandardOptions['basinVariant'],
+  ): PlacementReview['requested'] {
+    const existing = placementBases[candidate.id] ?? candidate.placementReview?.requested;
+    if (existing) return existing;
+    const defaults = reconstructionDefaults(kind, basinVariant);
+    const mapped =
+      kind === candidate.kind && review ? mapReconstructionCandidate(candidate, review) : undefined;
+    if (mapped && review && comparison)
+      return {
+        kind,
+        face: mapped.face,
+        ...estimateCandidateFixture(candidate, review, comparison.room, mapped),
+      };
+    const baseHeightMm = defaults.baseHeightMm ?? 0;
+    return {
+      kind,
+      face: defaults.face,
+      u: 0.5,
+      v: defaults.face === 'floor' ? 0.5 : 1 - baseHeightMm / comparison!.room.heightMm,
+      widthMm: defaults.widthMm,
+      heightMm: defaults.heightMm,
+      depthMm: defaults.depthMm,
+      baseHeightMm,
+      orientation: defaults.face === 'floor' ? 'back' : defaults.face,
+      provenance: {
+        position: 'default',
+        wall: 'default',
+        width: 'default',
+        height: 'default',
+        depth: 'default',
+        dimensions: 'default',
+        shape: 'default',
+      },
+    };
+  }
+  async function add(
+    kind: ReconstructionKind,
+    candidate?: ReconstructionCandidate,
+    basinVariant?: ReconstructionStandardOptions['basinVariant'],
+  ) {
     const captured = useEditor.getState().project;
     if (!captured?.shared.comparison || !writable || busy) return;
     setBusy(true);
@@ -54,9 +158,84 @@ export default function ReconstructionReviewPanel({
       useEditor.getState().project?.activeDesignId === captured.activeDesignId &&
       useEditor.getState().project?.editRevision === captured.editRevision;
     try {
-      const fixture = await createReconstructionFixture({
+      const defaults = reconstructionDefaults(kind, basinVariant ?? candidate?.installation?.basinVariant);
+      const mapped =
+        candidate &&
+        kind === candidate.kind &&
+        (!basinVariant || basinVariant === candidate.installation?.basinVariant) &&
+        captured.shared.comparison.review
+          ? mapReconstructionCandidate(candidate, captured.shared.comparison.review)
+          : undefined;
+      const originalProposal = candidate
+        ? initialPlacement(candidate, kind, basinVariant ?? candidate.installation?.basinVariant)
+        : undefined;
+      const originalMatches =
+        candidate &&
+        kind === candidate.kind &&
+        (!basinVariant || basinVariant === candidate.installation?.basinVariant);
+      const proposal =
+        candidate && originalProposal
+          ? { ...originalProposal, ...placementEdits[candidate.id] }
+          : originalMatches && mapped && captured.shared.comparison.review
+            ? estimateCandidateFixture(
+                candidate,
+                captured.shared.comparison.review,
+                captured.shared.comparison.room,
+                mapped,
+              )
+            : undefined;
+      const placementProvenance =
+        candidate && originalProposal
+          ? confirmedPlacementProvenance(originalProposal, placementEdits[candidate.id])
+          : proposal?.provenance;
+      const colorEvidence = resolveProductColor(
         kind,
-        color: candidate?.color,
+        candidate && kind === candidate.kind ? candidate : undefined,
+      );
+      const lidObservation =
+        candidate && kind === candidate.kind ? inferToiletLidState(candidate) : undefined;
+      const fixture = await createReconstructionFixture({
+        ...defaults,
+        ...mapped,
+        kind,
+        basinVariant: basinVariant ?? candidate?.installation?.basinVariant ?? defaults.basinVariant,
+        basinShape:
+          candidate && kind === candidate.kind
+            ? (candidate.evidence.basinShape?.value ?? defaults.basinShape)
+            : defaults.basinShape,
+        bowlCount:
+          candidate && kind === candidate.kind
+            ? (candidate.evidence.bowlCount?.value ?? defaults.bowlCount)
+            : defaults.bowlCount,
+        face:
+          defaults.face === 'floor'
+            ? 'floor'
+            : (candidate?.installation?.wall ?? mapped?.face ?? defaults.face),
+        ...proposal,
+        color: colorEvidence.color,
+        colorEvidence,
+        placementPolicy: candidate ? 'preserve' : undefined,
+        toiletLidState: lidObservation?.value ?? defaults.toiletLidState,
+        provenance: {
+          ...placementProvenance,
+          ...(candidate && confirmedPresets[candidate.id]
+            ? { position: 'user' as const, wall: 'user' as const }
+            : {}),
+          kind: 'user',
+          mounting: 'user',
+          position:
+            candidate && confirmedPresets[candidate.id]
+              ? 'user'
+              : (placementProvenance?.position ?? (mapped ? 'inferred' : 'default')),
+          dimensions: placementProvenance?.dimensions ?? 'default',
+          shape:
+            candidate && kind === candidate.kind && candidate.evidence.basinShape
+              ? 'inferred'
+              : (placementProvenance?.shape ?? 'default'),
+          appearance: colorEvidence.source,
+          color: colorEvidence.source,
+          ...(kind === 'toilet' ? { toiletLidState: lidObservation?.source ?? 'default' } : {}),
+        },
         room: captured.shared.comparison.room,
         aspect: captured.shared.comparison.aspect,
       });
@@ -71,10 +250,37 @@ export default function ReconstructionReviewPanel({
           if (found) {
             found.fixtureId = fixture.id;
             found.status = 'placed';
-            p.shared.comparison.before = remapReconstructionCandidates(p.shared.comparison.before, {
-              ...p.shared.comparison.review,
-              candidates: [found],
+            found.kind = kind;
+            found.proposedKind = kind;
+            found.source = 'user';
+            found.color = fixture.reconstruction!.color;
+            found.colorEvidence = fixture.reconstruction!.colorEvidence;
+            found.installation = {
+              mode:
+                kind === 'showerCurtain'
+                  ? 'suspended'
+                  : fixture.roomPlacement!.face === 'floor'
+                    ? 'floor'
+                    : 'wall',
+              wall: fixture.roomPlacement!.face === 'floor' ? undefined : fixture.roomPlacement!.face,
+              basinVariant: fixture.reconstruction!.basinVariant,
+              source: 'user',
+              reason: '사용자가 종류·설치 방식·위치를 확인했어요.',
+            };
+            found.requiresReview = false;
+            found.placementReview = inspectStrictPlacement(captured.shared.comparison!.room, {
+              ...fixture.reconstruction!,
+              ...fixture.roomPlacement!,
+              kind,
+              depthMm: fixture.reconstruction!.depthMm,
             });
+            found.warning = mapped
+              ? '사용자가 종류를 확인하고 추정 위치에 추가했어요. 설치 높이와 규격을 확인해 주세요.'
+              : '사용자가 선택한 모형을 기본 위치에 추가했어요. 설치 벽·높이·규격을 수정해 주세요.';
+            found.trace = [
+              ...(found.trace ?? []),
+              { stage: 'placement', outcome: 'accepted', reason: found.warning },
+            ];
           }
         }
       });
@@ -82,7 +288,29 @@ export default function ReconstructionReviewPanel({
       st.setTool('select');
       onShowProperties();
     } catch (error) {
-      if (current()) onError(error instanceof Error ? error.message : '기구를 추가하지 못했어요.');
+      if (current()) {
+        if (
+          candidate &&
+          error instanceof StrictPlacementError &&
+          captured.shared.comparison.review &&
+          reconstructionReviewSchema.safeParse({
+            ...captured.shared.comparison.review,
+            candidates: captured.shared.comparison.review.candidates.map((item) =>
+              item.id === candidate.id ? { ...item, placementReview: error.review } : item,
+            ),
+          }).success
+        ) {
+          st.changeProject((p) => {
+            const found = p.shared.comparison?.review?.candidates.find((c) => c.id === candidate.id);
+            if (!found) return;
+            found.placementReview = error.review;
+            found.requiresReview = true;
+            found.status = 'unplaced';
+            found.warning = `입력한 위치와 규격을 보존하고 배치를 보류했어요. ${error.message}`;
+          });
+        }
+        onError(error instanceof Error ? error.message : '기구를 추가하지 못했어요.');
+      }
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -156,6 +384,12 @@ export default function ReconstructionReviewPanel({
                 }}
               >
                 {fixture.name}
+                {(() => {
+                  const result = resolveBathRimFixture(scene, fixture);
+                  return result.status === 'held' ? (
+                    <small style={{ display: 'block' }}>배치 보류: {result.reason}</small>
+                  ) : null;
+                })()}
               </button>
             ))}
           </>
@@ -165,21 +399,223 @@ export default function ReconstructionReviewPanel({
             <h4>사진에서 찾은 기구</h4>
             {review.candidates.map((candidate) => {
               const fixture = scene.fixtures.find((f) => f.id === candidate.fixtureId);
+              const choice =
+                candidateKinds[candidate.id] ??
+                (candidate.detectedLabel === 'cabinet' && !candidate.proposedKind
+                  ? ''
+                  : (candidate.proposedKind ?? candidate.kind));
+              const variant =
+                candidateVariants[candidate.id] ?? candidate.installation?.basinVariant ?? 'wall';
+              const requestedPlacement = choice
+                ? {
+                    ...initialPlacement(candidate, choice, choice === 'basin' ? variant : undefined),
+                    ...placementEdits[candidate.id],
+                  }
+                : undefined;
               return (
-                <div key={candidate.id} className={styles.candidate}>
+                <div key={candidate.id} data-candidate-id={candidate.id} className={styles.candidate}>
                   <strong>
-                    {reconstructionLabels[candidate.kind]} ·{' '}
+                    {reconstructionCandidateLabel(candidate)} ·{' '}
                     {fixture ? '배치 확인' : candidate.status === 'ignored' ? '제외함' : '미배치'}
                   </strong>
                   <p>{candidate.warning || '종류와 위치를 직접 확인해 주세요.'}</p>
+                  <div className={styles.provenance}>
+                    <span>
+                      {candidate.source === 'user'
+                        ? '사용자 확인'
+                        : candidate.proposedKind
+                          ? '형태 관계로 추정'
+                          : candidate.source === 'gemma'
+                            ? 'Gemma 관측'
+                            : candidate.source === 'qwen'
+                            ? 'Qwen 관측'
+                            : 'DeepLab 관측'}
+                    </span>
+                    {candidate.installation && (
+                      <span>
+                        {candidate.installation.mode === 'unknown'
+                          ? '설치 확인 필요'
+                          : candidate.installation.mode === 'wall'
+                            ? candidate.installation.source === 'user'
+                              ? '벽 설치 · 사용자 설정'
+                              : '벽 설치 추정'
+                            : candidate.installation.source === 'user'
+                              ? '바닥 설치 · 사용자 설정'
+                              : '바닥 설치 추정'}
+                      </span>
+                    )}
+                  </div>
+                  {candidate.installation?.reason && <p>{candidate.installation.reason}</p>}
+                  {!fixture && requestedPlacement && (
+                    <details open>
+                      <summary>
+                        {candidate.placementReview ? '원래 위치·규격 확인' : '설치 위치·규격 확인'}
+                      </summary>
+                      {!candidate.placementReview && (
+                        <p>
+                          설치 위치 근거가 부족해 기본값으로 시작해요. 사진에서 알아낸 위치가 아니에요. 설치
+                          면과 위치를 확인한 뒤 추가해 주세요.
+                        </p>
+                      )}
+                      <p>
+                        그림에서 위치를 정하고 방향을 선택해 주세요. 방 범위를 넘는 제품을 자동으로 이동하거나
+                        줄이지 않아요. 종류·설치 방식을 바꾸면 해당 모형의 기본값으로 다시 시작해요.
+                      </p>
+                      {requestedPlacement && (
+                        <ReviewPlacementPicker
+                          room={comparison.room}
+                          request={requestedPlacement}
+                          prefix={reconstructionCandidateLabel(candidate)}
+                          disabled={!writable || busy || !!st.draft}
+                          onChange={(edits) =>
+                            setPlacementEdits((all) => ({
+                              ...all,
+                              [candidate.id]: { ...all[candidate.id], ...edits },
+                            }))
+                          }
+                          onChooseWall={(edits) => {
+                            setPlacementEdits((all) => ({
+                              ...all,
+                              [candidate.id]: { ...all[candidate.id], ...edits },
+                            }));
+                            setConfirmedPresets((all) => ({ ...all, [candidate.id]: true }));
+                          }}
+                        />
+                      )}
+                      <label className={styles.control}>
+                        설치 면
+                        <select
+                          aria-label="보류 후보 설치 면"
+                          value={placementEdits[candidate.id]?.face ?? requestedPlacement.face}
+                          onChange={(e) =>
+                            setPlacementEdits((all) => ({
+                              ...all,
+                              [candidate.id]: {
+                                ...all[candidate.id],
+                                face: e.target.value as PlacementReview['requested']['face'],
+                                ...(e.target.value !== 'floor'
+                                  ? {
+                                      baseHeightMm: requestedPlacement.baseHeightMm ?? 0,
+                                      v:
+                                        1 - (requestedPlacement.baseHeightMm ?? 0) / comparison.room.heightMm,
+                                    }
+                                  : {}),
+                              },
+                            }))
+                          }
+                        >
+                          <option value="floor">바닥</option>
+                          <option value="left">왼쪽 벽</option>
+                          <option value="back">뒤쪽 벽</option>
+                          <option value="right">오른쪽 벽</option>
+                        </select>
+                      </label>
+                      {(
+                        [
+                          ['u', '가로 위치 (%)'],
+                          ['v', '세로·깊이 위치 (%)'],
+                          ['widthMm', '폭 (mm)'],
+                          ['heightMm', '높이 (mm)'],
+                          ['depthMm', '깊이 (mm)'],
+                          ['baseHeightMm', '설치 높이 (mm)'],
+                          ['yawDegrees', '바닥 제품 방향 (°)'],
+                        ] as const
+                      ).map(([key, label]) => {
+                        const request = {
+                          ...requestedPlacement,
+                          ...placementEdits[candidate.id],
+                        };
+                        const factor = key === 'u' || key === 'v' ? 100 : 1;
+                        const currentValue =
+                          request[key] ??
+                          (key === 'yawDegrees'
+                            ? request.orientation === 'left'
+                              ? 90
+                              : request.orientation === 'right'
+                                ? -90
+                                : 0
+                            : 0);
+                        return (
+                          <label key={key} className={styles.control}>
+                            {label}
+                            <input
+                              type="number"
+                              step="any"
+                              aria-label={'보류 후보 ' + label}
+                              value={Number.isFinite(currentValue) ? currentValue * factor : ''}
+                              onChange={(e) => {
+                                const value = e.target.valueAsNumber / factor;
+                                setPlacementEdits((all) => ({
+                                  ...all,
+                                  [candidate.id]: {
+                                    ...all[candidate.id],
+                                    [key]: value,
+                                    ...(request.face !== 'floor' && key === 'baseHeightMm'
+                                      ? { v: 1 - value / comparison.room.heightMm }
+                                      : {}),
+                                    ...(request.face !== 'floor' && key === 'v'
+                                      ? { baseHeightMm: (1 - value) * comparison.room.heightMm }
+                                      : {}),
+                                  },
+                                }));
+                              }}
+                            />
+                          </label>
+                        );
+                      })}
+                    </details>
+                  )}
+                  {!fixture && (
+                    <>
+                      <label className={styles.control}>
+                        설비 종류
+                        <select
+                          aria-label="후보 설비 종류"
+                          value={choice}
+                          onChange={(e) => {
+                            const kind = e.target.value as ReconstructionKind;
+                            setCandidateKinds((v) => ({ ...v, [candidate.id]: kind }));
+                            resetPlacement(candidate, kind, kind === 'basin' ? variant : undefined);
+                          }}
+                        >
+                          {!choice && <option value="">종류를 선택해 주세요</option>}
+                          {Object.entries(reconstructionLabels).map(([key, label]) => (
+                            <option key={key} value={key}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {choice === 'basin' && (
+                        <label className={styles.control}>
+                          설치 방식
+                          <select
+                            aria-label="후보 세면대 설치 방식"
+                            value={variant}
+                            onChange={(e) => {
+                              const variant = e.target.value as 'wall' | 'pedestal' | 'vanity';
+                              setCandidateVariants((v) => ({ ...v, [candidate.id]: variant }));
+                              resetPlacement(candidate, 'basin', variant);
+                            }}
+                          >
+                            <option value="wall">벽걸이형</option>
+                            <option value="pedestal">기둥형</option>
+                            <option value="vanity">하부장형</option>
+                          </select>
+                        </label>
+                      )}
+                    </>
+                  )}
                   <div className="row">
                     <button
                       className="btn small"
+                      disabled={!fixture && !choice}
                       onClick={() => {
                         if (fixture) {
                           st.select(fixture.id);
                           onShowProperties();
-                        } else void add(candidate.kind, candidate);
+                        } else if (choice)
+                          void add(choice, candidate, choice === 'basin' ? variant : undefined);
                       }}
                     >
                       {fixture ? '선택해서 수정' : '모형 추가'}

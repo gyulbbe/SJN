@@ -76,7 +76,7 @@ export default function MaterialManager() {
       const input: MaterialInput = stripLegacyMaterialImages({
         ...version,
         name: `${version.name} (복사)`,
-        scope: 'personal',
+        scope: mode === 'local' ? 'personal' : 'shared',
       });
       const result = await getRepositories().materials.create(input);
       setNotice('내 자재로 복제했어요. 원래 자재에 영향을 주지 않고 수정할 수 있어요.');
@@ -141,6 +141,11 @@ export default function MaterialManager() {
           <Grid2X2 size={18} />
           자재 라이브러리
         </Link>
+        {(mode === 'local' || isAdmin) && (
+          <Link href="/admin/catalog" className="nav-item">
+            분류·속성 관리
+          </Link>
+        )}
         <div className="nav-bottom">
           <StorageBadge />
           <p>

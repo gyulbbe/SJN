@@ -15,6 +15,7 @@ import {
   Search,
   ImagePlus,
   Columns2 as Columns2Icon,
+  FlaskConical,
 } from 'lucide-react';
 import { getRepositories } from '@/lib/repositories';
 import { DEFAULT_COLOR, EMPTY_MASK, type LegacyProjectDocument, type ProjectSummary } from '@/lib/types';
@@ -28,7 +29,9 @@ import ReconstructionDialog from '@/components/reconstruction/reconstruction-dia
 import SummaryDesignThumbnail from '@/components/designs/summary-design-thumbnail';
 import { AssetImage } from '@/components/materials/asset-image';
 import { StorageBadge, useAccess } from './app-provider';
+import { useSharedCatalogAdmin } from './materials/shared-access';
 export default function ProjectHome() {
+  const isAdmin = useSharedCatalogAdmin();
   const [projects, setProjects] = useState<ProjectSummary[]>([]),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -40,7 +43,7 @@ export default function ProjectHome() {
   const creating = useRef(false);
   const creationAttempt = useRef(0);
   const router = useRouter();
-  const { writable, ready, mode } = useAccess();
+  const { writable, ready, mode, signOut } = useAccess();
   async function refresh() {
     try {
       setProjects(await getRepositories().projects.list());
@@ -163,19 +166,25 @@ export default function ProjectHome() {
           자재 라이브러리
           <ArrowUpRight size={15} />
         </Link>
+        <Link href="/reconstruction-lab" className="nav-item">
+          <FlaskConical size={18} />
+          사진 재구성 테스트
+        </Link>
         <div className="nav-bottom">
+          {(isAdmin || mode === 'local') && (
+            <Link href="/admin/materials" className="nav-item">
+              관리자 자재 관리
+            </Link>
+          )}
           <StorageBadge />
           <p>
             {mode === 'local' ? '사진과 작업은 이 브라우저에 저장돼요.' : '로그인 계정에 작업을 저장해요.'}
           </p>
-          {mode === 'supabase' && (
+          {mode !== 'local' && (
             <button
               className="text-button"
-              onClick={async () => {
-                const { createBrowserSupabase } = await import('@/lib/supabase/client');
-                await createBrowserSupabase().auth.signOut();
-                window.location.reload();
-              }}
+              style={{ display: 'block', marginBottom: 12 }}
+              onClick={() => void signOut()}
             >
               로그아웃
             </button>
@@ -186,6 +195,11 @@ export default function ProjectHome() {
       <main className="home-main">
         <div className="home-topline">
           <span>WORKSPACE / PROJECTS</span>
+          {(isAdmin || mode === 'local') && (
+            <Link href="/admin/materials" className="nav-item">
+              관리자 자재 관리
+            </Link>
+          )}
           <StorageBadge />
         </div>
         <div className="page-heading">
@@ -267,6 +281,10 @@ export default function ProjectHome() {
                 {busy ? '공간을 준비하고 있어요…' : '기본 공간으로 시작'}
                 <ArrowRight size={17} />
               </button>
+              <Link href="/reconstruction-lab" className="btn">
+                <FlaskConical size={17} />
+                사진 재구성 테스트
+              </Link>
             </div>
             <small className="start-hint">
               사진을 올리거나 끌어 놓으면 Before를 재구성하고 빈 After에서 시작해요. JPG · PNG · WebP / 최대
@@ -325,6 +343,8 @@ export default function ProjectHome() {
                       designId={p.activeDesignId}
                       revision={p.activeDesignRevision}
                       sharedRevision={p.sharedRevision}
+                      contextKey={p.designPreviewContextKey}
+                      repositories={getRepositories()}
                       alt={p.name}
                       fallback={<AssetImage assetId={p.thumbnailAssetId || p.previewAssetId} alt={p.name} />}
                     />
@@ -363,7 +383,9 @@ export default function ProjectHome() {
           </div>
         )}
         <footer className="home-footer">
-          <span>사진은 외부 AI로 전송되지 않아요.</span>
+          <span>
+            기본 분석은 기기에서 실행해요. 정밀 분석을 선택하면 설비 분석용 사진을 Cloudflare로 전송해요.
+          </span>
           <span>가상 시공 결과의 색상·치수·설치 가능 여부는 현장 확인이 필요합니다.</span>
         </footer>
       </main>

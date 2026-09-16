@@ -3,28 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1",
+    "dev": "node scripts/dev-local.mjs next",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:webgl": "node --experimental-strip-types tests/render-browser.ts",
-    "test:images": "node --experimental-strip-types tests/image-browser.ts",
+    "test:webgl": "node tests/run-browser-test.mjs tests/render-browser.ts",
+    "test:images": "node tests/run-browser-test.mjs tests/image-browser.ts",
     "test:ui": "playwright test e2e/simple-editor.spec.ts e2e/room-fixtures.spec.ts",
-    "test:failure": "node --experimental-strip-types tests/failure-browser.ts",
-    "test:segmentation": "node --experimental-strip-types tests/segmentation-browser.ts",
+    "test:failure": "node tests/run-browser-test.mjs tests/failure-browser.ts",
+    "test:segmentation": "node tests/run-browser-test.mjs tests/segmentation-browser.ts",
     "format": "prettier --write src tests e2e",
-    "test:comparison": "node --experimental-strip-types tests/comparison-render-browser.ts",
-    "test:reconstruction": "node --experimental-strip-types tests/reconstruction-browser.ts",
-    "test:reconstruction:quality": "node --experimental-strip-types tests/reconstruction-quality-browser.ts",
-    "dev:vinext": "vinext dev --port 3001",
+    "test:comparison": "node tests/run-browser-test.mjs tests/comparison-render-browser.ts",
+    "test:reconstruction": "node tests/run-browser-test.mjs tests/reconstruction-browser.ts",
+    "test:reconstruction:quality": "node tests/run-browser-test.mjs tests/reconstruction-quality-browser.ts",
+    "dev:vinext": "node scripts/dev-local.mjs vinext",
     "build:vinext": "vinext build",
     "start:vinext": "wrangler dev --config dist/server/wrangler.json --port 8787 --persist-to .wrangler/state",
     "deploy:vinext": "vinext-cloudflare deploy --config dist/server/wrangler.json",
     "test:cloudflare": "playwright test --config playwright.cloudflare.config.ts",
-    "test:background-removal": "playwright test --config playwright.background-removal.config.ts"
+    "test:background-removal": "playwright test --config playwright.background-removal.config.ts",
+    "test:reconstruction:standard": "node tests/run-browser-test.mjs tests/reconstruction-standard-browser.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",
@@ -33,6 +34,7 @@
     "@tensorflow/tfjs-converter": "4.22.0",
     "@tensorflow/tfjs-core": "4.22.0",
     "@vinext/cloudflare": "1.0.0-beta.7",
+    "better-auth": "1.7.4",
     "idb": "^8.0.0",
     "lucide-react": "^0.577.0",
     "next": "16.3.4",
@@ -47,7 +49,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.54.4",
+    "@cloudflare/vite-plugin": "1.54.8",
     "@playwright/test": "^1.58.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.0.0",
@@ -60,12 +62,14 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "16.3.4",
     "fake-indexeddb": "^6.0.0",
+    "jose": "6.2.12",
+    "miniflare": "5.20260911.0-alpha",
     "prettier": "3.9.6",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.9.0",
     "vite": "8.2.2",
     "vitest": "^3.2.0",
-    "wrangler": "4.129.0"
+    "wrangler": "4.131.1"
   },
   "type": "module"
 }

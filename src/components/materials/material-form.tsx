@@ -32,6 +32,14 @@ import { AngleNameInput } from './angle-name-input';
 import { useAccess } from '@/components/app-provider';
 import { useSharedCatalogAdmin } from './shared-access';
 import styles from './materials.module.css';
+import CatalogSelect from './catalog-select';
+import { loadCatalog } from '@/lib/catalog/client';
+import {
+  emptySelection,
+  normalizeCatalogName,
+  type CatalogData,
+  type CatalogSelection,
+} from '@/lib/catalog/contract';
 
 const defaults: MaterialInput = {
   name: '',
@@ -131,8 +139,9 @@ export function MaterialForm({
   onSaved: (version: MaterialVersion) => void;
   onCancel: () => void;
 }) {
-  const { writable, mode } = useAccess();
-  const isAdmin = useSharedCatalogAdmin();
+  const { writable, mode, userId } = useAccess();
+  const serverAdmin = useSharedCatalogAdmin();
+  const isAdmin = mode === 'local' || serverAdmin;
   const [form, setForm] = useState<MaterialInput>(() =>
     initial
       ? {
@@ -162,6 +171,69 @@ export function MaterialForm({
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const [catalogData, setCatalogData] = useState<CatalogData>();
+  const [pendingQueries, setPendingQueries] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    let dead = false;
+    loadCatalog(mode === 'local', userId)
+      .then((data) => {
+        if (dead) return;
+        setCatalogData(data);
+        setForm((current) => {
+          const match = (kind: string, value?: string) =>
+            data.options.find(
+              (o) => o.kind === kind && normalizeCatalogName(o.name) === normalizeCatalogName(value ?? ''),
+            )?.id;
+          const selection = current.catalog ?? {
+            ...emptySelection(),
+            brandId: match('brand', current.brand),
+            colorIds: [match('color', current.color)].filter((id): id is string => !!id),
+            compositionIds: [match('composition', current.composition)].filter((id): id is string => !!id),
+            finishIds: [match('finish', current.finish)].filter((id): id is string => !!id),
+          };
+          return {
+            ...current,
+            catalog: selection,
+            scope: mode === 'd1' && !initial ? 'shared' : current.scope,
+          };
+        });
+      })
+      .catch((e) => {
+        if (!dead) setError(e instanceof Error ? e.message : '분류를 불러오지 못했어요.');
+      });
+    return () => {
+      dead = true;
+    };
+  }, [mode, userId, initial]);
+  const selection = form.catalog ?? emptySelection();
+  const selectCatalog = (key: keyof CatalogSelection, ids: string[]) =>
+    setForm((current) => ({
+      ...current,
+      catalog: {
+        ...(current.catalog ?? emptySelection()),
+        [key]: key === 'brandId' || key === 'subcategoryId' ? ids[0] : ids,
+      },
+    }));
+  const catalogField = (label: string, kind: string, key: keyof CatalogSelection, multiple = false) => (
+    <CatalogSelect
+      key={key === 'subcategoryId' ? key + form.category : key}
+      label={label}
+      options={
+        kind === 'subcategory'
+          ? (catalogData?.subcategories ?? []).filter((s) => s.category === form.category)
+          : (catalogData?.options ?? []).filter((o) => o.kind === kind)
+      }
+      value={
+        typeof selection[key] === 'string'
+          ? [selection[key] as string]
+          : ((selection[key] as string[] | undefined) ?? [])
+      }
+      multiple={multiple}
+      onChange={(ids) => selectCatalog(key, ids)}
+      onQueryChange={(pending) => setPendingQueries((current) => ({ ...current, [key]: pending }))}
+    />
+  );
+
   const [preparing, setPreparing] = useState<{ assetId: string; index: number }>();
   const [backgroundTest, setBackgroundTest] = useState<{
     assetId: string;
@@ -359,8 +431,28 @@ export function MaterialForm({
       setError('이 탭은 읽기 전용이에요. 편집권을 가진 탭에서 저장해 주세요.');
       return;
     }
-    if (form.scope === 'shared' && !isAdmin) {
+    if (!isAdmin) {
       setError('공용 자재 편집에는 서버에서 확인한 관리자 권한이 필요해요.');
+      return;
+    }
+    if (!catalogData || Object.values(pendingQueries).some(Boolean)) {
+      setError('분류 목록을 불러온 뒤 검색한 항목을 선택하거나 검색어를 지워 주세요.');
+      return;
+    }
+    const ids = [
+      selection.brandId,
+      ...selection.colorIds,
+      ...selection.compositionIds,
+      ...selection.finishIds,
+    ].filter(Boolean);
+    if (
+      ids.some((id) => !catalogData.options.some((o) => o.id === id && o.active)) ||
+      (selection.subcategoryId &&
+        !catalogData.subcategories.some(
+          (o) => o.id === selection.subcategoryId && o.active && o.category === form.category,
+        ))
+    ) {
+      setError('비활성 항목을 제거하고 등록된 항목을 다시 선택해 주세요.');
       return;
     }
     if (!form.name.trim()) {
@@ -427,7 +519,16 @@ export function MaterialForm({
         ...form,
         pricing: { ...pricing },
         name: form.name.trim(),
-        brand: form.brand.trim(),
+        catalog: selection,
+        brand: catalogData.options.find((o) => o.id === selection.brandId)?.name ?? '',
+        color: selection.colorIds.map((id) => catalogData.options.find((o) => o.id === id)!.name).join(' · '),
+        composition: selection.compositionIds
+          .map((id) => catalogData.options.find((o) => o.id === id)!.name)
+          .join(' · '),
+        finish: selection.finishIds
+          .map((id) => catalogData.options.find((o) => o.id === id)!.name)
+          .join(' · '),
+        subcategoryName: catalogData.subcategories.find((o) => o.id === selection.subcategoryId)?.name ?? '',
         code: form.code.trim(),
         textureAssetIds: form.category === 'tile' ? form.textureAssetIds : [],
         views:
@@ -505,7 +606,11 @@ export function MaterialForm({
                   aria-label="카테고리"
                   className="input"
                   value={form.category}
-                  onChange={(event) => setCategory(event.target.value as MaterialCategory)}
+                  onChange={(event) => {
+                    setCategory(event.target.value as MaterialCategory);
+                    selectCatalog('subcategoryId', []);
+                    setPendingQueries((q) => ({ ...q, subcategoryId: false }));
+                  }}
                 >
                   {Object.entries(categoryLabels).map(([key, label]) => (
                     <option key={key} value={key}>
@@ -514,16 +619,8 @@ export function MaterialForm({
                   ))}
                 </select>
               </label>
-              <label className="field">
-                브랜드
-                <input
-                  className="input"
-                  placeholder="브랜드명"
-                  maxLength={100}
-                  value={form.brand}
-                  onChange={(event) => set('brand', event.target.value)}
-                />
-              </label>
+              {catalogField('하위 카테고리', 'subcategory', 'subcategoryId')}
+              {catalogField('브랜드', 'brand', 'brandId')}
               <label className="field">
                 모델명 · 상품 코드
                 <input
@@ -534,44 +631,18 @@ export function MaterialForm({
                   onChange={(event) => set('code', event.target.value)}
                 />
               </label>
-              <label className="field">
-                색상
-                <input
-                  className="input"
-                  placeholder="예: 웜 그레이"
-                  maxLength={100}
-                  value={form.color}
-                  onChange={(event) => set('color', event.target.value)}
-                />
-              </label>
-              <label className="field">
-                재질 · 마감
-                <input
-                  className="input"
-                  placeholder="예: 포세린 · 무광"
-                  maxLength={100}
-                  value={form.finish}
-                  onChange={(event) => set('finish', event.target.value)}
-                />
-              </label>
+              {catalogField('색상', 'color', 'colorIds', true)}
+              {catalogField('재질', 'composition', 'compositionIds', true)}
+              {catalogField('마감', 'finish', 'finishIds', true)}
             </div>
-            {mode === 'supabase' && isAdmin && (
-              <label className="field" style={{ marginBottom: 17 }}>
-                목록 범위
-                <select
-                  aria-label="목록 범위"
-                  className="input"
-                  disabled={!!initial}
-                  value={form.scope}
-                  onChange={(event) => set('scope', event.target.value as MaterialInput['scope'])}
-                >
-                  <option value="personal">내 자재</option>
-                  <option value="shared">관리자 공용 자재</option>
-                </select>
-                <small>
-                  공용 자재는 모든 로그인 사용자가 볼 수 있어요. 저장 시 서버에서 권한을 다시 확인해요.
-                </small>
-              </label>
+            {initial && !initial.catalog && [initial.brand, initial.color, initial.finish].some(Boolean) && (
+              <p className="muted">
+                이전 기록: {[initial.brand, initial.color, initial.finish].filter(Boolean).join(' / ')}.
+                일치하는 등록 항목만 연결했어요. 저장 전에 선택 항목을 확인해 주세요.
+              </p>
+            )}
+            {mode === 'd1' && (
+              <p className="muted">새 자재는 공개 라이브러리에 등록돼요. 기존 자재의 공개 범위는 유지돼요.</p>
             )}
             <div className={styles.dimensions}>
               <label className="field">

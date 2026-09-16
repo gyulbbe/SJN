@@ -7,7 +7,18 @@ import type {
   ProjectInput,
   ProjectSummary,
 } from '../types';
+/** A complete in-memory project export; imported together or not at all. */
+export type ProjectResourceBundle = {
+  document: ProjectDocument;
+  assets: AssetRecord[];
+  versions: MaterialVersion[];
+};
 export interface ProjectRepository {
+  /** Local-only atomic import. Ordinary creation and cloud repositories need not expose it. */
+  createWithResources?(
+    bundle: ProjectResourceBundle,
+    options?: { signal?: AbortSignal },
+  ): Promise<ProjectDocument>;
   list(): Promise<ProjectSummary[]>;
   load(id: string): Promise<ProjectDocument>;
   create(document: ProjectInput): Promise<ProjectDocument>;
@@ -16,6 +27,7 @@ export interface ProjectRepository {
   remove(id: string): Promise<void>;
 }
 export interface MaterialRepository {
+  createProjectResource?(input: MaterialInput): Promise<MaterialVersion>;
   list(): Promise<{ material: Material; version: MaterialVersion }[]>;
   getVersion(id: string): Promise<MaterialVersion>;
   create(input: MaterialInput): Promise<MaterialVersion>;
@@ -31,5 +43,5 @@ export type Repositories = {
   projects: ProjectRepository;
   materials: MaterialRepository;
   assets: AssetRepository;
-  mode: 'local' | 'supabase';
+  mode: 'local' | 'd1' | 'supabase';
 };

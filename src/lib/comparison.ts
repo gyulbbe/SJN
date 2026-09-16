@@ -1,3 +1,5 @@
+import { normalizeRoomView } from './room-viewer/view-state';
+import { validateWallFeatures } from './wall-features';
 import { createRoomSurfaces } from './room-geometry';
 import { DEFAULT_COLOR, EMPTY_MASK } from './types';
 import type {
@@ -53,6 +55,7 @@ export function sameSceneFrame(a: Scene, b: Scene): boolean {
 export function blankSceneFrom(source: Scene, stableNamespace?: string): Scene {
   const next = structuredClone(source);
   delete next.backgroundAssetId;
+  delete next.wallFeatures;
   next.surfaces = source.room ? createRoomSurfaces(source.room, source.imageWidth / source.imageHeight) : [];
   if (stableNamespace)
     next.surfaces.forEach((surface) => {
@@ -139,7 +142,27 @@ function contiguousLegacy(project: LegacyProjectDocument, direction: 'past' | 'f
 }
 /** Conversion is pure, deterministic and never saves, mutates, or discards the legacy records. */
 export function normalizeProjectDocument(project: ProjectInput): ProjectDocument {
-  if (project.schemaVersion === 3) return project;
+  if (project.schemaVersion === 3) {
+    // Preserve old documents and valid object identity. Repair only supplied malformed view data,
+    // in memory; opening a project must not save or discard its original stored record.
+    const normalizeWorkspace = (workspace: WorkspaceSnapshot): WorkspaceSnapshot => {
+      if (workspace.roomView === undefined) return workspace;
+      const roomView = normalizeRoomView(workspace.roomView);
+      return JSON.stringify(roomView) === JSON.stringify(workspace.roomView)
+        ? workspace
+        : { ...workspace, roomView };
+    };
+    const current = normalizeWorkspace(project);
+    const past = project.roomHistory.past && normalizeWorkspace(project.roomHistory.past);
+    const future = project.roomHistory.future && normalizeWorkspace(project.roomHistory.future);
+    if (current === project && past === project.roomHistory.past && future === project.roomHistory.future)
+      return project;
+    return {
+      ...project,
+      ...current,
+      roomHistory: { ...(past ? { past } : {}), ...(future ? { future } : {}) },
+    };
+  }
   if (project.schemaVersion !== 1 && project.schemaVersion !== 2)
     throw new Error('지원하지 않는 프로젝트 형식이에요.');
   const baseline = blankSceneFrom(project.scene, project.id + '/baseline');
@@ -225,6 +248,7 @@ export function captureWorkspace(project: ProjectDocument): WorkspaceSnapshot {
     activeDesignId: project.activeDesignId,
     comparisonDesignIds: project.comparisonDesignIds,
     viewport: project.viewport,
+    ...(project.roomView ? { roomView: project.roomView } : {}),
   });
 }
 export function projectWorkspaces(project: ProjectDocument, includeHistory = true): WorkspaceSnapshot[] {
@@ -326,11 +350,14 @@ export function projectFrameError(project: ProjectDocument, maxDesigns = MAX_DES
   if (project.roomHistory.past && project.roomHistory.future)
     return '공간 변경 기록은 실행 취소 또는 다시 실행 하나만 유지할 수 있어요.';
   for (const scene of projectScenes(project)) {
+    const featureError = validateWallFeatures(scene.room, scene.wallFeatures)[0];
+    if (featureError) return featureError.message;
     const ids = [
       ...scene.surfaces.map((surface) => surface.id),
       ...scene.fixtures.map((fixture) => fixture.id),
+      ...(scene.wallFeatures ?? []).map((feature) => feature.id),
     ];
-    if (new Set(ids).size !== ids.length) return '같은 장면 안에 면이나 제품 ID가 중복되었어요.';
+    if (new Set(ids).size !== ids.length) return '같은 장면 안에 면·제품·벽 구조 ID가 중복되었어요.';
   }
   for (const workspace of projectWorkspaces(project)) {
     if (workspace.designs.length > maxDesigns) return DESIGN_LIMIT_MESSAGE;

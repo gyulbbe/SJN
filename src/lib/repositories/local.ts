@@ -2,7 +2,13 @@ import { getMaterialImageAssetId, stripLegacyMaterialImages } from '../material-
 import { decodeProductMesh, PRODUCT_MESH_MIME } from '../product3d/codec';
 import { normalizeProjectDocument, projectWriteError } from '../comparison';
 import { duplicateProjectDocument } from '../designs';
-import { product3dReferenceSchema, storedProjectV3Schema } from '../supabase/validation';
+import {
+  assetMetadataSchema,
+  identifierSchema,
+  materialInputSchema,
+  product3dReferenceSchema,
+  storedProjectV3Schema,
+} from '../supabase/validation';
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
   AssetRecord,
@@ -21,6 +27,10 @@ import {
   StorageNotFoundError,
 } from './references';
 import { materialPricingSchema } from '../quote-validation';
+import {
+  designPreviewRoomContextKey,
+  projectDesignPreviewRoomContext,
+} from '../render/design-preview-context';
 
 interface LocalSchema extends DBSchema {
   projects: { key: string; value: ProjectInput };
@@ -32,6 +42,23 @@ const STORES = ['projects', 'materials', 'versions', 'assets'] as const;
 type WriteTransaction = IDBPTransaction<LocalSchema, typeof STORES, 'readwrite'>;
 const LOCAL_OWNER = 'local';
 const now = () => new Date().toISOString();
+
+async function validateAsset(asset: AssetRecord) {
+  if (asset.kind === 'product-mesh') {
+    if (asset.mime !== PRODUCT_MESH_MIME || !asset.sourceAssetId)
+      throw new Error('입체 데이터 형식과 원본 연결을 확인해 주세요.');
+    await decodeProductMesh(asset.blob);
+  } else if (
+    !asset.blob.size ||
+    asset.blob.size > 25 * 1024 * 1024 ||
+    !Number.isSafeInteger(asset.width) ||
+    !Number.isSafeInteger(asset.height) ||
+    asset.width * asset.height > 40_000_000 ||
+    asset.width < 1 ||
+    asset.height < 1
+  )
+    throw new Error('이미지는 25MB, 4천만 화소 이하여야 해요.');
+}
 
 export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Repositories {
   let database: Promise<IDBPDatabase<LocalSchema>> | undefined;
@@ -45,8 +72,21 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
         database = undefined;
       },
     }));
-  const write = async <T>(callback: (tx: WriteTransaction) => Promise<T>): Promise<T> => {
+  const write = async <T>(
+    callback: (tx: WriteTransaction) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> => {
+    if (signal?.aborted) throw new DOMException('프로젝트 저장을 취소했어요.', 'AbortError');
     const transaction = (await db()).transaction(STORES, 'readwrite');
+    const abort = () => {
+      try {
+        transaction.abort();
+      } catch {
+        /* Already committed: preserve the successful save. */
+      }
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     try {
       const value = await callback(transaction);
       await transaction.done;
@@ -63,7 +103,10 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
         /* transaction already aborted */
       }
       await transaction.done.catch(() => {});
+      if (signal?.aborted) throw new DOMException('프로젝트 저장을 취소했어요.', 'AbortError');
       throw error;
+    } finally {
+      signal?.removeEventListener('abort', abort);
     }
   };
   async function checkAssets(tx: WriteTransaction, ids: string[]) {
@@ -120,27 +163,120 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
     mode: 'local',
     projects: {
       async list() {
-        return (await (await db()).getAll('projects'))
-          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-          .map((stored) => {
-            const project = normalizeProjectDocument(stored);
-            const active = project.designs.find((design) => design.id === project.activeDesignId);
-            return {
-              id: project.id,
-              name: project.name,
-              updatedAt: project.updatedAt,
-              thumbnailAssetId: project.thumbnailAssetId,
-              previewAssetId: (active?.scene ?? project.shared.baseline).previewAssetId,
-              activeDesignId: project.activeDesignId,
-              activeDesignRevision: active?.renderRevision ?? active?.revision ?? 0,
-              sharedRevision: project.shared.revision,
-            };
-          });
+        return Promise.all(
+          (await (await db()).getAll('projects'))
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+            .map(async (stored) => {
+              const project = normalizeProjectDocument(stored);
+              const active = project.designs.find((design) => design.id === project.activeDesignId);
+              const contextKey = await designPreviewRoomContextKey(projectDesignPreviewRoomContext(project));
+              return {
+                id: project.id,
+                name: project.name,
+                updatedAt: project.updatedAt,
+                thumbnailAssetId: project.thumbnailAssetId,
+                previewAssetId: (active?.scene ?? project.shared.baseline).previewAssetId,
+                activeDesignId: project.activeDesignId,
+                activeDesignRevision: active?.renderRevision ?? active?.revision ?? 0,
+                sharedRevision: project.shared.revision,
+                ...(contextKey ? { designPreviewContextKey: contextKey } : {}),
+              };
+            }),
+        );
       },
       async load(id) {
         const value = await (await db()).get('projects', id);
         if (!value) throw new StorageNotFoundError('프로젝트');
         return normalizeProjectDocument(value);
+      },
+      async createWithResources(bundle, options = {}) {
+        const captured = structuredClone(bundle);
+        const value: ProjectDocument = {
+          ...structuredClone(normalizeProjectDocument(captured.document)),
+          ownerId: LOCAL_OWNER,
+          storageRevision: 1,
+          updatedAt: now(),
+        };
+        storedProjectV3Schema.parse(value);
+        if (new Blob([JSON.stringify(value)]).size > 20 * 1024 * 1024)
+          throw new Error('프로젝트 문서가 너무 커요.');
+        const assetIds = new Set<string>();
+        const versionIds = new Set<string>();
+        const materialGroups = new Map<string, MaterialVersion[]>();
+        for (const asset of captured.assets) {
+          assetMetadataSchema.parse(asset);
+          if (assetIds.has(asset.id)) throw new Error('이미지 묶음에 중복 ID가 있어요.');
+          assetIds.add(asset.id);
+          await validateAsset(asset);
+        }
+        for (const version of captured.versions) {
+          identifierSchema.parse(version.id);
+          identifierSchema.parse(version.materialId);
+          materialInputSchema.parse(version);
+          if (
+            version.scope !== 'personal' ||
+            !Number.isSafeInteger(version.version) ||
+            version.version < 1 ||
+            !Number.isFinite(Date.parse(version.createdAt))
+          )
+            throw new Error('개인 자재 버전의 형식을 확인해 주세요.');
+          if (versionIds.has(version.id)) throw new Error('자재 묶음에 중복 ID가 있어요.');
+          versionIds.add(version.id);
+          materialGroups.set(version.materialId, [
+            ...(materialGroups.get(version.materialId) ?? []),
+            version,
+          ]);
+          if (materialReferences(version).some((id) => !assetIds.has(id)))
+            throw new StorageNotFoundError('묶음의 자재 이미지');
+        }
+        const byAssetId = new Map(captured.assets.map((asset) => [asset.id, asset]));
+        for (const asset of captured.assets) {
+          const visited = new Set([asset.id]);
+          let sourceId = asset.sourceAssetId;
+          while (sourceId) {
+            if (visited.has(sourceId)) throw new Error('이미지 원본 연결이 순환해요.');
+            visited.add(sourceId);
+            const source = byAssetId.get(sourceId);
+            if (!source) throw new StorageNotFoundError('묶음의 원본 이미지');
+            if (source.kind === 'product-mesh') throw new Error('파생 자산의 원본은 이미지여야 해요.');
+            sourceId = source.sourceAssetId;
+          }
+        }
+        const references = projectReferences(value);
+        if (
+          references.assets.some((id) => !assetIds.has(id)) ||
+          references.versions.some((id) => !versionIds.has(id))
+        )
+          throw new StorageNotFoundError('묶음의 프로젝트 자료');
+        return write(async (tx) => {
+          if (await tx.objectStore('projects').get(value.id)) throw new StorageConflictError();
+          for (const asset of captured.assets) {
+            if (await tx.objectStore('assets').get(asset.id)) throw new StorageConflictError();
+            await tx.objectStore('assets').add({ ...asset, ownerId: LOCAL_OWNER, size: asset.blob.size });
+          }
+          for (const [materialId, versions] of materialGroups) {
+            if (await tx.objectStore('materials').get(materialId)) throw new StorageConflictError();
+            const latest = [...versions].sort((a, b) => b.version - a.version)[0];
+            if (new Set(versions.map((version) => version.version)).size !== versions.length)
+              throw new Error('자재 버전 번호가 중복돼요.');
+            for (const version of versions) {
+              await checkMaterialAssets(tx, version);
+              if (await tx.objectStore('versions').get(version.id)) throw new StorageConflictError();
+              await tx.objectStore('versions').add(version);
+            }
+            await tx.objectStore('materials').add({
+              id: materialId,
+              ownerId: LOCAL_OWNER,
+              currentVersionId: latest.id,
+              active: true,
+              scope: 'personal',
+              updatedAt: now(),
+            });
+          }
+          await checkProject(tx, value);
+          await tx.objectStore('projects').add(value);
+          return value;
+        }, options.signal);
       },
       async create(document) {
         return write(async (tx) => {
@@ -259,20 +395,7 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
     },
     assets: {
       async put(asset) {
-        if (asset.kind === 'product-mesh') {
-          if (asset.mime !== PRODUCT_MESH_MIME || !asset.sourceAssetId)
-            throw new Error('입체 데이터 형식과 원본 연결을 확인해 주세요.');
-          await decodeProductMesh(asset.blob);
-        } else if (
-          !asset.blob.size ||
-          asset.blob.size > 25 * 1024 * 1024 ||
-          !Number.isSafeInteger(asset.width) ||
-          !Number.isSafeInteger(asset.height) ||
-          asset.width * asset.height > 40_000_000 ||
-          asset.width < 1 ||
-          asset.height < 1
-        )
-          throw new Error('이미지는 25MB, 4천만 화소 이하여야 해요.');
+        await validateAsset(asset);
         await write(async (tx) => {
           const existing = await tx.objectStore('assets').get(asset.id);
           if (existing) throw new StorageConflictError();

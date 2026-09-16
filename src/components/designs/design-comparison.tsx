@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { ArrowLeft, Download, Expand, Maximize, Minus, Plus, X } from 'lucide-react';
 import type { DesignDocument, MaterialVersion } from '@/lib/types';
 import type { AssetReader } from '@/lib/render/compositor';
+import type { DesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { MAX_COMPARISON_DESIGNS } from '@/lib/designs';
 import {
   acquireDesignPreviewSession,
@@ -30,6 +31,7 @@ export type DesignComparisonProps = {
   designs: DesignDocument[];
   materials: Record<string, MaterialVersion>;
   assetReader: AssetReader;
+  roomContext?: DesignPreviewRoomContext;
   writable: boolean;
   onEdit: (id: string) => void;
   onExclude: (id: string) => void;
@@ -38,7 +40,14 @@ export type DesignComparisonProps = {
 };
 type CardProps = Pick<
   DesignComparisonProps,
-  'projectId' | 'sharedRevision' | 'materials' | 'assetReader' | 'writable' | 'onEdit' | 'onExclude'
+  | 'projectId'
+  | 'sharedRevision'
+  | 'materials'
+  | 'assetReader'
+  | 'roomContext'
+  | 'writable'
+  | 'onEdit'
+  | 'onExclude'
 > & {
   design: DesignDocument;
   view: DesignView;
@@ -352,6 +361,7 @@ export default function DesignComparison(props: DesignComparisonProps) {
     sharedRevision: props.sharedRevision,
     design,
     materials: props.materials,
+    roomContext: props.roomContext,
   });
   async function exportImage(design?: DesignDocument) {
     if (exporting) return;
