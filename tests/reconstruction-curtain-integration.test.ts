@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Box3, Vector3 } from 'three';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
 import {
   DEFAULT_COLOR,
@@ -32,7 +32,7 @@ import {
 } from '../src/lib/reconstruction/scene-understanding';
 import type { SceneCandidate, SceneUnderstanding } from '../src/lib/reconstruction/pipeline-contract';
 import type { CurtainHardware, ReconstructionReview } from '../src/lib/reconstruction/types';
-import { projectV3Schema } from '../src/lib/supabase/validation';
+import { projectV3Schema } from '../src/lib/storage/validation';
 
 // Only WebGL rasterization and browser bitmap/canvas readback are synthetic. Model geometry,
 // placement, material/version creation, editor history, local repository and schemas are real.
@@ -95,7 +95,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 function repos(databaseName = 'curtain-integration-' + crypto.randomUUID()) {
-  return createLocalRepositories(databaseName);
+  return createLegacyLocalRepositories(databaseName);
 }
 function candidate(): SceneCandidate {
   return {
@@ -357,7 +357,7 @@ describe('suspended curtains: real factory, physical placement, editor and local
     useEditor.getState().redo();
     expect(useEditor.getState().project!.shared.comparison!.before.fixtures[0]).toEqual(next);
     const saved = await repository.projects.save(useEditor.getState().project!, value.storageRevision);
-    const reopened = createLocalRepositories(databaseName);
+    const reopened = createLegacyLocalRepositories(databaseName);
     expect(reopened.mode).toBe('local');
     const loaded = await reopened.projects.load(saved.id);
     useEditor.getState().load(loaded);

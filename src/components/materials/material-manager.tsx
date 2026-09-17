@@ -2,6 +2,7 @@
 import { getMaterialImageAssetId, stripLegacyMaterialImages } from '@/lib/material-images';
 
 import Link from 'next/link';
+import AdminLinks from '@/components/admin/admin-links';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Archive,
@@ -33,7 +34,7 @@ import styles from './materials.module.css';
 type MaterialRow = { material: Material; version: MaterialVersion };
 
 export default function MaterialManager() {
-  const { writable, ready, mode } = useAccess();
+  const { writable, ready } = useAccess();
   const isAdmin = useSharedCatalogAdmin();
   const [rows, setRows] = useState<MaterialRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +69,7 @@ export default function MaterialManager() {
     };
   }, [refresh]);
   const duplicate = async (version: MaterialVersion) => {
-    if (!writable) return;
+    if (!writable || !isAdmin) return;
     setBusy(version.materialId);
     setError('');
     try {
@@ -76,10 +77,10 @@ export default function MaterialManager() {
       const input: MaterialInput = stripLegacyMaterialImages({
         ...version,
         name: `${version.name} (복사)`,
-        scope: mode === 'local' ? 'personal' : 'shared',
+        scope: 'shared',
       });
       const result = await getRepositories().materials.create(input);
-      setNotice('내 자재로 복제했어요. 원래 자재에 영향을 주지 않고 수정할 수 있어요.');
+      setNotice('새 공용 자재로 복제했어요. 원래 자재에 영향을 주지 않고 수정할 수 있어요.');
       setDetail(undefined);
       setForm(result);
       await refresh();
@@ -90,7 +91,7 @@ export default function MaterialManager() {
     }
   };
   const toggleActive = async (row: MaterialRow) => {
-    if (!writable || (row.material.scope === 'shared' && !isAdmin)) return;
+    if (!writable || !isAdmin) return;
     setBusy(row.material.id);
     setError('');
     try {
@@ -141,18 +142,15 @@ export default function MaterialManager() {
           <Grid2X2 size={18} />
           자재 라이브러리
         </Link>
-        {(mode === 'local' || isAdmin) && (
+        {isAdmin && (
           <Link href="/admin/catalog" className="nav-item">
             분류·속성 관리
           </Link>
         )}
+        <AdminLinks className="nav-item" />
         <div className="nav-bottom">
           <StorageBadge />
-          <p>
-            {mode === 'local'
-              ? '사진과 자재는 이 브라우저에 저장돼요.'
-              : '로그인 계정의 서버 저장소를 사용해요.'}
-          </p>
+          <p>로그인 계정의 서버 저장소를 사용해요.</p>
           <span className="version">공간미리 · 0.1</span>
         </div>
       </aside>
@@ -272,7 +270,9 @@ export default function MaterialManager() {
           </label>
         </div>
         {scope === 'shared' && (
-          <p className={styles.sharedNote}>공용 자재는 내 자재로 복제하면 개인 버전으로 수정할 수 있어요.</p>
+          <p className={styles.sharedNote}>
+            공용 자재는 새 공용 자재로 복제하면 개인 버전으로 수정할 수 있어요.
+          </p>
         )}
         {loading ? (
           <div className={styles.empty} role="status">
@@ -359,7 +359,7 @@ export default function MaterialManager() {
                         : void duplicate(row.version)
                     }
                   >
-                    {row.material.scope === 'personal' || isAdmin ? '정보 수정' : '내 자재로 복제'}
+                    {row.material.scope === 'personal' || isAdmin ? '정보 수정' : '새 공용 자재로 복제'}
                   </button>
                   <div className={styles.toolbar}>
                     {(row.material.scope === 'personal' || isAdmin) && (
@@ -391,11 +391,7 @@ export default function MaterialManager() {
           </div>
         )}
         <footer className="home-footer">
-          <span>
-            {mode === 'local'
-              ? '등록한 이미지는 외부 AI로 전송되지 않아요.'
-              : '공용 자재의 편집 권한은 서버에서 확인해요.'}
-          </span>
+          <span>공용 자재의 편집 권한은 서버에서 확인해요.</span>
           <span>기존 프로젝트는 적용 당시의 자재 버전을 유지합니다.</span>
         </footer>
       </main>
@@ -519,7 +515,7 @@ export default function MaterialManager() {
                   disabled={!writable || !!busy}
                   onClick={() => void duplicate(detail.version)}
                 >
-                  내 자재로 복제
+                  새 공용 자재로 복제
                 </button>
                 {detail.material.scope === 'personal' && (
                   <button

@@ -1,4 +1,4 @@
-/** Production UI/WebGL/IndexedDB, synthetic support contract. No model inference or photo claims. */
+/** Production renderer/WebGL and historical IndexedDB fixture, synthetic support contract. No model inference or photo claims. */
 import { chromium, expect } from '@playwright/test';
 import { build } from 'esbuild';
 import { resolve } from 'node:path';
@@ -6,9 +6,9 @@ import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 type Modules = typeof import('../src/lib/reconstruction/lab') &
-  typeof import('../src/lib/reconstruction/lab-project') &
+  typeof import('./helpers/legacy-lab-project') &
   typeof import('../src/lib/room-viewer/render-snapshot') &
-  typeof import('../src/lib/repositories') &
+  typeof import('./helpers/legacy-local-repositories') &
   typeof import('../src/lib/room-geometry') &
   typeof import('../src/lib/types') &
   typeof import('./fixtures/room-source-inference-boundary') &
@@ -21,10 +21,10 @@ const bundle = await build({
   stdin: {
     contents: `
 export {runReconstructionLabCase} from './src/lib/reconstruction/lab';
-export {saveLabResultAsProject,readLabProjectReport} from './src/lib/reconstruction/lab-project';
+export {saveLabResultAsProject,readLabProjectReport} from './tests/helpers/legacy-lab-project';
 export {renderRoomSnapshotImage} from './src/lib/room-viewer/render-snapshot';
 export {default as RoomViewer} from './src/components/rooms/room-viewer';
-export {getRepositories} from './src/lib/repositories';
+export {createLegacyLocalRepositories} from './tests/helpers/legacy-local-repositories';
 export {DEFAULT_ROOM} from './src/lib/room-geometry';
 export {createRoot} from 'react-dom/client';export {createElement} from 'react';
 export {boundaryCalls} from './tests/fixtures/room-source-inference-boundary';
@@ -97,7 +97,7 @@ try {
   await page.goto(origin);
   const result = await page.evaluate(async (base) => {
     const m = (await import(base + '/bundle.js')) as Modules,
-      repo = m.getRepositories();
+      repo = m.createLegacyLocalRepositories('lab-source-camera-legacy-fixture');
     const input = document.createElement('canvas');
     input.width = 480;
     input.height = 640;
@@ -273,7 +273,7 @@ try {
   const reopened = await page.evaluate(
     async ({ base, id }) => {
       const m = (await import(base + '/bundle.js')) as Modules,
-        p = await m.getRepositories().projects.load(id);
+        p = await m.createLegacyLocalRepositories('lab-source-camera-legacy-fixture').projects.load(id);
       return {
         view: p.roomView,
         reportView: m.readLabProjectReport(p)?.renderView,

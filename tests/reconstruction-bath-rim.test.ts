@@ -16,7 +16,7 @@ import {
   syncBathRimAttachments,
 } from '../src/lib/reconstruction/bath-rim';
 import { normalizeRoomScene, resizedRoomScene } from '../src/lib/room-editing';
-import { fixtureReconstructionSchema, projectSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema, projectSchema } from '../src/lib/storage/validation';
 import { normalizeProjectDocument, projectScenes } from '../src/lib/comparison';
 import { duplicateProjectDocument, copyDesignDocument } from '../src/lib/designs';
 import { useEditor } from '../src/lib/editor-store';

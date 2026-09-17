@@ -12,7 +12,7 @@ const sha = (value: Buffer | string) => createHash('sha256').update(value).diges
 await mkdir(output, { recursive: true });
 const bundle = await build({
   stdin: {
-    contents: `export * from './src/lib/reconstruction'; export {DEFAULT_ROOM} from './src/lib/room-geometry';export {createLocalRepositories} from './src/lib/repositories/local';export {PhotoCompositor} from './src/lib/render/compositor';export {reconstructionReviewSchema} from './src/lib/supabase/validation';`,
+    contents: `export * from './src/lib/reconstruction'; export {DEFAULT_ROOM} from './src/lib/room-geometry';export {createLegacyLocalRepositories} from './tests/helpers/legacy-local-repositories';export {PhotoCompositor} from './src/lib/render/compositor';export {reconstructionReviewSchema} from './src/lib/storage/validation';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -61,10 +61,10 @@ try {
       async ({ origin, photo, report, id }) => {
         const m = (await import(origin + '/index.js')) as typeof import('../src/lib/reconstruction') &
           typeof import('../src/lib/room-geometry') &
-          typeof import('../src/lib/repositories/local') &
+          typeof import('./helpers/legacy-local-repositories') &
           typeof import('../src/lib/render/compositor') &
-          typeof import('../src/lib/supabase/validation');
-        const repositories = m.createLocalRepositories('strict-placement-' + id);
+          typeof import('../src/lib/storage/validation');
+        const repositories = m.createLegacyLocalRepositories('strict-placement-' + id);
         const file = new File([Uint8Array.from(atob(photo), (c) => c.charCodeAt(0))], id + '.jpg', {
           type: 'image/jpeg',
         });

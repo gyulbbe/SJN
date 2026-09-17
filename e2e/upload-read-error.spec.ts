@@ -1,3 +1,14 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, {
+    allowModelDownloads:
+      process.env.SJN_AI_BACKGROUND_REAL === '1' || process.env.SJN_AI_BACKGROUND_WASM === '1',
+  });
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 import { expect, test } from '@playwright/test';
 import sharp from 'sharp';
 
@@ -27,7 +38,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('제품 사진 읽기 실패를 안내하고 같은 파일 재선택으로 등록한다', async ({ page }) => {
-  await page.goto('/materials');
+  await page.goto('/admin/materials');
   await page.getByRole('button', { name: '자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
   await form.getByLabel('상품명').fill('파일 재선택 검증 제품');
@@ -54,11 +65,13 @@ test('공간 사진 읽기 실패 후 동일 사진을 다시 선택해 프로�
   const input = page.getByTestId('project-upload');
   await expect(input).toBeEnabled();
   await input.setInputFiles(await photo());
-  await expect(page.locator('.error[role="alert"]')).toContainText('다운로드 폴더에 새 이름으로 저장한 뒤 다시 선택');
+  await expect(page.locator('.error[role="alert"]')).toContainText(
+    '다운로드 폴더에 새 이름으로 저장한 뒤 다시 선택',
+  );
   await expect(page.locator('.error[role="alert"]')).not.toContainText('The requested file');
   await expect(input).toBeEnabled();
   await input.setInputFiles(await photo());
   await expect(page).toHaveURL(/\/projects\/[a-z0-9-]+$/);
   await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
 });

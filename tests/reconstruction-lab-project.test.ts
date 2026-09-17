@@ -3,10 +3,10 @@ import { IDBObjectStore } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getActiveScene, normalizeProjectDocument } from '../src/lib/comparison';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
-import { createLocalRepositories } from '../src/lib/repositories/local';
-import type { ProjectRepository } from '../src/lib/repositories/contracts';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
+import type { LegacyProjectRepository as ProjectRepository } from './helpers/legacy-local-repositories';
 import { projectReferences, StorageConflictError } from '../src/lib/repositories/references';
-import { storedProjectV3Schema } from '../src/lib/supabase/validation';
+import { storedProjectV3Schema } from '../src/lib/storage/validation';
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
@@ -18,7 +18,7 @@ import {
   readLabProjectReport,
   saveLabResultAsProject,
   type LabProjectBundle,
-} from '../src/lib/reconstruction/lab-project';
+} from './helpers/legacy-lab-project';
 import type { ReconstructionLabReport } from '../src/lib/reconstruction/lab';
 
 type AtomicProjectCreate = NonNullable<ProjectRepository['createWithResources']>;
@@ -177,20 +177,20 @@ function completed() {
   };
   return { report, projectBundle };
 }
-const repositories = () => createLocalRepositories('lab-project-' + crypto.randomUUID());
+const repositories = () => createLegacyLocalRepositories('lab-project-' + crypto.randomUUID());
 afterEach(() => vi.restoreAllMocks());
 
 describe('explicit lab project import (synthetic resources; no AI or renderer)', () => {
   it('persists editable Before, original photo, immutable versions and the completed raw/user archive together', async () => {
     const databaseName = 'lab-project-' + crypto.randomUUID(),
-      repo = createLocalRepositories(databaseName);
+      repo = createLegacyLocalRepositories(databaseName);
     const input = completed(),
       original = structuredClone(input);
     const request = vi.spyOn(globalThis, 'fetch');
     const saved = await saveLabResultAsProject(input, { repositories: repo, name: '보정된 욕실' });
     expect(input).toEqual(original);
     expect(request).not.toHaveBeenCalled();
-    const loaded = await createLocalRepositories(databaseName).projects.load(saved.id);
+    const loaded = await createLegacyLocalRepositories(databaseName).projects.load(saved.id);
     expect(loaded.name).toBe('보정된 욕실');
     expect(loaded.storageRevision).toBe(1);
     expect(loaded.shared.comparison?.before).toEqual(

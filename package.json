@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/dev-local.mjs next",
+    "dev": "node scripts/dev-local.mjs vinext",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "lint": "eslint .",
@@ -25,11 +25,11 @@
     "deploy:vinext": "vinext-cloudflare deploy --config dist/server/wrangler.json",
     "test:cloudflare": "playwright test --config playwright.cloudflare.config.ts",
     "test:background-removal": "playwright test --config playwright.background-removal.config.ts",
-    "test:reconstruction:standard": "node tests/run-browser-test.mjs tests/reconstruction-standard-browser.ts"
+    "test:reconstruction:standard": "node tests/run-browser-test.mjs tests/reconstruction-standard-browser.ts",
+    "dev:next": "node scripts/dev-local.mjs next",
+    "db:dev:migrate": "wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc --persist-to .wrangler/development"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.9.0",
-    "@supabase/supabase-js": "^2.99.0",
     "@tensorflow/tfjs-backend-wasm": "4.22.0",
     "@tensorflow/tfjs-converter": "4.22.0",
     "@tensorflow/tfjs-core": "4.22.0",

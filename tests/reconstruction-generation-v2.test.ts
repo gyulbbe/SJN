@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AssetRecord, MaterialInput, MaterialVersion } from '../src/lib/types';
-import type { Repositories } from '../src/lib/repositories';
+import type { RepositoryOperations } from '../src/lib/repositories/contracts';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 
 const render = vi.hoisted(() =>
@@ -69,7 +69,7 @@ function repositories() {
     },
     materials: {
       list: async () => versions.map((version) => ({ version })),
-      create: async (input: MaterialInput) => {
+      createProjectResource: async (input: MaterialInput) => {
         const version = {
           ...input,
           id: crypto.randomUUID(),
@@ -81,7 +81,7 @@ function repositories() {
         return version;
       },
     },
-  } as unknown as Repositories;
+  } as unknown as RepositoryOperations;
   return { repos, versions, assets, put };
 }
 beforeEach(() => render.mockClear());

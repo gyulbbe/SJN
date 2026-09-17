@@ -31,9 +31,9 @@ export async function discoverStorage(
       if (!response.ok) return blockedStatus('connection_failed');
       const value = (await response.json()) as StorageStatus;
       if (
-        !['local', 'd1', 'supabase'].includes(value.mode) ||
+        value.mode !== 'd1' ||
         typeof value.ready !== 'boolean' ||
-        (value.mode === 'local' && !value.ready) ||
+        value.authRequired !== true ||
         !Object.hasOwn(STORAGE_MESSAGES, value.reason)
       )
         return blockedStatus('invalid_configuration');

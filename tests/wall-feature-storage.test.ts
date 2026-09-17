@@ -10,10 +10,10 @@ import {
 } from '../src/lib/comparison';
 import { copyDesignDocument, createBlankDesign, duplicateProjectDocument } from '../src/lib/designs';
 import { useEditor } from '../src/lib/editor-store';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { normalizeRoomScene, projectWallFeatureResizeError, resizedRoomScene } from '../src/lib/room-editing';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
-import { legacyProjectSchema, projectV3Schema, storedProjectV3Schema } from '../src/lib/supabase/validation';
+import { legacyProjectSchema, projectV3Schema, storedProjectV3Schema } from '../src/lib/storage/validation';
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
@@ -215,7 +215,7 @@ describe('wall structure storage and state boundaries', () => {
 
   it('persists all frames in isolated local storage and rejects invalid saves atomically', async () => {
     const p = historicalProject();
-    const repo = createLocalRepositories('wall-features-test-' + crypto.randomUUID());
+    const repo = createLegacyLocalRepositories('wall-features-test-' + crypto.randomUUID());
     for (const id of new Set(projectScenes(p).flatMap((s) => [s.originalAssetId, s.previewAssetId]))) {
       await repo.assets.put({
         id,

@@ -1,6 +1,7 @@
 'use client';
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
+import { useAdminProjectScope } from '@/components/repository-context';
 import { ArrowLeft, Download, Expand, Maximize, Minus, Plus, X } from 'lucide-react';
 import type { DesignDocument, MaterialVersion } from '@/lib/types';
 import type { AssetReader } from '@/lib/render/compositor';
@@ -316,6 +317,7 @@ function downloadBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export default function DesignComparison(props: DesignComparisonProps) {
+  const adminScope = useAdminProjectScope();
   const exportSession = useRef<ReturnType<typeof acquireDesignPreviewSession> | null>(null);
   const container = useRef<HTMLElement>(null),
     alive = useRef(true),
@@ -365,7 +367,10 @@ export default function DesignComparison(props: DesignComparisonProps) {
   });
   async function exportImage(design?: DesignDocument) {
     if (exporting) return;
-    const session = acquireDesignPreviewSession(props.projectId, props.assetReader);
+    const session = acquireDesignPreviewSession(
+      adminScope ? adminScope + props.projectId : props.projectId,
+      props.assetReader,
+    );
     exportSession.current = session;
     setExporting(design?.id ?? 'all');
     setError('');

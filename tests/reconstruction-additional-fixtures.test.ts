@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createTemplateModel, disposeTemplateModel } from '../src/lib/reconstruction/templates';
 import { reconstructionDefaults, reconstructionLabels } from '../src/lib/reconstruction/types';
 import { categoryLabels } from '../src/lib/types';
-import { fixtureReconstructionSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema } from '../src/lib/storage/validation';
 
 const kinds = ['shower', 'wallCabinet', 'lowPartition'] as const;
 

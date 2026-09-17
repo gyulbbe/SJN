@@ -1,3 +1,4 @@
+import { photoAnalysisSignal, type AnalysisCachePolicy } from './analysis-cache-policy';
 import { createProjectMaterial } from '@/lib/repositories/project-material';
 import { fixtureVariantErrors, openCounterDefaults, showerVariantDefaults } from './fixture-variants';
 import { resolveProductColor } from './product-color';
@@ -18,7 +19,7 @@ import {
 } from '../types';
 import { normalizeProjectDocument } from '../comparison';
 import type { RoomDefinition, RoomFace } from '../room-types';
-import type { Repositories } from '../repositories';
+import type { RepositoryOperations } from '../repositories/contracts';
 import { getRepositories } from '../repositories';
 import { canvasBlob, importImage, makeAsset } from '../images';
 import { createRoomSurfaces, validateRoomDimensions } from '../room-geometry';
@@ -117,7 +118,7 @@ export type ReconstructionFixtureOptions = ReconstructionStandardOptions & {
   heightMm?: number;
   depthMm?: number;
   aspect?: number;
-  repositories?: Repositories;
+  repositories?: RepositoryOperations;
   signal?: AbortSignal;
   /** Required when confirming a link to an existing bath. Never included in immutable material data. */
   relatedFixtures?: readonly FixtureInstance[];
@@ -532,7 +533,7 @@ export async function createReconstructionTile(options: {
   groutWidth?: number;
   groutColor?: string;
   pattern?: 'grid' | 'brick';
-  repositories?: Repositories;
+  repositories?: RepositoryOperations;
   signal?: AbortSignal;
 }): Promise<MaterialVersion> {
   const color = colorValue(options.color),
@@ -746,7 +747,10 @@ export function estimateCandidateFixture(
   };
 }
 export type ReconstructionProjectOptions = {
-  repositories?: Repositories;
+  /** Administrator edits must not retain another owner's photo-derived observations locally. */
+  cachePolicy?: AnalysisCachePolicy;
+  onDiagnostic?: (entry: import('./lab-diagnostic-storage').DiagnosticArchiveEntry) => void;
+  repositories?: RepositoryOperations;
   onStage?: (message: string) => void;
   signal?: AbortSignal;
   manual?: boolean;
@@ -778,50 +782,57 @@ export async function createReconstructionProject(
   room: RoomDefinition,
   options: ReconstructionProjectOptions = {},
 ): Promise<ProjectDocument> {
+  options = { ...options, signal: photoAnalysisSignal(options.signal, options.cachePolicy ?? 'persistent') };
   if (options.externalDiagnostics) return createReconstructionProjectImpl(file, room, options);
   const profile = options.manual ? 'browser-basic' : (options.analysisProfile ?? 'browser-basic');
-  return withProjectAnalysisDiagnostics(file, room, profile, options.signal, (capture, diagnostic) =>
-    createReconstructionProjectImpl(file, room, {
-      ...options,
-      onStage: (message) => {
-        diagnostic.progress(message);
-        options.onStage?.(message);
-      },
-      onAnalysisPhase: (phase) => {
-        diagnostic.phase(phase);
-        options.onAnalysisPhase?.(phase);
-      },
-      onQualityCheckpoint: (name, value) => {
-        diagnostic.checkpoint(name, value);
-        options.onQualityCheckpoint?.(name, value);
-      },
-      onRawReview: (review) => {
-        capture.rawReview = structuredClone(review);
-        diagnostic.checkpoint('baselineReview', review);
-        options.onRawReview?.(review);
-      },
-      onSegmentationCandidates: (candidates) => {
-        capture.rawSegmentationCandidates = structuredClone(candidates);
-        diagnostic.checkpoint('rawSegmentationCandidates', candidates);
-        options.onSegmentationCandidates?.(candidates);
-      },
-      onQuality: (result) => {
-        capture.quality = result.evidence;
-        capture.pipeline = {
-          ...result.pipeline,
-          model: result.model,
-          modelReused: result.evidence.reused,
-          quality: result.evidence,
-        };
-        diagnostic.checkpoint('candidatePipeline', capture.pipeline);
-        options.onQuality?.(result);
-      },
-      onBaselineAnalysis: (measurement) => {
-        diagnostic.checkpoint('baselineMeasurement', measurement);
-        diagnostic.phase(profile !== 'browser-basic' ? 'candidate-model' : 'placement');
-        options.onBaselineAnalysis?.(measurement);
-      },
-    }),
+  return withProjectAnalysisDiagnostics(
+    file,
+    room,
+    profile,
+    options.signal,
+    (capture, diagnostic) =>
+      createReconstructionProjectImpl(file, room, {
+        ...options,
+        onStage: (message) => {
+          diagnostic.progress(message);
+          options.onStage?.(message);
+        },
+        onAnalysisPhase: (phase) => {
+          diagnostic.phase(phase);
+          options.onAnalysisPhase?.(phase);
+        },
+        onQualityCheckpoint: (name, value) => {
+          diagnostic.checkpoint(name, value);
+          options.onQualityCheckpoint?.(name, value);
+        },
+        onRawReview: (review) => {
+          capture.rawReview = structuredClone(review);
+          diagnostic.checkpoint('baselineReview', review);
+          options.onRawReview?.(review);
+        },
+        onSegmentationCandidates: (candidates) => {
+          capture.rawSegmentationCandidates = structuredClone(candidates);
+          diagnostic.checkpoint('rawSegmentationCandidates', candidates);
+          options.onSegmentationCandidates?.(candidates);
+        },
+        onQuality: (result) => {
+          capture.quality = result.evidence;
+          capture.pipeline = {
+            ...result.pipeline,
+            model: result.model,
+            modelReused: result.evidence.reused,
+            quality: result.evidence,
+          };
+          diagnostic.checkpoint('candidatePipeline', capture.pipeline);
+          options.onQuality?.(result);
+        },
+        onBaselineAnalysis: (measurement) => {
+          diagnostic.checkpoint('baselineMeasurement', measurement);
+          diagnostic.phase(profile !== 'browser-basic' ? 'candidate-model' : 'placement');
+          options.onBaselineAnalysis?.(measurement);
+        },
+      }),
+    options.onDiagnostic,
   );
 }
 async function createReconstructionProjectImpl(
@@ -864,9 +875,19 @@ async function createReconstructionProjectImpl(
   if (options.reuseAnalysis) {
     review = structuredClone(options.reuseAnalysis);
   } else if (!options.manual) {
-    const runSegmentation = options.analysisProfile === 'cloud-browser-v1'
-      ? async (photo: Blob, onStage: ((message: string) => void) | undefined, settings: { signal?: AbortSignal }) => (await import('./segmentation-cache')).segmentReconstructionCached(photo, onStage, settings.signal ?? new AbortController().signal)
-      : segmentRoom;
+    const runSegmentation =
+      options.analysisProfile === 'cloud-browser-v1'
+        ? async (
+            photo: Blob,
+            onStage: ((message: string) => void) | undefined,
+            settings: { signal?: AbortSignal },
+          ) =>
+            (await import('./segmentation-cache')).segmentReconstructionCached(
+              photo,
+              onStage,
+              settings.signal ?? new AbortController().signal,
+            )
+        : segmentRoom;
     const segmentation = await runSegmentation(
       reference.preview.blob,
       (message) => {
@@ -918,7 +939,10 @@ async function createReconstructionProjectImpl(
     throw new Error('기존 로컬 AI 분석은 종료됐어요. 사진 분석 방식에서 AI 정밀 분석을 다시 선택해 주세요.');
   } else if (!options.manual && options.analysisProfile === 'cloud-browser-v1') {
     const runQuality = async (input: Parameters<typeof runQualityPipeline>[0]) =>
-      (await import('./cloud-quality')).runCloudBrowserQuality(input, { mode: options.mogeMode, onGeometry: options.onMogeGeometry });
+      (await import('./cloud-quality')).runCloudBrowserQuality(input, {
+        mode: options.mogeMode,
+        onGeometry: options.onMogeGeometry,
+      });
     const result = await runQuality({
       baseline: structuredClone(review),
       photo: reference.preview.blob,

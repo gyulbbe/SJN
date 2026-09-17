@@ -1,5 +1,13 @@
-import { CLOUD_GEMMA_APPEARANCE_METADATA, cloudGemmaFixtureAppearancePrompt } from '../src/lib/reconstruction/cloud-gemma-appearance';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getD1Actor } from '../src/lib/auth/d1';
+beforeEach(() => vi.mocked(getD1Actor).mockResolvedValue({ id: 'test-account', isAdmin: false }));
+vi.mock('../src/lib/auth/d1', () => ({
+  getD1Actor: vi.fn().mockResolvedValue({ id: 'test-account', isAdmin: false }),
+}));
+import {
+  CLOUD_GEMMA_APPEARANCE_METADATA,
+  cloudGemmaFixtureAppearancePrompt,
+} from '../src/lib/reconstruction/cloud-gemma-appearance';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { canvasBlob, readImageHeader } from '../src/lib/images';
 import { fetchAnalysis } from '../src/lib/reconstruction/analysis-transport';
 import {
@@ -91,8 +99,8 @@ async function call(mutate?: (form: FormData) => void, operation = 'appearance')
   });
   const result = runCloudGemmaModel(request, {
     platform: 'cloudflare',
-    APP_ENV: 'local',
-    STORAGE_MODE: 'auto',
+    APP_ENV: 'development',
+    STORAGE_MODE: 'd1',
     AI: { run },
   });
   return { result, run, input };
@@ -376,15 +384,25 @@ it.each([
   vi.mocked(fetchAnalysis).mockImplementationOnce(async (_provider, options) => {
     const form = options.body as FormData;
     return Response.json({
-      provider: CLOUD_GEMMA_PROVIDER, modelId: CLOUD_GEMMA_MODEL,
-      modelRevision: CLOUD_GEMMA_REVISION, modelIdentity: CLOUD_GEMMA_IDENTITY,
-      outputContract: 'fixed-candidate-appearance-v1', promptRevision: 1,
-      ...CLOUD_GEMMA_APPEARANCE_METADATA, ...mutation, rawText,
+      provider: CLOUD_GEMMA_PROVIDER,
+      modelId: CLOUD_GEMMA_MODEL,
+      modelRevision: CLOUD_GEMMA_REVISION,
+      modelIdentity: CLOUD_GEMMA_IDENTITY,
+      outputContract: 'fixed-candidate-appearance-v1',
+      promptRevision: 1,
+      ...CLOUD_GEMMA_APPEARANCE_METADATA,
+      ...mutation,
+      rawText,
       appearanceReceipt: JSON.parse(form.get('appearanceReceipt') as string),
     });
   });
-  await expect(analyzeFixtureAppearance(
-    new Blob([photoBytes()]), inventory(), new AbortController().signal, CLOUD_GEMMA_PROVIDER,
-  )).rejects.toMatchObject({ diagnostics: { validationError: expect.stringContaining('프롬프트 버전') } });
+  await expect(
+    analyzeFixtureAppearance(
+      new Blob([photoBytes()]),
+      inventory(),
+      new AbortController().signal,
+      CLOUD_GEMMA_PROVIDER,
+    ),
+  ).rejects.toMatchObject({ diagnostics: { validationError: expect.stringContaining('프롬프트 버전') } });
   expect(fetchAnalysis).toHaveBeenCalledOnce();
 });

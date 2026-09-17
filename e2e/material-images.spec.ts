@@ -1,3 +1,14 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, {
+    allowModelDownloads:
+      process.env.SJN_AI_BACKGROUND_REAL === '1' || process.env.SJN_AI_BACKGROUND_WASM === '1',
+  });
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import sharp from 'sharp';
 import { savedProject } from '../tests/helpers/editor-actions';
@@ -81,7 +92,7 @@ for (const hasFront of [true, false]) {
   test(`제품 이미지만 등록: ${hasFront ? '두 번째 정면 사진 우선' : '정면 없으면 첫 사진'} · 목록·상세·편집 목록·사용 내역 동일`, async ({
     page,
   }) => {
-    await page.goto('http://127.0.0.1:3000/materials');
+    await page.goto('http://127.0.0.1:3000/admin/materials');
     await page.getByRole('button', { name: '자재 등록', exact: true }).click();
     const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
     const name = hasFront ? '정면 자동 표시 검증 제품' : '첫 사진 자동 표시 검증 제품';
@@ -117,7 +128,7 @@ for (const hasFront of [true, false]) {
 }
 
 test('타일은 텍스처만 등록: 상품 소개·대표 설정 없이 목록·상세·편집·사용 내역 표시', async ({ page }) => {
-  await page.goto('http://127.0.0.1:3000/materials');
+  await page.goto('http://127.0.0.1:3000/admin/materials');
   await page.getByRole('button', { name: '자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
   const name = '텍스처 자동 표시 검증 타일';

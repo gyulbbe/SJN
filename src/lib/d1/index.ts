@@ -1,3 +1,4 @@
+import { requireActiveAdmin } from '../admin/access';
 import { manageCatalog } from '../catalog/server';
 import { assets } from './assets';
 import { cleanup } from './cleanup';
@@ -45,11 +46,14 @@ export async function handleD1Request(
     const body = await bodyJson(request);
     const operation = body.operation;
     if (
-      (resource === 'catalog' ||
-        (resource === 'materials' && !['list', 'getVersion'].includes(String(operation)))) &&
-      !actor.isAdmin
-    )
-      throw new D1StorageError(403, '자재와 분류는 관리자만 변경할 수 있어요.', 'FORBIDDEN');
+      resource === 'catalog' ||
+      (resource === 'materials' && !['list', 'getVersion'].includes(String(operation)))
+    ) {
+      if (!actor.isAdmin)
+        throw new D1StorageError(403, '자재와 분류는 관리자만 변경할 수 있어요.', 'FORBIDDEN');
+      ctx.adminWrite = true;
+      await requireActiveAdmin(ctx);
+    }
     if (resource === 'project-materials' && operation !== 'create')
       throw invalid('프로젝트 모형은 새로 생성만 할 수 있어요.');
     const mutating =

@@ -1,118 +1,68 @@
 # 개발환경 참조
 
-확인 기준: **2026-09-17 저장소 소스와 실제 원격 D1 확인**. Wrangler 원격 목록에서 D1 `sjn`의 이름·ID가 `wrangler.jsonc`와 일치함을 확인했고 `0001`~`0004` migration을 원격에 적용했다. 앱의 운영 Worker 연결·Google OAuth·R2는 미검증이며 관리자 지정·배포는 수행하지 않았다. 선언된 설정, 예시 값, 과거 검증 기록을 실제 운영 상태와 구분하며, 실제 `.env*`·`.dev.vars`·secret 값은 기록하지 않는다.
+확인 기준: **2026-09-17 현재 소스**. 2026-09-17 사용자 승인 후 D1 `sjn`의 기존 0001~0004에 0005·0006을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 0001~0006을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했다. 관리자 지정·배포·R2 버킷 생성·실제 Google 인증·AI 호출은 수행하지 않았다. 실제 secret은 문서·로그·Git에 기록하지 않는다.
 
 ## 실행과 검사
 
-Node 기준은 [`.node-version`](../../../../.node-version)의 **22.23.2**다. 의존성·명령은 [`package.json`](../../../../package.json)과 `package-lock.json`을 따른다. 새 환경에서는 `npm ci`로 설치한다.
+Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [package.json](../../../../package.json)과 lockfile을 사용하며 새 환경은 `npm ci`로 설치한다.
 
-| 목적 | 명령 | 기본 주소·동작 |
+| 목적 | 명령 | 동작 |
 | --- | --- | --- |
-| Next 개발 | `npm run dev` | `http://127.0.0.1:3000`, 로컬 저장 강제 |
-| Workers 개발 | `npm run dev:vinext` | 포트 `3001`, 로컬 저장 강제 |
-| Next 빌드·실행 | `npm run build` → `npm run start` | `127.0.0.1:3000`, Node 런타임 |
-| Workers 빌드·미리보기 | `npm run build:vinext` → `npm run start:vinext` | 포트 `8787`, 로컬 workerd |
-| 기본 검사 | `npm run typecheck`, `npm run lint`, `npm test` | 변경 범위에 맞게 실행 |
-| Workers 브라우저 검사 | `npm run test:cloudflare` | 빌드 후 실행; Chrome, 포트 `8787` |
+| 기본 Workers 개발 | `npm run dev` 또는 `npm run dev:vinext` | vinext, `http://127.0.0.1:3000`, 로컬 D1/R2 + Google 로그인 |
+| 개발 migration | `npm run db:dev:migrate` | 0001~0006, 로컬 DB만, `.wrangler/development` |
+| 별도 Next 개발 | `npm run dev:next` | Node/Next, Cloudflare D1/R2/AI 바인딩 없음; 기본 앱 작업 공간 대체 아님 |
+| Next 빌드 | `npm run build` → `npm run start` | Node 빌드/실행 검사; Workers 바인딩은 생기지 않음 |
+| Workers 빌드·미리보기 | `npm run build:vinext` → `npm run start:vinext` | 빌드 설정과 `dist/server/wrangler.json`, 포트 8787, `.wrangler/state` |
+| 기본 검사 | `npm run typecheck`, `npm run lint`, `npm test` | 변경 범위에 맞는 검증; Next/vinext 빌드는 순차 실행 |
 
-[`scripts/dev-local.mjs`](../../../../scripts/dev-local.mjs)는 두 개발 명령에 `APP_ENV=local`, `SJN_DEV_LOCAL=1`을 강제한다. [`build/cloudflare-local.ts`](../../../../build/cloudflare-local.ts)는 vinext 런타임에도 이 로컬 선택을 반영한다.
+[dev-local](../../../../scripts/dev-local.mjs)는 `APP_ENV=development`, `SJN_DEV_BINDINGS=1`을 설정한다. [Vite 설정](../../../../vite.config.ts)이 이를 보고 `wrangler.dev.jsonc`와 `persistState.path=.wrangler/development`를 선택한다. 개발용 DB/R2에는 `remote:false`가 명시돼 있다. 기본 빌드 설정과 개발 설정을 섞지 않는다. 기존 `.wrangler/state`나 origin별 IndexedDB 자료는 삭제·자동 이전하지 않는다.
 
-`start:vinext`는 `wrangler dev --config dist/server/wrangler.json --port 8787 --persist-to .wrangler/state`다. `.wrangler/state`는 로컬 Workers 상태이며 브라우저 IndexedDB와 별개다. Windows에서는 미리보기 서버를 종료한 뒤 재빌드한다. Next·vinext 빌드는 공유 `.next/types`를 갱신하므로 순차 실행한다.
+## 설정 파일과 변수
 
-브라우저 자료는 origin별로 분리된다. `localhost`와 `127.0.0.1`, 포트, 브라우저 프로필, 운영 도메인이 다르면 같은 자료가 보이지 않을 수 있다. 로그인해도 로컬 자료가 계정 저장소로 자동 업로드되지 않는다.
-
-## 현재 설정과 파일 역할
-
-| 파일·설정 | 소스에서 확인한 의미 |
+| 파일 | 역할 |
 | --- | --- |
-| [`wrangler.jsonc`](../../../../wrangler.jsonc) | 기본 빌드 설정. Worker `sjn`, `APP_ENV=local`, `STORAGE_MODE=auto`. `AI`·`ASSETS`와 D1 `sjn`의 `DB` 바인딩, `migrations_dir=migrations/d1` 선언. `ASSET_BUCKET` 미선언 |
-| [`wrangler.d1.example.jsonc`](../../../../wrangler.d1.example.jsonc) | 운영 D1 참고본. `sjn-data`·`sjn-assets`는 예시 이름, DB ID·도메인은 placeholder. 자동 적용되지 않음 |
-| [`.env.example`](../../../../.env.example) | Next/Node 변수 예시. 실제 `.env.local`은 운영 Worker secret을 대신하지 않음 |
-| [`.dev.vars.example`](../../../../.dev.vars.example) | Wrangler 로컬 변수 예시. 실제 `.dev.vars`는 배포 설정이 아님 |
-| `dist/server/wrangler.json` | Workers 빌드 산출물. 미리보기·배포 명령이 읽음. 원본 설정을 수정하고 다시 빌드 |
+| [wrangler.dev.jsonc](../../../../wrangler.dev.jsonc) | 개발 전용 sjn-development. 로컬 DB/R2, `APP_ENV=development`, `STORAGE_MODE=d1`, `BETTER_AUTH_URL=http://127.0.0.1:3000`, AI 바인딩 없음 |
+| [wrangler.jsonc](../../../../wrangler.jsonc) | 기본 빌드/배포 원본. 기존 원격 sjn DB/AI/ASSETS. APP_ENV=production·STORAGE_MODE=d1, 사용자 R2는 미선언 |
+| [wrangler.d1.example.jsonc](../../../../wrangler.d1.example.jsonc) | 운영 설정 참고본; 이름·ID·도메인·버킷은 예시이며 자동 적용되지 않음 |
+| [.dev.vars.example](../../../../.dev.vars.example) | 실제 `.dev.vars`의 로컬 Workers secret 예시. 빈 Google/Better Auth 값을 직접 준비 |
+| [.env.example](../../../../.env.example) | Node/Next 변수 참고. `.env.local`은 Workers secret을 대신하지 않음 |
+| `dist/server/wrangler.json` | 생성물; 직접 편집하지 않고 원본 설정을 고쳐 재빌드 |
 
-Wrangler 소스는 `compatibility_date=2026-09-07`, `nodejs_compat`, 진입점 `vinext/server/fetch-handler`를 사용한다. Dashboard에만 있는 운영 값이나 바인딩이 현재 소스와 일치하는지는 미확인이다.
+D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아니다. `ASSETS`는 정적 파일이고 R2 사용자 자료와 다르다. `AI`는 Gemma/FLUX 공통 Workers AI 바인딩이다. `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`은 서버 전용이다. `NEXT_PUBLIC_*`·Wrangler vars·커밋에 비밀값을 넣지 않는다.
 
-| 변수·바인딩 | 용도 |
+## 첫 로컬 실행
+
+1. `.dev.vars.example`을 `.dev.vars`로 복사한다(이미 있으면 덮어쓰지 않는다).
+2. Google 웹 OAuth 클라이언트의 origin을 `http://127.0.0.1:3000`, redirect URI를 `http://127.0.0.1:3000/api/auth/callback/google`로 맞추고 개발용 credentials를 로컬 secret에 입력한다. 테스트 상태라면 계정이 Google 테스트 사용자에 포함되어야 한다.
+3. 길이 32자 이상 안전한 `BETTER_AUTH_SECRET`을 준비한다. 경로 없는 `BETTER_AUTH_URL`과 실제 접속 origin을 맞춘다.
+4. `npm run db:dev:migrate` 후 `npm run dev`를 실행하고 준비 상태·Google 로그인을 확인한다.
+5. 최초 관리자 지정은 로그인한 검증된 회원만 대상으로 [bootstrap SQL](../../../../docs/database-design.md)을 로컬 개발 DB에 적용한다. 이후 역할/상태 변경은 관리자 UI를 사용한다.
+
+개발도 실제 Google 로그인이 필요하다. 격리 테스트의 서명된 Google fixture는 일반 실행용 우회 기능이 아니다. 로컬 D1/R2 구성 자체는 Cloudflare 운영 DB·버킷 생성이나 배포를 필요로 하지 않는다. 이 문서는 실제 Google 인증 완료를 의미하지 않는다.
+
+## 현재 저장소·접근 정책
+
+[storage/config](../../../../src/lib/storage/config.ts)와 [server](../../../../src/lib/storage/server.ts)를 기준으로 개발·운영 모두 D1 + Google 로그인을 요구한다. `auto/d1`만 현재 선택 경로이며 `local/supabase`는 설정 오류다. 과거 Supabase SQL과 브라우저 원본은 보존하지만 실행 어댑터·SDK는 제거했다. `/api/cloud/**`는 410이며 현재 `/api/d1/**`만 사용한다. IndexedDB에는 복구본·재사용 캐시만 새로 저장하고 진단 아카이브는 `/api/reconstruction/diagnostics`를 통해 D1/R2에 저장한다.
+
+누락된 바인딩·migration·secret·연결 실패·초기 timeout은 접근을 잠근다. 세션 만료 시 편집 화면을 숨기고 로그인 안내를 표시하되 본인 계정의 IndexedDB 복구본은 보존한다. 관리자 타인 프로젝트 편집은 명시적으로 범위가 지정된 저장소를 사용하고 캐시로 권한을 우회하지 않는다.
+
+`GET /api/storage/status`는 서버 최대 4.5초, 브라우저 초기 확인 최대 5초다. D1 스키마와 R2 `HEAD __sjn_readiness__`를 읽기만 하며 sentinel 객체가 없어도 HEAD 성공이면 된다. `ready:true`는 실제 Google callback/R2 업로드 성공까지 보증하지 않는다. 원본: [status route](../../../../src/app/api/storage/status/route.ts), [database](../../../../src/lib/d1/database.ts), [auth](../../../../src/lib/auth/d1.ts).
+
+## R2 키와 접근 API
+
+| 자료 | 객체 키 |
 | --- | --- |
-| `APP_ENV`, `STORAGE_MODE` | 저장소 선택. `NEXT_PUBLIC_STORAGE_MODE`는 `STORAGE_MODE`가 없을 때만 읽는 호환 변수 |
-| `BETTER_AUTH_URL` | 앱의 기준 origin. 운영은 HTTPS |
-| `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | 서버 인증 설정. 운영 값은 Wrangler secret/Worker 설정으로 준비 |
-| `DB` | D1 바인딩. URL·비밀번호 환경변수가 아님 |
-| `ASSET_BUCKET` | 비공개 R2 사용자 자료 바인딩 |
-| `ASSETS` | `dist/client`의 앱 정적 파일 바인딩. R2 사용자 자료와 별개 |
-| `AI` | Gemma·FLUX가 공유하는 Workers AI 바인딩 |
-| `NEXT_PUBLIC_MOGE_MODEL_URL` | 선택적 브라우저 MoGe 모델 미러. 같은 고정 SHA의 모델만 허용 |
-| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` | 기존 Node/Next Supabase 어댑터의 선택적 설정 |
+| 이미지·메시 | `assets/{encodeURIComponent(userId)}/{assetId}/{randomUUID}` |
+| 프로젝트 문서 | `projects/{encodeURIComponent(userId)}/{projectId}/{randomUUID}.json` |
 
-`NEXT_PUBLIC_`에는 서버 secret이나 AI 토큰을 넣지 않는다. 설정 작업에서는 예시 파일과 코드로 이름·형식을 확인하고, 실제 secret은 문서·로그·Git에 옮기지 않는다.
+객체 키와 브라우저 URL은 다르다. 일반 업로드·조회는 `/api/d1/assets`, raw 바이트는 `?id={assetId}&raw=1`다. 관리자 전용 경로는 `/api/admin/project-assets?projectId=...`이며 해당 프로젝트/행위자 범위만 허용한다. `/api/catalog/images?id=...`도 로그인한 회원에게 현재 활성 공용 자재의 표시 이미지(texture/product/preview)만 전달한다. source 원본·메시를 공용 이미지로 노출하지 않는다.
 
-## 로컬·운영 저장소 선택
+이미지 업로드는 최대 25MB, 서버에서 형식·MIME·metadata를 검사한다. raw는 private/no-store이며 버킷 공개나 S3 관리 키 배포는 필요 없다. [assets](../../../../src/lib/d1/assets.ts), [projects](../../../../src/lib/d1/projects.ts), [admin projects](../../../../src/lib/admin/projects.ts), [catalog images](../../../../src/app/api/catalog/images/route.ts)를 확인한다. 과거 Supabase migration의 scene-assets 규칙은 현재 R2 경로와 별개다. 실행 어댑터와 SDK는 제거했다.
 
-현재 기준은 [`storage/config.ts`](../../../../src/lib/storage/config.ts), [`storage/server.ts`](../../../../src/lib/storage/server.ts), [`storage/bootstrap.ts`](../../../../src/lib/storage/bootstrap.ts)다.
+## AI와 빌드·운영 경계
 
-- `APP_ENV`가 `production`이 아니면 로컬 IndexedDB를 선택한다.
-- 운영 `STORAGE_MODE=auto` 또는 `d1`은 Cloudflare 런타임, `DB`·`ASSET_BUCKET`, 인증 설정과 스키마·연결 확인이 필요하다.
-- 운영 `STORAGE_MODE=local`, 잘못된 설정, 누락된 바인딩, 연결 실패·초기 timeout은 **편집 차단 상태**다. 로그인 없는 로컬 편집으로 자동 전환하지 않는다.
-- `STORAGE_MODE=supabase`는 Node/Next에서만 지원한다. Workers의 기존 `/api/cloud/**` 경로는 503으로 대체되며 D1 경로는 `/api/d1/**`다.
+Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는 `/api/export/photoreal`의 4B/9B다. 같은 `AI` 바인딩과 `sjn-gateway`를 사용하며 활성 로그인이 필요하다. 기본 개발 설정과 Next Node에는 AI 바인딩이 없다. 기본 개발 서버 시작만으로 원격 프록시를 연결하지 않도록 `wrangler.dev.jsonc`에서 AI를 제외했다. 실제 Workers AI 검증은 별도 승인된 원격 AI 바인딩 설정에서 실행한다. **로컬 D1/R2라는 사실은 AI가 로컬이라는 뜻이 아니다.** 명시적 AI 실행은 Cloudflare 사진 전송·사용량을 발생시킨다. 로그인·DB 준비·문서 갱신만으로 AI를 실행하지 않는다.
 
-`GET /api/storage/status`는 서버 최대 4.5초, 브라우저 초기 확인은 최대 5초다. D1 스키마와 R2의 `HEAD __sjn_readiness__`를 읽기 전용으로 확인하며, sentinel 객체가 없어도 HEAD 성공이면 된다. `ready:true`는 실제 Google 로그인이나 R2 업로드 성공까지 증명하지 않는다. 근거: [`status route`](../../../../src/app/api/storage/status/route.ts), [`d1/database.ts`](../../../../src/lib/d1/database.ts).
+MoGe·DeepLab·배경 제거·제품 입체화는 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
 
-README와 일부 과거 검증 기록의 “초기 실패 후 로컬 시작” 설명은 현재 정책과 다르다. 이 문서에서는 위 소스를 기준으로 하며, 운영 구성 상세는 [D1·R2 설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 확인한다.
-
-## R2 객체 키와 이미지 API
-
-R2에는 이미지·제품 메시와 프로젝트 JSON 스냅샷을 저장한다. D1에는 자산 메타데이터·권한·참조와 실제 객체 키를 저장한다. 버킷 이름은 배포 환경의 `ASSET_BUCKET` 바인딩으로 결정하며 `sjn-assets`를 실제 운영 버킷명으로 단정하지 않는다.
-
-| 자료 | 코드가 만드는 R2 객체 키 | D1 연결 |
-| --- | --- | --- |
-| 이미지·제품 메시 | `assets/{encodeURIComponent(userId)}/{assetId}/{randomUUID}` | `d1_assets.object_key` |
-| 프로젝트 스냅샷 | `projects/{encodeURIComponent(userId)}/{projectId}/{randomUUID}.json` | `d1_projects.object_key` |
-
-자산 키에는 원래 파일명이나 확장자가 붙지 않는다. 객체 키와 브라우저에서 여는 API URL은 다르다. 근거: [`d1/assets.ts`](../../../../src/lib/d1/assets.ts), [`d1/projects.ts`](../../../../src/lib/d1/projects.ts), [`0002_storage.sql`](../../../../migrations/d1/0002_storage.sql).
-
-| 흐름 | 경로·동작 |
-| --- | --- |
-| 인증 업로드 | `POST /api/d1/assets`, multipart `file` + JSON 문자열 `metadata` |
-| 인증 메타데이터 조회 | `GET /api/d1/assets?id={assetId}` → 자산 메타데이터와 아래 raw URL |
-| 인증 파일 조회 | `GET /api/d1/assets?id={assetId}&raw=1` → D1의 `object_key`로 R2를 읽어 응답 |
-| 공개 카탈로그 이미지 | `GET /api/catalog/images?id={assetId}` → 허용된 공개 이미지의 바이트 응답 |
-
-인증 경로는 세션과 자산 접근권한을 확인한다. 업로드는 파일 최대 25MB이며 서버가 형식·MIME·메타데이터를 검증한다. 정리 기록을 남기고 R2에 올린 뒤 D1 등록을 확정한다. raw 응답은 `private, no-store`이며 R2 공개 URL이나 서명 URL을 반환하지 않는다.
-
-공개 이미지 API는 현재 활성 공용 카탈로그 버전에 직접 표시되는 `texture`·`product`·`preview`만 허용한다. 파생 이미지의 원본 참조를 따라 공개하지 않는다. 사용자 자료 버킷 전체를 공개할 필요가 없다.
-
-흐름 근거: [`cloud repository`](../../../../src/lib/repositories/cloud.ts), [`D1 route`](../../../../src/app/api/d1/assets/route.ts), [`storage/server.ts`](../../../../src/lib/storage/server.ts), [`catalog/public.ts`](../../../../src/lib/catalog/public.ts), [`catalog image route`](../../../../src/app/api/catalog/images/route.ts).
-
-기존 Supabase의 [`/api/cloud/assets`](../../../../src/app/api/cloud/assets/route.ts)는 `scene-assets` 버킷의 `{userId}/{assetId}`와 120초 서명 URL을 사용한다. 이 경로를 R2 규칙과 혼동하지 않는다.
-
-## Google 로그인
-
-Better Auth 기준 경로는 `/api/auth`다. `BETTER_AUTH_URL`에는 경로·query·hash 없는 origin을 넣는다. 예시 origin이 `https://YOUR-APP.example.com`이면 Google 승인 리디렉션 URI는 `https://YOUR-APP.example.com/api/auth/callback/google`이다.
-
-운영은 HTTPS만 허용하고 신뢰 origin은 설정된 기준 주소로 제한한다. 앱 접속 origin·`BETTER_AUTH_URL`·Google Console 콜백의 origin을 일치시킨다. 실제 OAuth 클라이언트·운영 콜백·세션 갱신은 이번 문서 작성에서 확인하지 않았다. 근거: [`auth/d1.ts`](../../../../src/lib/auth/d1.ts), [설정 절차](../../../../docs/cloudflare-storage-setup.md).
-
-## AI 연결과 모델 다운로드
-
-| 기능 | 서버 API | 모델·공통 연결 |
-| --- | --- | --- |
-| 사진 설비 분석 | `/api/reconstruction/cloud` | `@cf/google/gemma-4-26b-a4b-it`, `AI`, `sjn-gateway` |
-| 현장 사진 변환 내보내기 | `POST /api/export/photoreal` | `@cf/black-forest-labs/flux-2-klein-4b` 또는 `flux-2-klein-9b`, 같은 `AI`·`sjn-gateway` |
-
-Gemma·FLUX는 별도 Gateway나 브라우저 토큰 없이 서버 바인딩을 공유한다. 근거: [`Gemma contract`](../../../../src/lib/reconstruction/cloud-gemma-contract.ts), [`Gemma server`](../../../../src/lib/reconstruction/cloud-gemma-server.ts), [`FLUX contract`](../../../../src/lib/ai-export/contract.ts), [`FLUX server`](../../../../src/lib/ai-export/server.ts).
-
-Next 개발 서버에는 Cloudflare AI 바인딩이 없다. `build:vinext` → `start:vinext`로 로컬 workerd를 실행해도 AI 요청은 실제 원격 호출이며 사진 전송·사용량이 발생한다. 로컬 저장 강제는 AI 네트워크 차단을 뜻하지 않는다. 실제 AI 검사에는 원격 바인딩을 끄는 `--local`을 추가하지 않으며 Worker 전체를 원격 실행하는 `--remote`도 필요 없다.
-
-Gemma GET 준비 응답은 바인딩·접근 정책만 확인한다(`upstreamVerified:false`). 모델 추론·잔여량·Gateway 로그·과금의 실제 상태를 보증하지 않는다.
-
-MoGe·DeepLab 계산은 브라우저에서 수행한다. MoGe와 배경 제거 등은 최초 실행에 모델/CDN 다운로드가 필요할 수 있다. MoGe R2 미러를 마련할 경우 모델 전용 공개 경로를 사용하고 사용자 사진 버킷을 공개하지 않는다. 연결 작업에만 [현재 AI 실행 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), 내보내기 작업에만 [FLUX 가이드](../../../../docs/flux-export.md)를 추가로 읽는다.
-
-## 빌드와 실제 배포의 경계
-
-`npm run build`·`npm run build:vinext`는 빌드, `npm run start:vinext`는 로컬 미리보기다. `npm run deploy:vinext`는 생성된 `dist/server/wrangler.json`으로 실제 Worker 배포를 수행한다. 기본 소스 설정을 그대로 배포하면 로컬 저장 모드다.
-
-원격 자원 생성·secret 등록·원격 migration은 일반 로컬 개발의 필수 단계가 아니다. 현재 `DB`가 가리키는 원격 D1 `sjn`에는 `migrations/d1/0001_auth.sql`부터 `0004_catalog_seed.sql`까지 적용됐으며, DB 재생성이나 기존 SQL 재실행은 필요 없다. 이후에는 대상 DB와 미적용 migration을 확인한다. `wrangler d1 migrations apply DB --local`은 로컬 DB, `--remote`는 실제 원격 DB를 변경한다. 원격 DB 적용과 별개로 앱은 `APP_ENV=local`, `STORAGE_MODE=auto`를 유지하며 R2 설정·관리자 지정·배포는 수행하지 않았다.
-
-배포·D1/R2 설정이 필요한 작업에서만 [Cloudflare 배포 가이드](../../../../docs/cloudflare-deployment.md)와 [저장소 설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 읽는다. 날짜가 붙은 검증 문서의 과거 결과는 현재 운영 계정·배포·Google 로그인·R2 쓰기의 재확인으로 취급하지 않는다.
-
-이 문서의 명령·포트·환경변수·바인딩·저장소 선택·R2 키/API·OAuth·AI 연결을 바꾸는 코드나 설정을 수정했다면, 해당 항목과 근거 링크를 같은 작업에서 갱신한다.
+`deploy:vinext`는 실제 배포이고 기본 설정을 그대로 배포해도 누락된 R2·인증 설정이 자동 준비되지 않는다. 원격 sjn과 로컬 개발 DB는 2026-09-17 사용자 승인 후 0001~0006 적용을 완료했다. 이후 운영 DB 변경은 대상과 미적용 목록을 확인해 별도로 승인된 범위에서 진행한다. 로컬 개발 DB 적용과 원격 DB 적용은 다른 작업이다. 자세한 Google/secret/배포 준비는 [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 따른다.

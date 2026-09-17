@@ -25,7 +25,10 @@ vi.mock('../src/lib/reconstruction/quality-core', () => ({
   runQualityPipeline: hooks.quality,
   photoFingerprint: vi.fn(),
 }));
-vi.mock('../src/lib/repositories', () => ({ getRepositories: hooks.repositories }));
+vi.mock('../src/lib/repositories', () => ({
+  getRepositories: hooks.repositories,
+  getRepositoryUserId: () => '',
+}));
 import { createReconstructionProject } from '../src/lib/reconstruction/index';
 import { prepareReconstructionTargetFrame } from '../src/lib/reconstruction/reconstruction-target-frame';
 

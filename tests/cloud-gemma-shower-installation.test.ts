@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getD1Actor } from '../src/lib/auth/d1';
+beforeEach(() => vi.mocked(getD1Actor).mockResolvedValue({ id: 'test-account', isAdmin: false }));
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CLOUD_GEMMA_CONTRACT_REVISION,
   CLOUD_GEMMA_IDENTITY,
@@ -24,7 +26,9 @@ import {
 } from '../src/lib/reconstruction/target-existence-observation';
 import type { SceneCandidate } from '../src/lib/reconstruction/pipeline-contract';
 
-vi.mock('../src/lib/auth/d1', () => ({ getD1Actor: vi.fn() }));
+vi.mock('../src/lib/auth/d1', () => ({
+  getD1Actor: vi.fn().mockResolvedValue({ id: 'test-account', isAdmin: false }),
+}));
 const origin = 'http://127.0.0.1:3000';
 const candidate: SceneCandidate = {
   id: 'generic-fixture',
@@ -86,7 +90,7 @@ async function fixture(responseText = raw) {
       usage: { prompt_tokens: 240, completion_tokens: 80, total_tokens: 320 },
     }),
   );
-  const env = { platform: 'cloudflare' as const, APP_ENV: 'local', STORAGE_MODE: 'auto', AI: { run } };
+  const env = { platform: 'cloudflare' as const, APP_ENV: 'development', STORAGE_MODE: 'd1', AI: { run } };
   const request = (mutate?: (form: FormData) => void) => {
     const form = new FormData();
     form.set('operation', 'shower-installation');

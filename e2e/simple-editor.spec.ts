@@ -1,3 +1,4 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { getActiveDesign } from '../src/lib/designs';
 import { test, expect, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
@@ -7,6 +8,13 @@ import { savedProject, storedProject, selectFixture, selectSurface } from '../te
 import type { ProjectDocument, Scene } from '../src/lib/types';
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 test.setTimeout(150000);
 
 const material = (page: Page, name: string) => page.locator('button.material-tile').filter({ hasText: name });
@@ -59,7 +67,7 @@ async function simplifiedControls(page: Page) {
   await expect(page.getByLabel('실측 치수 확인', { exact: true })).toHaveCount(0);
 }
 async function ready(page: Page) {
-  await expect(page).toHaveURL(/\/projects\/[\w-]+$/);
+  await expect(page).toHaveURL(/\/projects\/[\w-]+$/, { timeout: 30000 });
   await expect(page.getByTestId('editor-canvas')).toBeVisible();
   await savedProject(page);
 }
@@ -76,17 +84,9 @@ async function originalRendered(page: Page, project: ProjectDocument) {
   }));
   const expected = await page.evaluate(
     async ({ id, points, width, height }) => {
-      const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('gongganmiri-v1');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      const asset = await new Promise<{ blob: Blob }>((resolve, reject) => {
-        const request = database.transaction('assets').objectStore('assets').get(id);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      database.close();
+      const response = await fetch('/api/d1/assets?id=' + encodeURIComponent(id) + '&raw=1');
+      if (!response.ok) throw new Error(await response.text());
+      const asset = { blob: await response.blob() };
       const bitmap = await createImageBitmap(asset.blob),
         canvas = document.createElement('canvas');
       canvas.width = width;

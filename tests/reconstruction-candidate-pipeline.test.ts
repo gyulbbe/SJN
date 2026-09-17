@@ -453,7 +453,7 @@ it.each(['qwen', 'gemma'] as const)('retains %s candidate provenance through the
   const candidate = item(), scene = understanding([candidate]);
   const result = buildCandidatePipeline(scene, baseline(candidate), room, source.image, {}, scene, {}, undefined, undefined, {}, {}, undefined, providerSource);
   expect(result.review.candidates.find(c => c.id === candidate.id)?.source).toBe(providerSource);
-  const { reconstructionReviewSchema } = await import('../src/lib/supabase/validation');
+  const { reconstructionReviewSchema } = await import('../src/lib/storage/validation');
   const restored = reconstructionReviewSchema.parse(JSON.parse(JSON.stringify(result.review)));
   expect(restored.candidates.find(c => c.id === candidate.id)?.source).toBe(providerSource);
   expect(scene.candidates[0].provenance).toBeUndefined();

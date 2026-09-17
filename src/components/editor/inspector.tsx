@@ -7,7 +7,7 @@ import { Copy, Trash2, Lock, Unlock, ArrowUp, ArrowDown, RotateCcw, X } from 'lu
 import { useEditor } from '@/lib/editor-store';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import ReconstructionProperties from '@/components/reconstruction/reconstruction-properties';
-import { getRepositories } from '@/lib/repositories';
+import { useRepositories } from '@/components/repository-context';
 import { DEFAULT_COLOR, type ColorAdjust, type MaterialVersion } from '@/lib/types';
 import { useAccess } from '../app-provider';
 import { AssetImage } from '../materials/asset-image';
@@ -72,6 +72,7 @@ export default function Inspector({
   onWallFeatures?: () => void;
   onMaterialsChanged: () => Promise<void>;
 }) {
+  const repositories = useRepositories();
   const st = useEditor(),
     { writable } = useAccess();
   const [colorTarget, setColorTarget] = useState<'global' | 'selection'>('global');
@@ -139,7 +140,7 @@ export default function Inspector({
         : undefined;
     };
     try {
-      const asset = await getRepositories().assets.get(view.assetId);
+      const asset = await repositories.assets.get(view.assetId);
       if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
       if (!currentFixture()) return;
       if (

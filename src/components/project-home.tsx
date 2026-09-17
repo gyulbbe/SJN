@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import AdminLinks from '@/components/admin/admin-links';
 import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -43,7 +44,7 @@ export default function ProjectHome() {
   const creating = useRef(false);
   const creationAttempt = useRef(0);
   const router = useRouter();
-  const { writable, ready, mode, signOut } = useAccess();
+  const { writable, ready, userId, signOut } = useAccess();
   async function refresh() {
     try {
       setProjects(await getRepositories().projects.list());
@@ -68,7 +69,7 @@ export default function ProjectHome() {
     setRoomOpen(false);
   }
   async function create(file: File | null, room?: RoomDefinition) {
-    if (!ready || !writable || creating.current) return;
+    if (!ready || !writable || !userId || creating.current) return;
     creating.current = true;
     const attempt = ++creationAttempt.current;
     const current = () => creationAttempt.current === attempt;
@@ -88,7 +89,7 @@ export default function ProjectHome() {
       const now = new Date().toISOString();
       const p: LegacyProjectDocument = {
         id: crypto.randomUUID(),
-        ownerId: 'local',
+        ownerId: userId,
         name: room ? '기본 공간' : file.name.replace(/\.[^.]+$/, '') || '새 공간',
         schemaVersion: 1,
         editRevision: 0,
@@ -171,35 +172,33 @@ export default function ProjectHome() {
           사진 재구성 테스트
         </Link>
         <div className="nav-bottom">
-          {(isAdmin || mode === 'local') && (
+          {isAdmin && (
             <Link href="/admin/materials" className="nav-item">
               관리자 자재 관리
             </Link>
           )}
+          <AdminLinks className="nav-item" />
           <StorageBadge />
-          <p>
-            {mode === 'local' ? '사진과 작업은 이 브라우저에 저장돼요.' : '로그인 계정에 작업을 저장해요.'}
-          </p>
-          {mode !== 'local' && (
-            <button
-              className="text-button"
-              style={{ display: 'block', marginBottom: 12 }}
-              onClick={() => void signOut()}
-            >
-              로그아웃
-            </button>
-          )}
+          <p>로그인 계정에 작업을 저장해요.</p>
+          <button
+            className="text-button"
+            style={{ display: 'block', marginBottom: 12 }}
+            onClick={() => void signOut()}
+          >
+            로그아웃
+          </button>
           <span className="version">공간미리 · 0.1</span>
         </div>
       </aside>
       <main className="home-main">
         <div className="home-topline">
           <span>WORKSPACE / PROJECTS</span>
-          {(isAdmin || mode === 'local') && (
+          {isAdmin && (
             <Link href="/admin/materials" className="nav-item">
               관리자 자재 관리
             </Link>
           )}
+          <AdminLinks className="nav-item" />
           <StorageBadge />
         </div>
         <div className="page-heading">

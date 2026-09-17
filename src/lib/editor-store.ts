@@ -536,12 +536,17 @@ export const useEditor = create<EditorState>((set, get) => {
       if (project) set({ project: { ...project, viewport: { zoom, pan } }, saveStatus: 'dirty' });
     },
     setRoomView: (input) => {
-      const project = get().project;
+      const { project, saveStatus, error } = get();
       if (!project) return;
       const roomView = normalizeRoomView(input);
       if (same(normalizeRoomView(project.roomView), roomView)) return;
       // A view change has no scene revision, thumbnail invalidation or undo/redo entry.
-      set({ project: { ...project, roomView }, saveStatus: 'dirty', error: '' });
+      // Cloud saves pause after failure; keep retry available while the user changes the view.
+      set({
+        project: { ...project, roomView },
+        saveStatus: saveStatus === 'error' ? 'error' : 'dirty',
+        error: saveStatus === 'error' ? error : '',
+      });
     },
     renamed: (name) => {
       get().commit();

@@ -1,7 +1,16 @@
+import { downloadedArtifact } from './helpers/downloaded-artifact';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+import type { Page as AuthenticatedPage } from '@playwright/test';
 import { test, expect } from '@playwright/test';
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
+test.beforeEach(async ({ page }) => {
+  authenticatedTests.set(page, await authenticatedApp(page));
+});
+test.afterEach(async ({ page }) => {
+  await authenticatedTests.get(page)?.dispose();
+});
 test.use({ channel: 'chrome', actionTimeout: 20000 });
 test.setTimeout(120000);
 
@@ -44,8 +53,8 @@ test('export compares 4B and 9B on identical input, downloads PNG and preserves 
   await page.goto('/');
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
   await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
   const four = dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true });
@@ -65,7 +74,7 @@ test('export compares 4B and 9B on identical input, downloads PNG and preserves 
   await dialog.getByRole('link', { name: '9B PNG 저장' }).click();
   const download = await downloaded;
   expect(download.suggestedFilename()).toContain('flux-2-klein-9b.png');
-  expect((await sharp(await readFile((await download.path())!)).metadata()).format).toBe('png');
+  expect((await sharp(await downloadedArtifact(download)).metadata()).format).toBe('png');
   fail = true;
   await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-9b 다시 만들기' }).click();
   await expect(dialog.getByRole('alert')).toContainText('한도를 모두 사용');
@@ -98,8 +107,8 @@ test('closing during conversion discards late results and allows a fresh compari
   await page.goto('/');
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
   await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
   await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();

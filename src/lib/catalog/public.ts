@@ -3,7 +3,7 @@ import { json, D1StorageError } from '@/lib/d1/http';
 import type { D1Bindings } from '@/lib/d1/types';
 import type { MaterialVersion } from '@/lib/types';
 import { getMaterialImageAssetId } from '@/lib/material-images';
-import { identifierSchema } from '@/lib/supabase/validation';
+import { identifierSchema } from '@/lib/storage/validation';
 export type PublicMaterial = {
   id: string;
   name: string;

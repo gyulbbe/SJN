@@ -1,12 +1,14 @@
+import { adminAuditStatement } from '../admin/access';
 import { normalizeProjectDocument, projectScenes, projectWriteError } from '../comparison';
 import { duplicateProjectDocument } from '../designs';
 import { projectReferences } from '../repositories/references';
 import { createProjectSummary, readCurrentProjectSummary } from '../repositories/project-summary';
-import { identifierSchema, projectSchema, storedProjectSchema } from '../supabase/validation';
+import { identifierSchema, projectSchema, storedProjectSchema } from '../storage/validation';
 import type { ProjectDocument, ProjectInput, ProjectSummary } from '../types';
 import { z } from 'zod';
 import {
   assetAssertion,
+  dataOwnerId,
   assertion,
   batch,
   committedObject,
@@ -33,11 +35,12 @@ interface ProjectRow {
   summary_json: string;
 }
 async function rowFor(ctx: Context, id: string): Promise<ProjectRow> {
+  if (ctx.adminProject && ctx.adminProject.id !== id) throw notFound();
   const row = await sql(
     ctx,
     'SELECT * FROM d1_projects WHERE id=? AND owner_id=?',
     id,
-    ctx.actor.id,
+    dataOwnerId(ctx),
   ).first<ProjectRow>();
   if (!row) throw notFound();
   return row;
@@ -55,7 +58,7 @@ async function writeProject(
   if (error) throw invalid(error);
   const saved: ProjectDocument = {
     ...document,
-    ownerId: ctx.actor.id,
+    ownerId: dataOwnerId(ctx),
     storageRevision: expected === null ? 1 : expected + 1,
     createdAt: previous?.created_at ?? stamp(),
     updatedAt: stamp(),
@@ -80,7 +83,7 @@ async function writeProject(
     }
   const text = boundedDocument(saved);
   const summaryJson = JSON.stringify(await createProjectSummary(saved));
-  const key = `projects/${encodeURIComponent(ctx.actor.id)}/${saved.id}/${crypto.randomUUID()}.json`;
+  const key = `projects/${encodeURIComponent(dataOwnerId(ctx))}/${saved.id}/${crypto.randomUUID()}.json`;
   await stageObject(ctx, key, text, 'application/json');
   const checks =
     expected === null
@@ -90,7 +93,7 @@ async function writeProject(
           'conflict',
           'EXISTS(SELECT 1 FROM d1_projects WHERE id=? AND owner_id=? AND storage_revision=?)',
           saved.id,
-          ctx.actor.id,
+          dataOwnerId(ctx),
           expected,
         );
   const change =
@@ -100,7 +103,7 @@ async function writeProject(
           `INSERT INTO d1_projects(id,owner_id,name,storage_revision,object_key,byte_size,summary_json,created_at,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?)`,
           saved.id,
-          ctx.actor.id,
+          dataOwnerId(ctx),
           saved.name,
           saved.storageRevision,
           key,
@@ -120,7 +123,7 @@ async function writeProject(
           summaryJson,
           saved.updatedAt,
           saved.id,
-          ctx.actor.id,
+          dataOwnerId(ctx),
           expected,
         );
   await batch(ctx, [
@@ -154,17 +157,32 @@ async function writeProject(
     ),
     ...(previous ? [queueObject(ctx, previous.object_key)] : []),
     committedObject(ctx, key),
+    ...(ctx.adminProject
+      ? [
+          adminAuditStatement(ctx, {
+            action: 'project.save',
+            targetUserId: ctx.adminProject.ownerId,
+            projectId: saved.id,
+            projectRevision: saved.storageRevision,
+            before: { storageRevision: expected },
+            after: { storageRevision: saved.storageRevision },
+            requestId: ctx.adminProject.requestId,
+          }),
+        ]
+      : []),
     ...mutationStatement(ctx, { key }),
   ]);
   return saved;
 }
 export async function projects(ctx: Context, body: Record<string, unknown>): Promise<unknown> {
+  if (ctx.adminProject && !['load', 'save'].includes(String(body.operation)))
+    throw invalid('관리자 편집에서는 불러오기와 저장만 할 수 있어요.');
   switch (body.operation) {
     case 'list': {
       const rows = await sql(
         ctx,
         'SELECT object_key,summary_json FROM d1_projects WHERE owner_id=? ORDER BY updated_at DESC',
-        ctx.actor.id,
+        dataOwnerId(ctx),
       ).all<{ object_key: string; summary_json: string }>();
       const summaries: ProjectSummary[] = [];
       // Normal writes commit the document pointer and derived summary in one transaction.
@@ -213,11 +231,11 @@ export async function projects(ctx: Context, body: Record<string, unknown>): Pro
           'conflict',
           'EXISTS(SELECT 1 FROM d1_projects WHERE id=? AND owner_id=? AND storage_revision=?)',
           id,
-          ctx.actor.id,
+          dataOwnerId(ctx),
           row.storage_revision,
         ),
         queueObject(ctx, row.object_key),
-        sql(ctx, 'DELETE FROM d1_projects WHERE id=? AND owner_id=?', id, ctx.actor.id),
+        sql(ctx, 'DELETE FROM d1_projects WHERE id=? AND owner_id=?', id, dataOwnerId(ctx)),
         ...mutationStatement(ctx, { value: null }),
       ]);
       return null;

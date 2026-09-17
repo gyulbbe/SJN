@@ -1,3 +1,14 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, {
+    allowModelDownloads:
+      process.env.SJN_AI_BACKGROUND_REAL === '1' || process.env.SJN_AI_BACKGROUND_WASM === '1',
+  });
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
@@ -92,11 +103,11 @@ async function installControlledWorker(page: Page) {
           return nativeDecode(...args);
         },
       });
-      const nativePut = IDBObjectStore.prototype.add;
-      IDBObjectStore.prototype.add = function (value, key) {
-        if (controls.failAssetPut && this.name === 'assets')
-          throw new DOMException('테스트 저장 공간 부족', 'QuotaExceededError');
-        return key === undefined ? nativePut.call(this, value) : nativePut.call(this, value, key);
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        if (controls.failAssetPut && String(input).includes('/api/d1/assets') && init?.method === 'POST')
+          return Response.json({ error: '테스트 저장 공간 부족' }, { status: 503 });
+        return nativeFetch(input, init);
       };
     },
     [...png],
@@ -104,31 +115,12 @@ async function installControlledWorker(page: Page) {
 }
 
 async function productVersions(page: Page) {
-  return page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    try {
-      return await new Promise<import('../src/lib/types').MaterialVersion[]>((resolve, reject) => {
-        const request = db.transaction('versions').objectStore('versions').getAll();
-        request.onsuccess = () =>
-          resolve(
-            request.result
-              .filter((v: { name: string }) => v.name === 'AI 적용 검증 제품')
-              .sort((a: { version: number }, b: { version: number }) => a.version - b.version),
-          );
-        request.onerror = () => reject(request.error);
-      });
-    } finally {
-      db.close();
-    }
-  });
+  void page;
+  return (await app.versions('AI 적용 검증 제품')).sort((a, b) => a.version - b.version);
 }
 
 async function openSavedProduct(page: Page) {
-  await page.goto('/materials');
+  await page.goto('/admin/materials');
   await page.getByRole('button', { name: '자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
   await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
@@ -147,6 +139,18 @@ async function openSavedProduct(page: Page) {
   await form.getByRole('button', { name: '자재 등록', exact: true }).click();
   await expect(form).toHaveCount(0);
   await page.getByRole('button', { name: '정보 수정', exact: true }).first().click();
+  await expect(previewImages(page)).toHaveCount(2, { timeout: 15000 });
+  await expect
+    .poll(
+      () =>
+        previewImages(page).evaluateAll((images) =>
+          images.every(
+            (image) => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0,
+          ),
+        ),
+      { timeout: 30000 },
+    )
+    .toBe(true);
   return page.getByRole('dialog', { name: '자재 수정', exact: true });
 }
 
@@ -159,6 +163,14 @@ async function releaseResult(page: Page) {
 }
 
 async function imagePixels(image: ReturnType<typeof previewImages>) {
+  await expect
+    .poll(() =>
+      image.evaluate(
+        (element: HTMLImageElement) =>
+          !!element.getAttribute('src') && element.complete && element.naturalWidth > 0,
+      ),
+    )
+    .toBe(true);
   return image.evaluate(async (element: HTMLImageElement) => {
     const blob = await (await fetch(element.src)).blob();
     const bitmap = await createImageBitmap(blob);

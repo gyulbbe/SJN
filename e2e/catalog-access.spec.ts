@@ -1,9 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { catalogSeed } from '../src/lib/catalog/seed';
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 
-const localStatus = { mode: 'local', ready: true, reason: 'local_environment', authRequired: false };
+const apps = new WeakMap<Page, AuthenticatedApp>();
+test.afterEach(async ({ page }) => {
+  await apps.get(page)?.dispose();
+});
 const cloudStatus = { mode: 'd1', ready: true, reason: 'ready', authRequired: true };
 const memberId = 'b19e14ea-5f5a-4a8d-aa16-e9baef686d32';
 const sample = {
@@ -35,7 +39,7 @@ test.beforeEach(async ({ page }) => {
   await page.route(/\/models\//, (route) => route.abort());
 });
 async function local(page: Page) {
-  await page.route('**/api/storage/status', (route) => route.fulfill({ json: localStatus }));
+  apps.set(page, await authenticatedApp(page, { admin: true }));
 }
 async function cloud(page: Page, options: { member?: boolean; broken?: boolean } = {}) {
   let signedIn = !!options.member;
@@ -80,7 +84,9 @@ async function materialForm(page: Page) {
   return form;
 }
 
-test('로컬 분류 관리에서 등록·수정·비활성 상태를 저장하고 중복 이름을 거부한다', async ({ page }) => {
+test('인증된 관리자 분류 관리에서 등록·수정·비활성 상태를 저장하고 중복 이름을 거부한다', async ({
+  page,
+}) => {
   await local(page);
   await page.goto('/admin/catalog');
   await expect(page.getByRole('heading', { name: '자재 분류 관리' })).toBeVisible();
@@ -172,7 +178,12 @@ test('자재 속성은 부분 검색·복수 선택·IME·키보드를 지원하
   await color.fill('');
   await form.getByRole('button', { name: '자재 등록', exact: true }).click();
   await expect(form.getByRole('alert')).toContainText('텍스처를 한 장 이상');
-  expect(await page.evaluate(() => localStorage.getItem('sjn-local-catalog-v1'))).toBeNull();
+  const created = await apps
+    .get(page)!
+    .env.DB.prepare('SELECT COUNT(*) AS count FROM d1_catalog_options WHERE name = ?')
+    .bind('등록되지않은색상')
+    .first<{ count: number }>();
+  expect(created?.count).toBe(0);
 });
 
 test('비활성 분류는 자재 검색에서 제외되고 하위 분류는 제품 종류에 따라 바뀐다', async ({ page }) => {
@@ -201,33 +212,22 @@ test('비활성 분류는 자재 검색에서 제외되고 하위 분류는 제�
   await expect(form.getByRole('button', { name: '하위 카테고리 벽걸이 제거', exact: true })).toBeVisible();
 });
 
-test('비로그인 사용자는 공개 자재와 상세를 보고 프로젝트 생성에서 Google 로그인으로 이동한다', async ({
-  page,
-}) => {
+test('비로그인 사용자는 자재와 프로젝트 모두 로그인 화면으로 보호된다', async ({ page }) => {
   const calls = await cloud(page);
-  await page.goto('/materials');
-  await expect(page.getByRole('heading', { name: '내 공간을 완성할 자재' })).toBeVisible();
-  await page.getByLabel('자재 검색', { exact: true }).fill('그레');
-  await expect(page.getByRole('heading', { name: sample.name, exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: '자재 관리', exact: true })).toHaveCount(0);
-  await page
-    .getByRole('button')
-    .filter({ has: page.getByRole('heading', { name: sample.name, exact: true }) })
-    .click();
-  const detail = page.getByRole('dialog', { name: '자재 상세' });
-  await expect(detail).toContainText('공개 자재 설명');
-  await expect(detail.getByAltText('정면')).toBeVisible();
-  await expect(detail).toContainText('600 × 180 × 420 mm');
-  await detail.getByRole('button', { name: '닫기', exact: true }).click();
-  await page.getByRole('link', { name: '프로젝트 만들기', exact: true }).click();
-  await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeEnabled();
-  expect(calls.some((call) => call.path.startsWith('/api/d1/projects'))).toBe(false);
+  for (const path of ['/materials', '/', '/admin/users', '/admin/projects']) {
+    await page.goto(path);
+    await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeEnabled();
+    await expect(page.getByRole('heading', { name: sample.name, exact: true })).toHaveCount(0);
+  }
+  expect(
+    calls.some((call) => call.path === '/api/catalog/materials' || call.path.startsWith('/api/d1/projects')),
+  ).toBe(false);
 });
 
 test('일반 회원은 관리자 화면과 등록 버튼에 접근할 수 없다', async ({ page }) => {
   const calls = await cloud(page, { member: true });
-  for (const path of ['/admin/materials', '/admin/catalog']) {
+  for (const path of ['/admin/materials', '/admin/catalog', '/admin/users', '/admin/projects']) {
     await page.goto(path);
     await expect(page.getByRole('heading', { name: '관리자 전용', exact: true })).toBeVisible();
     await expect.poll(() => calls.filter((call) => call.path === '/api/d1/role').length).toBeGreaterThan(0);
@@ -254,8 +254,10 @@ for (const failure of ['reported', 'network'] as const) {
     await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
     await expect(page.getByRole('button', { name: '기본 공간으로 시작', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /로컬 자료 열기|로그인 없이.*편집/ })).toHaveCount(0);
-    await page.getByRole('link', { name: '로그인 없이 자재 둘러보기', exact: true }).click();
-    await expect(page.getByRole('heading', { name: sample.name, exact: true })).toBeVisible();
+    await page.goto('/materials');
+    await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
+    await expect(page.getByRole('heading', { name: sample.name, exact: true })).toHaveCount(0);
   });
 }
 
@@ -277,15 +279,15 @@ test('Google 로그인 요청 실패와 OAuth 취소 안내를 표시하고 다�
   await expect(signIn).toBeEnabled();
 });
 
-test('회원 로그아웃 후 프로젝트 화면은 로그인으로 보호되고 공개 자재는 계속 볼 수 있다', async ({ page }) => {
+test('회원 로그아웃 후 프로젝트와 자재 화면 모두 로그인으로 보호된다', async ({ page }) => {
   const calls = await cloud(page, { member: true });
   await page.goto('/materials');
   await page.getByRole('button', { name: '로그아웃', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
   expect(calls.filter((call) => call.path === '/api/auth/sign-out')).toHaveLength(1);
-  await page.getByRole('link', { name: '로그인 없이 자재 둘러보기', exact: true }).click();
-  await expect(page.getByRole('heading', { name: sample.name, exact: true })).toBeVisible();
+  await page.goto('/materials');
+  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '로그아웃', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Google로 시작하기', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeVisible();
 });

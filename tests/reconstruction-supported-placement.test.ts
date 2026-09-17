@@ -10,7 +10,7 @@ import type {
 } from '../src/lib/reconstruction/types';
 import { estimateCandidateFixture } from '../src/lib/reconstruction';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
-import { reconstructionReviewSchema } from '../src/lib/supabase/validation';
+import { reconstructionReviewSchema } from '../src/lib/storage/validation';
 
 function plane(face: ReconstructionPlane['face'], top: number, bottom: number): ReconstructionPlane {
   return {

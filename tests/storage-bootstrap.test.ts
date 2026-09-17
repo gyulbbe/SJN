@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { configuredStorage, localStatus, blockedStatus } from '../src/lib/storage/config';
+import { configuredStorage, blockedStatus } from '../src/lib/storage/config';
 import { discoverStorage } from '../src/lib/storage/bootstrap';
 describe('runtime storage selection', () => {
   it.each([undefined, 'local', 'development'])(
-    'forces a local environment (%s) to browser storage',
+    'requires authentication in every environment (%s)',
     (APP_ENV) => {
-      expect(configuredStorage({ APP_ENV, STORAGE_MODE: 'd1' })).toEqual(localStatus('local_environment'));
+      expect(configuredStorage({ APP_ENV, STORAGE_MODE: 'd1' })).toEqual({ mode: 'd1', ready: false, reason: 'ready', authRequired: true });
     },
   );
   it('defaults production to D1 discovery, not a ready repository', () => {
@@ -19,9 +19,9 @@ describe('runtime storage selection', () => {
       blockedStatus('invalid_configuration'),
     );
   });
-  it('supports explicit legacy Supabase only when the new selector is absent', () => {
+  it('rejects legacy Supabase selection so login always uses Google/D1', () => {
     expect(configuredStorage({ APP_ENV: 'production', NEXT_PUBLIC_STORAGE_MODE: 'supabase' }).mode).toBe(
-      'supabase',
+      'd1',
     );
     expect(
       configuredStorage({
@@ -35,6 +35,7 @@ describe('runtime storage selection', () => {
     for (const data of [
       { mode: 'd1', ready: false },
       { mode: 'oops', ready: true },
+      { mode: 'local', ready: true, reason: 'local_environment', authRequired: false },
       { mode: 'd1', ready: true, reason: '__proto__' },
     ]) {
       const status = await discoverStorage({ fetcher: vi.fn().mockResolvedValue(Response.json(data)) });

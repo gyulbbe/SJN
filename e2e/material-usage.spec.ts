@@ -1,8 +1,17 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import sharp from 'sharp';
 import { writeFile } from 'node:fs/promises';
 import { getActiveDesign } from '../src/lib/designs';
 import { savedProject, storedProject, selectFixture, selectSurface } from '../tests/helpers/editor-actions';
+
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 test.setTimeout(150000);
@@ -266,7 +275,7 @@ test('최신 가격 확인 · 수동 수량 보존 · 판매 단위 변경 초�
   const original = await savedProject(page),
     projectUrl = page.url();
   async function updateCatalog(price: string, unit?: string, width?: string) {
-    await page.goto('/materials');
+    await page.goto('/admin/materials');
     await page.getByRole('button', { name: '정보 수정', exact: true }).click();
     const form = page.getByRole('dialog', { name: '자재 수정', exact: true });
     if (unit) {
@@ -326,5 +335,5 @@ test('모바일 드로어·고정 합계·잘못된 숫자 입력 차단', async
   await expect(price).toHaveValue('40000');
   await page.screenshot({ path: info.outputPath('usage-mobile.png'), fullPage: true });
   await page.getByRole('button', { name: '사용 내역 닫기', exact: true }).click();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
 });

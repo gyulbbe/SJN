@@ -69,6 +69,14 @@ function material(assetId: string, scope: 'shared' | 'personal' = 'personal'): M
     defaultPattern: 'grid',
   };
 }
+async function registerAdministrator(id: string) {
+  await env.DB.prepare(
+    'INSERT INTO "user"(id,name,email,emailVerified,createdAt,updatedAt) VALUES(?,?,?,?,?,?)',
+  )
+    .bind(id, '격리 테스트 관리자', id + '@example.test', 1, old, old)
+    .run();
+  await env.DB.prepare('INSERT INTO admin_roles(user_id) VALUES(?)').bind(id).run();
+}
 async function call(
   resource: string,
   body: unknown,
@@ -199,8 +207,14 @@ describe('D1/R2 storage in a real local Worker', () => {
     const result = (await (await assetGet(user, id)).json()) as {
       asset: { ownerId: string; mime: string; width: number };
       url: string;
+      contentHash: string;
     };
     expect(result.asset).toMatchObject({ ownerId: user, mime: 'image/png', width: 10 });
+    expect(result.contentHash).toBe(
+      Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', png)), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join(''),
+    );
     expect(result.url).toBe(`/api/d1/assets?id=${id}&raw=1`);
     expect((await assetGet(other, id)).status).toBe(404);
     expect((await assetGet(other, id, true)).status).toBe(404);
@@ -292,6 +306,7 @@ describe('D1/R2 storage in a real local Worker', () => {
     const admin = crypto.randomUUID(),
       user = crypto.randomUUID(),
       { id } = await upload(admin);
+    await registerAdministrator(admin);
     const denied = await call(
       'materials',
       { operation: 'create', input: material(id, 'shared') },
@@ -549,4 +564,226 @@ describe('D1/R2 storage in a real local Worker', () => {
     expect((await assetGet(user, derived.id)).status).toBe(200);
     expect((await assetGet(other, foreign.id)).status).toBe(200);
   });
+});
+
+async function storedObjectKeys() {
+  // Miniflare's wrapped binding type is wider than this test-only R2 listing subset.
+  const bucket = (await worker.getR2Bucket('ASSET_BUCKET')) as unknown as {
+    list(): Promise<{ objects: { key: string }[] }>;
+  };
+  return (await bucket.list()).objects.map((object) => object.key).sort();
+}
+
+describe('D1 owner boundaries beyond catalog administrator privileges', () => {
+  it('denies administrator access to another member project without changing its D1 or R2 state', async () => {
+    const owner = crypto.randomUUID(),
+      administrator = crypto.randomUUID();
+    const uploaded = await upload(owner);
+    expect(uploaded.response.status).toBe(200);
+    const document = project(uploaded.id);
+    const created = await call('projects', { operation: 'create', document }, owner);
+    expect(created.status).toBe(200);
+    const saved = (await created.json()) as ProjectDocument;
+    const before = await env.DB.prepare('SELECT * FROM d1_projects WHERE id=?')
+      .bind(saved.id)
+      .first<{ object_key: string }>();
+    expect(before).not.toBeNull();
+    const bytes = await (await env.ASSET_BUCKET.get(before!.object_key))!.text();
+    const objectsBefore = await storedObjectKeys();
+    const jobsBefore = (await env.DB.prepare('SELECT * FROM d1_cleanup_jobs ORDER BY object_key').all())
+      .results;
+    const attempts = [
+      { operation: 'load', id: saved.id },
+      { operation: 'duplicate', id: saved.id },
+      { operation: 'remove', id: saved.id },
+      {
+        operation: 'save',
+        document: { ...saved, ownerId: administrator, name: 'forged transfer' },
+        expectedStorageRevision: saved.storageRevision,
+      },
+    ];
+    for (const attempt of attempts) {
+      const response = await call('projects', attempt, administrator, undefined, true);
+      expect(response.status, await response.clone().text()).toBe(404);
+    }
+    expect(
+      await (await call('projects', { operation: 'list' }, administrator, undefined, true)).json(),
+    ).toEqual([]);
+    expect(await env.DB.prepare('SELECT * FROM d1_projects WHERE id=?').bind(saved.id).first()).toEqual(
+      before,
+    );
+    expect(await (await env.ASSET_BUCKET.get(before!.object_key))!.text()).toBe(bytes);
+    expect(await storedObjectKeys()).toEqual(objectsBefore);
+    expect((await env.DB.prepare('SELECT * FROM d1_cleanup_jobs ORDER BY object_key').all()).results).toEqual(
+      jobsBefore,
+    );
+    expect(await (await call('projects', { operation: 'load', id: saved.id }, owner)).json()).toEqual(saved);
+  });
+
+  it('rejects anonymous uploads and cross-owner asset replacement before creating R2 objects', async () => {
+    const owner = crypto.randomUUID(),
+      other = crypto.randomUUID();
+    const original = await upload(owner);
+    expect(original.response.status).toBe(200);
+    const row = await env.DB.prepare('SELECT * FROM d1_assets WHERE id=?')
+      .bind(original.id)
+      .first<{ object_key: string }>();
+    const objectsBefore = await storedObjectKeys();
+    const jobsBefore = (await env.DB.prepare('SELECT * FROM d1_cleanup_jobs ORDER BY object_key').all())
+      .results;
+    const anonymous = await upload('');
+    expect(anonymous.response.status).toBe(401);
+    expect(await env.DB.prepare('SELECT id FROM d1_assets WHERE id=?').bind(anonymous.id).first()).toBeNull();
+    expect((await upload(other, { id: original.id })).response.status).toBe(404);
+    expect(await env.DB.prepare('SELECT * FROM d1_assets WHERE id=?').bind(original.id).first()).toEqual(row);
+    expect(new Uint8Array(await (await env.ASSET_BUCKET.get(row!.object_key))!.arrayBuffer())).toEqual(png);
+    expect(await storedObjectKeys()).toEqual(objectsBefore);
+    expect((await env.DB.prepare('SELECT * FROM d1_cleanup_jobs ORDER BY object_key').all()).results).toEqual(
+      jobsBefore,
+    );
+  });
+});
+
+describe('shared material applied to a member project', () => {
+  it('retains the selected version and R2 image after an administrator replaces and deactivates the material', async () => {
+    const admin = crypto.randomUUID(),
+      member = crypto.randomUUID();
+    await registerAdministrator(admin);
+    const image = await upload(admin, { kind: 'product' });
+    expect(image.response.status).toBe(200);
+    const imageRow = await env.DB.prepare('SELECT object_key FROM d1_assets WHERE id=?')
+      .bind(image.id)
+      .first<{ object_key: string }>();
+    expect(new Uint8Array(await (await env.ASSET_BUCKET.get(imageRow!.object_key))!.arrayBuffer())).toEqual(
+      png,
+    );
+    const registered = await call(
+      'materials',
+      { operation: 'create', input: material(image.id, 'shared') },
+      admin,
+      undefined,
+      true,
+    );
+    expect(registered.status, await registered.clone().text()).toBe(200);
+    const first = (await registered.json()) as MaterialVersion;
+    const immutablePayload = await env.DB.prepare('SELECT payload_json FROM d1_material_versions WHERE id=?')
+      .bind(first.id)
+      .first<string>('payload_json');
+    const available = await (await call('materials', { operation: 'list' }, member)).json();
+    expect(available.some((row: { version: MaterialVersion }) => row.version.id === first.id)).toBe(true);
+    expect(new Uint8Array(await (await assetGet(member, image.id, true)).arrayBuffer())).toEqual(png);
+
+    const photo = await upload(member);
+    expect(photo.response.status).toBe(200);
+    const document = project(photo.id);
+    const fixture = {
+      id: crypto.randomUUID(),
+      name: first.name,
+      materialVersionId: first.id,
+      viewIndex: 0,
+      position: { x: 0.5, y: 0.5 },
+      width: 0.25,
+      height: 0.35,
+      anchor: { x: 0.5, y: 1 },
+      rotation: 0,
+      locked: false,
+      shadow: { x: 0, y: 0, opacity: 0, blur: 0, scale: 1 },
+      occlusion: EMPTY_MASK(),
+      color: { ...DEFAULT_COLOR },
+    };
+    document.designs[0].scene.fixtures.push(fixture);
+    const created = await call('projects', { operation: 'create', document }, member);
+    expect(created.status, await created.clone().text()).toBe(200);
+    const saved = (await created.json()) as ProjectDocument;
+    expect(saved.ownerId).toBe(member);
+    expect(saved.designs[0].scene.fixtures).toEqual([fixture]);
+    const persisted = await env.DB.prepare('SELECT object_key FROM d1_projects WHERE id=?')
+      .bind(saved.id)
+      .first<{ object_key: string }>();
+    const snapshot = JSON.parse(
+      await (await env.ASSET_BUCKET.get(persisted!.object_key))!.text(),
+    ) as ProjectDocument;
+    expect(snapshot.designs[0].scene.fixtures).toEqual([fixture]);
+    expect(
+      (
+        await env.DB.prepare('SELECT version_id FROM d1_project_versions WHERE project_id=?')
+          .bind(saved.id)
+          .all()
+      ).results,
+    ).toEqual([{ version_id: first.id }]);
+    expect(await (await call('projects', { operation: 'load', id: saved.id }, member)).json()).toEqual(saved);
+
+    const replacement = await upload(admin, { kind: 'product' });
+    expect(replacement.response.status).toBe(200);
+    const updated = await call(
+      'materials',
+      {
+        operation: 'update',
+        id: first.materialId,
+        expectedVersionId: first.id,
+        input: { ...material(replacement.id, 'shared'), name: '관리자가 변경한 새 버전' },
+      },
+      admin,
+      undefined,
+      true,
+    );
+    expect(updated.status, await updated.clone().text()).toBe(200);
+    const second = (await updated.json()) as MaterialVersion;
+    expect(second.id).not.toBe(first.id);
+    expect(second.version).toBe(2);
+    expect(
+      (
+        await call(
+          'materials',
+          { operation: 'setActive', id: first.materialId, active: false },
+          admin,
+          undefined,
+          true,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      await env.DB.prepare('SELECT current_version_id,active FROM d1_materials WHERE id=?')
+        .bind(first.materialId)
+        .first(),
+    ).toEqual({ current_version_id: second.id, active: 0 });
+
+    const reopened = (await (
+      await call('projects', { operation: 'load', id: saved.id }, member)
+    ).json()) as ProjectDocument;
+    expect(reopened).toEqual(saved);
+    expect(await (await call('materials', { operation: 'getVersion', id: first.id }, member)).json()).toEqual(
+      first,
+    );
+    const resaved = await call(
+      'projects',
+      {
+        operation: 'save',
+        expectedStorageRevision: reopened.storageRevision,
+        document: { ...reopened, name: '기존 자재 버전을 유지한 프로젝트' },
+      },
+      member,
+    );
+    expect(resaved.status, await resaved.clone().text()).toBe(200);
+    expect(((await resaved.json()) as ProjectDocument).designs[0].scene.fixtures).toEqual([fixture]);
+    expect(
+      (
+        await env.DB.prepare('SELECT version_id FROM d1_project_versions WHERE project_id=?')
+          .bind(saved.id)
+          .all()
+      ).results,
+    ).toEqual([{ version_id: first.id }]);
+    expect(
+      await env.DB.prepare('SELECT payload_json FROM d1_material_versions WHERE id=?')
+        .bind(first.id)
+        .first('payload_json'),
+    ).toBe(immutablePayload);
+    await env.DB.prepare('UPDATE d1_assets SET created_at=? WHERE id IN (?,?)')
+      .bind(old, image.id, replacement.id)
+      .run();
+    expect((await call('cleanup', { operation: 'run' }, admin, undefined, true)).status).toBe(200);
+    expect(new Uint8Array(await (await assetGet(member, image.id, true)).arrayBuffer())).toEqual(png);
+    expect(await env.ASSET_BUCKET.head(imageRow!.object_key)).not.toBeNull();
+    expect((await env.DB.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
+  }, 30000);
 });

@@ -4,7 +4,7 @@ import 'fake-indexeddb/auto';
 import { IDBObjectStore } from 'fake-indexeddb';
 import { openDB } from 'idb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { createCloudRepositories } from '../src/lib/repositories/cloud';
 import { projectReferences, StorageConflictError } from '../src/lib/repositories/references';
 import { captureWorkspace, getActiveDesign, normalizeProjectDocument } from '../src/lib/comparison';
@@ -14,7 +14,7 @@ import {
   DESIGN_LIMIT_MESSAGE,
   COMPARISON_LIMIT_MESSAGE,
 } from '../src/lib/designs';
-import { projectV3Schema } from '../src/lib/supabase/validation';
+import { projectV3Schema } from '../src/lib/storage/validation';
 import { createQuote, quoteSourceSignature } from '../src/lib/quote';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
 import {
@@ -29,7 +29,7 @@ import {
 const stamp = '2020-01-01T00:00:00.000Z';
 async function setup() {
   const name = 'design-storage-' + crypto.randomUUID();
-  const repo = createLocalRepositories(name);
+  const repo = createLegacyLocalRepositories(name);
   async function asset(label = 'room.png', sourceAssetId?: string) {
     const record: AssetRecord = {
       id: crypto.randomUUID(),
@@ -359,8 +359,6 @@ describe('v3 workspace durable storage', () => {
   it('sends only a document request for cloud save, never an image upload or AI request', async () => {
     const { project } = await setup();
     append(project, 3);
-    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.invalid');
-    vi.stubEnv('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY', 'test-only');
     const fetch = vi.fn(async () => Response.json({ ...project, storageRevision: 1 }));
     vi.stubGlobal('fetch', fetch);
     const cloud = createCloudRepositories();
@@ -368,7 +366,7 @@ describe('v3 workspace durable storage', () => {
     expect(saved.designs).toHaveLength(3);
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('/api/cloud/projects');
+    expect(url).toBe('/api/d1/projects');
     expect(init.credentials).toBe('same-origin');
     const body = JSON.parse(init.body as string);
     expect(body.document.schemaVersion).toBe(3);

@@ -5,7 +5,7 @@ import { useSharedCatalogAdmin } from './shared-access';
 export default function AdminGuard({ children }: { children: React.ReactNode }) {
   const access = useAccess(),
     admin = useSharedCatalogAdmin();
-  if (access.ready && (access.mode === 'local' || admin)) return <>{children}</>;
+  if (access.ready && !!access.userId && admin) return <>{children}</>;
   return (
     <main className="auth-page">
       <div className="panel auth-card">

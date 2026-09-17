@@ -14,7 +14,7 @@ for (const phase of ['before', 'after']) {
   const result = await build({
     stdin: {
       contents:
-        "export * from './src/lib/reconstruction';export {createLocalRepositories} from './src/lib/repositories/local';export {PhotoCompositor} from './src/lib/render/compositor';",
+        "export * from './src/lib/reconstruction';export {createLegacyLocalRepositories} from './tests/helpers/legacy-local-repositories';export {PhotoCompositor} from './src/lib/render/compositor';",
       resolveDir: process.cwd(),
     },
     bundle: true,
@@ -95,7 +95,7 @@ try {
     const result = await page.evaluate(
       async ({ origin, id }) => {
         type API = typeof import('../src/lib/reconstruction') &
-          typeof import('../src/lib/repositories/local') &
+          typeof import('./helpers/legacy-local-repositories') &
           typeof import('../src/lib/render/compositor');
         const api = (await import(origin + '/after.js')) as API;
         const report = await (await fetch('/' + id + '/report')).json(),
@@ -103,7 +103,7 @@ try {
         const file = new File([photo], id + '.jpg', { type: 'image/jpeg' }),
           raw = report.rawReview ?? report.review,
           rawString = JSON.stringify(raw);
-        const repos = api.createLocalRepositories('floor-size-' + id),
+        const repos = api.createLegacyLocalRepositories('floor-size-' + id),
           runs = [];
         let immutable: string | undefined,
           oldProjectId: string | undefined,

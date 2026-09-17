@@ -4,13 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { captureWorkspace, normalizeProjectDocument, projectWriteError } from '../src/lib/comparison';
 import { createBlankDesign, copyDesignDocument, DESIGN_LIMIT_MESSAGE, MAX_DESIGNS } from '../src/lib/designs';
 import { useEditor } from '../src/lib/editor-store';
-import { createLocalRepositories } from '../src/lib/repositories/local';
-import { projectV3Schema, storedProjectV3Schema } from '../src/lib/supabase/validation';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
+import { projectV3Schema, storedProjectV3Schema } from '../src/lib/storage/validation';
 import { DEFAULT_COLOR, EMPTY_MASK } from '../src/lib/types';
 
 async function existing(count = 6) {
   const databaseName = 'five-design-compat-' + crypto.randomUUID();
-  const repo = createLocalRepositories(databaseName),
+  const repo = createLegacyLocalRepositories(databaseName),
     assetId = crypto.randomUUID();
   const now = new Date().toISOString();
   await repo.assets.put({

@@ -14,23 +14,18 @@ import {
 } from '../src/lib/render/design-preview-context';
 import { projects } from '../src/lib/d1/projects';
 import type { Context } from '../src/lib/d1/database';
-import { POST } from '../src/app/api/cloud/projects/route';
 import { createCloudRepositories } from '../src/lib/repositories/cloud';
-import { storedProjectSchema } from '../src/lib/supabase/validation';
+import { storedProjectSchema } from '../src/lib/storage/validation';
 
 const mock = vi.hoisted(() => ({
   sql: vi.fn(),
   read: vi.fn(),
   batch: vi.fn(),
   stage: vi.fn(),
-  authenticated: vi.fn(),
-  serviceClient: vi.fn(),
-  from: vi.fn(),
-  select: vi.fn(),
-  order: vi.fn(),
 }));
 vi.mock('../src/lib/d1/database', () => ({
   sql: mock.sql,
+  dataOwnerId: (ctx: Context) => ctx.adminProject?.ownerId ?? ctx.actor.id,
   readDocument: mock.read,
   batch: mock.batch,
   stageObject: mock.stage,
@@ -43,24 +38,6 @@ vi.mock('../src/lib/d1/database', () => ({
   committedObject: () => ({ kind: 'commit' }),
   queueObject: () => ({ kind: 'queue' }),
   mutationStatement: () => [],
-}));
-vi.mock('../src/lib/supabase/server', () => ({
-  authenticated: mock.authenticated,
-  serviceClient: mock.serviceClient,
-  boundedJson: (request: Request) => request.json(),
-  databaseError: (error: unknown) => {
-    if (error) throw error;
-  },
-  HttpError: class extends Error {
-    constructor(
-      public status: number,
-      message: string,
-    ) {
-      super(message);
-    }
-  },
-  routeError: (error: { status?: number; message?: string }) =>
-    Response.json({ error: error.message }, { status: error.status ?? 500 }),
 }));
 const ctx = { actor: { id: 'tenant-a' }, env: {} } as Context;
 const stamp = '2026-09-15T00:00:00.000Z';
@@ -115,21 +92,11 @@ function listRows(rows: Row[]) {
     return { all: async () => ({ results: rows.filter((row) => row.owner === owner) }) };
   });
 }
-const request = () =>
-  new Request('http://unit.test/api/cloud/projects', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ operation: 'list' }),
-  });
 beforeEach(() => {
   vi.clearAllMocks();
-  for (const fn of [mock.sql, mock.read, mock.authenticated, mock.from, mock.select, mock.order])
-    fn.mockReset();
+  for (const fn of [mock.sql, mock.read]) fn.mockReset();
   mock.batch.mockResolvedValue(undefined);
   mock.stage.mockResolvedValue(undefined);
-  mock.authenticated.mockResolvedValue({ client: { from: mock.from }, user: { id: 'tenant-a' } });
-  mock.from.mockReturnValue({ select: mock.select });
-  mock.select.mockReturnValue({ order: mock.order });
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -277,39 +244,8 @@ describe('D1 list and writes without a database', () => {
   );
 });
 
-describe('Supabase response and cloud client boundary without a server', () => {
-  it('computes current document context while preserving row metadata and authenticated-client/RLS access', async () => {
-    const p = project();
-    const before = structuredClone(p);
-    mock.order.mockResolvedValue({
-      data: [{ id: p.id, name: 'row title', updated_at: 'row-stamp', document: p }],
-      error: null,
-    });
-    const response = await POST(request());
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual([
-      {
-        ...JSON.parse(
-          JSON.stringify(await createProjectSummary(normalizeProjectDocument(storedProjectSchema.parse(p)))),
-        ),
-        name: 'row title',
-        updatedAt: 'row-stamp',
-      },
-    ]);
-    expect(mock.authenticated).toHaveBeenCalledTimes(1);
-    expect(mock.from).toHaveBeenCalledWith('projects');
-    expect(mock.select).toHaveBeenCalledWith('id,name,updated_at,document');
-    expect(mock.order).toHaveBeenCalledWith('updated_at', { ascending: false });
-    expect(mock.serviceClient).not.toHaveBeenCalled();
-    expect(p).toEqual(before);
-  });
-  it('retains authentication rejection before reading any project', async () => {
-    mock.authenticated.mockRejectedValue({ status: 401, message: 'auth required' });
-    expect((await POST(request())).status).toBe(401);
-    expect(mock.from).not.toHaveBeenCalled();
-    expect(mock.serviceClient).not.toHaveBeenCalled();
-  });
-  it.each(['d1', 'supabase'] as const)(
+describe('D1 client response boundary', () => {
+  it.each(['d1'] as const)(
     'passes %s summary context through the existing client without image transfer',
     async (mode) => {
       const summary = JSON.parse(JSON.stringify(await createProjectSummary(project())));

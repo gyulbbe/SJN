@@ -2,14 +2,16 @@ import { resolveCatalogInput, catalogStatements } from '../catalog/server';
 import { z } from 'zod';
 import { stripLegacyMaterialImages } from '../material-images';
 import { materialReferences } from '../repositories/references';
-import { identifierSchema, materialInputSchema } from '../supabase/validation';
+import { identifierSchema, materialInputSchema } from '../storage/validation';
 import type { AssetRecord, Material, MaterialInput, MaterialVersion } from '../types';
 import {
   assetAssertion,
+  dataOwnerId,
+  visibleAssetsQuery,
+  visibleVersionsQuery,
   assertion,
   batch,
   mutationStatement,
-  visibleAssets,
   referenceJson,
   sql,
   stamp,
@@ -44,12 +46,12 @@ async function materialFor(ctx: Context, id: string): Promise<MaterialRow> {
   return row;
 }
 async function versionFor(ctx: Context, id: string): Promise<VersionRow> {
+  const visible = visibleVersionsQuery(ctx);
   const row = await sql(
     ctx,
-    `SELECT v.* FROM d1_material_versions v JOIN d1_materials m ON m.id=v.material_id
-    WHERE v.id=? AND (m.owner_id=? OR m.scope='shared')`,
+    `${visible.cte} SELECT v.* FROM d1_material_versions v JOIN visible_versions p ON p.id=v.id WHERE v.id=?`,
+    ...visible.values,
     id,
-    ctx.actor.id,
   ).first<VersionRow>();
   if (!row) throw notFound();
   return row;
@@ -61,10 +63,11 @@ async function checkMaterialAssets(ctx: Context, input: MaterialInput): Promise<
   const refs = materialReferences(input),
     refsJson = referenceJson(refs);
   const assets = new Map<string, Omit<AssetRecord, 'blob'>>();
+  const visible = visibleAssetsQuery(ctx);
   const rows = await sql(
     ctx,
-    `${visibleAssets} SELECT a.id,a.metadata_json FROM d1_assets a JOIN visible_assets v ON v.id=a.id JOIN json_each(?) r ON r.value=a.id`,
-    ctx.actor.id,
+    `${visible.cte} SELECT a.id,a.metadata_json FROM d1_assets a JOIN visible_assets v ON v.id=a.id JOIN json_each(?) r ON r.value=a.id`,
+    ...visible.values,
     refsJson,
   ).all<{ id: string; metadata_json: string }>();
   if (rows.results.length !== refs.length) throw invalid('접근할 수 없는 자산이 포함되어 있어요.');
@@ -96,27 +99,38 @@ export async function materials(
   body: Record<string, unknown>,
   projectResource = false,
 ): Promise<unknown> {
+  if (ctx.adminProject && !['list', 'getVersion', 'create'].includes(String(body.operation)))
+    throw forbidden();
+  if (ctx.adminProject && body.operation === 'create' && !projectResource) throw forbidden();
   switch (body.operation) {
     case 'list': {
-      const rows = await sql(
-        ctx,
-        `SELECT m.*,v.payload_json FROM d1_materials m JOIN d1_material_versions v ON v.id=m.current_version_id
-        WHERE m.owner_id=? OR m.scope='shared' ORDER BY m.updated_at DESC`,
-        ctx.actor.id,
-      ).all<MaterialRow & { payload_json: string }>();
+      const visible = visibleVersionsQuery(ctx);
+      const rows = ctx.adminProject
+        ? await sql(
+            ctx,
+            `${visible.cte} SELECT m.*,v.payload_json FROM d1_materials m JOIN d1_material_versions v ON v.material_id=m.id JOIN visible_versions p ON p.id=v.id ORDER BY (v.id=m.current_version_id) DESC,m.updated_at DESC`,
+            ...visible.values,
+          ).all<MaterialRow & { payload_json: string }>()
+        : await sql(
+            ctx,
+            `SELECT m.*,v.payload_json FROM d1_materials m JOIN d1_material_versions v ON v.id=m.current_version_id WHERE m.owner_id=? OR m.scope='shared' ORDER BY m.updated_at DESC`,
+            ctx.actor.id,
+          ).all<MaterialRow & { payload_json: string }>();
       const result: { material: Material; version: MaterialVersion }[] = [];
-      for (const row of rows.results)
+      for (const row of rows.results) {
+        if (ctx.adminProject && result.some((entry) => entry.material.id === row.id)) continue;
         result.push({
           material: {
             id: row.id,
             ownerId: row.owner_id,
-            currentVersionId: row.current_version_id,
+            currentVersionId: ctx.adminProject ? JSON.parse(row.payload_json).id : row.current_version_id,
             active: !!row.active,
             scope: row.scope,
             updatedAt: row.updated_at,
           },
           version: JSON.parse(row.payload_json) as MaterialVersion,
         });
+      }
       return result;
     }
     case 'getVersion':
@@ -143,7 +157,7 @@ export async function materials(
             ctx,
             'SELECT source_asset_id FROM d1_assets WHERE id=? AND owner_id=? AND deleting=0',
             input.views[0].assetId,
-            ctx.actor.id,
+            dataOwnerId(ctx),
           ).first<{ source_asset_id: string | null }>();
           if (!asset?.source_asset_id) throw invalid('사진에서 추출한 본인 프로젝트 이미지가 필요해요.');
         }
@@ -194,7 +208,7 @@ export async function materials(
               ctx,
               `INSERT INTO d1_materials(id,owner_id,scope,current_version_id,created_at,updated_at,purpose) VALUES(?,?,?,?,?,?,?)`,
               id,
-              ctx.actor.id,
+              dataOwnerId(ctx),
               input.scope,
               value.id,
               value.createdAt,
@@ -223,6 +237,18 @@ export async function materials(
           value.id,
           refs,
         ),
+        ...(ctx.adminProject
+          ? [
+              sql(
+                ctx,
+                'INSERT INTO d1_admin_project_versions(project_id,version_id,actor_id,created_at) VALUES(?,?,?,?)',
+                ctx.adminProject.id,
+                value.id,
+                ctx.actor.id,
+                value.createdAt,
+              ),
+            ]
+          : []),
         ...(selection ? catalogStatements(ctx, value.id, selection) : []),
         ...mutationStatement(ctx, { value }),
       ]);

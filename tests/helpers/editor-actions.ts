@@ -4,27 +4,20 @@ import type { FixtureInstance, ProjectDocument, Surface } from '../../src/lib/ty
 /** Inspect the persisted result; mutations still use the visible editor controls. */
 export async function storedProject(page: Page): Promise<ProjectDocument> {
   return page.evaluate(async (id) => {
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+    const response = await fetch('/api/d1/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operation: 'load', id }),
     });
-    try {
-      return await new Promise<ProjectDocument>((resolve, reject) => {
-        const request = database.transaction('projects').objectStore('projects').get(id);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-    } finally {
-      database.close();
-    }
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
   }, page.url().split('/').at(-1)!);
 }
 
 export async function savedProject(page: Page, afterRevision?: number) {
   if (afterRevision !== undefined)
     await expect.poll(async () => (await storedProject(page)).editRevision).toBeGreaterThan(afterRevision);
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
   await expect(page.locator('.canvas-loading')).toHaveCount(0);
   await expect(page.locator('.editor-error')).toHaveCount(0);
   return storedProject(page);

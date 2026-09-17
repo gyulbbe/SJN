@@ -46,7 +46,7 @@ const defaults: MaterialInput = {
   brand: '',
   code: '',
   category: 'tile',
-  scope: 'personal',
+  scope: 'shared',
   description: '',
   color: '',
   finish: '',
@@ -139,9 +139,9 @@ export function MaterialForm({
   onSaved: (version: MaterialVersion) => void;
   onCancel: () => void;
 }) {
-  const { writable, mode, userId } = useAccess();
+  const { writable, userId } = useAccess();
   const serverAdmin = useSharedCatalogAdmin();
-  const isAdmin = mode === 'local' || serverAdmin;
+  const isAdmin = serverAdmin;
   const [form, setForm] = useState<MaterialInput>(() =>
     initial
       ? {
@@ -175,7 +175,7 @@ export function MaterialForm({
   const [pendingQueries, setPendingQueries] = useState<Record<string, boolean>>({});
   useEffect(() => {
     let dead = false;
-    loadCatalog(mode === 'local', userId)
+    loadCatalog(userId)
       .then((data) => {
         if (dead) return;
         setCatalogData(data);
@@ -194,7 +194,7 @@ export function MaterialForm({
           return {
             ...current,
             catalog: selection,
-            scope: mode === 'd1' && !initial ? 'shared' : current.scope,
+            scope: !initial ? 'shared' : current.scope,
           };
         });
       })
@@ -204,7 +204,7 @@ export function MaterialForm({
     return () => {
       dead = true;
     };
-  }, [mode, userId, initial]);
+  }, [userId, initial]);
   const selection = form.catalog ?? emptySelection();
   const selectCatalog = (key: keyof CatalogSelection, ids: string[]) =>
     setForm((current) => ({
@@ -641,9 +641,7 @@ export function MaterialForm({
                 일치하는 등록 항목만 연결했어요. 저장 전에 선택 항목을 확인해 주세요.
               </p>
             )}
-            {mode === 'd1' && (
-              <p className="muted">새 자재는 공개 라이브러리에 등록돼요. 기존 자재의 공개 범위는 유지돼요.</p>
-            )}
+            <p className="muted">새 자재는 공개 라이브러리에 등록돼요. 기존 자재의 공개 범위는 유지돼요.</p>
             <div className={styles.dimensions}>
               <label className="field">
                 가로 (mm)

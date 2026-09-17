@@ -3,11 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor } from '@/lib/editor-store';
 import { useAccess } from '@/components/app-provider';
-import { getRepositories } from '@/lib/repositories';
+import { useRepositories, useAdminProjectScope } from '@/components/repository-context';
 import { createReconstructionProject } from '@/lib/reconstruction';
 import type { ReconstructionAnalysisProfile } from '@/lib/reconstruction/quality-contract';
 import AnalysisProfilePicker, { type AnalysisProfileSelection } from './analysis-profile-picker';
 import DiagnosticLogDownload from './diagnostic-log-download';
+import type { DiagnosticArchiveEntry } from '@/lib/reconstruction/lab-diagnostic-storage';
 import styles from './reconstruction.module.css';
 
 export default function ReconstructionRebuild({
@@ -15,6 +16,12 @@ export default function ReconstructionRebuild({
 }: {
   onMaterialsChanged: () => Promise<void>;
 }) {
+  const repositories = useRepositories();
+  const adminProjectScope = useAdminProjectScope();
+  const [diagnosticRecords, setDiagnosticRecords] = useState<DiagnosticArchiveEntry[]>([]);
+  useEffect(() => {
+    setDiagnosticRecords([]);
+  }, [adminProjectScope]);
   const st = useEditor(),
     { writable } = useAccess();
   const [open, setOpen] = useState(false),
@@ -99,7 +106,7 @@ export default function ReconstructionRebuild({
       useEditor.getState().project?.editRevision === captured.editRevision &&
       !useEditor.getState().draft;
     try {
-      const repo = getRepositories(),
+      const repo = repositories,
         reference = await repo.assets.get(captured.shared.comparison.referenceOriginalAssetId);
       if (!current()) return;
       const next = await createReconstructionProject(
@@ -107,6 +114,12 @@ export default function ReconstructionRebuild({
         captured.shared.comparison.room,
         {
           repositories: repo,
+          cachePolicy: adminProjectScope ? 'transient' : 'persistent',
+          onDiagnostic: adminProjectScope
+            ? (entry) => {
+                if (current()) setDiagnosticRecords([entry]);
+              }
+            : undefined,
           signal: request.signal,
           analysisProfile: analysis.profile,
           targetFrame: {
@@ -180,7 +193,10 @@ export default function ReconstructionRebuild({
                   disabled={!!stage || !writable}
                   onChange={setAnalysis}
                 />
-                <DiagnosticLogDownload className="btn small" />
+                <DiagnosticLogDownload
+                  className="btn small"
+                  records={adminProjectScope ? diagnosticRecords : undefined}
+                />
                 {stage && (
                   <p data-testid="reconstruction-progress" role="status" style={{ marginTop: 18 }}>
                     {stage}

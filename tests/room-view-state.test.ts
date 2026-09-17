@@ -22,8 +22,8 @@ import { captureWorkspace, getActiveDesign, normalizeProjectDocument } from '../
 import { duplicateProjectDocument } from '../src/lib/designs';
 import { useEditor } from '../src/lib/editor-store';
 import { DEFAULT_COLOR, EMPTY_MASK, type LegacyProjectDocument } from '../src/lib/types';
-import { projectV3Schema, roomViewSchema } from '../src/lib/supabase/validation';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { projectV3Schema, roomViewSchema } from '../src/lib/storage/validation';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { projectReferences, StorageConflictError } from '../src/lib/repositories/references';
 import { createQuote } from '../src/lib/quote';
 
@@ -213,6 +213,22 @@ describe('room viewing state is not a scene edit', () => {
     expect(useEditor.getState().saveStatus).toBe('dirty');
     expect(projectReferences(current())).toEqual(projectReferences(source));
   });
+  it('retains a save failure and its retry action while preserving the newly selected view', () => {
+    const state = useEditor.getState(),
+      source = structuredClone(current()),
+      view = rotateRoomView(defaultRoomView(), 'right');
+    state.failed('서버 저장 실패');
+    state.setRoomView(view);
+    expect(current()).toEqual({ ...source, roomView: view });
+    expect(useEditor.getState().saveStatus).toBe('error');
+    expect(useEditor.getState().error).toBe('서버 저장 실패');
+    state.saving();
+    expect(useEditor.getState().saveStatus).toBe('saving');
+    expect(useEditor.getState().error).toBe('');
+    state.saved({ ...current(), storageRevision: source.storageRevision + 1 });
+    expect(useEditor.getState().saveStatus).toBe('saved');
+    expect(current().roomView).toEqual(view);
+  });
   it('preserves shared view on design switch, design copy and independent project duplication', () => {
     const state = useEditor.getState(),
       view = rotateRoomView(defaultRoomView(), 'up');
@@ -311,7 +327,7 @@ describe('room viewing state is not a scene edit', () => {
 
 describe('real IndexedDB view-only writes', () => {
   async function setup() {
-    const repo = createLocalRepositories('room-view-' + crypto.randomUUID()),
+    const repo = createLegacyLocalRepositories('room-view-' + crypto.randomUUID()),
       source = project();
     const id = source.shared.baseline.originalAssetId;
     await repo.assets.put({

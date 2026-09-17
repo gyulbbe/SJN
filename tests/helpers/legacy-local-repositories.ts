@@ -1,14 +1,14 @@
-import { getMaterialImageAssetId, stripLegacyMaterialImages } from '../material-images';
-import { decodeProductMesh, PRODUCT_MESH_MIME } from '../product3d/codec';
-import { normalizeProjectDocument, projectWriteError } from '../comparison';
-import { duplicateProjectDocument } from '../designs';
+import { getMaterialImageAssetId, stripLegacyMaterialImages } from '../../src/lib/material-images';
+import { decodeProductMesh, PRODUCT_MESH_MIME } from '../../src/lib/product3d/codec';
+import { normalizeProjectDocument, projectWriteError } from '../../src/lib/comparison';
+import { duplicateProjectDocument } from '../../src/lib/designs';
 import {
   assetMetadataSchema,
   identifierSchema,
   materialInputSchema,
   product3dReferenceSchema,
   storedProjectV3Schema,
-} from '../supabase/validation';
+} from '../../src/lib/storage/validation';
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
   AssetRecord,
@@ -17,20 +17,20 @@ import type {
   MaterialVersion,
   ProjectDocument,
   ProjectInput,
-} from '../types';
-import type { Repositories } from './contracts';
+} from '../../src/lib/types';
+import type { ProjectResourceBundle, RepositoryOperations } from '../../src/lib/repositories/contracts';
 import {
   materialReferences,
   isDisposableReconstructionVersion,
   projectReferences,
   StorageConflictError,
   StorageNotFoundError,
-} from './references';
-import { materialPricingSchema } from '../quote-validation';
+} from '../../src/lib/repositories/references';
+import { materialPricingSchema } from '../../src/lib/quote-validation';
 import {
   designPreviewRoomContextKey,
   projectDesignPreviewRoomContext,
-} from '../render/design-preview-context';
+} from '../../src/lib/render/design-preview-context';
 
 interface LocalSchema extends DBSchema {
   projects: { key: string; value: ProjectInput };
@@ -60,7 +60,13 @@ async function validateAsset(asset: AssetRecord) {
     throw new Error('이미지는 25MB, 4천만 화소 이하여야 해요.');
 }
 
-export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Repositories {
+export type LegacyProjectRepository = RepositoryOperations['projects'] & {
+  createWithResources(bundle: ProjectResourceBundle, options?: { signal?: AbortSignal }): Promise<ProjectDocument>;
+};
+export type LegacyRepositories = RepositoryOperations & { mode: 'local'; projects: LegacyProjectRepository };
+
+/** Test fixture only: preserve historical IndexedDB format coverage without an application adapter. */
+export function createLegacyLocalRepositories(databaseName: string): LegacyRepositories {
   let database: Promise<IDBPDatabase<LocalSchema>> | undefined;
   const db = () =>
     (database ??= openDB<LocalSchema>(databaseName, 1, {
@@ -159,7 +165,7 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
       createdAt: now(),
     };
   }
-  return {
+  const repositories: LegacyRepositories = {
     mode: 'local',
     projects: {
       async list() {
@@ -471,4 +477,6 @@ export function createLocalRepositories(databaseName = 'gongganmiri-v1'): Reposi
       },
     },
   };
+  repositories.materials.createProjectResource = (input) => repositories.materials.create(input);
+  return repositories;
 }

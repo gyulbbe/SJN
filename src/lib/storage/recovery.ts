@@ -3,7 +3,7 @@ import type { MaterialVersion, ProjectDocument } from '../types';
 
 export type RecoveryScope = {
   origin: string;
-  backend: 'd1' | 'supabase';
+  backend: 'd1';
   userId: string;
   projectId: string;
 };
@@ -24,7 +24,7 @@ interface RecoverySchema extends DBSchema {
 }
 
 export function recoveryKey(scope: RecoveryScope) {
-  if (!scope.origin || !scope.userId || !scope.projectId || !['d1', 'supabase'].includes(scope.backend))
+  if (!scope.origin || !scope.userId || !scope.projectId || scope.backend !== 'd1')
     throw new Error('복구본에는 로그인한 사용자와 저장소 정보가 필요해요.');
   return JSON.stringify([scope.origin, scope.backend, scope.userId, scope.projectId]);
 }

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { Box3, Mesh, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { createTemplateModel, disposeTemplateModel } from '../src/lib/reconstruction/templates';
-import { fixtureReconstructionSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema } from '../src/lib/storage/validation';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 import { buildCandidatePipeline } from '../src/lib/reconstruction/candidate-pipeline';
 import type { SceneUnderstanding } from '../src/lib/reconstruction/pipeline-contract';

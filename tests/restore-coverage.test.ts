@@ -12,7 +12,7 @@ import {
   type Surface,
 } from '../src/lib/types';
 import { useEditor } from '../src/lib/editor-store';
-import { projectSchema } from '../src/lib/supabase/validation';
+import { projectSchema } from '../src/lib/storage/validation';
 
 const rect = (left: number, top: number, right: number, bottom: number): Quad => [
   { x: left, y: top },

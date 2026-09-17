@@ -18,7 +18,7 @@ const output = process.env.RECONSTRUCTION_OUTPUT || 'test-results/reconstruction
 const entry = await build({
   stdin: {
     contents:
-      "export * from './src/lib/reconstruction';export {segmentRoom} from './src/lib/segmentation';export {DEFAULT_ROOM} from './src/lib/room-geometry';export {createLocalRepositories} from './src/lib/repositories/local';export {PhotoCompositor} from './src/lib/render/compositor';",
+      "export * from './src/lib/reconstruction';export {segmentRoom} from './src/lib/segmentation';export {DEFAULT_ROOM} from './src/lib/room-geometry';export {createLegacyLocalRepositories} from './tests/helpers/legacy-local-repositories';export {PhotoCompositor} from './src/lib/render/compositor';",
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -96,10 +96,10 @@ try {
       const m = (await import(base + '/index.js')) as typeof import('../src/lib/reconstruction') &
         typeof import('../src/lib/segmentation') &
         typeof import('../src/lib/room-geometry') &
-        typeof import('../src/lib/repositories/local') &
+        typeof import('./helpers/legacy-local-repositories') &
         typeof import('../src/lib/render/compositor');
       const blob = await (await fetch('/input')).blob();
-      const repos = m.createLocalRepositories('private-quality');
+      const repos = m.createLegacyLocalRepositories('private-quality');
       const started = performance.now();
       // Chromium reports this page's JS heap only; segmentation Worker and GPU allocations are excluded.
       const pageHeap = () =>

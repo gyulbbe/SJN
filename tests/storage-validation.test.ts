@@ -3,7 +3,7 @@ import {
   legacyProjectSchema as projectSchema,
   assetMetadataSchema,
   materialInputSchema,
-} from '../src/lib/supabase/validation';
+} from '../src/lib/storage/validation';
 import { DEFAULT_COLOR, DEFAULT_TILE, EMPTY_MASK, type LegacyProjectDocument } from '../src/lib/types';
 
 function document(): LegacyProjectDocument {

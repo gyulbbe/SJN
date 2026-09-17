@@ -1,3 +1,14 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, {
+    allowModelDownloads:
+      process.env.SJN_AI_BACKGROUND_REAL === '1' || process.env.SJN_AI_BACKGROUND_WASM === '1',
+  });
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,7 +31,7 @@ const fixtureDirectory = path.resolve('test-results/background-removal/fixtures'
 const aiDialog = (page: Page) => page.getByRole('dialog', { name: 'AI 배경 제거 테스트', exact: true });
 
 async function openProductForm(page: Page) {
-  await page.goto('/materials');
+  await page.goto('/admin/materials');
   await page.getByRole('button', { name: '자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
   await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
@@ -29,29 +40,8 @@ async function openProductForm(page: Page) {
 }
 
 async function assetManifest(page: Page) {
-  return page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const contents: Record<string, unknown[]> = {};
-    for (const store of ['assets', 'materials', 'versions']) {
-      contents[store] = await new Promise<unknown[]>((resolve, reject) => {
-        const request = db.transaction(store).objectStore(store).getAll();
-        request.onsuccess = () =>
-          resolve(
-            request.result.map((value) => {
-              const { blob, ...record } = value;
-              return { ...record, ...(blob ? { blobSize: blob.size, blobType: blob.type } : {}) };
-            }),
-          );
-        request.onerror = () => reject(request.error);
-      });
-    }
-    db.close();
-    return contents;
-  });
+  void page;
+  return app.snapshot();
 }
 
 async function uploadView(form: Locator, file: string | { name: string; mimeType: string; buffer: Buffer }) {

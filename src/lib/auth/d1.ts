@@ -64,11 +64,12 @@ export async function checkD1AuthSchema(env: Pick<D1AuthEnvironment, 'DB'>) {
       a.id, a.accountId, a.providerId, a.userId, a.accessToken, a.refreshToken, a.idToken,
       a.accessTokenExpiresAt, a.refreshTokenExpiresAt, a.scope, a.password, a.createdAt, a.updatedAt,
       v.id, v.identifier, v.value, v.expiresAt, v.createdAt, v.updatedAt,
-      r.id, r.key, r.count, r.lastRequest, ar.user_id
+      r.id, r.key, r.count, r.lastRequest, ar.user_id, um.status, um.revision
       FROM user u LEFT JOIN session s ON s.userId = u.id
       LEFT JOIN account a ON a.userId = u.id
       LEFT JOIN verification v ON 0 LEFT JOIN rateLimit r ON 0
-      LEFT JOIN admin_roles ar ON ar.user_id = u.id LIMIT 0`,
+      LEFT JOIN admin_roles ar ON ar.user_id = u.id
+      LEFT JOIN d1_user_management um ON um.user_id = u.id LIMIT 0`,
     ).all();
   } catch {
     throw new D1AuthError(
@@ -110,6 +111,19 @@ export function createD1Auth(env: D1AuthEnvironment) {
       expiresIn: 7 * 24 * 60 * 60,
       updateAge: 24 * 60 * 60,
       cookieCache: { enabled: false },
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          before: async (session) => {
+            const state = await env.DB.prepare('SELECT status FROM d1_user_management WHERE user_id=?')
+              .bind(session.userId)
+              .first<{ status: string }>();
+            // SQL triggers repeat this check atomically if suspension races OAuth.
+            if (state?.status !== 'active') return false;
+          },
+        },
+      },
     },
     user: { deleteUser: { enabled: false }, changeEmail: { enabled: false } },
     advanced: {
@@ -179,10 +193,15 @@ export async function getD1Actor(
       'authentication_required',
       '로그인이 필요해요. 현재 작업을 보존하고 다시 로그인해 주세요.',
     );
-  const role = await env.DB.prepare('SELECT user_id FROM admin_roles WHERE user_id = ?')
+  const state = await env.DB.prepare(
+    'SELECT s.status,EXISTS(SELECT 1 FROM admin_roles r WHERE r.user_id=s.user_id) AS isAdmin FROM d1_user_management s WHERE s.user_id=?',
+  )
     .bind(session.user.id)
-    .first<{ user_id: string }>();
-  return { id: session.user.id, isAdmin: !!role };
+    .first<{ status: string; isAdmin: number }>();
+  if (!state) throw new D1AuthError(503, 'auth_schema_unavailable', '회원 상태 정보를 확인할 수 없어요.');
+  if (state.status !== 'active')
+    throw new D1AuthError(403, 'account_suspended', '이 계정은 이용이 정지되어 있어요.');
+  return { id: session.user.id, isAdmin: !!state.isAdmin };
 }
 
 /** Route entrypoint also enforces origin on the first (not yet cookie-bearing) sign-in. */

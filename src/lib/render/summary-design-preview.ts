@@ -1,4 +1,4 @@
-import type { Repositories } from '../repositories/contracts';
+import type { RepositoryOperations } from '../repositories/contracts';
 import { DesignPreviewCancelled, DesignPreviewService, type PreviewDesign } from './design-preview';
 import { getCachedDesignThumbnail, type DesignPreviewIdentity } from './design-preview-cache';
 import {
@@ -10,7 +10,7 @@ import {
 // Listing many projects must not allocate one WebGL context per card.
 let pending: Promise<unknown> = Promise.resolve();
 export function prepareSummaryRoomThumbnail(
-  repositories: Repositories,
+  repositories: RepositoryOperations,
   identity: DesignPreviewIdentity,
   signal: AbortSignal,
 ): Promise<void> {

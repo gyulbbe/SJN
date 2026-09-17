@@ -1,3 +1,4 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { normalizeRoomView } from '../src/lib/room-viewer/view-state';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
@@ -5,6 +6,14 @@ import sharp from 'sharp';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
 import { savedProject, storedProject } from '../tests/helpers/editor-actions';
 import type { ProjectDocument } from '../src/lib/types';
+
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 test.setTimeout(180000);
@@ -67,91 +76,90 @@ function observe(page: Page) {
         denied.push(url.href);
         return route.abort();
       }
-      return route.continue();
+      return route.fallback();
     })
     .then(() => ({ errors, denied }));
 }
 // Explicit author-created test product, in the disposable browser context only.
 async function seedProduct(page: Page) {
-  await page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    try {
+  await page.evaluate(
+    async ({ name, code, file, description }) => {
+      const api = async (path: string, body: FormData | object) => {
+        const response = await fetch(
+          '/api/d1/' + path,
+          body instanceof FormData
+            ? { method: 'POST', body }
+            : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+        );
+        if (!response.ok) throw new Error(await response.text());
+        return response.json();
+      };
       const canvas = document.createElement('canvas');
       canvas.width = 180;
       canvas.height = 260;
-      const context = canvas.getContext('2d')!;
-      context.fillStyle = '#e74177';
-      context.fillRect(30, 10, 120, 240);
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#e74177';
+      ctx.fillRect(30, 10, 120, 240);
       const blob = await new Promise<Blob>((resolve) =>
         canvas.toBlob((value) => resolve(value!), 'image/png'),
       );
-      const assetId = crypto.randomUUID(),
-        materialId = crypto.randomUUID(),
-        versionId = crypto.randomUUID();
-      const now = new Date().toISOString();
-      const tx = db.transaction(['assets', 'materials', 'versions'], 'readwrite');
-      tx.objectStore('assets').add({
-        id: assetId,
-        ownerId: 'local',
-        name: '저장·이동 검증 제품.png',
-        mime: 'image/png',
-        size: blob.size,
-        width: 180,
-        height: 260,
-        kind: 'product',
-        createdAt: now,
-        blob,
+      const assetId = crypto.randomUUID();
+      const form = new FormData();
+      form.set(
+        'metadata',
+        JSON.stringify({
+          id: assetId,
+          name: file,
+          mime: 'image/png',
+          size: blob.size,
+          width: 180,
+          height: 260,
+          kind: 'product',
+          createdAt: new Date().toISOString(),
+        }),
+      );
+      form.set('file', blob, file);
+      await api('assets', form);
+      await api('materials', {
+        operation: 'create',
+        input: {
+          name,
+          code,
+          description,
+          category: 'basin',
+          scope: 'shared',
+          brand: '',
+          color: '',
+          finish: '',
+          catalog: { colorIds: [], compositionIds: [], finishIds: [] },
+          widthMm: 500,
+          heightMm: 750,
+          depthMm: 450,
+          usage: 'both',
+          installation: 'floor',
+          coverAssetId: assetId,
+          imageAssetIds: [assetId],
+          textureAssetIds: [],
+          views: [{ assetId, direction: '정면', anchor: { x: 0.5, y: 0.98 } }],
+          defaultGroutWidth: 2,
+          defaultGroutColor: '#dddddd',
+          defaultPattern: 'grid',
+        },
       });
-      tx.objectStore('materials').add({
-        id: materialId,
-        ownerId: 'local',
-        currentVersionId: versionId,
-        active: true,
-        scope: 'personal',
-        updatedAt: now,
-      });
-      tx.objectStore('versions').add({
-        id: versionId,
-        materialId,
-        version: 1,
-        name: '구조 UI 검증 세면대',
-        brand: '직접 제작 테스트',
-        code: 'QA-WALL-FEATURE-UI',
-        category: 'basin',
-        scope: 'personal',
-        description: '실제 사진·AI 관측과 무관한 합성 제품',
-        color: '분홍',
-        finish: '',
-        widthMm: 500,
-        heightMm: 750,
-        depthMm: 450,
-        usage: 'both',
-        installation: 'floor',
-        coverAssetId: assetId,
-        imageAssetIds: [assetId],
-        textureAssetIds: [],
-        views: [{ assetId, direction: '정면', anchor: { x: 0.5, y: 0.98 } }],
-        defaultGroutWidth: 2,
-        defaultGroutColor: '#ddd',
-        defaultPattern: 'grid',
-        createdAt: now,
-      });
-      await new Promise<void>((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onabort = () => reject(tx.error);
-      });
-    } finally {
-      db.close();
-    }
-  });
+    },
+    {
+      name: '구조 UI 검증 세면대',
+      code: 'QA-WALL-FEATURE-UI',
+      file: '저장·이동 검증 제품.png',
+      description: '실제 사진·AI 관측과 무관한 합성 제품',
+    },
+  );
 }
 async function start(page: Page, product = false) {
   await page.goto('/');
-  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
   await seedTestTiles(page);
   if (product) await seedProduct(page);
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();

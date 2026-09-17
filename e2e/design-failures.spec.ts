@@ -1,9 +1,18 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { test, expect, type Page } from '@playwright/test';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
 import { savedProject, storedProject } from '../tests/helpers/editor-actions';
 import type { ProjectDocument } from '../src/lib/types';
 
 // Every test gets Playwright's isolated storage context; no personal browser data is opened.
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
+
 test.use({ channel: 'chrome', actionTimeout: 20000 });
 test.setTimeout(150000);
 const active = (project: ProjectDocument) =>
@@ -14,8 +23,8 @@ async function start(page: Page) {
   await seedTestTiles(page);
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
   await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
-  await expect(page).toHaveURL(/\/projects\/[\w-]+$/);
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\/[\w-]+$/, { timeout: 30000 });
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   return savedProject(page);
 }
 async function openManager(page: Page) {
@@ -31,27 +40,12 @@ async function copyCurrent(page: Page, sourceName: string) {
   await manager(page).getByRole('button', { name: '시안 관리 닫기', exact: true }).click();
   await expect(page.getByTestId('active-design-name')).toHaveText(sourceName + ' 복사본');
 }
-async function assetCount(page: Page) {
-  return page.evaluate(async () => {
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    try {
-      return await new Promise<number>((resolve, reject) => {
-        const request = database.transaction('assets').objectStore('assets').count();
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-    } finally {
-      database.close();
-    }
-  });
+async function assetCount() {
+  return (await app.snapshot()).assets.length;
 }
 
 for (const failureName of ['QuotaExceededError', 'AbortError']) {
-  test(`다중 시안 ${failureName}: 기존 저장본·현재 복사본·자재 금액을 보존하고 명시적 저장으로 복구한다`, async ({
+  test(`다중 시안 서버 응답 ${failureName}: 기존 저장본·현재 복사본·자재 금액을 보존하고 명시적 저장으로 복구한다`, async ({
     page,
   }, info) => {
     const errors: string[] = [],
@@ -68,27 +62,17 @@ for (const failureName of ['QuotaExceededError', 'AbortError']) {
     await price.fill('30000');
     await price.press('Enter');
     const before = await savedProject(page),
-      originalAssetCount = await assetCount(page);
-    await page.evaluate((failureName) => {
-      const state = window as unknown as {
-        __designStorageFault: { enabled: boolean; failures: number; restore: () => void };
-      };
-      const nativePut = IDBObjectStore.prototype.put;
-      state.__designStorageFault = {
-        enabled: true,
-        failures: 0,
-        restore: () => {
-          IDBObjectStore.prototype.put = nativePut;
-        },
-      };
-      IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
-        if (this.name === 'projects' && state.__designStorageFault.enabled) {
-          state.__designStorageFault.failures++;
-          throw new DOMException('검증용 시안 저장 실패: ' + failureName, failureName);
-        }
-        return Reflect.apply(nativePut, this, key === undefined ? [value] : [value, key]);
-      };
-    }, failureName);
+      originalAssetCount = await assetCount();
+    // Fault only the authenticated save response; real D1/R2 preserve the last commit.
+    let faultEnabled = true,
+      thrown = 0;
+    await page.route('**/api/d1/projects', (route) => {
+      if (faultEnabled && route.request().postDataJSON()?.operation === 'save') {
+        thrown++;
+        return route.fulfill({ status: 503, json: { error: '검증용 서버 저장 실패: ' + failureName } });
+      }
+      return route.fallback();
+    });
     await copyCurrent(page, active(before).name);
     await expect(price).toHaveValue('30000');
     await price.fill('45000');
@@ -97,18 +81,9 @@ for (const failureName of ['QuotaExceededError', 'AbortError']) {
     await expect(page.locator('.editor-error[role="alert"]')).toContainText(failureName);
     await expect(page.getByTestId('active-design-name')).toHaveText(active(before).name + ' 복사본');
     expect(await storedProject(page)).toEqual(before);
-    expect(await assetCount(page)).toBe(originalAssetCount);
+    expect(await assetCount()).toBe(originalAssetCount);
     await page.screenshot({ path: info.outputPath(failureName + '-preserved.png'), fullPage: true });
-    const thrown = await page.evaluate(() => {
-      const fault = (
-        window as unknown as {
-          __designStorageFault: { enabled: boolean; failures: number; restore: () => void };
-        }
-      ).__designStorageFault;
-      fault.enabled = false;
-      fault.restore();
-      return fault.failures;
-    });
+    faultEnabled = false;
     expect(thrown).toBeGreaterThan(0);
     await page.getByRole('button', { name: '지금 저장', exact: true }).click();
     const recovered = await savedProject(page, before.editRevision);
@@ -124,7 +99,7 @@ for (const failureName of ['QuotaExceededError', 'AbortError']) {
       active(before).scene.surfaces[0].materialVersionId,
     );
     expect(recovered.storageRevision).toBe(before.storageRevision + 1);
-    expect(await assetCount(page)).toBe(originalAssetCount);
+    expect(await assetCount()).toBe(originalAssetCount);
     await page.reload();
     await savedProject(page);
     expect(await storedProject(page)).toEqual(recovered);
@@ -147,7 +122,10 @@ for (const failureName of ['QuotaExceededError', 'AbortError']) {
   });
 }
 
-test('다른 탭은 시안 조회만 허용하며 첫 탭 종료 후 편집권을 이어받는다', async ({ page, context }, info) => {
+test('회원의 두 탭은 D1 버전 충돌을 보존하고 서버 저장본 확인 후 편집을 계속한다', async ({
+  page,
+  context,
+}, info) => {
   await start(page);
   await copyCurrent(page, '시안 A');
   await savedProject(page);
@@ -155,41 +133,44 @@ test('다른 탭은 시안 조회만 허용하며 첫 탭 종료 후 편집권�
     url = page.url();
   const viewer = await context.newPage();
   await viewer.goto(url);
-  await expect(viewer.locator('.readonly-banner')).toContainText('읽기 전용');
-  await expect(viewer.getByTestId('editor-canvas')).toBeVisible();
-  await expect(viewer.locator('.canvas-loading')).toHaveCount(0);
-  await expect(viewer.getByLabel('프로젝트명', { exact: true })).toBeDisabled();
-  await expect(viewer.getByRole('button', { name: '지금 저장', exact: true })).toBeDisabled();
-  await openManager(viewer);
-  await expect(manager(viewer).getByRole('button', { name: '새 시안', exact: true })).toBeDisabled();
-  for (const design of original.designs) {
-    for (const action of ['복제', '이름 변경', '삭제'])
-      await expect(
-        manager(viewer).getByRole('button', { name: `${design.name} ${action}`, exact: true }),
-      ).toBeDisabled();
-  }
-  await manager(viewer).getByRole('button', { name: '시안 A 열기', exact: true }).click();
-  await expect(viewer.getByTestId('active-design-name')).toHaveText('시안 A');
+  await expect(viewer.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(viewer.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  await expect(viewer.getByLabel('프로젝트명', { exact: true })).toBeEnabled();
   await viewer.getByRole('button', { name: 'Before', exact: true }).click();
   await viewer.getByRole('button', { name: 'After', exact: true }).click();
   expect(await storedProject(viewer)).toEqual(original);
-  await viewer.screenshot({ path: info.outputPath('readonly-designs.png'), fullPage: true });
-  await page.close();
-  await expect(viewer.locator('.readonly-banner')).toHaveCount(0);
-  await expect(viewer.getByLabel('프로젝트명', { exact: true })).toBeEnabled();
+
+  // D1 uses optimistic revisions; the local-only exclusive writer lock does not apply.
+  await page.getByLabel('프로젝트명', { exact: true }).fill('첫 탭에서 확정한 프로젝트');
+  const committed = await savedProject(page, original.editRevision);
   await openManager(viewer);
-  await expect(manager(viewer).getByRole('button', { name: '새 시안', exact: true })).toBeEnabled();
+  await manager(viewer).getByRole('button', { name: '새 시안', exact: true }).click();
+  await manager(viewer).getByRole('button', { name: '시안 관리 닫기', exact: true }).click();
+  const recovery = viewer.getByRole('dialog', { name: '클라우드 작업 복구' });
+  await expect(recovery).toContainText('서버 저장본과 다른 복구본', { timeout: 30000 });
+  expect(await storedProject(viewer)).toEqual(committed);
+  await expect(recovery.getByRole('button', { name: '복구본 이어서 편집', exact: true })).toHaveCount(0);
+  await viewer.screenshot({ path: info.outputPath('conflicting-designs-preserved.png'), fullPage: true });
+  await recovery.getByRole('button', { name: '서버 저장본 사용 · 복구본 보관' }).click();
+  await expect(recovery).toHaveCount(0);
+  await expect(viewer.getByLabel('프로젝트명', { exact: true })).toHaveValue(committed.name);
+  expect(await storedProject(viewer)).toEqual(committed);
+
+  await page.close();
+  await openManager(viewer);
   await manager(viewer).getByRole('button', { name: '새 시안', exact: true }).click();
   await expect(manager(viewer).getByTestId('design-card')).toHaveCount(3);
   await manager(viewer).getByRole('button', { name: '시안 관리 닫기', exact: true }).click();
-  const saved = await savedProject(viewer, original.editRevision);
+  const saved = await savedProject(viewer, committed.editRevision);
   expect(saved.designs).toHaveLength(3);
-  await info.attach('writer-handoff', {
+  expect(saved.storageRevision).toBe(committed.storageRevision + 1);
+  await info.attach('cloud-writer-conflict', {
     body: JSON.stringify({
-      initiallyReadonly: true,
       viewingDidNotWrite: true,
+      staleSavePreservedServer: true,
       finalDesigns: saved.designs.length,
       originalStorageRevision: original.storageRevision,
+      committedStorageRevision: committed.storageRevision,
       finalStorageRevision: saved.storageRevision,
     }),
     contentType: 'application/json',
@@ -226,7 +207,7 @@ test('WebGL 실패 시 문서를 보존하고 비교 카드 재시도·편집기
   await page.reload();
   await expect(page.locator('.editor-error[role="alert"]')).toContainText('WebGL을 시작할 수 없어요');
   await expect(page.locator('.editor-error[role="alert"]')).toContainText('하드웨어 가속');
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await expect(page.getByTestId('active-design-name')).toHaveText(active(before).name);
   expect(await storedProject(page)).toEqual(before);
   await openManager(page);

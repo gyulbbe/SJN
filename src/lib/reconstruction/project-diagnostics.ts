@@ -1,3 +1,5 @@
+import { getRepositoryUserId } from '../repositories';
+import { analysisCacheAllowed } from './analysis-cache-policy';
 import type { ProjectDocument } from '../types';
 import type { RoomDefinition } from '../room-types';
 import type { LabTraceReport } from './lab-candidate-trace';
@@ -8,7 +10,7 @@ import {
   diagnosticValue,
   ReconstructionDiagnosticError,
 } from './lab-diagnostics';
-import { saveDiagnosticArchive } from './lab-diagnostic-storage';
+import { saveDiagnosticArchive, type DiagnosticArchiveEntry } from './lab-diagnostic-storage';
 import type { ReconstructionQualityEvidence, ReconstructionAnalysisProfile } from './quality-contract';
 
 export type ProjectDiagnosticCapture = Partial<LabTraceReport> & {
@@ -23,7 +25,9 @@ export async function withProjectAnalysisDiagnostics(
     capture: ProjectDiagnosticCapture,
     diagnostic: ReturnType<typeof createDiagnosticRun>,
   ) => Promise<ProjectDocument>,
+  onDiagnostic?: (entry: DiagnosticArchiveEntry) => void,
 ) {
+  const diagnosticUserId = getRepositoryUserId();
   const runId = crypto.randomUUID(),
     startedAt = new Date().toISOString();
   const diagnostic = createDiagnosticRun(
@@ -65,7 +69,7 @@ export async function withProjectAnalysisDiagnostics(
       quality: capture.quality,
       runLog: diagnostic.finish('complete'),
     };
-    const status = await saveDiagnosticArchive({
+    const entry: DiagnosticArchiveEntry = {
       schemaVersion: 1,
       runId,
       startedAt,
@@ -73,7 +77,10 @@ export async function withProjectAnalysisDiagnostics(
       input: projectAnalysis.runLog.input,
       engine: profile,
       projectAnalysis: diagnosticValue(projectAnalysis) as Record<string, unknown>,
-    });
+    };
+    onDiagnostic?.(entry);
+    if (!analysisCacheAllowed(signal)) return project;
+    const status = await saveDiagnosticArchive(entry, diagnosticUserId);
     if (!status.stored)
       comparison.review.warnings.push('작업은 유지했지만 진단 기록을 보관하지 못했어요: ' + status.reason);
     return project;
@@ -83,7 +90,7 @@ export async function withProjectAnalysisDiagnostics(
       error,
     );
     const failure = new ReconstructionDiagnosticError(error, runLog);
-    failure.diagnostics.logStorage = await saveDiagnosticArchive({
+    const entry: DiagnosticArchiveEntry = {
       schemaVersion: 1,
       runId,
       startedAt,
@@ -91,7 +98,11 @@ export async function withProjectAnalysisDiagnostics(
       input: runLog.input,
       engine: profile,
       failure: failure.diagnostics,
-    });
+    };
+    failure.diagnostics.logStorage = !analysisCacheAllowed(signal)
+      ? { stored: false, reason: '관리자 편집의 진단은 현재 실행 메모리에만 보관해요.' }
+      : await saveDiagnosticArchive(entry, diagnosticUserId);
+    onDiagnostic?.(entry);
     throw failure;
   }
 }

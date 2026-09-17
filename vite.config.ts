@@ -8,6 +8,9 @@ import { cloudflareLocalRoutes } from './build/cloudflare-local';
 export default defineConfig({
   // The runtime's pinned CDN paths are set in the AI worker; do not emit unused WASM assets.
   environments: {
+    // Auth is dynamically reached from route handlers. Bundle its server graph once
+    // instead of discovering core subpaths after each first request and reloading RSC.
+    rsc: { optimizeDeps: { include: ['better-auth'] } },
     client: { resolve: { conditions: [...defaultClientConditions, 'onnxruntime-web-use-extern-wasm'] } },
   },
   // vinext folds typeof window to "object" for clients; Web Workers have no window.
@@ -41,6 +44,7 @@ export default defineConfig({
     cloudflareLocalRoutes(fileURLToPath(new URL('.', import.meta.url))),
     vinext({ prerender: { routes: '*' } }),
     cloudflare({
+      ...(process.env.SJN_DEV_BINDINGS === '1' ? { configPath: 'wrangler.dev.jsonc', persistState: { path: '.wrangler/development' } } : {}),
       viteEnvironment: { name: 'rsc', childEnvironments: ['ssr'] },
     }),
   ],

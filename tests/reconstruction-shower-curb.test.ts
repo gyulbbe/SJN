@@ -6,7 +6,7 @@ import { createTemplateModel, disposeTemplateModel } from '../src/lib/reconstruc
 import { defaultShowerCurb, reconstructionLocalBoxes } from '../src/lib/reconstruction/raised-glass-support';
 import { validateSourceFixture } from '../src/lib/reconstruction/source-camera';
 import { reconstructionVolumeProjection } from '../src/lib/reconstruction/projection';
-import { fixtureReconstructionSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema } from '../src/lib/storage/validation';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 import { resolveManualDraft } from '../src/lib/reconstruction/lab-manual-placement';
 import type { RaisedGlassSupport } from '../src/lib/reconstruction/types';

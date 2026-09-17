@@ -6,7 +6,7 @@ import {
   openCounterDefaults,
   OPEN_COUNTER_SUPPORTS,
 } from '../src/lib/reconstruction/fixture-variants';
-import { fixtureReconstructionSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema } from '../src/lib/storage/validation';
 const dimensions = { widthMm: 1000, heightMm: 950, depthMm: 550 },
   color = '#b5aea2';
 function size(group: ReturnType<typeof createTemplateModel>, dims = dimensions) {

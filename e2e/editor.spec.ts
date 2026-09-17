@@ -1,8 +1,19 @@
+import { handleD1Request } from '../src/lib/d1';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { getActiveDesign } from '../src/lib/designs';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import sharp from 'sharp';
 import { DEFAULT_TILE, DEFAULT_COLOR, type ProjectDocument, type Quad } from '../src/lib/types';
+
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async ({ page }) => {
+  pausedMetadata.get(page)?.release();
+  await app?.dispose();
+});
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 
@@ -33,39 +44,21 @@ const wideRedFixture = () =>
 
 async function createProject(page: Page, name = '검증 공간') {
   await page.goto('/');
-  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
   await seedTestTiles(page);
   await page
     .getByTestId('project-upload')
     .setInputFiles({ name: `${name}.png`, mimeType: 'image/png', buffer: await grayPhoto() });
-  await expect(page).toHaveURL(/\/projects\/[\w-]+/);
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 30000 });
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await expect(page.locator('.editor-error')).toHaveCount(0);
 }
 async function savedProject(page: Page): Promise<ProjectDocument> {
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
-  const id = page.url().split('/').at(-1)!;
-  return page.evaluate(
-    (id) =>
-      new Promise<ProjectDocument>((resolve, reject) => {
-        const request = indexedDB.open('gongganmiri-v1');
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const get = db.transaction('projects').objectStore('projects').get(id);
-          get.onerror = () => {
-            db.close();
-            reject(get.error);
-          };
-          get.onsuccess = () => {
-            db.close();
-            resolve(get.result);
-          };
-        };
-      }),
-    id,
-  );
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  return app.project(page.url().split('/').at(-1)!);
 }
 async function point(page: Page, x: number, y: number) {
   const box = (await page.getByTestId('editor-canvas').boundingBox())!;
@@ -94,26 +87,17 @@ async function makeSurface(page: Page) {
       color: { ...DEFAULT_COLOR },
     },
   ];
-  await page.evaluate(
-    (project) =>
-      new Promise<void>((resolve, reject) => {
-        const open = indexedDB.open('gongganmiri-v1');
-        open.onerror = () => reject(open.error);
-        open.onsuccess = () => {
-          const db = open.result,
-            tx = db.transaction('projects', 'readwrite');
-          tx.objectStore('projects').put(project);
-          tx.oncomplete = () => {
-            db.close();
-            resolve();
-          };
-          tx.onerror = () => reject(tx.error);
-        };
-      }),
-    p,
-  );
+  const row = await app.env.DB.prepare('SELECT object_key FROM d1_projects WHERE id=? AND owner_id=?')
+    .bind(p.id, app.actor.id)
+    .first<{ object_key: string }>();
+  if (!row) throw new Error('Missing isolated project fixture');
+  const text = JSON.stringify(p);
+  await app.env.ASSET_BUCKET.put(row.object_key, text, { httpMetadata: { contentType: 'application/json' } });
+  await app.env.DB.prepare('UPDATE d1_projects SET byte_size=? WHERE id=?')
+    .bind(new TextEncoder().encode(text).length, p.id)
+    .run();
   await page.reload();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await page
     .getByLabel('타일 적용 위치', { exact: true })
     .selectOption(getActiveDesign(p)!.scene.surfaces[0].id);
@@ -141,40 +125,50 @@ async function pixels(page: Page, coordinates: { x: number; y: number }[]) {
     ]);
   }, coordinates);
 }
+const pausedMetadata = new WeakMap<Page, { started: boolean; release: () => void; done: Promise<void> }>();
 async function pauseViewMetadata(page: Page, assetId: string) {
-  await page.evaluate((assetId) => {
-    const original = IDBObjectStore.prototype.get;
-    IDBObjectStore.prototype.get = function (key) {
-      const request = original.call(this, key);
-      if (this.name === 'assets' && key === assetId) {
-        IDBObjectStore.prototype.get = original;
-        request.addEventListener(
-          'success',
-          (event) => {
-            event.stopImmediatePropagation();
-            (window as unknown as { resumeViewMetadata: () => void }).resumeViewMetadata = () =>
-              request.dispatchEvent(new Event('success'));
-          },
-          { once: true },
-        );
+  // Freeze a real disposable-D1 metadata response, then delay its delivery at one route layer.
+  const response = await handleD1Request(
+    'assets',
+    new Request(new URL('/api/d1/assets?id=' + encodeURIComponent(assetId), page.url())),
+    app.env,
+    app.actor,
+  );
+  expect(response.status).toBe(200);
+  const body = await response.text();
+  let release!: () => void, complete!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const done = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  const state = { started: false, release, done };
+  pausedMetadata.set(page, state);
+  await page.route(
+    (url) =>
+      url.pathname === '/api/d1/assets' &&
+      url.searchParams.get('id') === assetId &&
+      !url.searchParams.has('raw'),
+    async (route) => {
+      state.started = true;
+      try {
+        await wait;
+        await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body });
+      } finally {
+        complete();
       }
-      return request;
-    };
-  }, assetId);
+    },
+    { times: 1 },
+  );
 }
 async function resumeViewMetadata(page: Page) {
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => typeof (window as unknown as { resumeViewMetadata?: () => void }).resumeViewMetadata,
-      ),
-    )
-    .toBe('function');
-  await page.evaluate(async () => {
-    (window as unknown as { resumeViewMetadata: () => void }).resumeViewMetadata();
-    delete (window as unknown as { resumeViewMetadata?: () => void }).resumeViewMetadata;
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  });
+  await expect.poll(() => pausedMetadata.get(page)?.started).toBe(true);
+  const state = pausedMetadata.get(page)!;
+  state.release();
+  await state.done;
+  pausedMetadata.delete(page);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 }
 async function registerMaterial(page: Page, category: 'tile' | 'basin') {
   const name = category === 'tile' ? '직접 등록한 블루 타일' : '직접 등록한 세면대';
@@ -213,7 +207,7 @@ async function registerMaterial(page: Page, category: 'tile' | 'basin') {
 }
 
 test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠금·삭제·재진입', async ({ page }, testInfo) => {
-  test.setTimeout(120000);
+  test.setTimeout(240000);
   await createProject(page, '제품 배치 검증');
   await makeSurface(page);
   await page.getByRole('button', { name: /라이트 스톤.*600/ }).click();
@@ -267,36 +261,16 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
   );
   const beforeMove = await savedProject(page);
   expect(getActiveDesign(beforeMove)!.scene.fixtures[0]).toEqual(fixture);
-  const sideAssetId = await page.evaluate(
-    (versionId) =>
-      new Promise<string>((resolve, reject) => {
-        const open = indexedDB.open('gongganmiri-v1');
-        open.onerror = () => reject(open.error);
-        open.onsuccess = () => {
-          const db = open.result;
-          const request = db.transaction('versions').objectStore('versions').get(versionId);
-          request.onsuccess = () => {
-            db.close();
-            resolve(request.result.views[1].assetId);
-          };
-          request.onerror = () => {
-            db.close();
-            reject(request.error);
-          };
-        };
-      }),
-    fixture.materialVersionId,
+  const sideAssetId = (await app.versions()).find((version) => version.id === fixture.materialVersionId)!
+    .views[1].assetId;
+  await page.route(
+    (url) =>
+      url.pathname === '/api/d1/assets' &&
+      url.searchParams.get('id') === sideAssetId &&
+      !url.searchParams.has('raw'),
+    (route) => route.fulfill({ status: 404, json: { error: '제품 이미지 읽기 테스트 오류' } }),
+    { times: 1 },
   );
-  await page.evaluate((assetId) => {
-    const original = IDBObjectStore.prototype.get;
-    IDBObjectStore.prototype.get = function (key) {
-      if (this.name === 'assets' && key === assetId) {
-        IDBObjectStore.prototype.get = original;
-        throw new Error('제품 이미지 읽기 테스트 오류');
-      }
-      return original.call(this, key);
-    };
-  }, sideAssetId);
   await page.getByTestId('fixture-view-1').click();
   await expect(page.getByRole('alert').filter({ hasText: '제품 이미지 읽기 테스트 오류' })).toBeVisible();
   expect(getActiveDesign(await savedProject(page))!.scene.fixtures[0]).toEqual(fixture);
@@ -339,15 +313,15 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
   await page.screenshot({ path: testInfo.outputPath('product-after-move.png'), fullPage: true });
   const other = await page.context().newPage();
   await other.goto(page.url());
-  await expect(other.getByText('이 탭은 읽기 전용입니다.', { exact: false })).toBeVisible();
-  await expect(other.getByTestId('editor-canvas')).toBeVisible();
+  await expect(other.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await other.locator('[data-entity="' + fixture.id + '"]').click();
-  await expect(other.getByRole('button', { name: '제품 삭제', exact: true })).toBeDisabled();
-  await expect(other.getByTestId('fixture-view-1')).toBeDisabled();
-  expect(getActiveDesign(await savedProject(other))!.scene).toEqual(getActiveDesign(restored)!.scene);
+  await expect(other.getByRole('button', { name: '제품 삭제', exact: true })).toBeEnabled();
+  await expect(other.getByTestId('fixture-view-1')).toBeEnabled();
+  // Same-account cloud tabs can edit; selecting a fixture alone must not write.
+  expect(await savedProject(other)).toEqual(restored);
   await other.close();
   await page.reload();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   expect(getActiveDesign(await savedProject(page))!.scene).toEqual(getActiveDesign(restored)!.scene);
   await page.locator('[data-entity="' + fixture.id + '"]').click();
   await pauseViewMetadata(page, sideAssetId);
@@ -358,13 +332,13 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
 });
 
 test('기본 공간 각도 썸네일 전환은 제품 개수·단가·설치 위치·배율을 유지한다', async ({ page }, testInfo) => {
-  test.setTimeout(120000);
+  test.setTimeout(240000);
   await page.goto('/');
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
   await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 30000 });
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   const name = await registerMaterial(page, 'basin');
   await page.getByRole('button', { name: new RegExp(`${name}.*600`) }).click();
   await page.getByLabel('면 가로 위치 (%)', { exact: true }).fill('31');
@@ -410,7 +384,9 @@ test('기본 공간 각도 썸네일 전환은 제품 개수·단가·설치 위
 
 test('이미지 확장자를 가장한 잘못된 파일을 거절한다', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
   await page
     .getByTestId('project-upload')
     .setInputFiles({ name: '공간.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('not an image') });
@@ -418,7 +394,7 @@ test('이미지 확장자를 가장한 잘못된 파일을 거절한다', async 
   expect(page.url()).not.toContain('/projects/');
 });
 
-test('자동 저장 500ms 전 뒤로 이동해도 복귀하면 마지막 편집을 복원한다', async ({ page }) => {
+test('자동 저장 확정 전 뒤로 이동해도 복귀하면 마지막 편집을 복원한다', async ({ page }) => {
   await createProject(page, '즉시 이동 검증');
   await makeSurface(page);
   await savedProject(page);
@@ -430,7 +406,7 @@ test('자동 저장 500ms 전 뒤로 이동해도 복귀하면 마지막 편집�
   await page.goBack();
   await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeVisible();
   await page.goForward();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   const returned = await savedProject(page);
   expect(returned.name).toBe(expectedName);
 });

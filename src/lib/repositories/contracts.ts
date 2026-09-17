@@ -14,11 +14,6 @@ export type ProjectResourceBundle = {
   versions: MaterialVersion[];
 };
 export interface ProjectRepository {
-  /** Local-only atomic import. Ordinary creation and cloud repositories need not expose it. */
-  createWithResources?(
-    bundle: ProjectResourceBundle,
-    options?: { signal?: AbortSignal },
-  ): Promise<ProjectDocument>;
   list(): Promise<ProjectSummary[]>;
   load(id: string): Promise<ProjectDocument>;
   create(document: ProjectInput): Promise<ProjectDocument>;
@@ -39,9 +34,14 @@ export interface AssetRepository {
   get(id: string): Promise<AssetRecord>;
   removeUnused(): Promise<number>;
 }
-export type Repositories = {
+/** Storage operations usable by temporary analysis stores as well as authenticated repositories. */
+export type RepositoryOperations = {
   projects: ProjectRepository;
   materials: MaterialRepository;
   assets: AssetRepository;
-  mode: 'local' | 'd1' | 'supabase';
+};
+/** The only persistent application repository; temporary analysis stores use operations directly. */
+export type Repositories = RepositoryOperations & {
+  mode: 'd1';
+  materials: MaterialRepository & Required<Pick<MaterialRepository, 'createProjectResource'>>;
 };

@@ -8,7 +8,8 @@ export default defineConfig({
   outputDir: './test-results/e2e',
   fullyParallel: false,
   workers: 1,
-  timeout: 60000,
+  timeout: 90000,
+  expect: { timeout: 15000 },
   use: {
     baseURL: 'http://127.0.0.1:3000',
     viewport: { width: 1440, height: 1000 },
@@ -23,7 +24,7 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: 'npm run dev',
+    command: 'npm run dev:next',
     url: 'http://127.0.0.1:3000',
     reuseExistingServer: true,
     timeout: 120000,

@@ -10,7 +10,7 @@ import {
   PRODUCT_NEUTRAL_OPTICS,
 } from '../src/lib/reconstruction/product-color';
 import { reconstructionDefaults, type ReconstructionKind } from '../src/lib/reconstruction/types';
-import { fixtureReconstructionSchema, reconstructionReviewSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema, reconstructionReviewSchema } from '../src/lib/storage/validation';
 
 function photograph(body: number[], border = [180, 110, 60], kind: ReconstructionKind = 'toilet') {
   const width = 24,

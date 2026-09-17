@@ -7,7 +7,7 @@ import type {
   MaterialVersion,
   RenderSnapshot,
 } from '../src/lib/types';
-import type { Repositories } from '../src/lib/repositories/contracts';
+import type { RepositoryOperations } from '../src/lib/repositories/contracts';
 import type { ReconstructionReview } from '../src/lib/reconstruction/types';
 import type { SceneUnderstanding } from '../src/lib/reconstruction/pipeline-contract';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
@@ -33,6 +33,7 @@ const hooks = vi.hoisted(() => ({
   render: vi.fn(),
   dispose: vi.fn(),
   getRepositories: vi.fn(),
+  archive: vi.fn(),
 }));
 vi.mock('../src/lib/segmentation', () => ({ segmentRoom: hooks.segment }));
 vi.mock('../src/lib/reconstruction/analysis-client', () => ({
@@ -57,7 +58,10 @@ vi.mock('../src/lib/reconstruction/analysis-client', () => ({
     throw new Error('Unexpected mirror receipt on historical path');
   }),
 }));
-vi.mock('../src/lib/repositories', () => ({ getRepositories: hooks.getRepositories }));
+vi.mock('../src/lib/repositories', () => ({
+  getRepositories: hooks.getRepositories,
+  getRepositoryUserId: () => 'analysis-member',
+}));
 vi.mock('../src/lib/reconstruction/analysis', async (original) => ({
   ...(await original<typeof import('../src/lib/reconstruction/analysis')>()),
   reviewFromSegmentation: hooks.review,
@@ -91,7 +95,7 @@ vi.mock('../src/lib/images', async (original) => ({
     height: 200,
     createdAt: new Date().toISOString(),
   }),
-  importImage: async (file: File, _kind: string, assets: Repositories['assets']) => {
+  importImage: async (file: File, _kind: string, assets: RepositoryOperations['assets']) => {
     const background = file.name === '비교 공간 배경.png';
     const make = (kind: 'original' | 'preview'): ImageAssetRecord => ({
       id: crypto.randomUUID(),
@@ -212,10 +216,13 @@ async function recordedLocalResult() {
   const result = await runReconstructionLabCase(file(), DEFAULT_ROOM);
   const observation = model();
   result.report.pipeline = {
-    ...buildCandidatePipeline(observation.understanding, result.report.rawReview!, DEFAULT_ROOM,
-      { width: result.report.input.previewWidth, height: result.report.input.previewHeight }).pipeline,
+    ...buildCandidatePipeline(observation.understanding, result.report.rawReview!, DEFAULT_ROOM, {
+      width: result.report.input.previewWidth,
+      height: result.report.input.previewHeight,
+    }).pipeline,
     automaticUnderstanding: structuredClone(observation.understanding),
-    model: observation, modelReused: true,
+    model: observation,
+    modelReused: true,
   };
   return result;
 }
@@ -226,7 +233,6 @@ function repositories() {
     throw new Error('persistent writes forbidden');
   });
   const repos = {
-    mode: 'local',
     projects: {
       list: forbidden,
       load: forbidden,
@@ -259,7 +265,8 @@ function repositories() {
       update: forbidden,
       setActive: forbidden,
     },
-  } as unknown as Repositories;
+  } as unknown as RepositoryOperations;
+  repos.materials.createProjectResource = (input) => repos.materials.create(input);
   return { repos, assets, versions, forbidden };
 }
 // Header-only output fixture: GPU encoding is mocked; header validation remains real.
@@ -273,6 +280,11 @@ function pngOutput(width = 1600, height = 1067) {
   return new Blob([bytes], { type: 'image/png' });
 }
 beforeEach(() => {
+  hooks.archive.mockImplementation(async (url) => {
+    if (url !== '/api/reconstruction/diagnostics') throw new Error('Unexpected model network');
+    return Response.json({ stored: true });
+  });
+  vi.stubGlobal('fetch', hooks.archive);
   vi.clearAllMocks();
   hooks.segment.mockResolvedValue({ width: 2, height: 2 });
   hooks.qwen.mockImplementation(async () => model());
@@ -412,9 +424,12 @@ describe('real project/lab integration with mocked inference and GPU boundaries'
     expect(review.candidates[0].fixtureId).toBeUndefined();
   });
   it('rejects new retired candidate inference without local or cloud calls', async () => {
-    await expect(runReconstructionLabCase(file(), DEFAULT_ROOM, {
-      engine: 'candidate', candidateProfile: 'legacy-inventory',
-    })).rejects.toThrow('종료');
+    await expect(
+      runReconstructionLabCase(file(), DEFAULT_ROOM, {
+        engine: 'candidate',
+        candidateProfile: 'legacy-inventory',
+      }),
+    ).rejects.toThrow('종료');
     expect(hooks.qwen).not.toHaveBeenCalled();
     expect(hooks.extendedInventory).not.toHaveBeenCalled();
     expect(hooks.setSnapshot).not.toHaveBeenCalled();
@@ -462,10 +477,13 @@ describe('real project/lab integration with mocked inference and GPU boundaries'
     expect(first.report.rawReview!.warnings).toEqual(firstCopy.rawReview!.warnings);
     expect((hooks.setSnapshot.mock.calls[1][0] as RenderSnapshot).scene.fixtures).toEqual([]);
     expect(hooks.dispose).toHaveBeenCalledTimes(2);
-    expect(indexedDB.open).toHaveBeenCalledWith('sjn-reconstruction-diagnostics', 1);
-    expect(
-      vi.mocked(indexedDB.open).mock.calls.every(([name]) => name === 'sjn-reconstruction-diagnostics'),
-    ).toBe(true);
+    expect(indexedDB.open).not.toHaveBeenCalled();
+    expect(hooks.archive).toHaveBeenCalledTimes(2);
+    for (const [url, init] of hooks.archive.mock.calls) {
+      expect(url).toBe('/api/reconstruction/diagnostics');
+      expect(init.headers['X-SJN-User-Id']).toBe('analysis-member');
+      expect(JSON.parse(init.body).status).toBe('complete');
+    }
   });
   it('rejects reuse for a different photograph or room before invoking any new analysis', async () => {
     const first = await recordedLocalResult();
@@ -490,14 +508,17 @@ describe('real project/lab integration with mocked inference and GPU boundaries'
   it('honors cancellation before a retired candidate can run', async () => {
     const controller = new AbortController();
     controller.abort();
-    await expect(runReconstructionLabCase(file(), DEFAULT_ROOM, {
-      engine: 'candidate', candidateProfile: 'legacy-inventory', signal: controller.signal,
-    })).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(
+      runReconstructionLabCase(file(), DEFAULT_ROOM, {
+        engine: 'candidate',
+        candidateProfile: 'legacy-inventory',
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
     expect(hooks.qwen).not.toHaveBeenCalled();
     expect(hooks.setSnapshot).not.toHaveBeenCalled();
     expect(hooks.renderModel).not.toHaveBeenCalled();
   });
-
 });
 
 it('holds an invalid custom photo plan unchanged while creating an independent valid plan', async () => {

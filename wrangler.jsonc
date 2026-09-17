@@ -19,7 +19,7 @@
     "binding": "ASSETS",
   },
   "vars": {
-    "APP_ENV": "local",
-    "STORAGE_MODE": "auto",
+    "APP_ENV": "production",
+    "STORAGE_MODE": "d1",
   },
 }

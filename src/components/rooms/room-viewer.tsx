@@ -535,7 +535,7 @@ export default function RoomViewer({
                 </button>
               </>
             ) : saveStatus === 'saved' ? (
-              '이 브라우저에 시점 저장됨'
+              '프로젝트에 시점 저장됨'
             ) : (
               '시점 저장 중…'
             )}

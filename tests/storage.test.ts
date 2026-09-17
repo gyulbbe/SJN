@@ -2,7 +2,7 @@ import { getActiveScene } from '../src/lib/comparison';
 import 'fake-indexeddb/auto';
 import { IDBObjectStore } from 'fake-indexeddb';
 import { describe, expect, it, vi } from 'vitest';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { StorageConflictError } from '../src/lib/repositories/references';
 import {
   DEFAULT_COLOR,
@@ -94,13 +94,13 @@ const floor = (version: string): Surface => ({
   tile: { ...DEFAULT_TILE },
   color: { ...DEFAULT_COLOR },
 });
-const setup = () => createLocalRepositories(`test-${crypto.randomUUID()}`);
+const setup = () => createLegacyLocalRepositories(`test-${crypto.randomUUID()}`);
 
 describe('transactional local persistence', () => {
   it('commits once under concurrent conditional saves from two connections', async () => {
     const name = `test-${crypto.randomUUID()}`;
-    const a = createLocalRepositories(name);
-    const b = createLocalRepositories(name);
+    const a = createLegacyLocalRepositories(name);
+    const b = createLegacyLocalRepositories(name);
     const asset = image();
     await a.assets.put(asset);
     const original = await a.projects.create(project(asset.id));

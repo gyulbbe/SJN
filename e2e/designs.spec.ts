@@ -1,9 +1,18 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { test, expect, type Page } from '@playwright/test';
 import sharp from 'sharp';
 import { readFile, writeFile } from 'node:fs/promises';
 import { getActiveDesign } from '../src/lib/designs';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
 import { savedProject, storedProject } from '../tests/helpers/editor-actions';
+
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 const manager = (page: Page) => page.getByRole('dialog', { name: /^시안 관리/ });
@@ -22,7 +31,7 @@ async function activate(page: Page, name: string) {
     .click();
   await expect(manager(page)).toHaveCount(0);
   await expect(page.getByTestId('active-design-name')).toHaveText(name);
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
 }
 async function rename(page: Page, from: string, to: string) {
   await card(page, from)
@@ -33,80 +42,84 @@ async function rename(page: Page, from: string, to: string) {
   await expect(card(page, to)).toHaveCount(1);
 }
 async function seedProduct(page: Page) {
-  await page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = 180;
-    canvas.height = 260;
-    const c = canvas.getContext('2d')!;
-    c.fillStyle = '#e74177';
-    c.fillRect(30, 10, 120, 240);
-    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((value) => resolve(value!), 'image/png'));
-    const now = new Date().toISOString(),
-      assetId = crypto.randomUUID(),
-      materialId = crypto.randomUUID(),
-      versionId = crypto.randomUUID();
-    const tx = db.transaction(['assets', 'versions', 'materials'], 'readwrite');
-    tx.objectStore('assets').add({
-      id: assetId,
-      ownerId: 'local',
-      name: '검증 제품.png',
-      mime: 'image/png',
-      size: blob.size,
-      width: 180,
-      height: 260,
-      kind: 'product',
-      createdAt: now,
-      blob,
-    });
-    tx.objectStore('materials').add({
-      id: materialId,
-      ownerId: 'local',
-      currentVersionId: versionId,
-      active: true,
-      scope: 'personal',
-      updatedAt: now,
-    });
-    tx.objectStore('versions').add({
-      id: versionId,
-      materialId,
-      version: 1,
+  await page.evaluate(
+    async ({ name, code, file, description }) => {
+      const api = async (path: string, body: FormData | object) => {
+        const response = await fetch(
+          '/api/d1/' + path,
+          body instanceof FormData
+            ? { method: 'POST', body }
+            : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+        );
+        if (!response.ok) throw new Error(await response.text());
+        return response.json();
+      };
+      const canvas = document.createElement('canvas');
+      canvas.width = 180;
+      canvas.height = 260;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#e74177';
+      ctx.fillRect(30, 10, 120, 240);
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((value) => resolve(value!), 'image/png'),
+      );
+      const assetId = crypto.randomUUID();
+      const form = new FormData();
+      form.set(
+        'metadata',
+        JSON.stringify({
+          id: assetId,
+          name: file,
+          mime: 'image/png',
+          size: blob.size,
+          width: 180,
+          height: 260,
+          kind: 'product',
+          createdAt: new Date().toISOString(),
+        }),
+      );
+      form.set('file', blob, file);
+      await api('assets', form);
+      await api('materials', {
+        operation: 'create',
+        input: {
+          name,
+          code,
+          description,
+          category: 'basin',
+          scope: 'shared',
+          brand: '',
+          color: '',
+          finish: '',
+          catalog: { colorIds: [], compositionIds: [], finishIds: [] },
+          widthMm: 500,
+          heightMm: 750,
+          depthMm: 450,
+          usage: 'both',
+          installation: 'floor',
+          coverAssetId: assetId,
+          imageAssetIds: [assetId],
+          textureAssetIds: [],
+          views: [{ assetId, direction: '정면', anchor: { x: 0.5, y: 0.98 } }],
+          defaultGroutWidth: 2,
+          defaultGroutColor: '#dddddd',
+          defaultPattern: 'grid',
+        },
+      });
+    },
+    {
       name: '검증 세면대',
-      brand: '직접 제작',
       code: 'QA-DESIGNS-1',
-      category: 'basin',
-      scope: 'personal',
+      file: '검증 제품.png',
       description: '테스트용 직접 제작 이미지',
-      color: '분홍',
-      finish: '',
-      widthMm: 500,
-      heightMm: 750,
-      depthMm: 450,
-      usage: 'both',
-      installation: 'floor',
-      coverAssetId: assetId,
-      imageAssetIds: [assetId],
-      textureAssetIds: [],
-      views: [{ assetId, direction: '정면', anchor: { x: 0.5, y: 0.98 } }],
-      defaultGroutWidth: 2,
-      defaultGroutColor: '#ddd',
-      defaultPattern: 'grid',
-      createdAt: now,
-    });
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onabort = () => reject(tx.error);
-    });
-    db.close();
-  });
+    },
+  );
 }
 async function createRoom(page: Page) {
   await page.goto('/');
-  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
   await seedTestTiles(page);
   await seedProduct(page);
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
@@ -115,25 +128,12 @@ async function createRoom(page: Page) {
     .getByRole('button', { name: '공간 만들기', exact: true })
     .click();
   await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 40000 });
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await savedProject(page);
 }
-async function assets(page: Page) {
-  return page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open('gongganmiri-v1');
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
-      const r = db.transaction('assets').objectStore('assets').getAllKeys();
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    db.close();
-    return keys.sort();
-  });
+async function assets() {
+  return (await app.snapshot()).assets.map((asset) => String(asset.id)).sort();
 }
 async function applyTile(page: Page, name: string) {
   await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
@@ -181,7 +181,13 @@ test('최신 시안 복사 → 타일·제품·자재 금액 독립 수정 → �
     uploads: string[] = [];
   page.on('pageerror', (error) => exceptions.push(error.message));
   page.on('request', (request) => {
-    if (['POST', 'PUT'].includes(request.method()) && /api|supabase|r2|openai/i.test(request.url()))
+    const url = new URL(request.url());
+    const isolatedD1 = url.origin === new URL(page.url()).origin && url.pathname.startsWith('/api/d1/');
+    if (
+      ['POST', 'PUT'].includes(request.method()) &&
+      !isolatedD1 &&
+      /api|supabase|r2|openai/i.test(request.url())
+    )
       uploads.push(request.url());
   });
   await createRoom(page);
@@ -194,7 +200,7 @@ test('최신 시안 복사 → 타일·제품·자재 금액 독립 수정 → �
   await price.press('Enter');
   const source = await savedProject(page),
     a = getActiveDesign(source)!;
-  const assetsBefore = await assets(page);
+  const assetsBefore = await assets();
   await openManager(page);
   await card(page, '시안 A').getByRole('button', { name: '시안 A 복제', exact: true }).click();
   await rename(page, '시안 A 복사본', '시안 B');
@@ -235,7 +241,7 @@ test('최신 시안 복사 → 타일·제품·자재 금액 독립 수정 → �
     .filter({ has: page.getByRole('heading', { name: '시안 B', exact: true }) });
   await comparisonCard.getByRole('button', { name: '이 시안 편집', exact: true }).click();
   await expect(page.getByTestId('active-design-name')).toHaveText('시안 B');
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await applyTile(page, '클라우드 화이트');
   await savedProject(page);
   const refreshStarted = Date.now();
@@ -246,7 +252,7 @@ test('최신 시안 복사 → 타일·제품·자재 금액 독립 수정 → �
   const refreshReport = { changedDesignReadyMs: Date.now() - refreshStarted };
   await writeFile(info.outputPath('changed-design-performance.json'), JSON.stringify(refreshReport, null, 2));
   await comparisonCard.getByRole('button', { name: '이 시안 편집', exact: true }).click();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   const previousAfter = await page
     .locator('[data-testid="canvas-frame"] canvas')
     .evaluate((c) => (c as HTMLCanvasElement).toDataURL());
@@ -290,7 +296,7 @@ test('최신 시안 복사 → 타일·제품·자재 금액 독립 수정 → �
     outputPixels.reduce((sum, value, index) => sum + Math.abs(value - expectedPixels[index]), 0) /
     outputPixels.length;
   expect(exportError).toBeLessThan(7);
-  expect(await assets(page)).toEqual(assetsBefore);
+  expect(await assets()).toEqual(assetsBefore);
   await page.reload();
   project = await savedProject(page);
   expect(project.designs).toHaveLength(2);
@@ -344,7 +350,7 @@ test('생성 5개 제한·연속 클릭·5개 선택 한도·삭제 후 재생�
   expect(p.activeDesignId).toBeNull();
   expect(p.comparisonDesignIds).toEqual([]);
   await page.getByRole('button', { name: '새 시안 만들기', exact: true }).click();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   p = await savedProject(page);
   expect(p.designs).toHaveLength(1);
   expect(getActiveDesign(p)!.scene.fixtures).toHaveLength(0);

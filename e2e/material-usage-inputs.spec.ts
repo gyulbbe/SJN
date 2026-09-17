@@ -1,33 +1,26 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 import type { ProjectDocument } from '../src/lib/types';
 
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
+
 test.use({ channel: 'chrome' });
 async function persisted(page: Page) {
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
-  return page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const project = await new Promise<ProjectDocument>((resolve, reject) => {
-      const request = db
-        .transaction('projects')
-        .objectStore('projects')
-        .get(location.pathname.split('/').at(-1)!);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    db.close();
-    return project;
-  });
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  return app.project(page.url().split('/').at(-1)!);
 }
 const design = (project: ProjectDocument) =>
   project.designs.find((item) => item.id === project.activeDesignId)!;
 
 test('자재 포장 확인, 수량·단가 Enter/blur 단일 기록과 빈 값·0원 구분', async ({ page }, testInfo) => {
-  test.setTimeout(90000);
+  test.setTimeout(180000);
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
@@ -36,7 +29,7 @@ test('자재 포장 확인, 수량·단가 Enter/blur 단일 기록과 빈 값·
     .getByRole('dialog', { name: '공간 크기 설정' })
     .getByRole('button', { name: '공간 만들기', exact: true })
     .click();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await page.getByRole('button', { name: '신규 자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '신규 자재 등록', exact: true });
   const buffer = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#c9d1bf' } })

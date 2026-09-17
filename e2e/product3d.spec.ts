@@ -1,9 +1,22 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, {
+    allowModelDownloads:
+      process.env.SJN_AI_BACKGROUND_REAL === '1' || process.env.SJN_AI_BACKGROUND_WASM === '1',
+  });
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 import { expect, test, type Page, type Locator } from '@playwright/test';
+// Product drag performance needs the real Chrome GPU, not the general suite's software renderer.
+test.use({ channel: 'chrome', launchOptions: { args: [] } });
+test.setTimeout(180000);
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import sharp from 'sharp';
-import type { MaterialVersion } from '../src/lib/types';
 import { getActiveDesign } from '../src/lib/designs';
 import { savedProject } from '../tests/helpers/editor-actions';
 import { calculateMaterialUsage } from '../src/lib/material-usage';
@@ -126,14 +139,12 @@ async function installReplay(page: Page) {
           return new Original(url, options);
         },
       });
-      for (const method of ['add', 'put'] as const) {
-        const original = IDBObjectStore.prototype[method];
-        IDBObjectStore.prototype[method] = function (value, key) {
-          if (state.failAssetWrite && this.name === 'assets')
-            throw new DOMException('검증용 저장 공간 부족', 'QuotaExceededError');
-          return key === undefined ? original.call(this, value) : original.call(this, value, key);
-        };
-      }
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        if (state.failAssetWrite && String(input).includes('/api/d1/assets') && init?.method === 'POST')
+          return Response.json({ error: '검증용 저장 공간 부족' }, { status: 503 });
+        return nativeFetch(input, init);
+      };
       for (const prototype of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) {
         const drawElements = prototype.drawElements;
         prototype.drawElements = function (...args) {
@@ -170,7 +181,7 @@ async function installReplay(page: Page) {
 async function openForm(page: Page, photoCount = 1) {
   page.on('pageerror', (error) => console.log('PRODUCT3D PAGE ERROR', error.message));
   await installReplay(page);
-  await page.goto('http://127.0.0.1:3000/materials');
+  await page.goto('http://127.0.0.1:3000/admin/materials');
   await page.getByRole('button', { name: '자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
   await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
@@ -186,6 +197,19 @@ async function openForm(page: Page, photoCount = 1) {
   await expect(form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })).toHaveCount(
     photoCount,
   );
+  await expect
+    .poll(
+      () =>
+        form
+          .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
+          .evaluateAll((images) =>
+            images.every(
+              (image) => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0,
+            ),
+          ),
+      { timeout: 30000 },
+    )
+    .toBe(true);
   await form.getByLabel('촬영 방향 1', { exact: true }).fill('정면');
   if (photoCount > 1) await form.getByLabel('촬영 방향 2', { exact: true }).fill('오른쪽 측면');
   return { form, name };
@@ -240,28 +264,10 @@ async function selectProduct(dialog: Locator) {
   await expect(dialog.getByTestId('product3d-handle-top')).toBeVisible();
 }
 async function versions(page: Page, name: string) {
-  return page.evaluate(async (name) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open('gongganmiri-v1');
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    try {
-      return await new Promise<MaterialVersion[]>((resolve, reject) => {
-        const req = db.transaction('versions').objectStore('versions').getAll();
-        req.onsuccess = () =>
-          resolve(
-            req.result
-              .filter((v: MaterialVersion) => v.name === name)
-              .sort((a: MaterialVersion, b: MaterialVersion) => a.version - b.version),
-          );
-        req.onerror = () => reject(req.error);
-      });
-    } finally {
-      db.close();
-    }
-  }, name);
+  void page;
+  return (await app.versions(name)).sort((a, b) => a.version - b.version);
 }
+
 async function updateSelectedAndClose(dialog: Locator) {
   await dialog.getByRole('button', { name: '선택한 각도 수정', exact: true }).click();
   await expect(dialog).toBeVisible();
@@ -606,20 +612,11 @@ test('실제 메시 재생: 저장 메시 유실 시 자동 AI 금지·재생성
   await updateSelectedAndClose(dialog);
   await saveForm(form);
   const saved = (await versions(page, name))[0];
-  await page.evaluate(async (assetId) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open('gongganmiri-v1');
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction('assets', 'readwrite');
-      tx.objectStore('assets').delete(assetId);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    db.close();
-  }, saved.views[0].product3d!.meshAssetId);
+  await page.route('**/api/d1/assets?*', (route) =>
+    new URL(route.request().url()).searchParams.get('id') === saved.views[0].product3d!.meshAssetId
+      ? route.fulfill({ status: 404, json: { error: '격리 테스트: 저장된 메시 없음' } })
+      : route.fallback(),
+  );
   await page.reload();
   await page
     .locator('article')
@@ -748,7 +745,7 @@ test('실제 AI opt-in: 프로덕션 Worker 추론→360 뷰어→PNG·각도 �
     globalThis.Worker = ObservedWorker;
   });
   try {
-    await page.goto('http://127.0.0.1:3000/materials');
+    await page.goto('http://127.0.0.1:3000/admin/materials');
     await page.getByRole('button', { name: '자재 등록', exact: true }).click();
     const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
     await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
@@ -928,33 +925,9 @@ test('실제 메시 재생: 한 번 입체화로 세 각도 추가·공유 메�
   closePose(last.views[0].product3d!.pose, changedFirstPose);
   closePose(last.views[1].product3d!.pose, secondPose);
   closePose(last.views[2].product3d!.pose, thirdPose);
-  const blobHashes = await page.evaluate(
-    async (ids) => {
-      const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const r = indexedDB.open('gongganmiri-v1');
-        r.onsuccess = () => resolve(r.result);
-        r.onerror = () => reject(r.error);
-      });
-      try {
-        const results = [];
-        for (const id of ids) {
-          const asset = await new Promise<{ blob: Blob }>((resolve, reject) => {
-            const r = db.transaction('assets').objectStore('assets').get(id);
-            r.onsuccess = () => resolve(r.result);
-            r.onerror = () => reject(r.error);
-          });
-          results.push(
-            Array.from(
-              new Uint8Array(await crypto.subtle.digest('SHA-256', await asset.blob.arrayBuffer())),
-            ).join(','),
-          );
-        }
-        return results;
-      } finally {
-        db.close();
-      }
-    },
-    last.views.map((v) => v.assetId),
+  const snapshot = await app.snapshot();
+  const blobHashes = last.views.map(
+    (view) => snapshot.assets.find((asset) => asset.id === view.assetId).sha256,
   );
   expect(new Set(blobHashes).size).toBe(3);
   await page.reload();

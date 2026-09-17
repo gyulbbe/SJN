@@ -538,3 +538,42 @@ it.each(['layout', 'inventory-extended', 'target-existence'])(
     stored.close();
   },
 );
+
+describe('administrator transient cloud observations', () => {
+  it('does not persist or reuse photo results, even for repeated requests in the same run', async () => {
+    const { photoAnalysisSignal } = await import('../src/lib/reconstruction/analysis-cache-policy');
+    const signal = photoAnalysisSignal(undefined, 'transient')!;
+    const mock = fetchMock();
+    await call(form(), signal);
+    await call(form(), signal);
+    expect(mock.posts).toBe(2);
+    expect(await indexedDB.databases()).toEqual([]);
+    await call();
+    expect(mock.posts).toBe(3);
+    await call();
+    expect(mock.posts).toBe(3);
+  });
+  it('keeps simultaneous ordinary cache flights separate and preserves their completed results', async () => {
+    const { photoAnalysisSignal } = await import('../src/lib/reconstruction/analysis-cache-policy');
+    const signal = photoAnalysisSignal(undefined, 'transient')!;
+    const started = deferred<void>(),
+      finish = deferred<void>();
+    const mock = fetchMock(async (attempt) => {
+      if (attempt === 2) started.resolve();
+      await finish.promise;
+      return Response.json(output('request-' + attempt));
+    });
+    const ordinary = call(),
+      transient = call(form(), signal);
+    await started.promise;
+    finish.resolve();
+    const [a, b] = await Promise.all([ordinary.then((r) => r.json()), transient.then((r) => r.json())]);
+    expect(a.marker).not.toBe(b.marker);
+    expect(mock.posts).toBe(2);
+    expect((await (await call()).json()).marker).toBe(a.marker);
+    expect(mock.posts).toBe(2);
+    const db = await openDB('sjn-reconstruction-cloud-stages', 1);
+    expect(await db.count('stages')).toBe(1);
+    db.close();
+  });
+});

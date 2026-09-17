@@ -9,49 +9,22 @@ export function runtimeSelection() {
 
 export async function storageStatus(): Promise<StorageStatus> {
   const { environment: env, selection } = runtimeSelection();
-  if (selection.mode === 'local' || selection.reason === 'invalid_configuration') return selection;
-  if (selection.mode === 'd1') {
-    if (env.platform !== 'cloudflare') return blockedStatus('unsupported_runtime');
-    if (!env.DB || !env.ASSET_BUCKET) return blockedStatus('missing_bindings');
-    try {
-      const auth = await import('../auth/d1');
-      auth.validateD1AuthConfig(env as unknown as Parameters<typeof auth.validateD1AuthConfig>[0]);
-    } catch {
-      return blockedStatus('invalid_configuration');
-    }
-    try {
-      const [{ checkD1Storage }, auth] = await Promise.all([import('../d1'), import('../auth/d1')]);
-      await Promise.all([
-        checkD1Storage(env as unknown as D1Bindings),
-        auth.checkD1AuthSchema(env as unknown as Parameters<typeof auth.checkD1AuthSchema>[0]),
-      ]);
-      return { ...selection, ready: true };
-    } catch {
-      return blockedStatus('connection_failed');
-    }
-  }
-  if (env.platform !== 'node') return blockedStatus('unsupported_runtime');
-  const url = env.NEXT_PUBLIC_SUPABASE_URL;
-  const publishableKey = env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  const secret = env.SUPABASE_SECRET_KEY;
-  if (
-    typeof url !== 'string' ||
-    typeof publishableKey !== 'string' ||
-    typeof secret !== 'string' ||
-    !publishableKey ||
-    !secret
-  )
-    return blockedStatus('invalid_configuration');
+  if (selection.reason === 'invalid_configuration') return selection;
+  if (env.platform !== 'cloudflare') return blockedStatus('unsupported_runtime');
+  if (!env.DB || !env.ASSET_BUCKET) return blockedStatus('missing_bindings');
   try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:') return blockedStatus('invalid_configuration');
-    const response = await fetch(new URL('/rest/v1/projects?select=id&limit=0', parsed), {
-      headers: { apikey: secret, Authorization: 'Bearer ' + secret },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(4000),
-    });
-    if (!response.ok) return blockedStatus('connection_failed');
-    return { ...selection, ready: true, supabase: { url, publishableKey } };
+    const auth = await import('../auth/d1');
+    auth.validateD1AuthConfig(env as unknown as Parameters<typeof auth.validateD1AuthConfig>[0]);
+  } catch {
+    return blockedStatus('invalid_configuration');
+  }
+  try {
+    const [{ checkD1Storage }, auth] = await Promise.all([import('../d1'), import('../auth/d1')]);
+    await Promise.all([
+      checkD1Storage(env as unknown as D1Bindings),
+      auth.checkD1AuthSchema(env as unknown as Parameters<typeof auth.checkD1AuthSchema>[0]),
+    ]);
+    return { ...selection, ready: true };
   } catch {
     return blockedStatus('connection_failed');
   }
@@ -80,7 +53,18 @@ export function serverError(error: unknown): Response {
         ? error.message
         : '요청에 실패했어요.';
   return Response.json(
-    { error: message },
+    {
+      error: message,
+      ...(error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      typeof error.code === 'string' &&
+      ['ACCOUNT_CHANGED', 'account_suspended', 'authentication_required', 'admin_required'].includes(
+        error.code,
+      )
+        ? { code: error.code }
+        : {}),
+    },
     {
       status: safeStatus,
       headers: { 'Cache-Control': 'private, no-store' },

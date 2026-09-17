@@ -26,7 +26,7 @@ import {
   fixtureReconstructionSchema,
   projectSchema,
   reconstructionReviewSchema,
-} from '../src/lib/supabase/validation';
+} from '../src/lib/storage/validation';
 import { normalizeProjectDocument, projectScenes } from '../src/lib/comparison';
 import { copyDesignDocument, duplicateProjectDocument } from '../src/lib/designs';
 import { useEditor } from '../src/lib/editor-store';

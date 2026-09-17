@@ -18,7 +18,7 @@ const sourcePaths = [
   'src/lib/reconstruction/types.ts',
   'src/lib/reconstruction/projection.ts',
   'src/lib/reconstruction/strict-placement.ts',
-  'src/lib/supabase/validation.ts',
+  'src/lib/storage/validation.ts',
 ];
 const hash = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
 const sourceHashes = Object.fromEntries(

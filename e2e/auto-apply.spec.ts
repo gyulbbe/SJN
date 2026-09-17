@@ -1,9 +1,18 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { getActiveDesign } from '../src/lib/designs';
 import { seedTestTiles, uploadBathroomPhoto } from '../tests/helpers/catalog-fixtures.mjs';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ProjectDocument } from '../src/lib/types';
+
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 test.setTimeout(180000);
@@ -24,36 +33,16 @@ const landmarks = [
 ];
 
 async function readProject(page: Page): Promise<ProjectDocument> {
-  const id = page.url().split('/').at(-1)!;
-  return page.evaluate(
-    (projectId) =>
-      new Promise<ProjectDocument>((resolve, reject) => {
-        const request = indexedDB.open('gongganmiri-v1');
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const database = request.result;
-          const get = database.transaction('projects').objectStore('projects').get(projectId);
-          get.onerror = () => {
-            database.close();
-            reject(get.error);
-          };
-          get.onsuccess = () => {
-            database.close();
-            resolve(get.result);
-          };
-        };
-      }),
-    id,
-  );
+  return app.project(page.url().split('/').at(-1)!);
 }
 
 async function readyProject(page: Page) {
   await page.goto('/');
   await seedTestTiles(page);
   await uploadBathroomPhoto(page);
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
   await expect(page.locator('.editor-error')).toHaveCount(0);
   return readProject(page);
 }
@@ -103,7 +92,7 @@ test('벽 탭과 차콜 클릭만으로 실제 감지 후 벽에 적용하고, �
       { timeout: 15000 },
     )
     .toBe(true);
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
   const wall = await readProject(page);
   const wallSurfaces = getActiveDesign(wall)!.scene.surfaces.filter((surface) => surface.kind === 'wall');
   expect(wallSurfaces.length).toBeGreaterThan(0);
@@ -147,7 +136,7 @@ test('벽 탭과 차콜 클릭만으로 실제 감지 후 벽에 적용하고, �
     )
     .toBe(true);
   await expect(page.getByTestId('auto-detection-status')).toHaveCount(0);
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
   const floor = await readProject(page);
   expect(getActiveDesign(floor)!.scene.surfaces.map((surface) => surface.id)).toEqual(idsAfterWall);
   expect(getActiveDesign(floor)!.scene.surfaces.filter((surface) => surface.kind === 'wall')).toEqual(
@@ -187,7 +176,7 @@ test('벽 탭과 차콜 클릭만으로 실제 감지 후 벽에 적용하고, �
         .every((surface) => surface.materialVersionId !== wallSurfaces[0].materialVersionId),
     )
     .toBe(true);
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
   const changed = await readProject(page);
   expect(getActiveDesign(changed)!.scene.surfaces.map((surface) => surface.id)).toEqual(idsAfterWall);
   expect(
@@ -234,7 +223,7 @@ test('모델 실패 때 장면을 보존하고 다시 누르면 실제 분석을
     if (blockModel) {
       blockedModelRequests.push(route.request().url());
       await route.abort('failed');
-    } else await route.continue();
+    } else await route.fallback();
   });
   const before = await readyProject(page);
   const beforePixels = await imagePixels(page);
@@ -243,7 +232,7 @@ test('모델 실패 때 장면을 보존하고 다시 누르면 실제 분석을
   await expect(page.locator('.editor-error')).toBeVisible({ timeout: 120000 });
   await expect(page.getByTestId('auto-detection-status')).toHaveCount(0);
   await expect(materialButton(page, '차콜 스톤')).toBeEnabled();
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
   const failed = await readProject(page);
   expect(blockedModelRequests.length).toBeGreaterThan(0);
   expect(failed).toEqual(before);
@@ -316,7 +305,7 @@ test('분석 중 Escape 취소는 늦은 실제 결과를 적용하지 않고 �
   await page.context().route(/\/models\/deeplab-ade20k\/model\.json(?:\?|$)/, async (route) => {
     modelRequests.push(route.request().url());
     await modelGate;
-    await route.continue();
+    await route.fallback();
   });
   try {
     const before = await readyProject(page);

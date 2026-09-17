@@ -1,8 +1,17 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { getActiveDesign } from '../src/lib/designs';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import sharp from 'sharp';
 import { calculateMaterialUsage } from '../src/lib/material-usage';
 import type { MaterialVersion, ProjectDocument } from '../src/lib/types';
+
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 const actorErrors = new WeakMap<Page, { page: string[]; console: string[] }>();
@@ -28,28 +37,10 @@ const quantity = (page: Page) => usageRow(page).getByLabel('치수 검증 타일
 const price = (page: Page) => usageRow(page).getByLabel('치수 검증 타일 단가 (원)', { exact: true });
 const area = (page: Page) => usageRow(page).getByLabel('바닥 면적 (㎡)', { exact: true });
 async function saved(page: Page) {
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
 }
-async function data(page: Page) {
-  const id = page.url().split('/').at(-1)!;
-  return page.evaluate(async (id) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const get = <T>(store: string, id?: string) =>
-      new Promise<T>((resolve, reject) => {
-        const table = db.transaction(store).objectStore(store),
-          request = id ? table.get(id) : table.getAll();
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-    const project = await get<ProjectDocument>('projects', id),
-      versions = await get<MaterialVersion[]>('versions');
-    db.close();
-    return { project, versions };
-  }, id);
+async function data(page: Page): Promise<{ project: ProjectDocument; versions: MaterialVersion[] }> {
+  return { project: await app.project(page.url().split('/').at(-1)!), versions: await app.versions() };
 }
 async function begin(page: Page) {
   await page.goto('/');
@@ -63,8 +54,8 @@ async function create(page: Page) {
   await begin(page);
   await roomDialog(page).getByRole('button', { name: '공간 만들기', exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 30000 });
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await saved(page);
 }
 async function resize(page: Page, width: string, depth?: string, height?: string) {
@@ -75,7 +66,7 @@ async function resize(page: Page, width: string, depth?: string, height?: string
   if (height) await modal.getByLabel('높이 (m)', { exact: true }).fill(height);
   await modal.getByRole('button', { name: '크기 적용', exact: true }).click();
   await expect(modal).toHaveCount(0);
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await saved(page);
 }
 async function registerTile(page: Page) {
@@ -162,7 +153,7 @@ test('기본 2.4m 공간 → 자재 수량·단가 → 크기 변경·전체 복
   await roomDialog(page).getByRole('button', { name: '전체 다시 실행', exact: true }).click();
   await saved(page);
   await page.reload();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await saved(page);
   await expect(quantity(page)).toHaveValue('6');
   const persisted = await data(page);
@@ -174,7 +165,7 @@ test('기본 2.4m 공간 → 자재 수량·단가 → 크기 변경·전체 복
   const copyLink = page.getByRole('link').filter({ has: page.getByRole('heading', { name: /복사본/ }) });
   await expect(copyLink).toHaveCount(1);
   await copyLink.click();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await saved(page);
   const copy = (await data(page)).project,
     copied = getActiveDesign(copy)!;
@@ -219,7 +210,7 @@ test('직접 입력한 면적·수량·단가는 공간 크기를 바꿔도 유�
   await expect(price(page)).toHaveValue('25000');
   await saved(page);
   await page.reload();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await expect(quantity(page)).toHaveValue('7');
   await usageRow(page)
     .getByRole('button', { name: '치수 검증 타일 구매 수량 자동 계산', exact: true })
@@ -228,7 +219,7 @@ test('직접 입력한 면적·수량·단가는 공간 크기를 바꿔도 유�
   await expect(page.getByTestId('usage-total')).toHaveText('250,000원');
 });
 
-test('잘못된 치수·생성 취소·수정 취소·두 번째 탭 읽기 전용', async ({ page, context }, testInfo) => {
+test('잘못된 치수·생성 취소·수정 취소·회원 두 번째 탭 취소 보존', async ({ page, context }, testInfo) => {
   test.setTimeout(120000);
   await begin(page);
   const modal = roomDialog(page);
@@ -252,7 +243,7 @@ test('잘못된 치수·생성 취소·수정 취소·두 번째 탭 읽기 전�
   await modal.getByLabel('높이 (m)', { exact: true }).fill('2.8');
   await modal.getByRole('button', { name: '공간 만들기', exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 30000 });
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await saved(page);
   const original = (await data(page)).project;
   expect(getActiveDesign(original)!.scene.room).toMatchObject({
@@ -266,8 +257,12 @@ test('잘못된 치수·생성 취소·수정 취소·두 번째 탭 읽기 전�
   expect(getActiveDesign((await data(page)).project)!.scene).toEqual(getActiveDesign(original)!.scene);
   const second = await context.newPage();
   await second.goto(page.url());
-  await expect(second.getByTestId('editor-canvas')).toBeVisible();
-  await expect(second.getByRole('button', { name: '공간 크기', exact: true })).toBeDisabled();
+  await expect(second.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(second.getByRole('button', { name: '공간 크기', exact: true })).toBeEnabled();
+  await second.getByRole('button', { name: '공간 크기', exact: true }).click();
+  await roomDialog(second).getByLabel('가로 (m)', { exact: true }).fill('9');
+  await roomDialog(second).getByRole('button', { name: '취소', exact: true }).click();
+  expect((await data(second)).project).toEqual(original);
   await second.close();
 });
 
@@ -289,34 +284,19 @@ test('과거에 저장한 수동 면은 크기 변경 확인·취소·적용·�
   legacy.storageRevision++;
   const url = page.url();
   await page.goto('/');
-  await page.evaluate(
-    (project) =>
-      new Promise<void>((resolve, reject) => {
-        const request = indexedDB.open('gongganmiri-v1');
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result,
-            transaction = db.transaction('projects', 'readwrite');
-          transaction.oncomplete = () => {
-            db.close();
-            resolve();
-          };
-          transaction.onabort = () => {
-            db.close();
-            reject(transaction.error);
-          };
-          transaction.onerror = () => {
-            db.close();
-            reject(transaction.error);
-          };
-          transaction.objectStore('projects').put(project);
-        };
-      }),
-    legacy,
-  );
+  const row = await app.env.DB.prepare('SELECT object_key FROM d1_projects WHERE id=? AND owner_id=?')
+    .bind(legacy.id, app.actor.id)
+    .first<{ object_key: string }>();
+  if (!row) throw new Error('Missing isolated legacy fixture');
+  const text = JSON.stringify(legacy);
+  await app.env.ASSET_BUCKET.put(row.object_key, text, { httpMetadata: { contentType: 'application/json' } });
+  await app.env.DB.prepare('UPDATE d1_projects SET storage_revision=?,byte_size=? WHERE id=?')
+    .bind(legacy.storageRevision, new TextEncoder().encode(text).length, legacy.id)
+    .run();
+
   await page.goto(url);
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await saved(page);
   const manuallyEdited = (await data(page)).project;
   expect(

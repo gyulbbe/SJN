@@ -1,15 +1,15 @@
 import { getActiveDesign, getActiveScene } from '../src/lib/comparison';
 import 'fake-indexeddb/auto';
 import { describe, it, expect } from 'vitest';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
 import { resizedRoomScene } from '../src/lib/room-editing';
-import { projectSchema } from '../src/lib/supabase/validation';
+import { projectSchema } from '../src/lib/storage/validation';
 import { StorageConflictError } from '../src/lib/repositories/references';
 import { DEFAULT_COLOR, EMPTY_MASK, type LegacyProjectDocument } from '../src/lib/types';
 
 async function setup() {
-  const repo = createLocalRepositories('room-storage-' + crypto.randomUUID());
+  const repo = createLegacyLocalRepositories('room-storage-' + crypto.randomUUID());
   const asset = async () => {
     const id = crypto.randomUUID();
     await repo.assets.put({

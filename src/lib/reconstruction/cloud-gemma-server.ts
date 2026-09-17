@@ -136,7 +136,7 @@ async function sha256(bytes: Uint8Array | string): Promise<string> {
     value.toString(16).padStart(2, '0'),
   ).join('');
 }
-/** Reuse D1 authentication, or allow anonymous AI for intentionally configured local storage. */
+/** Every AI request requires an active authenticated account, including local development. */
 export async function assertCloudGemmaRequest(request: Request, environment: Environment): Promise<string> {
   throwIfAborted(request.signal);
   const url = new URL(request.url);
@@ -180,47 +180,7 @@ export async function assertCloudGemmaRequest(request: Request, environment: Env
       );
     }
   }
-  const loopback = (hostname: string) => ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
-  const host = request.headers.get('host');
-  let publicUrl: URL;
-  try {
-    publicUrl = host ? new URL(url.protocol + '//' + host) : new URL(url.origin);
-  } catch {
-    return invalid('요청 주소가 올바르지 않아요.');
-  }
-  if (
-    environment.APP_ENV !== 'production' &&
-    selection.mode === 'local' &&
-    url.protocol === 'http:' &&
-    loopback(url.hostname) &&
-    loopback(publicUrl.hostname) &&
-    publicUrl.pathname === '/' &&
-    !publicUrl.username &&
-    !publicUrl.password &&
-    (!origin || origin === publicUrl.origin)
-  )
-    return 'local-dev';
-  const storageMode = environment.STORAGE_MODE ?? environment.NEXT_PUBLIC_STORAGE_MODE ?? 'auto';
-  const intentionalLocal =
-    selection.reason === 'local_selected' ||
-    (environment.APP_ENV === 'local' && (storageMode === 'local' || storageMode === 'auto'));
-  if (
-    selection.mode === 'local' &&
-    intentionalLocal &&
-    url.protocol === 'https:' &&
-    publicUrl.origin === url.origin &&
-    publicUrl.pathname === '/' &&
-    !publicUrl.username &&
-    !publicUrl.password &&
-    !publicUrl.search &&
-    !publicUrl.hash
-  )
-    return 'anonymous-origin-sha256:' + (await sha256('sjn-cloud-gemma-anonymous:' + url.origin));
-  throw new CloudGemmaError(
-    '설비 분석을 사용하려면 서버의 로컬 저장 모드 또는 D1 로그인 설정을 확인해 주세요.',
-    'authentication_unavailable',
-    503,
-  );
+  throw new CloudGemmaError('Google 로그인과 D1 연결 설정이 필요해요.', 'authentication_unavailable', 503);
 }
 function binding(environment: Environment): CloudGemmaBinding {
   const ai = environment.AI;

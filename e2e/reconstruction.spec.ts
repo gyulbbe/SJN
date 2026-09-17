@@ -1,9 +1,19 @@
+import { downloadedArtifact } from './helpers/downloaded-artifact';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+import type { Page as AuthenticatedPage } from '@playwright/test';
 import { getActiveDesign } from '../src/lib/designs';
 import { test, expect, type Page } from '@playwright/test';
 import sharp from 'sharp';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
-import type { MaterialVersion, ProjectDocument, Point, Quad } from '../src/lib/types';
+import type { Point, Quad } from '../src/lib/types';
 
+const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
+test.beforeEach(async ({ page }) => {
+  authenticatedTests.set(page, await authenticatedApp(page));
+});
+test.afterEach(async ({ page }) => {
+  await authenticatedTests.get(page)?.dispose();
+});
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 const faults = new WeakMap<Page, string[]>();
 test.beforeEach(({ page }) => {
@@ -20,34 +30,24 @@ test.afterEach(async ({ page }, info) => {
 });
 const dialog = (page: Page) => page.getByRole('dialog', { name: '사진으로 비교 공간 만들기', exact: true });
 async function stored(page: Page, explicitId?: string) {
+  const app = authenticatedTests.get(page)!;
   const id = explicitId || page.url().split('/').at(-1)!;
-  return page.evaluate(async (id) => {
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const read = <T>(store: string, key?: string) =>
-      new Promise<T>((resolve, reject) => {
-        const table = database.transaction(store).objectStore(store);
-        const request = key ? table.get(key) : table.getAll();
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-    const project = await read<ProjectDocument>('projects', id);
-    const projects = await read<ProjectDocument[]>('projects');
-    const versions = await read<MaterialVersion[]>('versions');
-    const assetIds = await new Promise<IDBValidKey[]>((resolve, reject) => {
-      const request = database.transaction('assets').objectStore('assets').getAllKeys();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    database.close();
-    return { project, projects, versions, assetIds };
-  }, id);
+  const rows = await app.env.DB.prepare('SELECT id FROM d1_projects WHERE owner_id=?')
+    .bind(app.actor.id)
+    .all<{ id: string }>();
+  const projects = await Promise.all(rows.results.map((row) => app.project(row.id)));
+  const assets = await app.env.DB.prepare('SELECT id FROM d1_assets WHERE owner_id=?')
+    .bind(app.actor.id)
+    .all<{ id: string }>();
+  return {
+    project: projects.find((project) => project.id === id)!,
+    projects,
+    versions: await app.versions(),
+    assetIds: assets.results.map((row) => row.id),
+  };
 }
 async function saved(page: Page) {
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
 }
 async function ready(page: Page) {
   await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 45000 });
@@ -347,12 +347,7 @@ test('직접 Before 재현 → 도기·타일 보정 → 빈 After·자재 내�
   await exportDialog.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   const downloaded = await downloading;
   const outputPath = info.outputPath('before-after-comparison.png');
-  await downloaded.saveAs(outputPath);
-  const downloadStream = await downloaded.createReadStream();
-  if (!downloadStream) throw new Error('PNG 다운로드 스트림을 읽을 수 없어요.');
-  const downloadChunks: Buffer[] = [];
-  for await (const chunk of downloadStream) downloadChunks.push(Buffer.from(chunk));
-  const { data: bytes, info: metadata } = await sharp(Buffer.concat(downloadChunks))
+  const { data: bytes, info: metadata } = await sharp(await downloadedArtifact(downloaded, outputPath))
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });

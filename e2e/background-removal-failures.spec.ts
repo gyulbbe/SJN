@@ -1,3 +1,14 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, {
+    allowModelDownloads:
+      process.env.SJN_AI_BACKGROUND_REAL === '1' || process.env.SJN_AI_BACKGROUND_WASM === '1',
+  });
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 import sharp from 'sharp';
 
@@ -8,7 +19,7 @@ const modelUrl = /^https:\/\/huggingface\.co\/studioludens\/birefnet-lite-512\/r
 const aiDialog = (page: Page) => page.getByRole('dialog', { name: 'AI 배경 제거 테스트', exact: true });
 
 async function openUploadedProduct(page: Page) {
-  await page.goto('/materials');
+  await page.goto('/admin/materials');
   await page.getByRole('button', { name: '자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
   await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
@@ -27,41 +38,8 @@ async function openUploadedProduct(page: Page) {
 }
 
 async function persistentManifest(page: Page) {
-  return page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const manifest: Record<string, unknown[]> = {};
-    try {
-      for (const store of ['assets', 'materials', 'versions']) {
-        const records = await new Promise<Record<string, unknown>[]>((resolve, reject) => {
-          const request = db.transaction(store).objectStore(store).getAll();
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-        manifest[store] = await Promise.all(
-          records.map(async (record) => {
-            const { blob, ...metadata } = record;
-            if (!(blob instanceof Blob)) return metadata;
-            const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
-            return {
-              ...metadata,
-              blobSize: blob.size,
-              blobType: blob.type,
-              sha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
-                '',
-              ),
-            };
-          }),
-        );
-      }
-    } finally {
-      db.close();
-    }
-    return manifest;
-  });
+  void page;
+  return app.snapshot();
 }
 
 async function previewSource(form: Locator) {

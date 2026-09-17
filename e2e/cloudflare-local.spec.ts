@@ -93,7 +93,7 @@ test('Workers 정적 자산이 실제 WASM·모델 파일의 원본 바이트로
   }
 });
 
-test('사용하지 않는 서버 저장 API 5개가 캐시되지 않는 503으로 응답한다', async ({ request }) => {
+test('종료된 저장 API 5개가 캐시되지 않는 410으로 응답한다', async ({ request }) => {
   const routes = [
     ['assets', 'GET'],
     ['assets', 'POST'],
@@ -104,9 +104,9 @@ test('사용하지 않는 서버 저장 API 5개가 캐시되지 않는 503으�
   ] as const;
   for (const [path, method] of routes) {
     const response = await request.fetch(`/api/cloud/${path}`, { method });
-    expect(response.status(), `${method} ${path}`).toBe(503);
+    expect(response.status(), `${method} ${path}`).toBe(410);
     expect(response.headers()['cache-control']).toContain('no-store');
-    expect(await response.json()).toEqual({ error: '서버 저장 모드가 꺼져 있어요.' });
+    expect(await response.json()).toEqual({ error: '이전 저장 API는 종료됐어요. 새로고침한 뒤 Google 계정으로 로그인해 주세요.' });
   }
 });
 

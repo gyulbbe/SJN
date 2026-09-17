@@ -1,6 +1,15 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+import type { Page as AuthenticatedPage } from '@playwright/test';
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
+const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
+test.beforeEach(async ({ page }) => {
+  authenticatedTests.set(page, await authenticatedApp(page));
+});
+test.afterEach(async ({ page }) => {
+  await authenticatedTests.get(page)?.dispose();
+});
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 const createDialog = (page: Page) =>
   page.getByRole('dialog', { name: '사진으로 비교 공간 만들기', exact: true });
@@ -35,7 +44,7 @@ async function manualProject(page: Page) {
   await createDialog(page).getByRole('button', { name: '분석 없이 직접 구성', exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 45000 });
   await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
 }
 async function openRebuild(page: Page) {
   await page.getByRole('button', { name: '기존 공간 수정', exact: true }).click();
@@ -69,9 +78,7 @@ test('unavailable cloud is explained and defaults a new project to browser basic
   await open(page);
   await expect(browserRadio(page)).toBeChecked();
   await expect(aiRadio(page)).toBeDisabled();
-  await expect(page.getByText(/AI 정밀 분석 연결:/)).toContainText(
-    'Gemma 연결 확인 필요',
-  );
+  await expect(page.getByText(/AI 정밀 분석 연결:/)).toContainText('Gemma 연결 확인 필요');
   await upload(page);
   await expect(
     createDialog(page).getByRole('button', { name: '자동 초안 만들기', exact: true }),
@@ -80,8 +87,10 @@ test('unavailable cloud is explained and defaults a new project to browser basic
 
 test('a user choice made during connection checks survives a late successful response', async ({ page }) => {
   let release!: () => void;
-  const pending = new Promise<void>((resolve) => { release = resolve; });
-  await page.route('**/api/reconstruction/cloud', async route => {
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/reconstruction/cloud', async (route) => {
     await pending;
     await route.fulfill({ json: { available: true } });
   });
@@ -113,9 +122,7 @@ test('connection recheck does not overwrite an explicit browser selection', asyn
   await expect(browserRadio(page)).toBeChecked();
 });
 
-test('an older project keeps browser analysis on rebuild even when Gemma is ready', async ({
-  page,
-}) => {
+test('an older project keeps browser analysis on rebuild even when Gemma is ready', async ({ page }) => {
   await availability(page);
   await manualProject(page);
   await openRebuild(page);
@@ -131,27 +138,22 @@ test('saved local profile explains migration and requires a ready cloud or expli
   await manualProject(page);
   const projectId = page.url().split('/').at(-1)!;
   await page.evaluate(async (id) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction('projects', 'readwrite');
-        const store = tx.objectStore('projects');
-        const request = store.get(id);
-        request.onsuccess = () => {
-          const project = request.result;
-          project.shared.comparison.review.analysisProfile = 'local-quality-v1';
-          store.put(project);
-        };
-        tx.oncomplete = () => resolve();
-        tx.onabort = () => reject(tx.error);
+    async function operation(body: object) {
+      const response = await fetch('/api/d1/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       });
-    } finally {
-      db.close();
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
     }
+    const project = await operation({ operation: 'load', id });
+    project.shared.comparison.review.analysisProfile = 'local-quality-v1';
+    await operation({
+      operation: 'save',
+      document: project,
+      expectedStorageRevision: project.storageRevision,
+    });
   }, projectId);
   await page.reload();
   await expect(page.getByTestId('editor-canvas')).toBeVisible();

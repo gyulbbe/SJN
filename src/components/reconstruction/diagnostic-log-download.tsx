@@ -1,8 +1,17 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { readDiagnosticArchive } from '@/lib/reconstruction/lab-diagnostic-storage';
+import {
+  readDiagnosticArchive,
+  type DiagnosticArchiveEntry,
+} from '@/lib/reconstruction/lab-diagnostic-storage';
 
-export default function DiagnosticLogDownload({ className }: { className?: string }) {
+export default function DiagnosticLogDownload({
+  className,
+  records,
+}: {
+  className?: string;
+  records?: DiagnosticArchiveEntry[];
+}) {
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState('');
   const urls = useRef(new Set<string>());
@@ -19,9 +28,13 @@ export default function DiagnosticLogDownload({ className }: { className?: strin
     setBusy(true);
     setMessage('');
     try {
-      const runs = await readDiagnosticArchive();
+      const runs = records ?? (await readDiagnosticArchive());
       if (!runs.length) {
-        setMessage('새로 실행한 분석부터 진단이 보관돼요. 아직 저장된 기록이 없어요.');
+        setMessage(
+          records
+            ? '현재 관리자 편집에서 실행한 분석 기록이 없어요.'
+            : '새로 실행한 분석부터 진단이 보관돼요. 아직 저장된 기록이 없어요.',
+        );
         return;
       }
       const blob = new Blob(
@@ -60,7 +73,11 @@ export default function DiagnosticLogDownload({ className }: { className?: strin
         timers.current.delete(timer);
       }, 15000);
       timers.current.add(timer);
-      setMessage(runs.length + '회 실행 기록을 내려받았어요. 최근 20회·최대 25MB가 이 브라우저에 보관돼요.');
+      setMessage(
+        records
+          ? '현재 실행 기록을 내려받았어요. 관리자 편집 화면을 벗어나면 이 기록은 폐기돼요.'
+          : runs.length + '회 실행 기록을 내려받았어요. 최근 20회·최대 25MB가 로그인 계정의 서버에 보관돼요.',
+      );
     } catch (error) {
       setMessage(
         '진단 보관함을 읽지 못했어요. 현재 전체 보고서 JSON을 내려받아 주세요. ' +

@@ -30,6 +30,7 @@
   list-style: none;
   max-height: 220px;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   margin: 3px 0 0;
   padding: 5px;
   background: white;

@@ -692,7 +692,7 @@ svg {
   place-items: center;
 }
 .auth-card {
-  width: 420px;
+  width: min(420px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1388,6 +1388,7 @@ svg {
     position: static;
     width: auto;
     flex-direction: row;
+    flex-wrap: wrap;
     padding: 13px 18px;
     border-bottom: 1px solid var(--line);
     gap: 16px;

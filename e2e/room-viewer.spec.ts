@@ -1,3 +1,5 @@
+import { buffer as streamBuffer } from 'node:stream/consumers';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { build } from 'esbuild';
@@ -15,6 +17,14 @@ import {
   type RoomViewDirection,
   type RoomViewState,
 } from '../src/lib/room-viewer/view-state';
+
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 
 test.use({ channel: 'chrome', actionTimeout: 15000, hasTouch: true });
 test.setTimeout(240000);
@@ -139,8 +149,10 @@ async function download(
   const event = page.waitForEvent('download');
   await viewer(page).getByRole('button', { name: '현재 시점 다운로드', exact: true }).click();
   const path = info.outputPath(filename);
-  await (await event).saveAs(path);
-  return readFile(path);
+  const download = await event;
+  const bytes = await streamBuffer(await download.createReadStream());
+  await download.saveAs(path);
+  return bytes;
 }
 
 test('공간 둘러보기 실제 90도 회전·동기 비교·현재 각도 출력·저장·재진입·50회 전환·10회 개폐', async ({
@@ -281,7 +293,7 @@ test('공간 둘러보기 실제 90도 회전·동기 비교·현재 각도 출�
   );
 });
 
-test('빈 공간 Before After 정렬과 키보드 포커스·390px 터치·읽기 전용 탭 시점 격리', async ({
+test('빈 공간 Before After 정렬과 키보드 포커스·390px 터치·회원 두 번째 탭 시점 저장', async ({
   page,
   context,
 }, info) => {
@@ -308,26 +320,29 @@ test('빈 공간 Before After 정렬과 키보드 포커스·390px 터치·읽�
   await waitSavedView(page, keyboardView);
   await viewer(page).getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
 
-  const readOnly = await context.newPage();
-  await readOnly.goto(page.url());
-  await ready(readOnly);
-  await opened(readOnly);
-  await expect(viewer(readOnly)).toContainText('읽기 전용 · 시점은 이 창에서만 유지돼요.');
-  const stored = await storedProject(readOnly);
-  await action(readOnly, '아래로 90°');
-  expect(await viewState(readOnly)).not.toEqual(stored.roomView);
-  await readOnly.setViewportSize({ width: 390, height: 844 });
-  await expect(viewer(readOnly)).toBeVisible();
-  expect(await viewer(readOnly).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-  const button = viewer(readOnly).getByRole('button', { name: '오른쪽 90°', exact: true });
-  const previous = await viewState(readOnly);
+  const second = await context.newPage();
+  await second.goto(page.url());
+  await ready(second);
+  await opened(second);
+  await expect(viewer(second)).not.toContainText('읽기 전용 · 시점은 이 창에서만 유지돼요.');
+  const stored = await storedProject(second);
+  await action(second, '아래로 90°');
+  expect(await viewState(second)).not.toEqual(stored.roomView);
+  await second.setViewportSize({ width: 390, height: 844 });
+  await expect(viewer(second)).toBeVisible();
+  expect(await viewer(second).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  const button = viewer(second).getByRole('button', { name: '오른쪽 90°', exact: true });
+  const previous = await viewState(second);
   await button.tap();
-  await expect.poll(() => viewState(readOnly)).toEqual(rotateRoomView(previous, 'right'));
-  await readOnly.screenshot({ path: info.outputPath('mobile-readonly.png') });
-  await viewer(readOnly).getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
-  await expect(viewer(readOnly)).toHaveCount(0);
-  expect(await storedProject(readOnly)).toEqual(stored);
-  await readOnly.close();
+  await expect.poll(() => viewState(second)).toEqual(rotateRoomView(previous, 'right'));
+  const secondView = await viewState(second);
+  const secondSaved = await waitSavedView(second, secondView);
+  expect(initializedDesigns(secondSaved)).toEqual(initializedDesigns(stored));
+  await second.screenshot({ path: info.outputPath('mobile-cloud-member.png') });
+  await viewer(second).getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
+  await expect(viewer(second)).toHaveCount(0);
+  expect((await storedProject(second)).roomView).toEqual(secondView);
+  await second.close();
   expect(initializedDesigns(await savedProject(page))).toEqual(initializedDesigns(source));
   expect(requests.errors).toEqual([]);
   expect(requests.forbidden).toEqual([]);
@@ -337,7 +352,8 @@ test('빈 공간 Before After 정렬과 키보드 포커스·390px 터치·읽�
       {
         blankBeforeAfterPixelsMatch: true,
         keyboardView,
-        readOnlyStoredDocumentUnchanged: true,
+        secondViewSaved: true,
+        designsUnchanged: true,
         mobileWidth: 390,
         requests,
       },
@@ -385,16 +401,11 @@ test('보기 WebGL 시작 실패 재시도와 저장 실패에서도 기존 장�
   await viewer(page).getByRole('button', { name: '다시 시도', exact: true }).click();
   await expect(viewport(page)).toHaveAttribute('aria-busy', 'false', { timeout: 45000 });
   await expect(viewer(page).getByRole('alert')).toHaveCount(0);
-  await page.evaluate(() => {
-    const original = IDBObjectStore.prototype.put;
-    const runtime = window as Window & { restoreRoomViewStore?: () => void };
-    runtime.restoreRoomViewStore = () => {
-      IDBObjectStore.prototype.put = original;
-    };
-    IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: Parameters<typeof original>) {
-      if (this.name === 'projects') throw new DOMException('검증용 저장 공간 부족', 'QuotaExceededError');
-      return Reflect.apply(original, this, args);
-    };
+  let failViewSave = true;
+  await page.route('**/api/d1/projects', (route) => {
+    if (failViewSave && route.request().postDataJSON()?.operation === 'save')
+      return route.fulfill({ status: 503, json: { error: '검증용 서버 저장 실패' } });
+    return route.fallback();
   });
   await action(page, '오른쪽 90°');
   const failedView = await viewState(page);
@@ -402,12 +413,16 @@ test('보기 WebGL 시작 실패 재시도와 저장 실패에서도 기존 장�
   expect((await storedProject(page)).roomView).toBeUndefined();
   expect(await viewState(page)).toEqual(failedView);
   await image(page, info, 'save-failure-view-preserved.png');
-  await page.evaluate(() =>
-    (window as Window & { restoreRoomViewStore?: () => void }).restoreRoomViewStore?.(),
-  );
-  await action(page, '위로 90°');
+  failViewSave = false;
+  const frame = Number(await viewport(page).getAttribute('data-frame'));
+  await viewer(page).getByRole('button', { name: '위로 90°', exact: true }).click();
+  await expect.poll(async () => Number(await viewport(page).getAttribute('data-frame'))).toBeGreaterThan(frame);
   const recoveredView = await viewState(page);
+  await expect(viewer(page).getByRole('alert')).toContainText('검증용 서버 저장 실패');
+  expect((await storedProject(page)).roomView).toBeUndefined();
+  await viewer(page).getByRole('button', { name: '시점 저장 다시 시도', exact: true }).click();
   const saved = await waitSavedView(page, recoveredView);
+  await expect(viewer(page).getByRole('alert')).toHaveCount(0);
   expect(initializedDesigns(saved)).toEqual(initializedDesigns(source));
   expect(saved.editRevision).toBe(source.editRevision);
   await writeFile(
@@ -418,7 +433,7 @@ test('보기 WebGL 시작 실패 재시도와 저장 실패에서도 기존 장�
           'Injected getContext(webgl)=null only for new viewer; existing editor retained',
         retriedSuccessfully: true,
         idleContextLostAndRetried: true,
-        quotaFailure: 'Injected projects.put throw; saved record unchanged',
+        saveFailure: 'Injected HTTP 503 for D1 projects save; persisted record unchanged',
         failedView,
         recoveredView,
         editRevision: saved.editRevision,
@@ -520,7 +535,7 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
   const bundle = await build({
     stdin: {
       contents:
-        "export {createLocalRepositories} from './src/lib/repositories/local'; export {renderReconstructionTemplate} from './src/lib/reconstruction/templates'; export {makeAsset} from './src/lib/images'; export {materialInputSchema} from './src/lib/supabase/validation';",
+        "export {createCloudRepositories} from './src/lib/repositories/cloud'; export {renderReconstructionTemplate} from './src/lib/reconstruction/templates'; export {makeAsset} from './src/lib/images'; export {materialInputSchema} from './src/lib/storage/validation';",
       resolveDir: process.cwd(),
     },
     bundle: true,
@@ -531,17 +546,17 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
   });
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
   const imported = await page.evaluate(
-    async ({ report, baseId, photoBase64 }) => {
+    async ({ report, baseId, photoBase64, actorId }) => {
       const api = (
         window as unknown as {
-          RoomViewImport: typeof import('../src/lib/repositories/local') &
+          RoomViewImport: typeof import('../src/lib/repositories/cloud') &
             typeof import('../src/lib/reconstruction/templates') &
             typeof import('../src/lib/images') &
-            typeof import('../src/lib/supabase/validation');
+            typeof import('../src/lib/storage/validation');
         }
       ).RoomViewImport;
       if (!report.inputFingerprint) throw new Error('Preserved report needs its original photo fingerprint');
-      const repo = api.createLocalRepositories();
+      const repo = api.createCloudRepositories('d1', actorId);
       const project = await repo.projects.load(baseId);
       const sourceBytes = Uint8Array.from(atob(photoBase64), (character) => character.charCodeAt(0));
       const original = await api.makeAsset(
@@ -598,32 +613,6 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
         api.materialInputSchema.parse(version);
         versions.push(version);
       }
-      const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('gongganmiri-v1');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const tx = db.transaction(['materials', 'versions'], 'readwrite');
-          for (const version of versions) {
-            tx.objectStore('versions').add(version);
-            tx.objectStore('materials').add({
-              id: version.materialId,
-              ownerId: 'local',
-              currentVersionId: version.id,
-              active: true,
-              scope: 'personal',
-              updatedAt: version.createdAt,
-            });
-          }
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => reject(tx.error);
-          tx.onabort = () => reject(tx.error);
-        });
-      } finally {
-        db.close();
-      }
       project.name = 'user01 · 실제 사용자 보정 Before 검증';
       const before = structuredClone(project.shared.baseline);
       before.fixtures = structuredClone(report.fixtures);
@@ -645,11 +634,58 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
           materialVersionIds: versions.map((version) => version.id),
         },
       };
-      const saved = await repo.projects.save(project, project.storageRevision);
-      return { project: saved, versions, originalId: original.id };
+      return { project, versions, originalId: original.id };
     },
-    { report, baseId: base.id, photoBase64: photo.toString('base64') },
+    { report, baseId: base.id, photoBase64: photo.toString('base64'), actorId: app.actor.id },
   );
+  // This historical fixture deliberately preserves the report's material IDs.
+  // Assets came through the authenticated upload API; only the preserved version
+  // rows are seeded directly into this test's disposable D1 database.
+  for (const version of imported.versions) {
+    await app.env.DB.batch([
+      app.env.DB.prepare(
+        'INSERT INTO d1_materials(id,owner_id,scope,current_version_id,active,created_at,updated_at,purpose) VALUES(?,?,?,?,1,?,?,?)',
+      ).bind(
+        version.materialId,
+        app.actor.id,
+        version.scope,
+        version.id,
+        version.createdAt,
+        version.createdAt,
+        'project',
+      ),
+      app.env.DB.prepare(
+        'INSERT INTO d1_material_versions(id,material_id,version,payload_json,category,view_count,created_at) VALUES(?,?,?,?,?,?,?)',
+      ).bind(
+        version.id,
+        version.materialId,
+        version.version,
+        JSON.stringify(version),
+        version.category,
+        version.views.length,
+        version.createdAt,
+      ),
+      ...version.views.map((view) =>
+        app.env.DB.prepare('INSERT INTO d1_material_assets(version_id,asset_id) VALUES(?,?)').bind(
+          version.id,
+          view.assetId,
+        ),
+      ),
+    ]);
+  }
+  imported.project = await page.evaluate(async (document) => {
+    const response = await fetch('/api/d1/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operation: 'save',
+        document,
+        expectedStorageRevision: document.storageRevision,
+      }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  }, imported.project);
   await page.goto(url);
   await ready(page);
   await savedProject(page);
@@ -693,20 +729,7 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
   expect(await viewState(page)).toEqual(view);
   const reloaded = await savedProject(page);
   expect(reloaded.shared.comparison?.before.fixtures).toEqual(report.fixtures);
-  const persisted = await page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('gongganmiri-v1');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const versions = await new Promise<MaterialVersion[]>((resolve, reject) => {
-      const request = db.transaction('versions').objectStore('versions').getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    db.close();
-    return versions;
-  });
+  const persisted = await app.versions();
   for (const version of imported.versions)
     expect(persisted.find((value) => value.id === version.id)).toEqual(version);
   expect(hash(await readFile(reportPath))).toBe(originalHashes.report);

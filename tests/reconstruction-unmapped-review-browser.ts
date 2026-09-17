@@ -31,7 +31,7 @@ const sourcePaths = [
   'src/lib/reconstruction/projection.ts',
   'src/lib/reconstruction/strict-placement.ts',
   'src/lib/reconstruction/product-color.ts',
-  'src/lib/supabase/validation.ts',
+  'src/lib/storage/validation.ts',
 ];
 const sourceHashes = Object.fromEntries(
   await Promise.all(sourcePaths.map(async (path) => [path, hash(await readFile(path))])),

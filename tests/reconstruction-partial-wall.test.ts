@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { inferPartialBackWall, type ObservedCeiling } from '../src/lib/reconstruction/partial-wall-geometry';
 import { reviewFromSegmentation } from '../src/lib/reconstruction/analysis';
 import { buildCandidatePipeline } from '../src/lib/reconstruction/candidate-pipeline';
-import { reconstructionReviewSchema } from '../src/lib/supabase/validation';
+import { reconstructionReviewSchema } from '../src/lib/storage/validation';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 import type { SceneUnderstanding } from '../src/lib/reconstruction/pipeline-contract';
 

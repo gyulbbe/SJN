@@ -1,17 +1,17 @@
 import { getActiveDesign, normalizeProjectDocument } from '../src/lib/comparison';
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { StorageConflictError } from '../src/lib/repositories/references';
 import { createQuote } from '../src/lib/quote';
 import { materialPricingSchema, quoteDocumentSchema } from '../src/lib/quote-validation';
-import { projectSchema, materialInputSchema } from '../src/lib/supabase/validation';
+import { projectSchema, materialInputSchema } from '../src/lib/storage/validation';
 import { createBaseRoomSurfaces } from '../src/lib/base-room';
 import { useEditor } from '../src/lib/editor-store';
 import { DEFAULT_COLOR, EMPTY_MASK, type MaterialInput, type LegacyProjectDocument } from '../src/lib/types';
 
 async function setup() {
-  const repo = createLocalRepositories('quote-' + crypto.randomUUID());
+  const repo = createLegacyLocalRepositories('quote-' + crypto.randomUUID());
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   await repo.assets.put({

@@ -1,6 +1,6 @@
 # 공간미리
 
-내 사진과 직접 등록한 자재로 작업하는 한국어 인테리어 시뮬레이터입니다. 기본값은 **로컬 모드**입니다. 계정, API 키, Supabase 또는 외부 AI 연결 없이 실행됩니다.
+사진과 등록된 자재로 작업하는 한국어 인테리어 시뮬레이터입니다. 개발·운영 모두 **Google 로그인 + D1/R2**를 사용합니다. 일반 회원은 본인 프로젝트를 만들고 관리자는 자재·분류와 회원을 관리합니다.
 
 사진 없이도 **기본 공간으로 시작**을 누르고 가로·깊이·높이를 입력하면 그 비율의 빈 방에서 편집할 수 있습니다. 기본값은 **2.4 × 2.4 × 2.4m**이며 실측 확인 전의 설정값입니다. Three.js가 벽 3면·바닥·천장 배경과 원근을 함께 만들고, 등록한 타일 규격과 제품 크기를 적용합니다. 도기·거울·문·창이나 예시 상품은 자동 추가하지 않습니다. Before와 After 모두 빈 공간으로 시작하고 After를 편집합니다. 이전 사진 합성은 **기존 사진 위에 직접 편집하기 → 사진 위에 직접 편집**에 따로 있습니다. 기존 저장 프로젝트는 유지합니다.
 
@@ -10,19 +10,21 @@
 
 ## 실행
 
-Node.js 22.13 이상을 권장합니다. 프로젝트 폴더에서:
+Node 기준은 `.node-version`의 22.23.2입니다. 기본 개발 서버는 **vinext/Workers + 로컬 D1/R2 + Google 로그인**입니다.
 
 ```powershell
-npm install
+npm ci
+# .dev.vars가 없는 경우만 복사하고, 실제 개발용 Google/Better Auth 값을 준비합니다.
+Copy-Item .dev.vars.example .dev.vars
+npm run db:dev:migrate
 npm run dev
 ```
 
-http://127.0.0.1:3000 에 접속합니다. 사진과 프로젝트는 이 주소의 **브라우저 IndexedDB**에 저장됩니다. `localhost`와 `127.0.0.1`, 포트, 브라우저 프로필이 다르면 다른 저장 공간입니다. 네트워크를 통한 외부 서버 저장이나 백업이 아닙니다. 최초 의존성 설치 후 로컬 실행에 외부 API 연결은 필요하지 않습니다.
+http://127.0.0.1:3000 에 접속합니다. Google 웹 OAuth의 origin과 `BETTER_AUTH_URL`을 이 주소로, callback을 `http://127.0.0.1:3000/api/auth/callback/google`로 맞춥니다. 자세한 secret·최초 관리자 설정은 [D1/R2·Google 설정](docs/cloudflare-storage-setup.md)을 따릅니다. 실제 로그인 설정 없이 익명 편집으로 전환하지 않습니다.
 
-```powershell
-npm run build
-npm run start
-```
+개발 D1/R2는 `wrangler.dev.jsonc`와 `.wrangler/development`를 사용하며 원격 sjn DB와 별개입니다. 기존 브라우저 IndexedDB와 `.wrangler/state`는 삭제·자동 업로드하지 않습니다. 로그인 만료 시 본인 계정의 미저장 복구본을 보존합니다.
+
+`npm run dev:vinext`는 기본 개발과 같고 `npm run dev:next`는 별도 Next/Node 개발 명령입니다. Next에는 Cloudflare D1/R2/AI 바인딩이 없습니다. `npm run build`와 `npm run build:vinext`는 순차 실행하며, `start:vinext`의 8787 미리보기는 기본 빌드 설정과 `.wrangler/state`를 쓰는 별도 경로입니다.
 
 ## AI 배경 제거 테스트
 
@@ -87,7 +89,7 @@ npm run start
 
 ## 구조와 저장 계약
 
-`src/lib/types.ts`의 직렬화 가능한 문서와 자산 ID가 공통 계약입니다. React/Zustand 편집기, Three.js 렌더러, IndexedDB/D1·R2/Supabase 저장소를 분리했습니다. 렌더러는 `RenderSnapshot`과 자산 reader만 받습니다.
+`src/lib/types.ts`의 직렬화 가능한 문서와 자산 ID가 공통 계약입니다. React/Zustand 편집기, Three.js 렌더러, D1/R2 저장소와 선택적 브라우저 복구·재사용 캐시를 분리했습니다. 렌더러는 `RenderSnapshot`과 자산 reader만 받습니다.
 
 사진 좌표는 방향 정리 후 `[0,1]`, 면은 mm, 화면 줌/이동은 별도 좌표입니다. 면의 역호모그래피로 타일과 줄눈을 함께 반복합니다. 원본 색을 반투명하게 덮지 않고 새 자재 위에 저주파 명암만 적용합니다. 선택 테두리는 SVG 오버레이라 이미지 출력에 들어가지 않습니다.
 
@@ -98,26 +100,26 @@ npm run start
 - 선택적인 `materialUsage`는 면별 수동 면적, 배치별 불변 가격·포장 스냅샷, 타일 수동 구매 수량만 저장합니다. 자동 수량과 합계는 장면에서 계산합니다. 시안 복사는 참조 ID를 변환한 깊은 복사이며 개별 실행 취소·공통 크기 변경 복원에 포함됩니다. `renderRevision`은 시각 변경에만 증가해 가격 수정으로 이미지를 다시 합성하지 않습니다. 기존 `quote`는 보관하고 정확하게 연결되는 수동 값만 읽기 시 메모리에서 이관합니다.
 - 새 기본 공간은 선택 필드인 `Scene.room`에 정수 mm 치수와 생성 버전을 저장합니다. 기존 사진·고정 배경 프로젝트에는 자동으로 이 필드를 추가하거나 장면을 변경하지 않습니다. 크기 변경은 새 배경 자산을 만들며 이전 배경도 전체 복원 백업과 시안 이력에서 참조합니다.
 - 한 브라우저 저장 공간에서 쓰기 탭 하나를 Web Locks로 관리합니다. 두 번째 탭은 읽기 전용으로 기다리며 앞 탭 종료 후 편집권을 얻습니다.
-- 저장 성공은 IndexedDB 트랜잭션 완료 후 표시합니다. 용량 초과 시 메모리의 작업과 기존 저장본을 유지합니다.
+- 서버 저장 성공과 브라우저 복구본 저장을 구분합니다. D1/R2 커밋 전에는 서버 저장 완료로 표시하지 않으며 실패·용량 초과 시 메모리 작업과 본인 계정 복구본을 보존합니다.
 - 삭제/정리는 모든 시안·Before·개별 이력·이전 버전 기록·전체 복원 백업·자재 버전과 파생 자산의 원본 참조를 보존합니다. 미저장 업로드는 24시간 유예합니다. 로컬 재구성 모형은 모든 프로젝트·이력에서 사용하지 않는 내부 캐시만 24시간 후 정리하며, 일반 자재·개인 복제·수정 버전은 유지합니다.
 
-브라우저 데이터 삭제 시 프로젝트가 사라질 수 있습니다. 이미지 내보내기는 다시 편집할 수 있는 프로젝트 백업이 아닙니다. 대용량 프로젝트 백업·이동 기능은 현재 제공하지 않습니다.
+브라우저 데이터 삭제 시 과거 로컬 프로젝트와 서버에 아직 저장되지 않은 복구본이 사라질 수 있습니다. 이미지 내보내기는 다시 편집할 수 있는 프로젝트 백업이 아닙니다. 대용량 프로젝트 백업·이동 기능은 현재 제공하지 않습니다.
 
 목록 썸네일과 비교 미리보기는 별도 브라우저 캐시에만 보관합니다. 시안 생성·복사·전환·비교는 AI를 호출하거나 합성 이미지를 서버에 업로드하지 않습니다. 사용자가 누른 다운로드만 PC에 파일을 만듭니다.
 
 ## 저장소와 로그인 설정
 
-`npm run dev`와 `npm run dev:vinext`는 설정 파일에 서버 키가 있어도 로컬 IndexedDB를 사용합니다. 배포 환경에서 `APP_ENV=production`, `STORAGE_MODE=auto`와 유효한 D1·R2 바인딩·인증 설정·마이그레이션이 모두 확인될 때 D1 클라우드 작업 공간을 엽니다. 초기 설정이 누락되거나 연결 확인에 실패하면 이유를 표시하고 로컬로 시작합니다. 작업 중인 클라우드의 저장 실패에는 저장소를 바꾸지 않습니다.
+개발·운영 모두 Google 로그인과 D1/R2를 사용합니다. 설정·스키마·바인딩·인증 준비가 실패하면 접근을 차단하고 재시도를 안내합니다. `STORAGE_MODE=local` 또는 `supabase`로 익명/다른 저장소에 자동 전환하지 않습니다.
 
-- **로그인:** Better Auth + Google OAuth. 계정·세션은 D1에 보관하며 관리자 권한도 서버에서 검사합니다.
-- **D1:** 프로젝트 요약·revision·자재 버전·참조 관계. **비공개 R2:** 원본 이미지·미리보기·3D 메시와 프로젝트 JSON 스냅샷. 큰 프로젝트를 D1 한 행에 넣지 않습니다.
-- **복구:** 클라우드 편집 후 500ms에 계정별 IndexedDB 복구본을 보관하고, 서버는 2초 지연·연속 편집 시 최대 15초 간격으로 저장합니다. 충돌 시 기존 서버본을 강제로 덮어쓰지 않고 별도 프로젝트 복원을 제공합니다.
-- 로컬 자료는 계정 자료와 분리하며 자동 업로드하지 않습니다. 로그인·로그아웃·로컬 전환에서 진행 중인 작업을 먼저 확정하고 보존합니다.
-- `.env.example`, `.dev.vars.example`, `wrangler.d1.example.jsonc`, `migrations/d1/`가 설정 예시와 SQL입니다. 실제 값을 넣는 곳과 순서는 [설정 가이드](docs/cloudflare-storage-setup.md)를 참고하세요. 현재 저장소의 기본 설정은 로컬이고 실제 연결·배포는 수행하지 않았습니다.
+- **회원:** Google 첫 로그인은 일반 회원 가입, 이후에는 재로그인입니다. 자재 목록·이미지·사진 분석도 로그인이 필요합니다. 계정 정지 시 기존 세션과 신규 로그인 모두 차단합니다.
+- **관리자:** `/admin/users`의 회원 역할·상태 관리, `/admin/projects`의 타인 프로젝트 조회·편집, 공용 자재·기준 데이터 관리를 제공합니다. 자기 정지와 마지막 활성 관리자 제거를 막고 관리자 작업을 감사에 기록합니다. 프로젝트 소유권은 유지합니다.
+- **저장:** D1은 회원·목록·revision·참조·감사, 비공개 R2는 사진·메시·프로젝트 JSON을 보관합니다. 서버 자동 저장은 2초 지연, 연속 편집 시 최대 15초 간격입니다. revision 충돌에서 서버본을 강제 덮어쓰지 않습니다.
+- **복구:** 본인 계정의 IndexedDB 복구본을 유지하며, 로그인 만료 시 편집 화면을 숨깁니다. 다른 계정이나 관리자 프로젝트로 기존 캐시를 자동 전송하지 않습니다.
+- **DB 적용 상태:** 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 0005·0006을 추가 적용하고, 로컬 개발 DB에는 0001~0006을 순서대로 적용했습니다. 양쪽 스키마·초기 데이터·무결성을 확인했습니다. 관리자 지정·배포·R2 버킷 생성/운영 연결 검증·실제 Google 로그인·AI 호출은 수행하지 않았습니다.
 
-기존 Supabase 어댑터와 `supabase/migrations`는 유지합니다. **Node/Next 프로덕션**에서 `APP_ENV=production`, `STORAGE_MODE=supabase`를 명시하고 Supabase 환경변수를 설정하면 선택할 수 있습니다. Cloudflare 런타임에서는 D1을 사용합니다. Supabase 실제 연결과 사용자 격리 검증은 미실행입니다. 서버 secret은 `NEXT_PUBLIC_` 변수나 Git에 넣지 마세요.
+운영 로컬·Supabase 저장 어댑터는 제거했고 D1/R2만 사용합니다. 과거 IndexedDB·Supabase 자료와 SQL은 보존하며 자동 데이터 이전은 없습니다. 자산 캐시는 서버 권한 확인 후 Blob을 재사용하고 7일·100개·200MiB로 제한합니다. 진단 로그는 새 `0006_reconstruction_diagnostics.sql`의 D1/R2 계정별 아카이브를 사용합니다. 현재 원격 `sjn`과 `.wrangler/development`의 로컬 DB는 0001~0006 적용을 마쳤습니다. 다른 DB나 새 스키마 변경은 적용 이력을 확인한 뒤 별도로 진행합니다. [.dev.vars.example](.dev.vars.example), [wrangler.dev.jsonc](wrangler.dev.jsonc), [설정 가이드](docs/cloudflare-storage-setup.md), [DB 설계](docs/database-design.md)를 참고하세요. 비밀값을 `NEXT_PUBLIC_*`나 Git에 넣지 않습니다.
 
-[구현·검증 결과와 미실행 항목](docs/cloud-storage-verification-20260914.md)
+[과거 구현·검증 기록](docs/cloud-storage-verification-20260914.md)은 당시의 정책과 결과이며 현재 접근 방식은 위 설명을 따릅니다.
 
 ## 외부 기능과 한계
 
@@ -148,7 +150,7 @@ npx playwright test e2e/material-usage.spec.ts e2e/material-usage-inputs.spec.ts
 node --experimental-strip-types tests/design-preview-browser.ts
 ```
 
-E2E와 UI 검증은 Playwright에서 시스템 Chrome을 사용합니다. 별도 WebGL·이미지·실패 검증도 시스템 Chrome을 사용하며 `npm run dev`가 실행 중이어야 합니다. UI 검증은 Playwright가 로컬 개발 서버를 재사용하거나 시작합니다. 테스트 장면은 외부 전송 없이 로컬에서 생성됩니다. 자세한 실행 결과·환경·미실행 항목은 [다중 시안 검증](docs/designs-verification.md) 및 [기존 검증 기록](docs/verification.md), 예시 자산 정보는 [자산 출처](docs/assets.md)에 기록합니다.
+E2E와 UI 검증은 Playwright에서 시스템 Chrome을 사용합니다. 별도 WebGL·이미지·실패 검증도 시스템 Chrome을 사용하며 `npm run dev`가 실행 중이어야 합니다. UI 모의 검증은 Playwright 설정의 테스트 서버·세션 fixture를 사용하며 실제 Google 인증 결과와 구분합니다. 테스트 장면은 외부 전송 없이 로컬에서 생성됩니다. 자세한 실행 결과·환경·미실행 항목은 [다중 시안 검증](docs/designs-verification.md) 및 [기존 검증 기록](docs/verification.md), 예시 자산 정보는 [자산 출처](docs/assets.md)에 기록합니다.
 
 ## 사진 재구성 테스트
 

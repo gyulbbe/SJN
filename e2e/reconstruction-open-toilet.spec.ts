@@ -1,8 +1,17 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+import type { Page as AuthenticatedPage } from '@playwright/test';
 import { test, expect } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { storedProject, savedProject } from '../tests/helpers/editor-actions';
 
+const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
+test.beforeEach(async ({ page }) => {
+  authenticatedTests.set(page, await authenticatedApp(page));
+});
+test.afterEach(async ({ page }) => {
+  await authenticatedTests.get(page)?.dispose();
+});
 test.use({ channel: 'chrome', actionTimeout: 20000 });
 test('actual open toilet and pedestal: inference, empty After, reload and PNG comparison', async ({
   page,

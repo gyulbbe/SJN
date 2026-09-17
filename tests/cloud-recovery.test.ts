@@ -60,13 +60,13 @@ describe('account-scoped cloud project recovery', () => {
     await db.write(scope, document, {});
     expect((await db.read(scope))?.document).toEqual(document);
     for (const other of [
-      { ...scope, backend: 'supabase' as const },
       { ...scope, origin: 'https://other.test' },
       { ...scope, userId: crypto.randomUUID() },
       { ...scope, projectId: crypto.randomUUID() },
     ])
       expect(await db.read(other)).toBeUndefined();
     expect(() => recoveryKey({ ...scope, userId: '' })).toThrow('로그인');
+    expect(() => recoveryKey({ ...scope, backend: 'supabase' as 'd1' })).toThrow('로그인');
     await expect(db.write({ ...scope, userId: 'other' }, document, {})).rejects.toThrow('현재 계정');
   });
   it('captures deeply independent histories, room backup and asset references before awaiting IndexedDB', async () => {

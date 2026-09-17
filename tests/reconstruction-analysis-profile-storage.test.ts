@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { projectSchema, reconstructionReviewSchema } from '../src/lib/supabase/validation';
+import { projectSchema, reconstructionReviewSchema } from '../src/lib/storage/validation';
 import { normalizeProjectDocument } from '../src/lib/comparison';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
 import { DEFAULT_COLOR, EMPTY_MASK, type LegacyProjectDocument, type Scene } from '../src/lib/types';

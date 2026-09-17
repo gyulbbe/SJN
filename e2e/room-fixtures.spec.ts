@@ -1,30 +1,25 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { getActiveDesign } from '../src/lib/designs';
 import { test, expect, type Page } from '@playwright/test';
 import sharp from 'sharp';
 import type { ProjectDocument } from '../src/lib/types';
 test.use({ channel: 'chrome', actionTimeout: 15000 });
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 async function saved(page: Page): Promise<ProjectDocument> {
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
-  return page.evaluate(async (id) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open('gongganmiri-v1');
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    const p = await new Promise<ProjectDocument>((resolve, reject) => {
-      const r = db.transaction('projects').objectStore('projects').get(id!);
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    db.close();
-    return p;
-  }, page.url().split('/').at(-1));
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
+  return app.project();
 }
 async function createProductRoom(page: Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
   await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   await expect(page.locator('.canvas-loading')).toHaveCount(0);
   const png = await sharp(
     Buffer.from(

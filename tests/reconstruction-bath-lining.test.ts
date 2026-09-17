@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Mesh, MeshStandardMaterial } from 'three';
 import { createTemplateModel, disposeTemplateModel } from '../src/lib/reconstruction/templates';
-import { fixtureReconstructionSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema } from '../src/lib/storage/validation';
 import { estimateCandidateFixture } from '../src/lib/reconstruction';
 import { reconstructionDefaults, type ReconstructionCandidate } from '../src/lib/reconstruction/types';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';

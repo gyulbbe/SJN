@@ -7,7 +7,7 @@ import {
 import { extractReconstructionCandidates, mapCandidatePass } from '../src/lib/reconstruction/candidates';
 import type { BasinComponentCapture } from '../src/lib/reconstruction/basin-observations';
 import type { ReconstructionCandidate } from '../src/lib/reconstruction/types';
-import { reconstructionReviewSchema } from '../src/lib/supabase/validation';
+import { reconstructionReviewSchema } from '../src/lib/storage/validation';
 
 function partialBowl(rim: 'corner' | 'curve' | 'line' | 'none' | 'single', scale = 1) {
   const width = Math.round(240 * scale),

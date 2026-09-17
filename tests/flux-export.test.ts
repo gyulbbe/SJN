@@ -1,8 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import sharp from 'sharp';
 import { runFluxExport } from '../src/lib/ai-export/server';
 import { FLUX_GATEWAY, FLUX_MODELS, FLUX_PROMPT, fluxDimensions } from '../src/lib/ai-export/contract';
 import { requestFluxImage } from '../src/lib/ai-export/client';
+
+vi.mock('../src/lib/auth/d1', () => ({ getD1Actor: vi.fn() }));
+import { getD1Actor } from '../src/lib/auth/d1';
+beforeEach(() => vi.mocked(getD1Actor).mockResolvedValue({ id: 'fixture-user', isAdmin: false }));
 
 const png = async (width = 496, height = 336) =>
   new Uint8Array(
@@ -30,7 +34,7 @@ function request(
 function environment(
   run = vi.fn(async () => Response.json({ image: Buffer.from(await png(992, 672)).toString('base64') })),
 ) {
-  return { platform: 'cloudflare' as const, APP_ENV: 'local', STORAGE_MODE: 'local', AI: { run } };
+  return { platform: 'cloudflare' as const, APP_ENV: 'development', STORAGE_MODE: 'd1', AI: { run } };
 }
 describe('FLUX image export', () => {
   it.each(['4b', '9b'] as const)(
@@ -110,12 +114,13 @@ describe('FLUX image export', () => {
   });
   it('reports missing Workers binding without any model call', async () => {
     await expect(
-      runFluxExport(request(await png()), { platform: 'node', APP_ENV: 'local', STORAGE_MODE: 'local' }),
+      runFluxExport(request(await png()), { platform: 'node', APP_ENV: 'development', STORAGE_MODE: 'd1' }),
     ).rejects.toMatchObject({ code: 'binding_unavailable' });
   });
   it('does not fall back to anonymous access for production auto storage', async () => {
     const env = { ...environment(), APP_ENV: 'production', STORAGE_MODE: 'auto' };
-    await expect(runFluxExport(request(await png()), env)).rejects.toMatchObject({ status: 503 });
+    vi.mocked(getD1Actor).mockRejectedValueOnce({status:401});
+    await expect(runFluxExport(request(await png()), env)).rejects.toMatchObject({ status: 401 });
     expect(env.AI.run).not.toHaveBeenCalled();
   });
   it.each([402, 429])('surfaces provider limit %s without retry or model fallback', async (status) => {

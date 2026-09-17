@@ -1,3 +1,14 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, {
+    allowModelDownloads:
+      process.env.SJN_AI_BACKGROUND_REAL === '1' || process.env.SJN_AI_BACKGROUND_WASM === '1',
+  });
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 import { expect, test } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -10,7 +21,7 @@ test('WebGPU 미지원 환경에서 실제 WASM FP32 추론과 반응하는 미�
     'SJN_AI_BACKGROUND_WASM=1로 183MiB CPU 모델을 실제 실행합니다.',
   );
   test.setTimeout(900_000);
-  await page.goto('/materials');
+  await page.goto('/admin/materials');
   expect(
     await page.evaluate(async () => {
       const gpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu;

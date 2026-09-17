@@ -1,25 +1,46 @@
-# Google 로그인·관리자 자재 관리·D1/R2 설계
+# Google 로그인·회원 관리·관리자 프로젝트 편집·D1/R2 설계
 
-이 문서는 SJN의 Google 로그인, 관리자 자재 라이브러리, 프로젝트 소유권과 저장 구조를 설명한다. 실행용 SQL의 원본은 `migrations/d1/0001_auth.sql`부터 `0004_catalog_seed.sql`까지다. 기존 `0001`·`0002` 적용 이력은 수정하지 않고 `0003`·`0004`로 확장한다.
+이 문서는 Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0006_reconstruction_diagnostics.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브를 추가한다.
 
-**코드·SQL 파일을 작성하는 것과 운영 DB에 적용하는 것은 별도 단계다.** 현재 원격 D1 `sjn`에는 `0001`~`0004`가 적용됐으며 상세 확인값은 8절을 따른다. 앱의 운영 연결·Google OAuth·R2 검증과 관리자 지정·배포는 별도이며 이번 작업에서 수행하지 않았다. Google 비밀키, Better Auth secret, 로그인 토큰은 이 문서나 소스에 넣지 않는다.
+**코드·SQL 파일을 작성하는 것과 운영 DB에 적용하는 것은 별도 단계다.** 2026-09-17 사용자 승인 후 원격 D1 `sjn`의 기존 `0001~0004`에 `0005`·`0006`을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 `0001~0006`을 순서대로 적용했다. 양쪽 적용 이력·초기 데이터·무결성을 확인했다. 상세 확인값은 8절을 따른다. 앱의 운영 연결·실제 Google OAuth·운영 R2 검증과 관리자 지정·배포·R2 버킷 생성·AI 호출은 별도이며 이번 작업에서 수행하지 않았다. Google 비밀키, Better Auth secret, 로그인 토큰은 이 문서나 소스에 넣지 않는다.
+
+## 0. 화면에서 사용하는 순서
+
+1. 운영 연결을 준비한 사이트의 `/login`에서 **Google로 시작하기**를 누른다. 별도 비밀번호나 회원가입 양식 없이 첫 로그인은 가입, 이후에는 재로그인이 된다.
+2. 일반 회원은 로그인한 뒤 `/`의 내 프로젝트에서 공간을 만들고 공용 자재를 적용한다. 자재 목록·이미지·사진 분석을 포함한 앱 기능은 로그인해야 이용할 수 있다.
+3. 관리자는 `/admin/catalog`에서 색상·브랜드·재질·마감·하위 카테고리를 먼저 등록하고, `/admin/materials`에서 이미지와 선택 값을 지정해 자재를 저장한다.
+4. 자재의 속성 입력칸을 클릭하면 목록을 스크롤할 수 있다. `그레`를 입력하면 `그레이`가 표시되며, 클릭 또는 방향키·Enter로 선택한다. 검색어만 입력한 상태로는 저장할 수 없고, 새 항목도 자동으로 만들어지지 않는다.
+5. 타일 텍스처와 제품 사진은 비공개 R2에 저장된다. 자재 변경은 새 버전이므로 기존 프로젝트의 이미지와 속성을 덮어쓰지 않는다.
+6. 관리자는 `/admin/users`에서 회원 검색·승격·강등·정지·해제를, `/admin/projects`에서 다른 회원의 프로젝트 검색·조회·편집을 한다. 프로젝트 소유자는 유지하고 실제 관리자 행위자를 감사 기록에 남긴다.
+
+기본 개발도 `npm run dev`의 vinext/Workers + 격리된 로컬 D1/R2 + Google 로그인을 사용한다. `.dev.vars`와 Google callback 설정, `npm run db:dev:migrate`가 필요하다. `/login`에서 설정 오류가 보이면 준비 상태를 확인하며 익명 IndexedDB 편집으로 우회하지 않는다. 기존 브라우저 자료는 삭제·자동 업로드하지 않는다.
 
 ## 1. 이용 화면과 권한
 
-| 기능                                               | 비로그인    | 일반 회원               | 관리자                                    |
-| -------------------------------------------------- | ----------- | ----------------------- | ----------------------------------------- |
-| `/materials` 공개 자재 목록·상세·검색              | 가능        | 가능                    | 가능                                      |
-| 활성 공용 자재의 표시 이미지                       | 가능        | 가능                    | 가능                                      |
-| 프로젝트 생성·편집·복제·삭제·내보내기              | 로그인 필요 | 본인 것만               | 본인 것만                                 |
-| 다른 회원의 프로젝트·개인 이미지 조회              | 불가        | 불가                    | 불가                                      |
-| `/admin/materials` 자재 등록·수정·비활성화         | 불가        | 불가                    | 가능                                      |
-| `/admin/catalog` 분류·속성 등록·수정·비활성화      | 불가        | 불가                    | 가능                                      |
-| 사진 분석·사진 추출로 만든 프로젝트 전용 모형 저장 | 불가        | 제한된 본인용 생성 경로 | 제한된 본인용 생성 경로                   |
-| 회원 권한 변경                                     | 불가        | 불가                    | 앱 화면/API로는 불가; 운영자가 SQL로 지정 |
+| 기능 | 비로그인 | 일반 회원 | 활성 관리자 |
+| --- | --- | --- | --- |
+| 로그인·OAuth callback | 가능 | 가능 | 가능 |
+| 자재 목록·상세·검색·표시 이미지 | 로그인 필요 | 공용 범위 | 공용 범위 |
+| 프로젝트 생성·편집·복제·삭제·내보내기 | 로그인 필요 | 본인 것만 | 본인 것만 |
+| 다른 회원 프로젝트 조회·편집 | 불가 | 불가 | 전용 관리자 경로에서 가능 |
+| 다른 회원 프로젝트 삭제·복제·소유권 이전 | 불가 | 불가 | 관리자 경로에서 제공하지 않음 |
+| 자재·분류·속성 등록·수정·비활성화 | 불가 | 불가 | 가능 |
+| 회원 검색·관리자 승격/강등·계정 정지/해제 | 불가 | 불가 | 가능; 자기 정지·마지막 활성 관리자 해제/정지 금지 |
+| 사진 분석용 프로젝트 전용 모형 | 불가 | 본인 프로젝트 범위 | 본인 또는 명시적으로 편집 중인 프로젝트 범위 |
 
-관리자는 다른 회원의 프로젝트를 열 수 있는 전체 데이터 관리자가 아니다. 공용 자재·기준 데이터 관리 권한만 추가된다. 로컬 개발 모드에서는 기존 IndexedDB 개발 기능을 유지하지만, 이것이 운영 API의 관리자 인증을 대신하지 않는다.
+정지 회원은 앱 기능을 사용할 수 없다. `/login`에서 **Google로 시작하기**를 누르면 첫 접속은 일반 회원 가입, 이후 접속은 기존 계정 로그인이다. 비밀번호 가입·최초 가입자 자동 관리자 지정은 없다. callback은 `/api/auth/callback/google`이며 공급자 오류 원문 대신 진행·취소·실패·재시도를 안내한다.
 
-로그인 화면 `/login`은 **Google로 시작하기** 버튼 하나를 사용한다. 첫 로그인에서 일반 회원 계정이 만들어지고, 같은 Google 계정으로 다시 접속하면 기존 계정으로 로그인한다. 비밀번호 가입, 최초 가입자 자동 관리자 지정, 사용자의 자기 권한 변경 경로는 없다. Google callback은 `/api/auth/callback/google`이다.
+기존 일반 프로젝트 API의 `id + owner_id` 검사는 유지한다. 관리자 권한은 별도 `/api/admin/projects` 경로에서만 소유권과 분리해 행사하며, 타인 프로젝트의 소유자는 바꾸지 않는다. 새 창이나 화면 전환 후에도 현재 활성 관리자 여부를 확인한다. 전용 편집기는 관리자·프로젝트 범위의 저장 경로를 사용하고 일반 회원 저장소나 과거 브라우저 캐시로 우회하지 않는다.
+
+### 회원·관리자 API
+
+- `GET /api/admin/users?q=&role=&status=&cursor=`: 이름·이메일·ID 부분 검색, 역할·상태 필터, 가입 시각/ID 기준 25개 cursor 페이지. 응답은 `{items,nextCursor}`이며 회원 ID·이름·이메일·검증 여부·가입일·역할·상태·revision·프로젝트 수만 반환한다.
+- `POST /api/admin/users`: `setRole` 또는 `setStatus`, `userId`, `expectedRevision`, 역할 또는 상태, 선택적 사유(500자)를 받는다. `X-Idempotency-Key`가 필수이며 성공은 `{user}`다.
+- 관리자 변경 batch는 현재 관리자 권한·대상 revision·자기 정지·마지막 활성 관리자 조건, 실제 변경, 감사, 재시도 결과를 원자적으로 처리한다. 같은 요청 재전송은 동일 결과를 반환하고 같은 키의 다른 입력 또는 stale revision은 409다. 값이 바뀌지 않는 요청은 revision을 올리지 않는다.
+- `/api/admin/projects`는 검색·불러오기·저장, `/api/admin/project-assets`와 `/api/admin/project-materials`는 해당 프로젝트 범위의 참조·업로드·모형 생성을 담당한다. 프로젝트 저장은 기존 `storage_revision` 충돌 검사를 유지한다.
+- 역할 해제·정지 이후에는 재시도 결과나 기존 관리자 편집 세션으로 접근할 수 없다. 저장 실패나 충돌에서 입력을 보존하고 다시 확인하도록 안내한다.
+
+근거: [회원 API](../src/lib/admin/users.ts), [권한·감사](../src/lib/admin/access.ts), [관리자 프로젝트](../src/lib/admin/projects.ts), [인증](../src/lib/auth/d1.ts).
 
 ## 2. 저장소와 공개 범위
 
@@ -28,12 +49,13 @@
 | D1 `DB`                  | 회원·세션·역할, 프로젝트 목록·revision, 자재 버전 JSON, 기준 데이터·참조, 재시도·정리 기록 | 서버 바인딩과 검증된 API                                 |
 | 비공개 R2 `ASSET_BUCKET` | 이미지·원본·가공 자료·메시, 프로젝트 JSON 스냅샷                                           | 서버 바인딩; 공개 버킷이나 S3 키 배포 불필요             |
 | 정적 파일 `ASSETS`       | 앱의 JS·CSS·정적 파일                                                                      | Workers 정적 파일 바인딩; 사용자 이미지 버킷과 다름      |
-| 로컬 IndexedDB           | 기존 로컬 프로젝트·자재·사진                                                               | 해당 브라우저/도메인만; 로그인해도 자동 업로드하지 않음  |
-| 브라우저 복구 저장소     | 서버 미저장 작업과 자산 캐시                                                               | 계정·저장 모드별 구분; 계정 변경 시 자동 업로드하지 않음 |
+| 과거 IndexedDB 원본      | 이전 로컬 프로젝트·자재·사진 | 현행 앱은 열거나 수정·삭제하지 않으며 자동 업로드도 하지 않음 |
+| 브라우저 복구·캐시 | 본인 미저장 작업, 자산·시안·AI 재사용 결과 | 정식 자료 저장 아님; 자산은 서버 권한 확인 후 재사용 |
+| 진단 아카이브 D1/R2 | 진단 메타데이터와 JSON | 시작 계정에 고정, 계정별 최근 최대 20건·25MiB |
 
-공개 목록은 `scope='shared' AND active=1 AND purpose='catalog'`인 자재의 **현재 버전**만 반환한다. 공개 DTO에는 표시 이름·규격·속성·가격·공개 이미지 API URL만 포함하고, 회원 정보·소유자 ID·프로젝트 JSON·R2 내부 키·전체 원본 payload는 넣지 않는다.
+로그인한 회원에게 제공하는 공용 목록은 `scope='shared' AND active=1 AND purpose='catalog'`인 자재의 **현재 버전**만 반환한다. 내부 파일·함수의 `public` 명칭은 공용 카탈로그 자료 범위를 뜻하며 비로그인 API 접근을 뜻하지 않는다. 공개 DTO에는 표시 이름·규격·속성·가격·공개 이미지 API URL만 포함하고, 회원 정보·소유자 ID·프로젝트 JSON·R2 내부 키·전체 원본 payload는 넣지 않는다.
 
-`GET /api/catalog/images?id=...`는 현재 공개 버전에서 직접 사용하는 표시 이미지인지 서버에서 다시 확인한다. 개인 프로젝트 사진, 분석 원본, 제품 메시, `source_asset_id`를 따라간 원본은 공개하지 않는다. 버킷을 공개로 바꾸지 않는다. 자재 비활성화나 버전 교체 후 이전 이미지 URL도 공개 조건을 다시 통과해야 한다.
+`GET /api/catalog/images?id=...`는 활성 회원 세션과 현재 공용 버전에서 직접 사용하는 표시 이미지인지 서버에서 다시 확인한다. 개인 프로젝트 사진, 분석 원본, 제품 메시, `source_asset_id`를 따라간 원본은 공개하지 않는다. 버킷을 공개로 바꾸지 않는다. 자재 비활성화나 버전 교체 후 이전 이미지 URL도 공개 조건을 다시 통과해야 한다.
 
 일반 회원의 프로젝트 분석 모형은 `scope='personal'`, `purpose='project'`로 생성한다. 기존 버전에 `reconstruction` 정보가 있는 자재도 0003에서 `purpose='project'`로 구분하여 공개 카탈로그에서 제외한다. `/api/d1/project-materials`의 제한된 생성 경로만 사용하며, 일반 자재 등록이나 공개 전환 API로 우회할 수 없다. 기존 개인 자재·프로젝트·불변 버전은 보존하고 일괄 공개하지 않는다.
 
@@ -46,6 +68,16 @@ erDiagram
     USER ||--o{ SESSION : userId
     USER ||--o{ ACCOUNT : userId
     USER ||--o| ADMIN_ROLES : user_id
+    USER ||--|| D1_USER_MANAGEMENT : user_id
+    USER ||--o{ D1_RECONSTRUCTION_DIAGNOSTICS : owner_id
+    USER ||--o{ D1_DIAGNOSTIC_CLEANUP : owner_id
+    D1_RECONSTRUCTION_DIAGNOSTICS ||..|| R2_OBJECT : object_key
+    USER ||..o{ D1_ADMIN_AUDIT : actor_or_target
+    D1_PROJECTS ||..o{ D1_ADMIN_AUDIT : project_id
+    D1_PROJECTS ||--o{ D1_ADMIN_PROJECT_ASSETS : project_id
+    D1_ASSETS ||--o{ D1_ADMIN_PROJECT_ASSETS : asset_id
+    D1_PROJECTS ||--o{ D1_ADMIN_PROJECT_VERSIONS : project_id
+    D1_MATERIAL_VERSIONS ||--o{ D1_ADMIN_PROJECT_VERSIONS : version_id
     USER ||..o{ D1_PROJECTS : owner_id
     USER ||..o{ D1_MATERIALS : owner_id
     USER ||..o{ D1_ASSETS : owner_id
@@ -83,7 +115,36 @@ ID는 앱에서 UUID를 사용한다. 기존 SQL의 ID 컬럼은 `TEXT`이고 UU
 | `admin_roles`  | `user_id`, `created_at`                                                                                                                                                             | 해당 회원에게 관리자 역할 부여. `user_id`가 PK이자 회원 FK                                                                              |
 | `d1_auth_meta` | `id`, `version`                                                                                                                                                                     | 인증 스키마 준비 확인. 한 행 `(1,1)`                                                                                                    |
 
-OAuth 토큰 암호화·HttpOnly 세션 쿠키·출처 검사·CSRF 검사를 사용한다. 관리자 여부는 서버가 `admin_roles`에서 확인하며 요청 본문이나 브라우저 저장소의 역할 값은 신뢰하지 않는다.
+OAuth 토큰 암호화·HttpOnly 세션 쿠키·출처 검사·CSRF 검사를 사용한다. 서버는 현재 `d1_user_management.status`와 `admin_roles`를 함께 조회하며 요청 본문·브라우저 저장소의 역할 값은 신뢰하지 않는다. 정지하면 기존 세션을 삭제하고 신규 세션 hook 및 SQL 트리거가 동시 로그인까지 차단한다.
+
+### 회원 관리·관리자 감사 — 0005
+
+| 테이블 | 컬럼과 관계 | 역할 |
+| --- | --- | --- |
+| `d1_user_management` | `user_id` PK/FK, `status` active/suspended, `revision` 0 이상, `updated_at` | 기존 회원을 active/0으로 보존하고 신규 회원 trigger로 상태 생성. 역할·상태가 바뀔 때 같은 revision 증가 |
+| `d1_admin_audit` | `id`, `actor_id`, `action`, `target_user_id`, `project_id`, `project_revision`, `before_json`, `after_json`, `reason`, `request_id`, `created_at` | 관리자 행위자와 대상 소유자를 구분. 회원 변경, 프로젝트 목록·읽기·저장·자료 접근 기록 |
+| `d1_admin_checks` | `id`, `access_ok`, `target_ok`, `revision_ok`, `last_admin_ok`, `self_ok` | 이름 있는 CHECK로 원자적 batch를 차단. 성공한 batch 끝에 검사 행 삭제 |
+| `d1_admin_project_assets` | `project_id`, `asset_id` 복합 PK/FK, `actor_id`, `created_at` | 해당 관리자가 해당 프로젝트에서 만든 자산의 편집 범위. 프로젝트·자산 삭제 시 cascade |
+| `d1_admin_project_versions` | `project_id`, `version_id` 복합 PK/FK, `actor_id`, `created_at` | 해당 프로젝트의 새 모형 버전 범위. 프로젝트·버전 삭제 시 cascade |
+| `d1_admin_meta` | `id=1`, `version=1` | 관리자 스키마 준비 확인 |
+
+새 인덱스는 회원 상태(`status,user_id`), 가입순 목록(`createdAt DESC,id DESC`), 이름·이메일 NOCASE, 감사 시각/행위자/대상 회원/프로젝트별 시각이다. 부분 검색은 서버가 매개변수화한 문자열 포함 검사로 처리하며 사용자 입력의 `%`, `_`, 역슬래시는 검색 문자열 자체다. 일반 B-tree 인덱스가 부분 일치 검색 전체를 최적화한다고 보장하지 않는다.
+
+관리자 프로젝트에서 허용하는 자료는 현재 문서의 참조, 해당 관리자·프로젝트에서 새로 만든 자료, 허용된 공용 카탈로그다. 다른 회원의 관계없는 개인 사진·자재는 이 범위에 넣지 않는다. 추적 테이블은 편집 접근용이며 실제 문서 저장 시 기존 참조 테이블에 연결한다. 그 자체로 미사용 R2 자료를 영구 보존하는 참조가 아니다.
+
+감사에는 권한/상태/revision 요약과 사유를 남기며 원문 프로젝트·사진·R2 객체 키·인증 토큰을 넣지 않는다. before/after 요약은 각각 4KB, 사유는 500자로 제한한다. 계정/프로젝트가 나중에 삭제돼도 기록이 남도록 감사의 식별자에는 cascade FK를 걸지 않는다. 앱에는 감사 수정·삭제 API가 없지만 DB 운영 권한까지 막는 변조 방지 저장소는 아니다. 감사 저장 실패 시 보호 작업도 실패한다. 임의 SQL 변경은 앱의 revision·마지막 관리자·감사 검사를 우회하므로 최초 bootstrap 외의 일상 변경에는 관리자 API를 사용한다.
+
+### 진단 아카이브 — 0006
+
+| 테이블 | 컬럼과 제약 | 역할 |
+| --- | --- | --- |
+| `d1_reconstruction_diagnostics` | `run_id` PK, `owner_id` 회원 FK, `object_key` UNIQUE, SHA-256 `content_hash`, `byte_length` 1~25MiB, `started_at`, `status` complete/failed/cancelled, `created_at` | 계정별 진단 목록과 비공개 R2 JSON의 검증 정보 |
+| `d1_diagnostic_cleanup` | `object_key` PK, `owner_id` 회원 FK, `eligible_at` | 아직 확정되지 않은 업로드와 보관 한도로 제외된 JSON 정리 대기열 |
+| `d1_diagnostic_checks` | `id` PK, `active_ok`·`conflict_ok`는 1만 허용 | 커밋 batch에서 활성 계정·동일 실행 ID 충돌을 재검사하고 성공하면 제거 |
+
+`d1_diagnostics_owner_started_idx(owner_id,started_at DESC,run_id)`는 본인 목록, `d1_diagnostic_cleanup_owner_due_idx(owner_id,eligible_at)`는 본인 정리 대상 조회에 사용한다. `GET/POST /api/reconstruction/diagnostics`는 활성 로그인과 분석 시작 계정 헤더를 확인한다. 사진·모델 파일은 진단에 포함하지 않으며 JSON 구조·크기·해시를 검증한다. 같은 실행 ID·같은 내용의 재시도만 멱등하게 처리한다.
+
+진단 JSON은 `reconstruction-diagnostics/v1/{owner}/{uuid}.json`에 저장하고 계정별 최대 20건/25MiB를 보관한다. 새 객체를 먼저 준비한 뒤 D1 batch로 목록을 확정하며 기존 원본 프로젝트·자산 경로는 정리하지 않는다. 정리 작업은 요청당 6건 이내이고 남은 작업은 후속 요청에서 처리한다. 관리자 타인 프로젝트 분석은 현재 실행 메모리만 사용한다. 과거 IndexedDB 진단을 자동 전송·삭제하거나 저장 실패 시 다시 IndexedDB로 저장하지 않는다.
 
 ### 프로젝트·자재·파일
 
@@ -146,7 +207,7 @@ D1 transaction과 R2 업로드는 하나의 분산 transaction이 아니다. R2 
 
 위 예는 `toilet` 카테고리에서 TOTO·원피스·그레이·도기·무광을 선택한 부분 계약이다. 실제 자재 저장에는 이름·규격·이미지 등 기존 MaterialInput 필드도 필요하다. 서버는 ID 존재 여부, 종류, 활성 상태, 브랜드 단일 선택, 하위 분류의 상위 종류를 검사하고 표시 이름을 직접 채운다. 임의 이름을 보내도 기준 데이터가 자동 생성되지 않는다.
 
-자재 입력창은 목록을 스크롤하거나 `그레`처럼 부분 검색해 선택한다. 영문 대소문자를 구분하지 않는다. 색상·재질·마감은 태그로 표시하고 개별 제거할 수 있다. 검색어와 선택 값은 별도로 보관하며 한글 조합 중 Enter는 선택으로 처리하지 않는다. 새 선택지를 만드는 곳은 `/admin/catalog`뿐이다.
+자재 입력창은 목록을 스크롤하거나 `그레`처럼 부분 검색해 선택한다. 영문 대소문자를 구분하지 않는다. 색상·재질·마감은 태그로 표시하고 개별 제거할 수 있다. 검색어와 선택 값은 별도로 보관하며 한글 조합 중 Enter는 선택으로 처리하지 않는다. 새 선택지를 만드는 곳은 `/admin/catalog`뿐이다. 처음 방향키 아래를 누르면 첫 항목, 위를 누르면 마지막 항목으로 이동한다. Escape 또는 다음 필드로 Tab 이동 시 목록을 닫고, 목록 내부의 휠 스크롤이 바깥 화면으로 이어지지 않게 한다.
 
 `0004`의 기존 자료 연결은 `brand`, `color`, `finish`의 **공백을 제거하고 영문 소문자로 바꾼 전체 문자열이 정확히 일치할 때만** 수행한다. 쉼표 등으로 과거 값을 임의 분해하지 않고, 알 수 없는 과거 문자열을 새 선택지로 만들지 않는다. 과거 payload는 수정하지 않는다. 일치하지 않은 값은 과거 버전의 기록으로 남고, 관리자가 새 버전을 저장할 때 등록된 활성 값을 선택하거나 비워야 한다.
 
@@ -169,46 +230,36 @@ Seed는 고정 ID와 `ON CONFLICT DO NOTHING`을 사용한다. 동일 seed를 �
 
 ## 7. 최초 관리자 지정 SQL
 
-1. 관리자 본인이 서비스에서 Google 로그인을 완료한다.
-2. 운영자가 올바른 D1을 선택하고 회원 ID·이메일·Google 연결을 확인한다.
-3. 아래의 예시 이메일과 사용자 ID를 확인된 값으로 바꾸어 실행한다. Google secret이나 토큰은 필요 없다.
+최초 관리자도 먼저 정상 Google 로그인으로 회원·Google account 행을 만들어야 한다. 아래는 **관리자가 한 명도 없는 DB의 최초 지정** 예시다. 대상 DB·회원 ID·검증된 이메일을 직접 확인한 운영자가 실행한다. 로컬 개발에는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`, 운영에는 확인한 운영 DB를 사용하며 서로 대체하지 않는다. 이번 작업에서는 지정 SQL을 실행하지 않았다.
 
 ```sql
--- 조회: 먼저 결과가 의도한 계정 한 개인지 확인한다.
-SELECT u.id, u.email, u.emailVerified, a.providerId
-FROM "user" AS u
-JOIN account AS a ON a.userId = u.id
-WHERE u.email = 'admin@example.com' AND a.providerId = 'google';
+SELECT u.id,u.email,u.emailVerified,a.providerId,s.status
+FROM "user" u JOIN account a ON a.userId=u.id
+JOIN d1_user_management s ON s.user_id=u.id
+WHERE u.email='admin@example.com' AND a.providerId='google';
 
--- 부여: ID와 이메일을 모두 확인한, 이메일 검증된 Google 회원만 대상.
-INSERT INTO admin_roles (user_id)
-SELECT u.id FROM "user" AS u
-WHERE u.id = '확인한-사용자-ID'
-  AND u.email = 'admin@example.com'
-  AND u.emailVerified = 1
-  AND EXISTS (
-    SELECT 1 FROM account AS a WHERE a.userId = u.id AND a.providerId = 'google'
-  )
-ON CONFLICT (user_id) DO NOTHING;
+INSERT INTO admin_roles(user_id)
+SELECT u.id FROM "user" u JOIN d1_user_management s ON s.user_id=u.id
+WHERE u.id='확인한-사용자-ID' AND u.email='admin@example.com'
+  AND u.emailVerified=1 AND s.status='active'
+  AND EXISTS(SELECT 1 FROM account a WHERE a.userId=u.id AND a.providerId='google')
+  AND NOT EXISTS(SELECT 1 FROM admin_roles)
+ON CONFLICT(user_id) DO NOTHING;
 
--- 확인
-SELECT u.id, u.email, r.created_at
-FROM admin_roles AS r JOIN "user" AS u ON u.id = r.user_id
-WHERE u.id = '확인한-사용자-ID';
-
--- 권한 회수가 필요할 때만 별도로 실행
--- DELETE FROM admin_roles WHERE user_id = '확인한-사용자-ID';
+SELECT u.id,u.email,s.status,s.revision,r.created_at
+FROM admin_roles r JOIN "user" u ON u.id=r.user_id
+JOIN d1_user_management s ON s.user_id=u.id;
 ```
 
-역할을 부여한 뒤 새로고침하면 관리자 메뉴를 확인할 수 있다. 클라이언트에 관리자 플래그를 저장하거나 회원가입 중 역할을 선택하도록 만들지 않는다. SQL 적용 대상은 프로젝트 소유자의 의사를 확인한 실제 계정이어야 한다.
+새로고침 후 관리자 메뉴를 확인한다. 이후 승격·강등·정지·해제는 `/admin/users`에서 수행해 마지막 활성 관리자 보호, revision 충돌, 감사 기록을 적용한다. 첫 가입자 자동 승격과 클라이언트 역할 선택은 제공하지 않는다. 위 최초 지정 SQL은 일반 역할 관리 API의 감사 트랜잭션을 대신하는 수단이 아니다.
 
 ## 8. 적용 순서
 
 ### 소스·로컬 준비
 
-2026-09-17 Wrangler 원격 목록에서 D1 `sjn` (`c43f3251-7795-4027-8846-f418ffc939d9`)을 확인했고, 앱 테이블이 없는 상태에서 `0001`~`0004` migration을 원격 적용했다. `wrangler.jsonc`는 이 DB의 `DB` 바인딩과 `migrations_dir: "migrations/d1"`을 포함한다. **`APP_ENV=local`, `STORAGE_MODE=auto`를 유지하고 R2 `ASSET_BUCKET`은 아직 선언하지 않았으므로, DB 적용만으로 앱의 운영 로그인이 활성화되지 않는다.** 운영 Worker 연결·Google OAuth·R2는 미검증이며 관리자 지정·배포는 수행하지 않았다. 운영 전환에는 대상 자원과 R2·인증 설정을 확인하고 `APP_ENV=production`을 준비한다. 빌드 산출물 `dist/server/wrangler.json`을 직접 편집하지 않는다.
+2026-09-17 Wrangler 원격 목록에서 D1 `sjn` (`c43f3251-7795-4027-8846-f418ffc939d9`)을 확인했고, 앱 테이블이 없는 상태에서 `0001`~`0004` migration을 원격 적용했다. `wrangler.jsonc`는 이 DB의 `DB` 바인딩과 `migrations_dir: "migrations/d1"`을 포함한다. **운영 빌드 설정 `wrangler.jsonc`는 `APP_ENV=production`, `STORAGE_MODE=d1`이며 기존 DB/AI/ASSETS를 유지한다. R2 `ASSET_BUCKET`과 OAuth 설정은 별도로 준비해야 하며 준비 실패는 로그인·편집을 차단한다.** 이후 같은 날 사용자 승인으로 `0005`·`0006`을 원격에 추가 적용했고, 기존 적용 이력과 데이터를 보존했다. 개발 전용 `wrangler.dev.jsonc`는 별도 로컬 D1/R2와 `.wrangler/development`를 사용한다. 운영 Worker 연결·Google OAuth·R2는 미검증이며 관리자 지정·배포는 수행하지 않았다. 운영 전환에는 대상 자원과 R2·인증 설정을 확인하고 `APP_ENV=production`을 준비한다. 빌드 산출물 `dist/server/wrangler.json`을 직접 편집하지 않는다.
 
-현재 원격 DB 확인값:
+아래는 `0005` 작성 전, 2026-09-17 `0001~0004` 원격 적용 직후 확인값이다. 현재 `0001~0006` 적용 후 확인과 구분해 보존하는 초기 이력이다:
 
 | 항목 | 확인 결과 |
 | --- | --- |
@@ -220,6 +271,19 @@ WHERE u.id = '확인한-사용자-ID';
 | 무결성 | `PRAGMA foreign_key_check` 결과 `[]`, `PRAGMA quick_check` 결과 `ok` |
 
 후속 확인 쿼리는 모두 `success=true`, `changed_db=false`, `rows_written=0`이었다. 같은 날 D1 회귀 3파일 42개도 재실행하여 모두 통과했다. 이 테스트는 격리 Miniflare와 Google 테스트 provider를 사용하므로 실제 Google 로그인 성공을 의미하지 않는다.
+
+같은 날 후속 사용자 승인으로 **2026-09-17 22:21:16 KST (13:21:16 UTC)**에 원격 `sjn`의 `0005`·`0006` 적용을 완료했다. 기존 `0001~0004`의 적용 시각 `2026-09-16 15:27:24 UTC`는 유지됐다. 로컬 개발 DB `.wrangler/development`도 빈 DB에서 `0001~0006`을 순서대로 적용했다. 최종 Wrangler 목록에서 원격·로컬 모두 `No migrations to apply`를 확인했다. 적용 후 확인값은 다음과 같다:
+
+| 항목 | 후속 적용 후 확인 결과 |
+| --- | --- |
+| 적용 범위 | 원격 `sjn`은 0005·0006 추가, 로컬 개발 DB는 0001~0006 전체 적용 완료 |
+| 사용자 자료 보존 | 원격 회원·세션·관리자·프로젝트·자재·자재 버전·자산 모두 적용 전후 0행으로 변경 없음 |
+| 기본 데이터 보존 | 원격·로컬 모두 속성 33개·하위 분류 21개 유지 |
+| 추가 스키마 | 진단 테이블 3개·인덱스 2개, 회원 관리 trigger 4개 확인 |
+| 회원 관리 상태 | admin meta `(id=1, version=1)`, 회원 상태 누락 0건 |
+| 무결성 | 원격·로컬 모두 `foreign_key_check` 빈 결과, `quick_check=ok` |
+
+이 확인은 DB 스키마 적용과 읽기 검증이다. 데이터 파일 삭제·R2 업로드·버킷 생성·관리자 지정·배포·실제 Google 로그인·AI 실행은 포함하지 않았다.
 
 ```jsonc
 {
@@ -242,20 +306,23 @@ WHERE u.id = '확인한-사용자-ID';
 
 위 조각은 운영 구성의 예시이며 현재 설정 파일 전체를 덮어쓰지 않는다. 이미 등록한 `DB` 바인딩을 중복 추가하거나 실제 ID를 예시 문자열로 덮어쓰지 않는다. 기존 D1 `sjn`을 재생성할 필요는 없으며 Worker 이름, `main`, compatibility, `ASSETS`, `AI` 설정을 보존한다. 설정 항목과 로그인 연결은 [Cloudflare 저장소 설정](cloudflare-storage-setup.md)도 함께 참고한다.
 
-로컬 D1 적용 명령은 `--local`을 반드시 포함한다. 별도 저장 경로를 쓰면 기존 개발 DB를 유지한 채 빈 DB에서 0001→0004 전체 적용을 확인할 수 있다.
+로컬 D1 적용 명령은 `--local`을 반드시 포함한다. 별도 저장 경로를 쓰면 기존 개발 DB를 유지한 채 빈 DB에서 0001→0006 전체 적용을 확인할 수 있다.
 
 ```powershell
 # 빈 로컬 D1: 운영 서버에 SQL을 보내지 않는다.
-npx wrangler d1 migrations apply DB --local --config wrangler.jsonc --persist-to tmp/catalog-local-d1
-npx wrangler d1 execute DB --local --config wrangler.jsonc --persist-to tmp/catalog-local-d1 --command "PRAGMA foreign_key_check"
-npx wrangler d1 execute DB --local --config wrangler.jsonc --persist-to tmp/catalog-local-d1 --command "SELECT kind, COUNT(*) AS count FROM d1_catalog_options GROUP BY kind"
+npx wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc --persist-to tmp/catalog-local-d1
+npx wrangler d1 execute DB --local --config wrangler.dev.jsonc --persist-to tmp/catalog-local-d1 --command "PRAGMA foreign_key_check"
+npx wrangler d1 execute DB --local --config wrangler.dev.jsonc --persist-to tmp/catalog-local-d1 --command "SELECT kind, COUNT(*) AS count FROM d1_catalog_options GROUP BY kind"
 
 # 코드·통합 테스트 (원격 Google 로그인 성공 여부를 대신하지 않는다)
 npm run typecheck
 npm run lint
 npm test
+npm run build
 npm run build:vinext
 ```
+
+회원 관리 업그레이드는 0001~0004 DB에 기존 회원·역할·세션을 준비한 뒤 0005를 적용해 상태 backfill·역할/세션 보존을 확인한다. 정지 후 세션 삭제, 동시 OAuth 생성 차단, 원자적 역할/상태/감사 변경도 격리된 Miniflare로 검증한다.
 
 기존 스키마 업그레이드는 `0001`, `0002`를 적용한 별도 로컬 D1에 기존 형태의 자재·버전을 준비한 뒤 `0003`, `0004`를 적용해 확인한다. 빈 DB 테스트와 업그레이드 테스트 모두 참조·이름 스냅샷·개인 자료가 보존되는지 확인한다. 실제 결과는 테스트 실행 로그를 기준으로 하며 이 문서 자체가 테스트 통과를 의미하지 않는다.
 
@@ -264,10 +331,10 @@ npm run build:vinext
 1. 실제 Worker·DB·버킷이 의도한 계정/환경인지 확인하고, 기존 운영 DB의 복구 가능한 백업/Time Travel 상태를 확보한다.
 2. 변경 코드의 타입·린트·D1 통합·브라우저 테스트와 Cloudflare 빌드를 통과시킨다.
 3. Google의 승인된 redirect URI를 `BETTER_AUTH_URL + /api/auth/callback/google`로 맞춘다. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BETTER_AUTH_SECRET`은 Worker의 서버 secret으로 등록한다. 실제 비밀값을 저장소 문서나 `NEXT_PUBLIC_*`에 넣지 않는다.
-4. 다음처럼 미적용 마이그레이션을 확인하고 적용한다. 기존 DB는 0003→0004만, 빈 DB는 0001부터 순서대로 적용된다.
+4. 다음처럼 미적용 마이그레이션을 확인하고 적용한다. 각 DB의 적용 이력에 없는 번호만 순서대로 적용한다. 현재 원격 `sjn`과 로컬 개발 DB는 0001~0006을 완료했다. 다른 환경이나 이후 추가된 파일은 해당 DB의 실제 적용 이력을 확인하고 남은 번호만 순서대로 적용한다.
 
 ```powershell
-# 실제 원격 DB 대상. 현재 sjn에는 0001~0004가 적용됐으므로 새 미적용 migration을 확인한다.
+# 실제 원격 DB 대상. 현재 sjn은 0001~0006 적용 완료이며 이후 새 파일이 있을 때만 적용한다.
 npx wrangler d1 migrations list DB --remote --config wrangler.jsonc
 npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 ```
@@ -276,7 +343,7 @@ npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 6. `/api/storage/status`의 D1 준비 상태를 확인하고, Google 신규/재로그인·로그아웃·실패 안내를 실제 운영 도메인에서 확인한다.
 7. 가입 완료한 계정에 위 SQL로 최초 관리자 권한을 부여한다. 일반 회원 계정과 별도 브라우저로 API 차단/소유권을 확인한다.
 
-명시적 Wrangler `--env`를 쓰는 경우 바인딩·변수·secret과 모든 적용/배포 명령의 환경을 일치시킨다. 일반 로컬 개발은 `npm run dev` / `npm run dev:vinext`의 기존 IndexedDB 경로를 유지한다. 운영에서 인증·DB 연결이 실패하면 편집을 잠그고 재시도를 안내하며 로그인 없는 로컬 편집으로 자동 전환하지 않는다. 운영 로그인 이전에도 공개 자재 조회는 별도 공개 API의 범위에서만 가능하다.
+명시적 Wrangler `--env`를 쓰는 경우 바인딩·변수·secret과 모든 적용/배포 명령의 환경을 일치시킨다. 기본 로컬 개발은 `npm run db:dev:migrate` 후 `npm run dev` / `npm run dev:vinext`로 3000 포트의 Workers와 격리된 D1/R2를 사용한다. 개발·운영 모두 Google 로그인이 필요하며 인증·DB 준비 실패 시 익명 편집으로 전환하지 않는다. 자재 API도 활성 세션을 요구한다.
 
 ## 9. 검증 기준
 
@@ -284,14 +351,16 @@ npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 | ------------- | ------------------------------------------------------------------------------------------------------------------ |
 | 스키마        | 빈 DB 전체 적용, 기존 DB 확장, seed 중복 실행, FK 검사, 브랜드 2개/종류 불일치/상위 분류 불일치 거부               |
 | 기준 데이터   | 중복 정규화 이름, 비활성화, 등록되지 않은 ID/다른 종류 ID/중복 ID 거부, 과거 이름 보존                             |
-| 공개 API      | 비로그인 목록 조회, 소유자/회원/R2 키 비노출, 비공개 자료·원본·메시·이전 비공개 버전 이미지 차단                   |
-| 권한          | 비로그인 쓰기 401, 일반 회원 자재/분류 쓰기 403, 다른 회원 프로젝트 접근 차단, 관리자도 타인 프로젝트 접근 불가    |
+| 카탈로그 API | 비로그인 접근 차단, 활성 회원의 공용 목록·이미지 조회, 소유자/R2 키 비노출, 비공개 원본·메시·이전 비공개 이미지 차단 |
+| 권한 | 일반 회원의 타인 프로젝트 접근·자재 쓰기 차단, 관리자 전용 경로의 타인 프로젝트 조회·편집·감사, 강등·정지 즉시 차단 |
 | Google 로그인 | 신규 가입, 재로그인, 로그아웃, OAuth 거부·서버 실패 UI, 관리자 SQL 지정. 실제 Google 흐름은 운영 설정 후 별도 확인 |
 | 입력 UI       | `그레 → 그레이`, 영문 대소문자 무시, 스크롤·방향키·Enter·Escape, 한글 조합, 복수 태그 제거, 검색어만으로 저장 불가 |
 | 실패 처리     | R2 업로드 실패·D1 commit 실패·revision 충돌, 초기 인증/DB 장애에서도 운영 익명 편집 전환 금지                      |
 | 회귀          | 기존 프로젝트와 자재 버전 열기, 사진 분석·재구성 모형 생성, PNG 및 FLUX 내보내기                                   |
 
-### 구현 검증 기록 — 2026-09-16
+### 과거 구현 검증 기록 — 2026-09-16
+
+아래 기록은 회원 관리·로그인 필수 전환 전 상태이며 당시의 테스트 수와 접근 정책을 보존한다. 현재 완료 기준은 위 표와 새 관리자 통합 검증을 따른다.
 
 - 전체 단위·통합 테스트: 198개 파일, **3,011개 통과**. D1 카탈로그 15개, 기존 D1/R2 저장 12개, Google 인증 15개 포함.
 - 브라우저: 카탈로그·권한·로그인 9개, 기존 편집기 2개, PNG/FLUX 내보내기 2개 통과. 카탈로그와 내보내기는 Cloudflare 빌드 결과를 로컬 Wrangler에서 실행하여 11개를 다시 확인했다.
@@ -302,8 +371,20 @@ npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 ```powershell
 # 주요 기능 회귀를 다시 실행하는 명령
 npx vitest run tests/d1-catalog.test.ts tests/d1-storage.test.ts tests/d1-auth.test.ts
-npx playwright test e2e/catalog-access.spec.ts e2e/simple-editor.spec.ts e2e/room-fixtures.spec.ts e2e/flux-export.spec.ts
+npx playwright test e2e/catalog-access.spec.ts e2e/catalog-selection-completion.spec.ts e2e/login-flow.spec.ts e2e/simple-editor.spec.ts e2e/room-fixtures.spec.ts
+# 내보내기 구현을 변경한 경우 추가 회귀
+npx playwright test e2e/flux-export.spec.ts
 ```
+
+### 과거 로그인·검색 UI 보완 검증 — 2026-09-17 (회원 관리 변경 전)
+
+- 로그인 진행·취소·실패·재시도, 이미 로그인한 회원의 홈 이동, 390px 화면을 보완했다. 취소 안내는 Better Auth의 `error=access_denied`를 사용하며 공급자의 오류 원문을 노출하지 않는다.
+- 선택 목록의 방향키 첫 이동, Tab 이탈, Escape 닫기와 목록 내부 스크롤을 보완했다. `그레 → 그레이`, 한글 조합, 없는 항목, 등록 ID만 저장, 비활성 항목 교체와 이전 버전 보존을 브라우저에서 확인했다.
+- 전체 단위·통합 198개 파일 **3,014개 통과**. 이후 자재→회원 프로젝트 적용→관리자 수정·비활성화→기존 버전·R2 이미지 보존 통합 검사 1개를 추가하고 저장 테스트 **15개를 재실행해 모두 통과**했다. 최종 D1 관련 범위는 인증 15개·카탈로그 16개·저장 15개다. 추가 후 전체 스위트를 다시 실행한 결과로 합산해 표기하지 않는다.
+- 최종 타입 검사·전체 ESLint(마지막 저장 테스트 수정 후 해당 파일도 재검사)·Next.js 빌드·vinext 빌드 통과. vinext의 기존 punycode 폐기 예고, Vite native config import 확장자, 실험적 glob·일부 경로 분류 안내는 남아 있다. 빌드 성공은 배포 성공을 의미하지 않는다.
+- 브라우저는 기존 카탈로그·권한 9개, 기존 편집 2개, 새 선택 목록 3개, 새 로그인 6개로 **서로 다른 20개 통과**. 초기 실패를 수정한 뒤 새 테스트 9개를 재실행했다. 데스크톱·모바일 로그인과 부분 검색 목록 캡처를 확인했다.
+- 로그인 브라우저 검사는 Google 이동·콜백·세션 응답을 모의 처리하고, 선택 목록과 저장 경로 브라우저 검사는 격리된 D1/R2를 사용한다. 서버 검사는 Miniflare D1/R2와 서명된 테스트 Google provider를 사용한다. 실제 Google 계정 인증·운영 R2 쓰기의 성공을 의미하지 않는다.
+- 로그와 화면 캡처는 `test-results/auth-catalog-20260917/`에 보관했다. 이번 UI·권한 보완에서 원격 DB 변경·관리자 지정·배포·AI 호출은 수행하지 않았다. 마이그레이션 0001~0004와 초기 데이터 9/7/10/7/21개는 유지했다.
 
 ## 10. 전체 DDL 및 기본 INSERT
 
@@ -570,4 +651,114 @@ INSERT INTO d1_material_subcategories(id,category_code,name,normalized_name,sort
 INSERT OR IGNORE INTO d1_material_version_options(version_id,option_id,option_kind) SELECT v.id,o.id,o.kind FROM d1_material_versions v JOIN d1_catalog_options o ON o.kind='brand' AND o.normalized_name=lower(trim(json_extract(v.payload_json,'$.brand'))) WHERE json_type(v.payload_json,'$.brand')='text';
 INSERT OR IGNORE INTO d1_material_version_options(version_id,option_id,option_kind) SELECT v.id,o.id,o.kind FROM d1_material_versions v JOIN d1_catalog_options o ON o.kind='color' AND o.normalized_name=lower(trim(json_extract(v.payload_json,'$.color'))) WHERE json_type(v.payload_json,'$.color')='text';
 INSERT OR IGNORE INTO d1_material_version_options(version_id,option_id,option_kind) SELECT v.id,o.id,o.kind FROM d1_material_versions v JOIN d1_catalog_options o ON o.kind='finish' AND o.normalized_name=lower(trim(json_extract(v.payload_json,'$.finish'))) WHERE json_type(v.payload_json,'$.finish')='text';
+```
+
+
+### 10.5 회원 상태·관리자 감사·프로젝트 편집 범위 — `0005_admin_management.sql`
+
+```sql
+-- App-owned user state; existing Better Auth tables and role assignments stay intact.
+CREATE TABLE d1_user_management (
+  user_id TEXT PRIMARY KEY NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended')),
+  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+  updated_at TEXT NOT NULL
+);
+INSERT INTO d1_user_management(user_id,status,revision,updated_at)
+  SELECT id,'active',0,updatedAt FROM "user";
+CREATE TRIGGER d1_user_management_signup AFTER INSERT ON "user" BEGIN
+  INSERT INTO d1_user_management(user_id,status,revision,updated_at) VALUES(NEW.id,'active',0,NEW.updatedAt);
+END;
+-- A concurrent OAuth callback must not recreate a suspended member's session.
+CREATE TRIGGER d1_session_active_insert BEFORE INSERT ON "session"
+WHEN NOT EXISTS(SELECT 1 FROM d1_user_management WHERE user_id=NEW.userId AND status='active') BEGIN
+  SELECT RAISE(ABORT,'d1_account_suspended');
+END;
+CREATE TRIGGER d1_session_active_update BEFORE UPDATE ON "session"
+WHEN NOT EXISTS(SELECT 1 FROM d1_user_management WHERE user_id=NEW.userId AND status='active') BEGIN
+  SELECT RAISE(ABORT,'d1_account_suspended');
+END;
+CREATE TRIGGER d1_user_suspended_sessions AFTER UPDATE OF status ON d1_user_management
+WHEN NEW.status='suspended' BEGIN
+  DELETE FROM "session" WHERE userId=NEW.user_id;
+END;
+CREATE INDEX d1_user_management_status_idx ON d1_user_management(status,user_id);
+CREATE INDEX d1_user_list_idx ON "user"(createdAt DESC,id DESC);
+CREATE INDEX d1_user_name_idx ON "user"(name COLLATE NOCASE);
+CREATE INDEX d1_user_email_idx ON "user"(email COLLATE NOCASE);
+-- Audit identities deliberately survive later account/project removal. No tokens/documents are recorded.
+CREATE TABLE d1_admin_audit (
+  id TEXT PRIMARY KEY NOT NULL,
+  actor_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_user_id TEXT,
+  project_id TEXT,
+  project_revision INTEGER,
+  before_json TEXT,
+  after_json TEXT,
+  reason TEXT,
+  request_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX d1_admin_audit_created_idx ON d1_admin_audit(created_at DESC,id DESC);
+CREATE INDEX d1_admin_audit_actor_idx ON d1_admin_audit(actor_id,created_at DESC);
+CREATE INDEX d1_admin_audit_target_idx ON d1_admin_audit(target_user_id,created_at DESC);
+CREATE INDEX d1_admin_audit_project_idx ON d1_admin_audit(project_id,created_at DESC);
+CREATE TABLE d1_admin_checks (
+  id TEXT PRIMARY KEY NOT NULL,
+  access_ok INTEGER NOT NULL DEFAULT 1 CONSTRAINT d1_admin_access CHECK(access_ok=1),
+  target_ok INTEGER NOT NULL DEFAULT 1 CONSTRAINT d1_admin_target CHECK(target_ok=1),
+  revision_ok INTEGER NOT NULL DEFAULT 1 CONSTRAINT d1_admin_revision CHECK(revision_ok=1),
+  last_admin_ok INTEGER NOT NULL DEFAULT 1 CONSTRAINT d1_admin_last CHECK(last_admin_ok=1),
+  self_ok INTEGER NOT NULL DEFAULT 1 CONSTRAINT d1_admin_self CHECK(self_ok=1)
+);
+CREATE TABLE d1_admin_project_assets (
+  project_id TEXT NOT NULL REFERENCES d1_projects(id) ON DELETE CASCADE,
+  asset_id TEXT NOT NULL REFERENCES d1_assets(id) ON DELETE CASCADE,
+  actor_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(project_id,asset_id)
+);
+CREATE TABLE d1_admin_project_versions (
+  project_id TEXT NOT NULL REFERENCES d1_projects(id) ON DELETE CASCADE,
+  version_id TEXT NOT NULL REFERENCES d1_material_versions(id) ON DELETE CASCADE,
+  actor_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(project_id,version_id)
+);
+CREATE TABLE d1_admin_meta (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  version INTEGER NOT NULL
+);
+INSERT INTO d1_admin_meta(id,version) VALUES(1,1);
+```
+
+
+### 10.6 계정별 진단 아카이브 — `0006_reconstruction_diagnostics.sql`
+
+```sql
+-- Only newly captured diagnostics are stored here; old browser archives remain untouched.
+CREATE TABLE d1_reconstruction_diagnostics (
+  run_id TEXT PRIMARY KEY NOT NULL,
+  owner_id TEXT NOT NULL REFERENCES "user"(id),
+  object_key TEXT NOT NULL UNIQUE,
+  content_hash TEXT NOT NULL,
+  byte_length INTEGER NOT NULL CHECK(byte_length > 0 AND byte_length <= 26214400),
+  started_at TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('complete','failed','cancelled')),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX d1_diagnostics_owner_started_idx ON d1_reconstruction_diagnostics(owner_id,started_at DESC,run_id);
+-- Staged uploads and retired JSON objects are cleaned independently of project/assets ownership.
+CREATE TABLE d1_diagnostic_cleanup (
+  object_key TEXT PRIMARY KEY NOT NULL,
+  owner_id TEXT NOT NULL REFERENCES "user"(id),
+  eligible_at TEXT NOT NULL
+);
+CREATE INDEX d1_diagnostic_cleanup_owner_due_idx ON d1_diagnostic_cleanup(owner_id,eligible_at);
+CREATE TABLE d1_diagnostic_checks (
+  id TEXT PRIMARY KEY NOT NULL,
+  active_ok INTEGER NOT NULL DEFAULT 1 CONSTRAINT diagnostic_active CHECK(active_ok=1),
+  conflict_ok INTEGER NOT NULL DEFAULT 1 CONSTRAINT diagnostic_conflict CHECK(conflict_ok=1)
+);
 ```

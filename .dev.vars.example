@@ -1,10 +1,10 @@
-# Copy this file to .dev.vars for Wrangler local bindings only. Never commit .dev.vars.
-# npm run dev / dev:vinext force local mode regardless of these values.
-APP_ENV=local
-STORAGE_MODE=auto
-# Cloud D1 mode requires Workers bindings DB and ASSET_BUCKET in wrangler.jsonc.
-# Production uses Wrangler secrets / Worker settings, not this local file.
-BETTER_AUTH_URL=
+# Copy to .dev.vars for local Workers only. Never commit secrets.
+# npm run dev uses isolated local D1/R2 with the same real Google authentication as production.
+APP_ENV=development
+STORAGE_MODE=d1
+BETTER_AUTH_URL=http://127.0.0.1:3000
+# Register this exact redirect URI in Google: http://127.0.0.1:3000/api/auth/callback/google
 BETTER_AUTH_SECRET=
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+# Production values are configured as Worker secrets, not from this file.

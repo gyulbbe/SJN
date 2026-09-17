@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Repositories } from '../src/lib/repositories/contracts';
+import type { RepositoryOperations } from '../src/lib/repositories/contracts';
 import type { ProjectDocument, RenderSnapshot, ImageAssetRecord } from '../src/lib/types';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 const hooks = vi.hoisted(() => ({
@@ -9,7 +9,10 @@ const hooks = vi.hoisted(() => ({
   dispose: vi.fn(),
   blob: vi.fn(),
   ctor: vi.fn(),
+  account: '',
+  archive: vi.fn(),
 }));
+vi.mock('../src/lib/repositories', () => ({ getRepositoryUserId: () => hooks.account }));
 vi.mock('../src/lib/reconstruction/index', () => ({ createReconstructionProject: hooks.create }));
 vi.mock('../src/lib/reconstruction/templates', () => ({ TEMPLATE_RENDERER_REVISION: 7 }));
 vi.mock('../src/lib/images', async (original) => ({
@@ -36,7 +39,7 @@ vi.mock('../src/lib/render/compositor', () => ({
 import { runReconstructionLabCase } from '../src/lib/reconstruction/lab';
 import { baselineReuseCompatible, modelReuseCompatible } from '../src/lib/reconstruction/lab-cache';
 import type { SceneUnderstanding } from '../src/lib/reconstruction/pipeline-contract';
-let used: Repositories;
+let used: RepositoryOperations;
 let generated: ProjectDocument;
 const original = new Blob(['oriented'], { type: 'image/png' });
 // Header-only output fixture: GPU encoding is mocked; header validation remains real.
@@ -67,6 +70,9 @@ function asset(id: string): ImageAssetRecord {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  hooks.account = '';
+  hooks.archive.mockImplementation(async () => Response.json({ stored: true }));
+  vi.stubGlobal('fetch', hooks.archive);
   hooks.ctor.mockImplementation(() => {});
   hooks.setSnapshot.mockResolvedValue(undefined);
   hooks.render.mockImplementation((width: number, height: number) => ({ width, height }));
@@ -82,7 +88,7 @@ beforeEach(() => {
       _file: File,
       _room: unknown,
       options: {
-        repositories: Repositories;
+        repositories: RepositoryOperations;
         onStage: (message: string) => void;
         onAnalysis: (size: { width: number; height: number }) => void;
         signal: AbortSignal;
@@ -113,6 +119,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 describe('disposable reconstruction lab orchestration (model/renderer mocked)', () => {
   it('uses the existing pipeline with isolated repositories, reports actual resolution stages, and releases them', async () => {
+    hooks.account = 'analysis-member';
     const stage = vi.fn();
     const result = await runReconstructionLabCase(file(), DEFAULT_ROOM, { onStage: stage });
     expect(result.original).toEqual(original);
@@ -149,10 +156,11 @@ describe('disposable reconstruction lab orchestration (model/renderer mocked)', 
     expect(hooks.dispose).toHaveBeenCalledOnce();
     await expect(used.assets.get('original')).rejects.toThrow('정리된');
     await expect(used.projects.create(generated)).rejects.toThrow('프로젝트 저장');
-    // Only the dedicated diagnostic archive is persistent; project/material repositories stay isolated.
-    expect(vi.mocked(indexedDB.open).mock.calls.map(([name]) => name)).toEqual([
-      'sjn-reconstruction-diagnostics',
-    ]);
+    // Only the account diagnostic API persists this report; project/material stores stay isolated.
+    expect(indexedDB.open).not.toHaveBeenCalled();
+    expect(hooks.archive).toHaveBeenCalledOnce();
+    expect(hooks.archive.mock.calls[0][0]).toBe('/api/reconstruction/diagnostics');
+    expect(hooks.archive.mock.calls[0][1].headers['X-SJN-User-Id']).toBe('analysis-member');
     expect(result.report.runLog?.status).toBe('complete');
     expect(result.report.diagnosticSummary?.runId).toBe(result.report.runId);
     expect(stage).toHaveBeenCalledWith('actual pipeline stage');
@@ -207,7 +215,7 @@ describe('disposable reconstruction lab orchestration (model/renderer mocked)', 
     const previous = hooks.create.getMockImplementation()!;
     hooks.create.mockImplementation(async (...args) => {
       const project = await previous(...args);
-      const repos = args[2].repositories as Repositories;
+      const repos = args[2].repositories as RepositoryOperations;
       const version = await repos.materials.create({
         name: 'test',
         scope: 'personal',

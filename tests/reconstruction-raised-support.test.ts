@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 import { validateSourceFixture } from '../src/lib/reconstruction/source-camera';
 import { reconstructionModelTransform } from '../src/lib/reconstruction/projection';
-import { fixtureReconstructionSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema } from '../src/lib/storage/validation';
 import { resolveManualDraft } from '../src/lib/reconstruction/lab-manual-placement';
 import { buildCandidatePipeline } from '../src/lib/reconstruction/candidate-pipeline';
 import type { RaisedGlassSupport } from '../src/lib/reconstruction/types';

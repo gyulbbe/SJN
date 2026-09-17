@@ -1,10 +1,10 @@
+import { authenticatedContext } from '@/lib/admin/server';
 import { publicImage } from '@/lib/catalog/public';
-import { requireD1Environment, serverError } from '@/lib/storage/server';
-import type { D1Bindings } from '@/lib/d1/types';
+import { serverError } from '@/lib/storage/server';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   try {
-    return await publicImage(requireD1Environment() as unknown as D1Bindings, request);
+    return await publicImage((await authenticatedContext(request)).env, request);
   } catch (error) {
     return serverError(error);
   }

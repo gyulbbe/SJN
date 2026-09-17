@@ -46,7 +46,7 @@ afterAll(async () => {
 });
 
 describe('runtime storage status with real local D1/R2 bindings', () => {
-  it('returns local with no settings and never probes storage or authentication', async () => {
+  it('blocks an unconfigured Node runtime without falling back to browser storage', async () => {
     const prepare = vi.fn(() => {
       throw new Error('must not query');
     });
@@ -55,10 +55,10 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
     });
     runtime.value = { platform: 'node', DB: { prepare }, ASSET_BUCKET: { head } };
     expect(await storageStatus()).toMatchObject({
-      mode: 'local',
-      ready: true,
-      authRequired: false,
-      reason: 'local_environment',
+      mode: 'd1',
+      ready: false,
+      authRequired: true,
+      reason: 'unsupported_runtime',
     });
     expect(prepare).not.toHaveBeenCalled();
     expect(head).not.toHaveBeenCalled();
@@ -139,9 +139,9 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
       await db.prepare('UPDATE d1_auth_meta SET version = 1').run();
     }
   });
-  it('keeps existing Supabase adapter explicit and rejects it on a Workers runtime', async () => {
+  it('rejects the inactive Supabase execution path in both runtimes', async () => {
     runtime.value = { ...ready, STORAGE_MODE: 'supabase' };
-    expect(await storageStatus()).toMatchObject({ mode: 'd1', ready: false, reason: 'unsupported_runtime' });
+    expect(await storageStatus()).toMatchObject({ mode: 'd1', ready: false, reason: 'invalid_configuration' });
     runtime.value = { platform: 'node', APP_ENV: 'production', STORAGE_MODE: 'supabase' };
     expect(await storageStatus()).toMatchObject({
       mode: 'd1',

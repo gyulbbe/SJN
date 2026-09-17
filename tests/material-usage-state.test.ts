@@ -6,7 +6,7 @@ import { captureWorkspace, getActiveDesign, normalizeProjectDocument } from '../
 import { copyDesignDocument, duplicateProjectDocument } from '../src/lib/designs';
 import { designPreviewKey } from '../src/lib/render/design-preview';
 import { projectReferences } from '../src/lib/repositories/references';
-import { projectV3Schema } from '../src/lib/supabase/validation';
+import { projectV3Schema } from '../src/lib/storage/validation';
 import { createQuote } from '../src/lib/quote';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
 import {

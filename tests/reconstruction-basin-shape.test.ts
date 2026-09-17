@@ -3,7 +3,7 @@ import { Box3, Mesh, Vector3 } from 'three';
 import { observeBasinCount, observeBasinShape } from '../src/lib/reconstruction/basin-observations';
 import { createTemplateModel, disposeTemplateModel } from '../src/lib/reconstruction/templates';
 import { reconstructionDefaults, type ReconstructionCandidate } from '../src/lib/reconstruction/types';
-import { fixtureReconstructionSchema, reconstructionReviewSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema, reconstructionReviewSchema } from '../src/lib/storage/validation';
 
 function basin(id: string, left: number, right: number): ReconstructionCandidate {
   return {

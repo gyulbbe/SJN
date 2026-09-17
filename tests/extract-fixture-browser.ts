@@ -11,7 +11,7 @@ await mkdir(directory, { recursive: true });
 const bundle = await build({
   stdin: {
     contents:
-      "export * from './src/lib/extract-fixture'; export {createLocalRepositories} from './src/lib/repositories/local';",
+      "export * from './src/lib/extract-fixture'; export {createLegacyLocalRepositories} from './tests/helpers/legacy-local-repositories';",
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -36,7 +36,7 @@ try {
     const lib = (
       window as unknown as {
         ExtractionTest: typeof import('../src/lib/extract-fixture') &
-          typeof import('../src/lib/repositories/local');
+          typeof import('./helpers/legacy-local-repositories');
       }
     ).ExtractionTest;
     const canvas = (width: number, height: number) => {
@@ -61,7 +61,7 @@ try {
     const decode = await createImageBitmap(extraction.blob);
     const decodedSize = [decode.width, decode.height];
     decode.close();
-    const repositories = lib.createLocalRepositories(`extract-fixture-${crypto.randomUUID()}`);
+    const repositories = lib.createLegacyLocalRepositories(`extract-fixture-${crypto.randomUUID()}`);
     const originalId = crypto.randomUUID();
     const originalBlob = await new Promise<Blob>((resolve) => source.toBlob((blob) => resolve(blob!)));
     await repositories.assets.put({

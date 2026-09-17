@@ -6,7 +6,7 @@ import {
 } from '../src/lib/reconstruction/strict-placement';
 import { estimateCandidateFixture } from '../src/lib/reconstruction';
 import { frontContactToCentre, projectReconstructionFixture } from '../src/lib/reconstruction/projection';
-import { reconstructionReviewSchema } from '../src/lib/supabase/validation';
+import { reconstructionReviewSchema } from '../src/lib/storage/validation';
 import type { ReconstructionCandidate } from '../src/lib/reconstruction/types';
 import { DEFAULT_COLOR, EMPTY_MASK, type FixtureInstance } from '../src/lib/types';
 

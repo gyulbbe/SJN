@@ -6,9 +6,9 @@ import {
   getPreferredProductViewIndex,
   stripLegacyMaterialImages,
 } from '../src/lib/material-images';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { materialReferences } from '../src/lib/repositories/references';
-import { materialInputSchema } from '../src/lib/supabase/validation';
+import { materialInputSchema } from '../src/lib/storage/validation';
 import { makeProductMeshAsset } from '../src/lib/product3d/codec';
 import type { ImageAssetRecord, MaterialInput } from '../src/lib/types';
 
@@ -112,7 +112,7 @@ describe('material persistence without a separate cover/gallery', () => {
   it.each(['basin', 'tile'] as const)(
     'registers %s and round-trips it without adding deprecated keys',
     async (category) => {
-      const repos = createLocalRepositories('images-' + crypto.randomUUID());
+      const repos = createLegacyLocalRepositories('images-' + crypto.randomUUID());
       const photo = image();
       await repos.assets.put(photo);
       const input = {
@@ -134,7 +134,7 @@ describe('material persistence without a separate cover/gallery', () => {
   );
   it('keeps old cover/gallery and mesh/input references after saving a new clean version', async () => {
     const databaseName = 'images-' + crypto.randomUUID();
-    const repos = createLocalRepositories(databaseName);
+    const repos = createLegacyLocalRepositories(databaseName);
     const cover = image(),
       gallery = image(),
       input = image(),
@@ -198,7 +198,7 @@ describe('material persistence without a separate cover/gallery', () => {
     await expect(repos.assets.get(orphan.id)).rejects.toThrow();
   });
   it('accepts old cover-only material data but rejects completely missing photos', async () => {
-    const repos = createLocalRepositories('images-' + crypto.randomUUID());
+    const repos = createLegacyLocalRepositories('images-' + crypto.randomUUID());
     const photo = image();
     await repos.assets.put(photo);
     const old = { ...material(), coverAssetId: photo.id };

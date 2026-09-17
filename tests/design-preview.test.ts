@@ -83,6 +83,18 @@ function harness() {
 }
 
 describe('serial design preview queue', () => {
+  it('keeps administrator previews memory-only without reading or writing persistent cache', async () => {
+    const h = harness();
+    const source = { ...input(), transient: true };
+    const first = await h.service.request('admin', source);
+    const second = await h.service.request('admin', source);
+    expect(first).toEqual(second);
+    expect(h.capture).toHaveBeenCalledTimes(1);
+    expect(h.readCache).not.toHaveBeenCalled();
+    expect(h.writeCache).not.toHaveBeenCalled();
+    expect(await designPreviewKey(source)).not.toBe(await designPreviewKey(input()));
+    h.service.dispose();
+  });
   it('keeps decoded assets across same-flush subscriber handover and disposes a real unmount', async () => {
     vi.useFakeTimers();
     try {

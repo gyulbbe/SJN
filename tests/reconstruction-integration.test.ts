@@ -14,7 +14,7 @@ import {
   fixtureReconstructionSchema,
   reconstructionReviewSchema,
   projectV3Schema,
-} from '../src/lib/supabase/validation';
+} from '../src/lib/storage/validation';
 import { sceneReferences } from '../src/lib/repositories/references';
 import { useEditor } from '../src/lib/editor-store';
 import { normalizeProjectDocument, getActiveDesign } from '../src/lib/comparison';

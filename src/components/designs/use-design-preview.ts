@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useAdminProjectScope } from '@/components/repository-context';
 import type { AssetReader } from '@/lib/render/compositor';
 import { designPreviewMaterialIds } from '@/lib/render/design-preview-context';
 import {
@@ -28,7 +29,9 @@ type State = {
   status: 'idle' | 'loading' | 'ready' | 'error';
   error?: string;
 };
-export function useDesignPreview(input: Input) {
+export function useDesignPreview(source: Input) {
+  const adminScope = useAdminProjectScope();
+  const input = { ...source, transient: !!adminScope || source.transient };
   const channel = useId(),
     currentInput = useRef(input),
     url = useRef<string | undefined>(undefined);
@@ -39,6 +42,7 @@ export function useDesignPreview(input: Input) {
     const ids = input.design ? designPreviewMaterialIds(input.design.scene, input.roomContext) : [];
     return JSON.stringify([
       input.projectId,
+      input.transient,
       input.sharedRevision,
       input.design?.id,
       input.design?.renderRevision ?? input.design?.revision,
@@ -50,6 +54,7 @@ export function useDesignPreview(input: Input) {
     ]);
   }, [
     input.projectId,
+    input.transient,
     input.sharedRevision,
     input.design,
     input.purpose,
@@ -60,7 +65,10 @@ export function useDesignPreview(input: Input) {
   const enabled = input.enabled !== false && !!input.design;
   useEffect(() => {
     if (!enabled) return;
-    const session = acquireDesignPreviewSession(input.projectId, input.assetReader);
+    const session = acquireDesignPreviewSession(
+      adminScope ? adminScope + input.projectId : input.projectId,
+      input.assetReader,
+    );
     let alive = true;
     const timer = setTimeout(
       () => {
@@ -106,7 +114,16 @@ export function useDesignPreview(input: Input) {
       session.service.cancel(channel);
       session.release();
     };
-  }, [enabled, signature, retryVersion, channel, input.projectId, input.assetReader, input.delayMs]);
+  }, [
+    enabled,
+    signature,
+    retryVersion,
+    channel,
+    input.projectId,
+    input.assetReader,
+    input.delayMs,
+    adminScope,
+  ]);
   useEffect(
     () => () => {
       if (url.current) URL.revokeObjectURL(url.current);

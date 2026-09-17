@@ -2,9 +2,9 @@ import 'fake-indexeddb/auto';
 import { describe, expect, it, vi } from 'vitest';
 import { IDBObjectStore } from 'fake-indexeddb';
 import { makeProductMeshAsset } from '../src/lib/product3d/codec';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { materialReferences, StorageConflictError } from '../src/lib/repositories/references';
-import { materialInputSchema, assetMetadataSchema } from '../src/lib/supabase/validation';
+import { materialInputSchema, assetMetadataSchema } from '../src/lib/storage/validation';
 import type { ImageAssetRecord, MaterialInput } from '../src/lib/types';
 import type { Product3dReference } from '../src/lib/product3d/state-types';
 const old = '2000-01-01T00:00:00.000Z';
@@ -50,7 +50,7 @@ function material(photo: string, reference?: Product3dReference): MaterialInput 
   };
 }
 async function setup() {
-  const repos = createLocalRepositories('product3d-' + crypto.randomUUID());
+  const repos = createLegacyLocalRepositories('product3d-' + crypto.randomUUID());
   const input = image();
   const png = image();
   await repos.assets.put(input);

@@ -1,3 +1,6 @@
+import { downloadedArtifact } from './helpers/downloaded-artifact';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+import type { Page as AuthenticatedPage } from '@playwright/test';
 import {
   SHOWER_INSTALLATION_CONTRACT,
   SHOWER_INSTALLATION_PROMPT_REVISION,
@@ -12,7 +15,6 @@ import {
   type CloudFixtureCropReceipt,
 } from '../src/lib/reconstruction/cloud-fixture-crops';
 import { expect, test, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import type { DesignDocument, ProjectDocument } from '../src/lib/types';
 import { getActiveDesign } from '../src/lib/designs';
@@ -37,6 +39,13 @@ import { MOGE_PLANES_VERSION } from '../src/lib/reconstruction/moge-browser/plan
 
 // UI/transport integration ONLY: authored observations, HTTP and Worker boundaries mocked.
 // Never run external AI, download a model, or present these images as reconstruction quality evidence.
+const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
+test.beforeEach(async ({ page }) => {
+  authenticatedTests.set(page, await authenticatedApp(page));
+});
+test.afterEach(async ({ page }) => {
+  await authenticatedTests.get(page)?.dispose();
+});
 test.use({ channel: 'chrome', serviceWorkers: 'block', actionTimeout: 15000 });
 const cloudPath = '**/api/reconstruction/cloud';
 const dialog = (page: Page) => page.getByRole('dialog', { name: '사진으로 비교 공간 만들기', exact: true });
@@ -477,23 +486,7 @@ async function fakeWorkers(page: Page, pending = false) {
   );
 }
 async function savedProject(page: Page) {
-  const id = page.url().split('/').at(-1)!;
-  return page.evaluate(async (id) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open('gongganmiri-v1');
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    try {
-      return await new Promise<Record<string, unknown>>((resolve, reject) => {
-        const r = db.transaction('projects').objectStore('projects').get(id);
-        r.onsuccess = () => resolve(r.result);
-        r.onerror = () => reject(r.error);
-      });
-    } finally {
-      db.close();
-    }
-  }, id);
+  return authenticatedTests.get(page)!.project();
 }
 
 test('cloud binding selects new profile without preloading models and exposes actual photo transfer', async ({
@@ -541,8 +534,7 @@ test('Gemma-only performance result JSON preserves usage and downloads without l
   await page.getByRole('button', { name: '결과 JSON 다운로드' }).click();
   const download = await nextDownload;
   const target = info.outputPath('mock-gemma-report.json');
-  await download.saveAs(target);
-  const report = JSON.parse(await readFile(target, 'utf8'));
+  const report = JSON.parse((await downloadedArtifact(download, target)).toString('utf8'));
   expect(report).toMatchObject({
     kind: 'gemma',
     modelId: CLOUD_GEMMA_MODEL,
@@ -644,7 +636,7 @@ test('normal create and Before reanalysis persist the cloud profile and keep Aft
   await dialog(page).getByRole('button', { name: '자동 초안 만들기', exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 45000 });
   await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
   const saved = await savedProject(page);
   expect(saved).toMatchObject({
     shared: {
@@ -665,7 +657,7 @@ test('normal create and Before reanalysis persist the cloud profile and keep Aft
   await expect(page.getByRole('dialog', { name: 'Before 사진 다시 분석', exact: true })).toHaveCount(0, {
     timeout: 45000,
   });
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
   expect(((await savedProject(page)).designs as DesignDocument[]).map(comparableDesign)).toEqual(
     (saved.designs as DesignDocument[]).map(comparableDesign),
   );
@@ -673,6 +665,7 @@ test('normal create and Before reanalysis persist the cloud profile and keep Aft
   expect(state.forbidden).toEqual([]);
   await page.reload();
   await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   expect(await savedProject(page)).toMatchObject({
     shared: { comparison: { review: { analysisProfile: 'cloud-browser-v1' } } },
   });
@@ -701,11 +694,11 @@ test('mock cloud project supports user Before history, edited After preservation
       external.push(url.href);
       return route.abort();
     }
-    return route.continue();
+    return route.fallback();
   });
   const project = async () => (await savedProject(page)) as unknown as ProjectDocument;
   const save = async () => {
-    await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+    await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
   };
   const changed = async (revision: number) => {
     await expect.poll(async () => (await project()).editRevision).toBeGreaterThan(revision);
@@ -725,12 +718,9 @@ test('mock cloud project supports user Before history, edited After preservation
     const download = await pending;
     expect(await download.failure()).toBeNull();
     const path = info.outputPath(name + '.png');
-    await download.saveAs(path);
+    const downloadedBytes = await downloadedArtifact(download, path);
     await expect(exporting).toHaveCount(0);
-    return sharp(await readFile(path))
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+    return sharp(downloadedBytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   };
 
   await page.goto('/');
@@ -903,8 +893,7 @@ test('full performance path shows original and Before without saving a project, 
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: '결과 JSON 다운로드' }).click();
   const target = info.outputPath('mock-full-flow-report.json');
-  await (await downloaded).saveAs(target);
-  expect(JSON.parse(await readFile(target, 'utf8'))).toMatchObject({
+  expect(JSON.parse((await downloadedArtifact(await downloaded, target)).toString('utf8'))).toMatchObject({
     kind: 'full',
     profile: 'cloud-browser-v1',
     projectSaved: false,
@@ -1007,8 +996,7 @@ for (const corruptShowerReceipt of [false, true]) {
       const pending = page.waitForEvent('download');
       await page.getByRole('button', { name: '결과 JSON 다운로드' }).click();
       const path = info.outputPath('mock-shower-installation-report.json');
-      await (await pending).saveAs(path);
-      const result = JSON.parse(await readFile(path, 'utf8'));
+      const result = JSON.parse((await downloadedArtifact(await pending, path)).toString('utf8'));
       expect(result.quality.inventory.understanding.candidates).toHaveLength(1);
       expect(result.quality.showerDetails.observations[0].visibleParts.handheldHead).toBe('present');
       expect(result.quality.showerInstallation.decisions[0]).toMatchObject({

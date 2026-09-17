@@ -42,4 +42,6 @@ export const allD1Migrations = [
   '0002_storage.sql',
   '0003_catalog.sql',
   '0004_catalog_seed.sql',
+  '0005_admin_management.sql',
+  '0006_reconstruction_diagnostics.sql',
 ];

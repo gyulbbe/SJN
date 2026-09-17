@@ -24,6 +24,8 @@ export type DesignPreviewInput = {
   roomContext?: DesignPreviewRoomContext;
   purpose?: 'thumbnail' | 'comparison';
   edge?: number;
+  /** Do not read or write durable previews while editing another member's project. */
+  transient?: boolean;
 };
 export type DesignPreviewResult = { key: string; blob: Blob; width: number; height: number };
 export class DesignPreviewCancelled extends Error {
@@ -85,6 +87,7 @@ export function designPreviewSize(input: DesignPreviewInput) {
 export async function designPreviewKey(input: DesignPreviewInput): Promise<string> {
   const source = JSON.stringify([
     DESIGN_RENDER_REVISION,
+    ...(input.transient ? ['admin-memory-only'] : []),
     input.projectId,
     input.design.id,
     input.design.renderRevision ?? input.design.revision,
@@ -232,7 +235,7 @@ export class DesignPreviewService {
         this.remember(remembered);
         return remembered;
       }
-      const cached = await this.dependencies.readCache(key);
+      const cached = input.transient ? undefined : await this.dependencies.readCache(key);
       current();
       if (cached) {
         const result = { key, blob: cached.blob, width: cached.width, height: cached.height };
@@ -262,7 +265,7 @@ export class DesignPreviewService {
         rendererRevision: DESIGN_RENDER_REVISION,
         updatedAt: Date.now(),
       };
-      await this.dependencies.writeCache(record);
+      if (!input.transient) await this.dependencies.writeCache(record);
       current();
       this.remember(result);
       return result;

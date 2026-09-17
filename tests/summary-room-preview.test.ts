@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_COLOR, type ProjectDocument } from '../src/lib/types';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
 import { defaultRoomView } from '../src/lib/room-viewer/view-state';
-import { createLocalRepositories } from '../src/lib/repositories/local';
-import type { Repositories } from '../src/lib/repositories/contracts';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
+import type { RepositoryOperations } from '../src/lib/repositories/contracts';
 import {
   designPreviewRoomContextKey,
   projectDesignPreviewRoomContext,
@@ -102,8 +102,7 @@ function repository(p: ProjectDocument) {
     projects: { load: vi.fn(async () => structuredClone(p)), save: vi.fn(), create: vi.fn() },
     materials: { getVersion: vi.fn(async (id: string) => ({ id })) },
     assets: { get: vi.fn(), put: vi.fn() },
-    mode: 'local',
-  } as unknown as Repositories;
+  } as unknown as RepositoryOperations;
 }
 afterEach(() => {
   boundary.instances.length = 0;
@@ -112,7 +111,7 @@ afterEach(() => {
 describe('summary room image preparation — mock renderer, real context/cache boundary', () => {
   it('local listing invalidates its context key for common view/other design while preserving stored documents', async () => {
     const dbName = 'room-summary-' + crypto.randomUUID(),
-      repo = createLocalRepositories(dbName);
+      repo = createLegacyLocalRepositories(dbName);
     await repo.projects.list();
     const db = await openDB(dbName),
       p = project();

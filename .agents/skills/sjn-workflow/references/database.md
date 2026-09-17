@@ -1,62 +1,67 @@
 # DB·저장 구조
 
-확인 기준: **2026-09-17 저장소 소스와 실제 원격 D1 확인**. Wrangler 원격 목록에서 D1 `sjn`의 이름·ID를 대조했고 `0001`~`0004` 적용 이력·스키마·기본 데이터·무결성을 확인했다. 앱의 운영 Worker 연결·Google OAuth·R2는 미검증이며 관리자 지정·배포는 수행하지 않았다. 이 문서는 DB 작업 시 지켜야 할 계약과 원본 위치를 요약한다. 정확한 DDL은 [migrations/d1](../../../../migrations/d1), 현재 원격 확인값과 상세 설계는 [DB 설계 문서](../../../../docs/database-design.md)를 확인한다.
+확인 기준: **2026-09-17 현재 소스와 별도로 확인한 원격 이력**. 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 기존 `0001~0004`를 보존하며 `0005_admin_management.sql`과 `0006_reconstruction_diagnostics.sql`을 추가 적용했다. `.wrangler/development`의 빈 로컬 개발 DB에도 `0001~0006`을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했으며 관리자 지정·배포·R2 버킷 생성·실제 Google 로그인·AI 호출은 수행하지 않았다. 운영 R2 연결도 미검증이다. 정확한 DDL은 [migrations/d1](../../../../migrations/d1), ERD·인덱스·전체 SQL·과거 확인값은 [DB 설계](../../../../docs/database-design.md)를 따른다.
 
-## 저장 경계와 현재 상태
+## 저장 경계
 
 | 저장소 | 역할 |
 | --- | --- |
-| Cloudflare D1 `DB` | 회원·세션·관리자 역할, 프로젝트 요약·revision, 자재 버전 JSON, 분류·속성, 참조·재시도·정리 기록 |
+| D1 `DB` | 회원·세션·역할·상태/revision, 관리자 감사, 프로젝트 목록/revision, 자재 버전·분류·참조·재시도·정리 |
 | 비공개 R2 `ASSET_BUCKET` | 프로젝트 JSON 스냅샷, 이미지·원본·가공 자료·제품 메시 |
-| 브라우저 IndexedDB | 로컬 프로젝트·자재·사진. 로그인만으로 기존 자료를 서버에 자동 업로드하지 않음 |
-| Workers `ASSETS` | 앱 정적 파일. 사용자 자료용 R2와 구분 |
+| IndexedDB | 본인 미저장 복구본, 자산·시안·AI 재사용 캐시. 예전 브라우저 원본은 읽기·쓰기·삭제·자동 이전하지 않음 |
+| 진단 D1/R2 | 진단 메타데이터·계정별 JSON 아카이브(20건/25MiB) |
+| Workers `ASSETS` | 앱 정적 파일; 사용자 자료 R2와 별개 |
 
-현재 [wrangler.jsonc](../../../../wrangler.jsonc)는 `APP_ENV=local`, `STORAGE_MODE=auto`를 유지하며 D1 `sjn`의 `DB` 바인딩과 `migrations_dir: "migrations/d1"`을 포함한다. 원격 migration `0001`~`0004`는 적용됐지만 R2 `ASSET_BUCKET`은 미선언이며 앱 배포·관리자 지정은 수행하지 않았다. 운영 설정 참고본 [wrangler.d1.example.jsonc](../../../../wrangler.d1.example.jsonc)의 `sjn-data`는 예시 이름이다. DB 스키마 준비를 앱의 운영 연결 완료로 표현하지 않는다. [DB 설계 문서의 2026-09-16 검증 기록](../../../../docs/database-design.md)은 당시 격리 Miniflare·Google 테스트 provider 결과이며 현재 원격 DB 적용 상태와 구분한다.
+기본 개발은 [wrangler.dev.jsonc](../../../../wrangler.dev.jsonc)의 로컬 D1/R2를 `.wrangler/development`에 저장하며 Google 로그인이 필요하다. 운영 빌드 원본 [wrangler.jsonc](../../../../wrangler.jsonc)은 기존 `sjn` 바인딩을 보존한다. 여기의 R2 미선언·인증 준비 미완료를 DB 적용 완료와 혼동하지 않는다. 기존 IndexedDB 자료는 보존하지만 현재 앱에서 익명 편집으로 선택하는 경로는 없다.
 
-관련 변경 시 저장소별 역할과 기본 모드를 갱신한다. 운영 상태는 실제 확인 근거와 확인일이 있을 때만 바꾼다.
+## 핵심 스키마
 
-## 핵심 테이블과 관계
-
-| 영역 | 원본·핵심 관계 |
+| 원본 | 계약 |
 | --- | --- |
-| 인증 | [0001_auth.sql](../../../../migrations/d1/0001_auth.sql): `user`와 `session`, `account`, `admin_roles` 연결. `verification`, `rateLimit`, `d1_auth_meta` 포함 |
-| 프로젝트 | [0002_storage.sql](../../../../migrations/d1/0002_storage.sql): `d1_projects`에 소유자·요약·`storage_revision`·R2 `object_key` 저장 |
-| 자재 | `d1_materials`의 `current_version_id`가 현재 `d1_material_versions`를 가리킴. 버전별 payload·연결 자산을 보존 |
-| 자산·참조 | `d1_assets`는 R2 객체 메타데이터와 원본 `source_asset_id`를 보유. `d1_project_assets`, `d1_project_versions`, `d1_material_assets`로 사용 관계 저장 |
-| 카탈로그 | [0003_catalog.sql](../../../../migrations/d1/0003_catalog.sql): `d1_catalog_options`, `d1_material_subcategories`, `d1_material_version_options`; 자재에 `purpose` 추가 |
-| 저장 안정성 | `d1_mutations`는 재시도 결과, `d1_checks`는 batch 조건 검사, `d1_cleanup_jobs`와 `d1_maintenance`는 객체 정리·실행 간격 관리 |
+| [0001](../../../../migrations/d1/0001_auth.sql) | Better Auth `user/session/account/verification/rateLimit`, 기존 `admin_roles`, auth meta |
+| [0002](../../../../migrations/d1/0002_storage.sql) | 프로젝트 R2 문서·revision, 자재 불변 버전, 자산·참조, 재시도·조건 검사·정리 |
+| [0003](../../../../migrations/d1/0003_catalog.sql) | 하위 분류·색상/브랜드/재질/마감·버전별 선택 ID, catalog/project 용도 분리 |
+| [0004](../../../../migrations/d1/0004_catalog_seed.sql) | 속성 33개·하위 분류 21개. 고정 ID/`ON CONFLICT DO NOTHING`, 정확히 일치하는 과거 문자열만 연결 |
+| [0005](../../../../migrations/d1/0005_admin_management.sql) | `d1_user_management`, `d1_admin_audit`, `d1_admin_checks`, 관리자 프로젝트 자산/버전 범위, admin meta·목록/감사 인덱스 |
+| [0006](../../../../migrations/d1/0006_reconstruction_diagnostics.sql) | `d1_reconstruction_diagnostics`, `d1_diagnostic_cleanup`, `d1_diagnostic_checks`; 계정별 목록/정리 인덱스 |
 
-`owner_id`와 `current_version_id`는 기존 스키마의 **논리 관계**이며 FK가 아니다. 서버의 소유권·참조 검사를 유지한다. 카탈로그 연결은 FK·유일 제약·하위 분류와 렌더링 카테고리 일치 트리거로도 제한한다. ERD와 컬럼별 설명·전체 DDL은 [DB 설계 문서](../../../../docs/database-design.md)에 있으므로 여기에는 복사하지 않는다.
+`0001~0004`는 수정하지 않는다. `0005`는 기존 회원을 active/revision 0으로 backfill하고 기존 역할·세션·자료를 보존한다. 신규 회원 상태 생성, 정지 시 세션 삭제, 정지 회원 session INSERT/UPDATE 거부는 SQL trigger로도 보장한다. `owner_id`·`current_version_id`는 기존 논리 관계이며 새 FK를 만들려고 기존 테이블을 재생성하지 않는다. 카탈로그·새 프로젝트 편집 범위의 참조는 FK를 사용한다.
 
-[0004_catalog_seed.sql](../../../../migrations/d1/0004_catalog_seed.sql)은 고정 ID와 `ON CONFLICT DO NOTHING`으로 기본 데이터를 추가한다. 과거 문자열은 정확히 일치하는 값만 연결하며 기존 payload나 관리자가 바꾼 기준 데이터를 덮어쓰지 않는다.
+## 로그인·회원 관리
 
-관련 변경 시 테이블 역할·관계·스키마 원본 링크를 갱신한다. 컬럼·제약·ERD의 상세 변경은 DB 설계 문서에 반영한다.
+[인증](../../../../src/lib/auth/d1.ts)은 Google + D1 세션이다. 검증된 세션 ID와 최신 회원 상태·`admin_roles`를 확인한다. 비밀번호 가입·계정 자동 연결·첫 가입자 자동 승격은 없다. 개발·운영 모두 로그인 필수다. 세션 만료·정지·강등 후 현재 접근을 차단하며 익명 로컬 저장으로 우회하지 않는다. 운영 저장 계약은 D1 전용이다. 로컬 저장 어댑터·Supabase 실행 코드와 SDK는 제거했으며 `/api/cloud/**`는 410으로 종료를 안내한다. 과거 데이터 형식 검증용 IndexedDB 구현은 테스트 전용이며 앱 번들에서 참조하지 않는다.
 
-## 권한·공개 범위·참조 보존
+[회원 API](../../../../src/lib/admin/users.ts)는 이름/email/id 부분 검색·role/status 필터와 25개 cursor 페이지, `setRole/setStatus`를 제공한다. 변경에는 `expectedRevision`과 `X-Idempotency-Key`가 필수다. [access](../../../../src/lib/admin/access.ts)는 현재 활성 관리자·대상 revision·자기 정지·마지막 활성 관리자 보호를 변경·감사·재시도 결과와 같은 batch에서 확인한다. 정상 값 변경만 revision을 증가시키며 중복 요청은 감사/변경을 반복하지 않는다.
 
-- [인증 코드](../../../../src/lib/auth/d1.ts)는 Google 로그인과 서버 세션을 사용한다. 사용자 ID는 검증된 세션에서 얻고 관리자 여부는 `admin_roles`에서 조회한다. 비밀번호 가입·임의 계정 연결·자동 관리자 승격 경로는 없다. 관리자 지정 SQL은 DB 설계 문서를 따른다.
-- [프로젝트 처리](../../../../src/lib/d1/projects.ts)는 관리자도 `id + owner_id`로 본인 자료만 조회·변경한다. 관리자의 추가 권한은 공용 자재·기준 데이터 관리다. [자재 처리](../../../../src/lib/d1/materials.ts)의 일반 회원 프로젝트용 생성 경로는 `scope=personal`, `purpose=project`로 제한한다.
-- [공개 카탈로그](../../../../src/lib/catalog/public.ts)는 현재 버전 중 `scope=shared`, `active=1`, `purpose=catalog`이며 reconstruction payload가 없는 항목만 노출한다. 공개 이미지는 현재 공개 버전에서 직접 표시하는 이미지에 한정하고 `source_asset_id`를 따라 원본을 공개하지 않는다. R2 내부 키·개인 프로젝트·전체 원본 payload를 공개 DTO에 추가하지 않는다.
-- [로그인 사용자 자산 접근](../../../../src/lib/d1/database.ts)의 `visibleAssets`는 본인 자산과 공유 자재의 자산에서 원본 참조를 재귀 조회한다. 이 규칙을 비로그인 공개 이미지 접근과 혼동하지 않는다.
-- 자재 수정은 새 버전을 만들고 현재 버전 포인터를 바꾼다. 프로젝트가 참조하는 과거 버전과 자산을 보존한다. 비활성화가 기존 프로젝트 참조 삭제나 자재 버전 일괄 삭제로 이어지지 않게 한다.
+최초 관리자만 확인한 Google 회원에 대해 [설계 문서의 bootstrap SQL](../../../../docs/database-design.md)을 사용한다. 이후 일상적인 승격·강등·정지·해제는 `/admin/users`에서 수행한다. 직접 SQL은 앱의 마지막 관리자·revision·감사 정책을 우회할 수 있다.
 
-관련 변경 시 세션·역할 검증, 관리자 범위, 공개 조건, 프로젝트 전용 생성 제한, 과거 참조 보존 규칙을 코드와 함께 갱신한다.
+## 프로젝트·자재 접근과 감사
 
-## 저장·정리 계약
+- 일반 [프로젝트 API](../../../../src/lib/d1/projects.ts)는 관리자도 본인 자료만 다룬다. 일반 회원에게 다른 회원의 자료 접근을 열지 않는다.
+- [관리자 프로젝트 전용 API](../../../../src/lib/admin/projects.ts)는 타인 프로젝트 검색·조회·편집을 허용한다. 소유자 ID와 실제 관리자 행위자를 분리하고 기존 `storage_revision` 충돌 검사를 유지한다. 다른 회원 프로젝트 삭제·복제·소유권 이전은 제공하지 않는다.
+- 관리자 자산/버전은 해당 문서의 참조, 그 관리자·프로젝트에서 새로 만든 자료, 허용된 공용 카탈로그로 제한한다. 관계없는 회원 개인 자료는 제외한다. 별도 추적 테이블은 접근 범위이며 미사용 자료를 영구 보존하는 참조가 아니다.
+- 관리자 목록·읽기·변경·저장·관련 자료 접근은 `d1_admin_audit`에 기록한다. 역할/상태/revision 등의 작은 요약만 남기고 토큰·프로젝트 원문·사진·R2 키는 넣지 않는다. 감사 실패 시 보호 작업도 실패한다. 계정/프로젝트 삭제로 감사가 cascade되지 않지만 운영 DB 권한까지 막는 변조 방지 기능은 아니다.
+- [공용 카탈로그](../../../../src/lib/catalog/public.ts)의 `public`은 자료 범위 명칭이다. HTTP 목록/이미지 API는 활성 로그인 세션이 필요하며 shared/active/catalog 현재 버전만 표시한다. DTO에 회원 정보·R2 키·전체 payload를 넣지 않는다. 원본·메시·source 참조를 따라 공개하지 않는다.
+- 일반 회원 모형은 `personal/project`로 제한된 생성 API를 쓴다. 자재 수정은 새 버전이고 기존 프로젝트의 과거 버전·연결 이미지·이름 스냅샷을 보존한다.
 
-[프로젝트 저장](../../../../src/lib/d1/projects.ts)은 `storage_revision`으로 동시 수정 충돌을 검사한다. R2 업로드 전 참조를 확인하고, 커밋하는 D1 batch 안에서 소유권·revision·자산/버전 참조를 다시 검사한다. [database.ts](../../../../src/lib/d1/database.ts)의 `d1_checks` CHECK 실패는 batch를 중단하며, `d1_mutations`는 사용자·재시도 키·리소스·요청 해시가 맞을 때만 기존 결과를 재사용한다.
+## 저장·정리
 
-R2와 D1은 하나의 트랜잭션이 아니다. `stageObject`는 업로드 전에 정리 작업을 기록하고, D1 커밋 성공 시 해당 기록을 제거한다. [cleanup.ts](../../../../src/lib/d1/cleanup.ts)는 소유자별로 제한된 작업을 수행하며 프로젝트·자재 버전·파생 자산이 참조하는 자산을 보존한다. 현재 유예 기간은 [http.ts](../../../../src/lib/d1/http.ts)의 24시간이며 정리 작업은 lease·재시도를 사용한다. 저장 후 유지관리 실패로 이미 성공한 저장을 실패 처리하지 않는다.
+[D1 database helper](../../../../src/lib/d1/database.ts)는 소유권·revision·자산/버전 참조를 커밋 batch에서 재확인한다. 관리자 편집 batch에는 현재 활성 관리자 조건도 추가한다. 재시도 기록은 행위자·요청 키·리소스·해시가 맞아야 재사용하며 권한 상실 후에는 반환하지 않는다.
 
-관련 변경 시 충돌·재시도 조건, 객체 업로드와 커밋 순서, 참조 보호·정리 유예·실패 처리를 갱신한다.
+R2와 D1은 하나의 트랜잭션이 아니다. `stageObject`가 업로드 전에 정리 작업을 기록하고 D1 커밋이 확정되면 제거한다. [cleanup](../../../../src/lib/d1/cleanup.ts)은 프로젝트·불변 버전·파생 자산의 원본 참조를 보존한다. 미사용 객체는 24시간 유예, lease·재시도를 사용한다. 저장 후 유지관리 실패로 확정된 저장을 실패로 바꾸지 않는다.
 
-## 마이그레이션과 검증
+## 적용·검증
 
-1. 실행용 SQL은 `migrations/d1`에 새 번호로 추가한다. 이미 적용된 migration을 고치거나 운영 테이블을 삭제·재생성해서 맞추지 않는다. `0003` 전체는 이력 관리 없이 재실행할 SQL이 아니다.
-2. D1 바인딩과 `migrations_dir`가 있는 대상 설정을 확인한다. 현재 원격 `sjn`에는 `0001`~`0004`가 적용됐다. 이후에는 대상 DB와 미적용 목록을 확인하며, 로컬 DB의 적용 상태를 원격 결과로 대신하지 않는다. 로컬 검증은 `--local`과 별도 `--persist-to` 경로로 기존 개발 DB를 유지하며 수행한다.
-3. 빈 DB 전체 적용과 기존 스키마 업그레이드를 구분해 확인한다. `PRAGMA foreign_key_check`, 기존 개인 자료·불변 버전·이름 스냅샷 보존, 공개 범위와 타 사용자 접근 차단을 확인한다.
-4. 관련 코드 변경은 `npx vitest run tests/d1-catalog.test.ts tests/d1-storage.test.ts tests/d1-auth.test.ts`와 변경 범위에 맞는 타입·브라우저 검증으로 확인한다. [준비 상태 검사](../../../../src/lib/d1/database.ts)와 [인증 스키마 검사](../../../../src/lib/auth/d1.ts)는 읽기 전용이며 요청 중 테이블을 자동 생성하지 않는다.
+`npm run db:dev:migrate`는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`의 로컬 DB에만 적용한다. 원격 `sjn`과 로컬 개발 DB는 2026-09-17 승인 후 0001~0006 적용을 완료했다. 이후 원격 변경은 승인된 대상과 미적용 목록을 다시 확인한다. migration 작성이나 문서 변경을 운영 적용 허가로 해석하지 않는다.
 
-설정·로컬 및 원격 적용 명령·Google 연결·관리자 지정의 상세 절차는 [DB 설계 문서](../../../../docs/database-design.md)와 [Cloudflare 저장소 설정](../../../../docs/cloudflare-storage-setup.md)을 따른다. 코드·문서 수정, 로컬 검증, 운영 migration·권한 부여·배포는 별도 행위이며 문서 갱신 자체를 운영 작업 권한으로 해석하지 않는다. 비밀값은 이 문서에 기록하지 않는다.
+빈 DB 0001~0006, 기존 DB upgrade, seed 중복 방지, FK·불변 참조·관리자 감사·정지·동시 변경·재시도를 격리 Miniflare로 검사한다. 주된 테스트는 `tests/d1-auth.test.ts`, `d1-admin-users.test.ts`, `admin-projects.test.ts`, `d1-storage.test.ts`, `d1-catalog.test.ts`다. 브라우저 fixture와 로컬 Google provider를 실제 Google·운영 R2 검증으로 보고하지 않는다. 준비 확인은 읽기 전용이며 앱이 테이블을 자동 생성하지 않는다.
 
-관련 변경 시 migration 순서·검증 명령·준비 상태 조건과 상세 절차 링크를 갱신한다. 검증 결과는 실행 범위와 한계를 함께 기록하며 운영 성공을 추정하지 않는다.
+관련 스키마·권한·참조·실행 경계가 바뀌면 이 요약과 [상세 설계](../../../../docs/database-design.md), [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 함께 갱신한다.
+
+## 브라우저 저장과 진단 아카이브
+
+프로젝트·자재·기준값의 정식 저장은 D1/R2다. 기준값 선택은 D1 API만 사용하며 과거 localStorage 분류를 읽거나 저장하지 않는다. 본인 프로젝트의 IndexedDB 복구본은 500ms 지연·서버 저장 전에 작성하고 확인된 동일 내용은 정리한다. 충돌 보관본은 삭제하지 않는다.
+
+자산 캐시는 매번 서버가 계정 권한을 승인한 뒤 동일 SHA-256 Blob만 재사용한다. 저장 후 7일 만료, 모든 계정 합산 100개/200MiB, 개별 25MiB 제한을 적용한다. 서버 권한 오류나 연결 실패에 캐시로 우회하지 않으며 관리자 타인 프로젝트 자산에는 캐시를 사용하지 않는다. 시안 미리보기와 AI 단계 캐시는 반복 렌더링·추론 방지를 위해 유지하고 모델 파일은 별도 CacheStorage를 쓴다.
+
+진단 로그는 `0006_reconstruction_diagnostics.sql`의 D1 메타데이터·비공개 R2 JSON으로 계정별 20건/25MiB를 보관한다. 분석 시작 계정과 현재 계정이 다르면 업로드를 막는다. 관리자 타인 프로젝트 분석은 서버 아카이브에도 저장하지 않고 현재 실행 메모리에서만 내려받는다. 기존 IndexedDB 진단은 열거나 자동 전송·삭제하지 않는다. 원격 sjn과 로컬 개발 DB의 0001~0006은 2026-09-17에 적용 완료했다. 새로운 개발 환경이나 이후 마이그레이션은 `npm run db:dev:migrate`로 로컬 미적용 번호만 순차 적용한다.

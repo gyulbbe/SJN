@@ -45,7 +45,16 @@ export default function CatalogSelect({
     setIndex(-1);
   }
   return (
-    <div className={styles.select} ref={root}>
+    <div
+      className={styles.select}
+      ref={root}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setOpen(false);
+          setIndex(-1);
+        }
+      }}
+    >
       <label htmlFor={id}>{label}</label>
       <div className={styles.tags}>
         {value.map((v) => (
@@ -65,6 +74,7 @@ export default function CatalogSelect({
         className="input"
         role="combobox"
         aria-autocomplete="list"
+        autoComplete="off"
         aria-expanded={open}
         aria-controls={`${id}-options`}
         aria-activedescendant={open && choices[index] ? `${id}-${index}` : undefined}
@@ -86,11 +96,16 @@ export default function CatalogSelect({
           if (e.key === 'Escape') {
             e.preventDefault();
             setOpen(false);
+            setIndex(-1);
           }
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
             setOpen(true);
-            setIndex((i) => Math.max(0, Math.min(choices.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1))));
+            setIndex((current) => {
+              if (!choices.length) return -1;
+              if (!open || current < 0) return e.key === 'ArrowDown' ? 0 : choices.length - 1;
+              return Math.max(0, Math.min(choices.length - 1, current + (e.key === 'ArrowDown' ? 1 : -1)));
+            });
           }
           if (e.key === 'Enter') {
             e.preventDefault();
@@ -103,6 +118,7 @@ export default function CatalogSelect({
           id={`${id}-options`}
           className={styles.options}
           role="listbox"
+          tabIndex={-1}
           aria-label={`${label} 선택 목록`}
           aria-multiselectable={multiple || undefined}
         >

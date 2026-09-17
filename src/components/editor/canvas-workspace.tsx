@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Minus, Plus, Scan, MousePointer2, Square, Layers, SlidersHorizontal, Hand } from 'lucide-react';
 import { PhotoCompositor } from '@/lib/render/compositor';
-import { getRepositories } from '@/lib/repositories';
+import { useRepositories } from '@/components/repository-context';
 import { useEditor } from '@/lib/editor-store';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import type { MaterialVersion, Point, Scene } from '@/lib/types';
@@ -21,6 +21,7 @@ export default function CanvasWorkspace({
   showCatalog,
   showInspector,
 }: Props) {
+  const repositories = useRepositories();
   const st = useEditor(),
     { writable } = useAccess();
   const scene = st.draft || (st.project ? getEditingScene(st.project, st.editing) : undefined);
@@ -97,7 +98,7 @@ export default function CanvasWorkspace({
             if (!c.scene) break;
             await r.setSnapshot(
               { scene: c.scene, beforeScene: c.beforeScene, materials: c.materials },
-              (id) => getRepositories().assets.get(id),
+              (id) => repositories.assets.get(id),
             );
             if (life.disposed) return;
             if (processed === life.version) {
@@ -131,7 +132,7 @@ export default function CanvasWorkspace({
       r.dispose();
       if (renderer.current === r) renderer.current = null;
     };
-  }, [onRenderer, onError]);
+  }, [onRenderer, onError, repositories]);
   useEffect(() => {
     schedule.current();
   }, [

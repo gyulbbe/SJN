@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import AdminLinks from '@/components/admin/admin-links';
 import { useEffect, useState } from 'react';
 import { useAccess } from '../app-provider';
 import { loadCatalog, saveCatalog } from '@/lib/catalog/client';
@@ -16,14 +17,14 @@ const empty = () => ({
   colorHex: '',
 });
 export default function CatalogAdmin() {
-  const { mode, userId } = useAccess(),
+  const { userId } = useAccess(),
     [data, setData] = useState<CatalogData>({ options: [], subcategories: [] }),
     [form, setForm] = useState(empty),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     let dead = false;
-    loadCatalog(mode === 'local', userId)
+    loadCatalog(userId)
       .then((value) => {
         if (!dead) setData(value);
       })
@@ -33,18 +34,17 @@ export default function CatalogAdmin() {
     return () => {
       dead = true;
     };
-  }, [mode, userId]);
+  }, [userId]);
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     setBusy(true);
     try {
       await saveCatalog(
-        mode === 'local',
         { ...form, colorHex: form.kind === 'color' && form.colorHex ? form.colorHex : null },
         userId,
       );
-      setData(await loadCatalog(mode === 'local', userId));
+      setData(await loadCatalog(userId));
       setForm({ ...empty(), kind: form.kind });
     } catch (e) {
       setError(e instanceof Error ? e.message : '저장하지 못했어요.');
@@ -61,13 +61,13 @@ export default function CatalogAdmin() {
         <Link href="/materials">공개 자재</Link>
         <Link href="/admin/materials">자재 관리</Link>
         <strong>분류 관리</strong>
+        <AdminLinks />
       </nav>
       <h1>자재 분류 관리</h1>
       <p className={styles.muted}>
         자재 등록에서 선택할 항목을 관리해요. 사용하지 않는 항목은 비활성화하면 이전 프로젝트에는 그대로
         남아요.
       </p>
-      {mode === 'local' && <p>로컬 개발용 목록 · 이 브라우저에만 저장돼요.</p>}
       <form className={styles.form} onSubmit={save}>
         <label className="field">
           종류

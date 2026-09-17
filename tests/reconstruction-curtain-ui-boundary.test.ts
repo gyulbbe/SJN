@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isValidElement, type ReactNode } from 'react';
 import Properties from '../src/components/reconstruction/reconstruction-properties';
 import Review from '../src/components/reconstruction/reconstruction-review';
-import { reconstructionReviewSchema } from '../src/lib/supabase/validation';
+import { reconstructionReviewSchema } from '../src/lib/storage/validation';
 import { reconstructionDefaults, type ReconstructionKind } from '../src/lib/reconstruction/types';
 import { inspectStrictPlacement } from '../src/lib/reconstruction/strict-placement';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';

@@ -27,9 +27,16 @@ async function responseJson<T>(response: Response): Promise<T> {
   const value = await response.json().catch(() => ({ error: '서버 응답을 읽지 못했어요.' }));
   if (!response.ok) {
     if (response.status === 409) throw new StorageConflictError();
-    if (response.status === 401 && typeof window !== 'undefined')
+    if (response.status === 403 && typeof window !== 'undefined')
+      window.dispatchEvent(new CustomEvent('sjn-admin-role-changed'));
+    if ((response.status === 401 || value.code === 'account_suspended') && typeof window !== 'undefined')
       window.dispatchEvent(
-        new CustomEvent('sjn-auth-expired', { detail: { accountChanged: value.code === 'ACCOUNT_CHANGED' } }),
+        new CustomEvent('sjn-auth-expired', {
+          detail: {
+            accountChanged: value.code === 'ACCOUNT_CHANGED',
+            suspended: value.code === 'account_suspended',
+          },
+        }),
       );
     throw new CloudRequestError(response.status, value.error ?? '서버 저장 요청에 실패했어요.');
   }
@@ -40,10 +47,10 @@ async function operationKey(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export function createCloudRepositories(mode: 'd1' | 'supabase' = 'supabase', userId = ''): Repositories {
-  const base = mode === 'd1' ? '/api/d1' : '/api/cloud';
+export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Repositories {
+  if (mode !== 'd1') throw new Error('D1 저장소만 사용할 수 있어요.');
+  const base = '/api/d1';
   const namespace = JSON.stringify([typeof location === 'undefined' ? '' : location.origin, mode, userId]);
-  const retainedVersions = new Map<string, MaterialVersion>();
   const identityHeaders = userId ? { 'X-SJN-User-Id': userId } : undefined;
   function request(input: string, init: RequestInit = {}) {
     return fetch(input, { ...init, signal: AbortSignal.timeout(30_000) });
@@ -115,26 +122,16 @@ export function createCloudRepositories(mode: 'd1' | 'supabase' = 'supabase', us
       remove: (id) => invoke<void>('projects', 'remove', { id }),
     },
     materials: {
-      createProjectResource: (input) => invoke<MaterialVersion>('project-materials', 'create', { input: stripLegacyMaterialImages(input) }),
+      createProjectResource: (input) =>
+        invoke<MaterialVersion>('project-materials', 'create', { input: stripLegacyMaterialImages(input) }),
       list: async () => {
         const rows = await invoke<Awaited<ReturnType<Repositories['materials']['list']>>>(
           'materials',
           'list',
         );
-        for (const row of rows) retainedVersions.set(row.version.id, row.version);
         return rows;
       },
-      getVersion: async (id) => {
-        try {
-          const version = await invoke<MaterialVersion>('materials', 'getVersion', { id });
-          retainedVersions.set(id, version);
-          return version;
-        } catch (error) {
-          if (!(error instanceof CloudRequestError) && retainedVersions.has(id))
-            return retainedVersions.get(id)!;
-          throw error;
-        }
-      },
+      getVersion: (id) => invoke<MaterialVersion>('materials', 'getVersion', { id }),
       create: (input) =>
         invoke<MaterialVersion>('materials', 'create', { input: stripLegacyMaterialImages(input) }),
       update: (id, input, expectedVersionId) =>
@@ -166,6 +163,7 @@ export function createCloudRepositories(mode: 'd1' | 'supabase' = 'supabase', us
           const result = await responseJson<{
             asset: Omit<ImageAssetRecord, 'blob'> | Omit<ProductMeshAssetRecord, 'blob'>;
             url: string;
+            contentHash: string;
           }>(
             await request(base + '/assets?id=' + encodeURIComponent(id), {
               credentials: 'same-origin',
@@ -173,24 +171,27 @@ export function createCloudRepositories(mode: 'd1' | 'supabase' = 'supabase', us
               headers: identityHeaders,
             }),
           );
-          const sameOrigin =
-            typeof location !== 'undefined' &&
-            new URL(result.url, location.origin).origin === location.origin;
+          if (
+            result.asset.id !== id ||
+            result.url !== base + '/assets?id=' + encodeURIComponent(id) + '&raw=1'
+          )
+            throw new Error('자산 응답 경로를 확인할 수 없어요.');
+          if (userId) {
+            const cached = await readCachedCloudAsset(namespace, result.asset, result.contentHash);
+            if (cached) return cached;
+          }
           const response = await request(result.url, {
             credentials: 'same-origin',
-            headers: sameOrigin ? identityHeaders : undefined,
+            cache: 'no-store',
+            headers: identityHeaders,
           });
           if (!response.ok) await responseJson(response);
           const asset = { ...result.asset, blob: await response.blob() } as AssetRecord;
-          if (userId) await cacheCloudAsset(namespace, asset);
+          if (userId) await cacheCloudAsset(namespace, asset, result.contentHash);
           return asset;
         } catch (error) {
           const denied = error instanceof CloudRequestError && [400, 401, 403, 404].includes(error.status);
           if (denied) await invalidateCachedCloudAsset(namespace, id);
-          if (!denied && userId) {
-            const cached = await readCachedCloudAsset(namespace, id);
-            if (cached) return cached;
-          }
           throw error;
         }
       },

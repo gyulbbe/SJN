@@ -1,46 +1,43 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { getActiveDesign } from '../src/lib/designs';
 import { test, expect, type Page } from '@playwright/test';
 import sharp from 'sharp';
-import { readFile } from 'node:fs/promises';
+import { buffer as streamBuffer } from 'node:stream/consumers';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
 import type { ProjectDocument } from '../src/lib/types';
 
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
+
 test.use({ channel: 'chrome', actionTimeout: 15000 });
-test.setTimeout(90000);
+test.setTimeout(180000);
 
 async function records<T>(page: Page, store: string): Promise<T[]> {
-  return page.evaluate(
-    (storeName) =>
-      new Promise<T[]>((resolve, reject) => {
-        const request = indexedDB.open('gongganmiri-v1');
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const get = db.transaction(storeName).objectStore(storeName).getAll();
-          get.onerror = () => {
-            db.close();
-            reject(get.error);
-          };
-          get.onsuccess = () => {
-            db.close();
-            resolve(get.result);
-          };
-        };
-      }),
-    store,
-  );
+  if (store === 'projects') {
+    const ids = await app.env.DB.prepare('SELECT id FROM d1_projects WHERE owner_id=? ORDER BY id')
+      .bind(app.actor.id)
+      .all<{ id: string }>();
+    return Promise.all(ids.results.map((row) => app.project(row.id))) as Promise<T[]>;
+  }
+  void page;
+  const snapshot = await app.snapshot();
+  if (store === 'assets') return snapshot.assets as T[];
+  if (store === 'materials') return snapshot.materials as T[];
+  throw new Error('Unknown test store: ' + store);
 }
-async function savedProject(page: Page) {
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
-  const id = page.url().split('/').at(-1);
-  const project = (await records<ProjectDocument>(page, 'projects')).find((candidate) => candidate.id === id);
-  expect(project).toBeDefined();
-  return project!;
+async function savedProject(page: Page): Promise<ProjectDocument> {
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  return app.project(page.url().split('/').at(-1)!);
 }
 async function editorReady(page: Page) {
   await expect(page).toHaveURL(/\/projects\/[\w-]+$/, { timeout: 30000 });
   await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await expect(page.locator('.editor-error')).toHaveCount(0);
 }
 let landmarks: { x: number; y: number }[] = [];
@@ -207,8 +204,10 @@ test('기본 공간은 업로드 없이 열리고 네 면에 즉시 타일을 �
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   const output = testInfo.outputPath('base-room-after.png');
-  await (await downloaded).saveAs(output);
-  const image = await sharp(await readFile(output)).raw().toBuffer({ resolveWithObject: true });
+  const download = await downloaded;
+  const downloadedBytes = await streamBuffer(await download.createReadStream());
+  await download.saveAs(output);
+  const image = await sharp(downloadedBytes).raw().toBuffer({ resolveWithObject: true });
   expect(image.info.width).toBe(4096);
   expect(image.info.height).toBe(2731);
   const radius = Math.max(1, Math.round(Math.min(image.info.width, image.info.height) * 0.003));
@@ -356,7 +355,9 @@ test('공간 생성 중 취소하면 늦게 끝난 배경으로 프로젝트를 
   await dialog.getByRole('button', { name: '취소', exact: true }).click();
   await page.evaluate(() => (window as Window & { pendingRoomBlob?: () => void }).pendingRoomBlob?.());
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
   await expect.poll(async () => (await records(page, 'projects')).length).toBe(0);
   expect(await records(page, 'assets')).toEqual([]);
 });

@@ -7,7 +7,7 @@ import {
   targetExistenceSha256,
   targetExistenceCropTransform,
 } from '../src/lib/reconstruction/target-existence-observation';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   assertCloudGemmaRequest,
@@ -30,7 +30,7 @@ import {
 import {
   parseFixtureInventory,
 } from '../src/lib/reconstruction/inventory-observation';
-import { cloudflareLocalRouteSource, cloudflareRuntimeSource } from '../build/cloudflare-local';
+import { cloudflareRuntimeSource } from '../build/cloudflare-local';
 import { getD1Actor } from '../src/lib/auth/d1';
 import { prepareCloudGemmaSchema } from '../src/lib/reconstruction/cloud-gemma-coordinates';
 
@@ -98,156 +98,47 @@ function runtime(responder: CloudGemmaBinding['run'] = async (_model, payload) =
   const run = vi.fn<CloudGemmaBinding['run']>(responder);
   return {
     run,
-    env: { platform: 'cloudflare' as const, APP_ENV: 'local', STORAGE_MODE: 'auto', AI: { run } },
+    env: { platform: 'cloudflare' as const, APP_ENV: 'development', STORAGE_MODE: 'd1', AI: { run } },
   };
 }
+beforeEach(() => { vi.mocked(getD1Actor).mockResolvedValue({id:'signed-in-user',isAdmin:false}); });
 afterEach(() => {
   vi.mocked(getD1Actor).mockReset();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
-describe('Cloud Gemma anonymous local storage and D1 access boundaries', () => {
-  it.each([
-    { APP_ENV: 'local', STORAGE_MODE: 'auto' },
-    { APP_ENV: 'local', STORAGE_MODE: 'local' },
-    { APP_ENV: 'local', STORAGE_MODE: undefined },
-  ])('allows HTTPS same-origin AI with intentional local settings %j', async (settings) => {
-    const { run, env } = runtime();
-    const environment = { ...env, ...settings };
-    const available = await cloudGemmaAvailability(
-      new Request(publicOrigin + '/api/reconstruction/cloud'),
-      environment,
-    );
-    expect(available.cacheScope).toMatch(/^anonymous-origin-sha256:[a-f0-9]{64}$/);
-    expect(run).not.toHaveBeenCalled();
-    await expect(
-      runCloudGemmaModel(request('inventory', { urlOrigin: publicOrigin }), environment),
-    ).resolves.toMatchObject({ modelId: CLOUD_GEMMA_MODEL, understanding: { candidates: [] } });
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(getD1Actor).not.toHaveBeenCalled();
-  });
-  it.each([
-    { APP_ENV: 'production', STORAGE_MODE: 'local' },
-    { APP_ENV: 'production', STORAGE_MODE: undefined, NEXT_PUBLIC_STORAGE_MODE: 'local' },
-    { APP_ENV: undefined, STORAGE_MODE: 'auto' },
-    { APP_ENV: 'development', STORAGE_MODE: 'auto' },
-    { APP_ENV: 'prodution', STORAGE_MODE: 'local' },
-    { APP_ENV: 'production', STORAGE_MODE: 'locla' },
-    { APP_ENV: 'production', STORAGE_MODE: '', NEXT_PUBLIC_STORAGE_MODE: 'local' },
-    { APP_ENV: 'local', STORAGE_MODE: 'locla' },
-    { APP_ENV: 'local', STORAGE_MODE: 'd1' },
-    { APP_ENV: 'local', STORAGE_MODE: 'supabase' },
-    { APP_ENV: 'production', STORAGE_MODE: 'supabase' },
-  ])('does not grant public anonymous AI from fallback or invalid settings %j', async (settings) => {
-    const { run, env } = runtime();
-    await expect(
-      runCloudGemmaModel(request('inventory', { urlOrigin: publicOrigin }), { ...env, ...settings }),
-    ).rejects.toMatchObject({ code: 'authentication_unavailable', status: 503 });
-    expect(run).not.toHaveBeenCalled();
-    expect(getD1Actor).not.toHaveBeenCalled();
-  });
-  it.each<Record<string, string>>([
-    {},
-    { origin: 'null' },
-    { origin: 'https://foreign.example' },
-    { origin: publicOrigin, 'sec-fetch-site': 'cross-site' },
-  ])('denies missing or foreign POST origin before inference: %j', async (headers) => {
-    const { run, env } = runtime();
-    await expect(
-      runCloudGemmaModel(
-        new Request(publicOrigin + '/api/reconstruction/cloud', { method: 'POST', headers }),
-        env,
-      ),
-    ).rejects.toMatchObject({ code: 'access_denied', status: 403 });
-    expect(run).not.toHaveBeenCalled();
-    expect(getD1Actor).not.toHaveBeenCalled();
-  });
-  it('denies cross-origin availability probes and mismatched request hosts', async () => {
-    const { run, env } = runtime();
-    await expect(
-      cloudGemmaAvailability(
-        new Request(publicOrigin + '/api/reconstruction/cloud', {
-          headers: { origin: 'https://foreign.example' },
-        }),
-        env,
-      ),
-    ).rejects.toMatchObject({ code: 'access_denied', status: 403 });
-    await expect(
-      cloudGemmaAvailability(
-        new Request(publicOrigin + '/api/reconstruction/cloud', { headers: { host: 'foreign.example' } }),
-        env,
-      ),
-    ).rejects.toMatchObject({ code: 'authentication_unavailable', status: 503 });
+describe('Cloud Gemma requires an active account in every environment', () => {
+  it.each([undefined,'development','local','production'])('never allows anonymous AI in %s',async APP_ENV=>{
+    const {run,env}=runtime();vi.mocked(getD1Actor).mockRejectedValueOnce({status:401});
+    await expect(runCloudGemmaModel(request('inventory'),{...env,APP_ENV})).rejects.toMatchObject({status:401,code:'authentication_required'});
     expect(run).not.toHaveBeenCalled();
   });
-  it('keeps input validation active for public local mode before inference', async () => {
-    const { run, env } = runtime();
-    await expect(
-      runCloudGemmaModel(request('inventory', { urlOrigin: publicOrigin, image: photo(2000) }), env),
-    ).rejects.toMatchObject({ code: 'invalid_input', status: 400 });
-    expect(run).not.toHaveBeenCalled();
+  it.each(['local','locla','supabase'])('rejects unsupported/unauthenticated selector %s',async STORAGE_MODE=>{
+    const {run,env}=runtime();
+    await expect(runCloudGemmaModel(request('inventory'),{...env,STORAGE_MODE})).rejects.toMatchObject({status:503});
+    expect(run).not.toHaveBeenCalled();expect(getD1Actor).not.toHaveBeenCalled();
   });
-  it.each([
-    { STORAGE_MODE: 'd1' },
-    { STORAGE_MODE: 'auto' },
-    { STORAGE_MODE: undefined },
-    { STORAGE_MODE: 'd1', NEXT_PUBLIC_STORAGE_MODE: 'local' },
-  ])('requires the existing actor for production D1 settings %j', async (settings) => {
-    const { run, env } = runtime();
-    vi.mocked(getD1Actor).mockRejectedValueOnce({ status: 401 });
-    await expect(
-      runCloudGemmaModel(request('inventory', { urlOrigin: publicOrigin }), {
-        ...env,
-        ...settings,
-        APP_ENV: 'production',
-      }),
-    ).rejects.toMatchObject({ code: 'authentication_required', status: 401 });
-    expect(getD1Actor).toHaveBeenCalledTimes(1);
-    expect(run).not.toHaveBeenCalled();
+  it.each([{}, {origin:'null'}, {origin:'https://foreign.example'}, {origin:publicOrigin,'sec-fetch-site':'cross-site'}])('rejects unsafe request origin %j',async headers=>{
+    const {run,env}=runtime();
+    await expect(runCloudGemmaModel(new Request(publicOrigin+'/api/reconstruction/cloud',{method:'POST',headers:headers as Record<string,string>}),env)).rejects.toMatchObject({status:403});
+    expect(run).not.toHaveBeenCalled();expect(getD1Actor).not.toHaveBeenCalled();
   });
-  it.each([
-    [403, 'access_denied'],
-    [503, 'authentication_unavailable'],
-  ])('never falls back to anonymous access after D1 auth status %s', async (status, code) => {
-    const { run, env } = runtime();
-    vi.mocked(getD1Actor).mockRejectedValueOnce({ status });
-    await expect(
-      runCloudGemmaModel(request('inventory', { urlOrigin: publicOrigin }), {
-        ...env,
-        APP_ENV: 'production',
-        STORAGE_MODE: 'd1',
-      }),
-    ).rejects.toMatchObject({ code, status });
-    expect(getD1Actor).toHaveBeenCalledTimes(1);
-    expect(run).not.toHaveBeenCalled();
+  it.each([403,503])('does not fall back after authentication failure %s',async status=>{
+    const {run,env}=runtime();vi.mocked(getD1Actor).mockRejectedValueOnce({status});
+    await expect(runCloudGemmaModel(request(),env)).rejects.toMatchObject({status});expect(run).not.toHaveBeenCalled();
   });
-  it('preserves the expected-user check before D1 inference', async () => {
-    const { run, env } = runtime();
-    vi.mocked(getD1Actor).mockResolvedValueOnce({ id: 'signed-in-user', isAdmin: false });
-    const input = request('inventory', { urlOrigin: publicOrigin });
-    input.headers.set('X-SJN-User-Id', 'different-user');
-    await expect(
-      runCloudGemmaModel(input, { ...env, APP_ENV: 'production', STORAGE_MODE: 'd1' }),
-    ).rejects.toMatchObject({ code: 'authentication_required', status: 401 });
-    expect(run).not.toHaveBeenCalled();
+  it('rejects another signed-in account before inference',async()=>{
+    const {run,env}=runtime(),input=request();input.headers.set('X-SJN-User-Id','other');
+    await expect(runCloudGemmaModel(input,env)).rejects.toMatchObject({status:401});expect(run).not.toHaveBeenCalled();
   });
-  it('isolates public origins, loopback development and actors with stable cache scopes', async () => {
-    const { env, run } = runtime();
-    const scope = (urlOrigin: string, environment = env) =>
-      assertCloudGemmaRequest(new Request(urlOrigin + '/api/reconstruction/cloud'), environment);
-    const anonymous = await scope(publicOrigin);
-    expect(await scope(publicOrigin)).toBe(anonymous);
-    expect(anonymous).not.toContain(publicOrigin);
-    const otherOrigin = await scope('https://other.example');
-    const otherPort = await scope(publicOrigin + ':8443');
-    const loopback = await scope(origin);
-    expect(loopback).toBe('local-dev');
-    vi.mocked(getD1Actor).mockResolvedValueOnce({ id: publicOrigin, isAdmin: false });
-    const actor = await scope(publicOrigin, { ...env, APP_ENV: 'production', STORAGE_MODE: 'd1' });
-    expect(actor).toMatch(/^actor-sha256:[a-f0-9]{64}$/);
-    expect(new Set([anonymous, otherOrigin, otherPort, loopback, actor]).size).toBe(5);
-    expect(run).not.toHaveBeenCalled();
+  it('scopes cached results to authenticated identity without exposing IDs',async()=>{
+    const {env}=runtime();const input=new Request(origin+'/api/reconstruction/cloud');
+    const first=await assertCloudGemmaRequest(input,env);
+    expect(first).toMatch(/^actor-sha256:[a-f0-9]{64}$/);
+    expect(await assertCloudGemmaRequest(input,env)).toBe(first);
+    vi.mocked(getD1Actor).mockResolvedValueOnce({id:'other',isAdmin:false});
+    expect(await assertCloudGemmaRequest(input,env)).not.toBe(first);
   });
 });
 
@@ -259,7 +150,7 @@ describe('Cloudflare Gemma transport (mocked model; no AI accuracy claim or remo
       available: true,
       readiness: 'binding-configured',
       upstreamVerified: false,
-      cacheScope: 'local-dev',
+      cacheScope: expect.stringMatching(/^actor-sha256:/),
       modelId: CLOUD_GEMMA_MODEL,
       modelRevision: CLOUD_GEMMA_REVISION,
       modelIdentity: CLOUD_GEMMA_IDENTITY,
@@ -732,7 +623,7 @@ describe('Cloud error and Workers build contracts', () => {
   });
   it('keeps the new route active and forwards AI through the existing runtime binding spread', () => {
     expect(
-      cloudflareLocalRouteSource(
+      cloudflareRuntimeSource(
         '/workspace/SJN/src/app/api/reconstruction/cloud/route.ts',
         '/workspace/SJN',
       ),

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { allD1Migrations, applyD1Migrations } from './helpers/d1-migrations';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import {
@@ -20,7 +20,6 @@ const origin = 'https://sjn-auth.test';
 let mf: Miniflare;
 let env: D1AuthEnvironment;
 let keys: Awaited<ReturnType<typeof generateKeyPair>>;
-const migration = readFileSync(new URL('../migrations/d1/0001_auth.sql', import.meta.url), 'utf8');
 const cookies = (response: Response) =>
   response.headers
     .getSetCookie()
@@ -115,12 +114,7 @@ beforeAll(async () => {
     }),
   );
   const db = await mf.getD1Database('DB');
-  const statements = migration
-    .replace(/^--.*$/gm, '')
-    .split(';')
-    .map((sql) => sql.trim())
-    .filter(Boolean);
-  await db.batch(statements.map((sql) => db.prepare(sql)));
+  await applyD1Migrations(db as unknown as D1AuthEnvironment['DB'], allD1Migrations);
   env = {
     DB: db as unknown as D1AuthEnvironment['DB'],
     APP_ENV: 'production',
@@ -287,6 +281,76 @@ describe('real auth handlers with an isolated Google provider fixture', () => {
     expect(prepared.every((query) => /^select/i.test(query.trim()))).toBe(true);
     expect(prepared[0]).toContain('session');
     expect(prepared[1]).toContain('admin_roles');
+  });
+  it('revokes old sessions and rejects a suspended member returning through Google OAuth', async () => {
+    const first = await completeLogin();
+    const actor = await getD1Actor(request('/api/d1/projects', 'GET', first.cookie), env);
+    await env.DB.prepare(
+      "UPDATE d1_user_management SET status='suspended',revision=revision+1 WHERE user_id=?",
+    )
+      .bind(actor.id)
+      .run();
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM session').first()).toEqual({ count: 0 });
+    await expect(getD1Actor(request('/api/d1/projects', 'GET', first.cookie), env)).rejects.toMatchObject({
+      status: 401,
+    });
+    const login = await startLogin();
+    await mockGoogle(login.authorize);
+    const response = await login.auth.handler(
+      request(
+        '/api/auth/callback/google?code=local-code&state=' + login.authorize.searchParams.get('state'),
+        'GET',
+        login.cookie,
+      ),
+    );
+    expect(response.headers.get('location')).toContain('error');
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM session').first()).toEqual({ count: 0 });
+    expect(await getD1Session(request('/api/d1/projects', 'GET', cookies(response)), env)).toBeNull();
+    await env.DB.prepare("UPDATE d1_user_management SET status='active',revision=revision+1 WHERE user_id=?")
+      .bind(actor.id)
+      .run();
+    const restored = await completeLogin();
+    expect(await getD1Actor(request('/api/d1/projects', 'GET', restored.cookie), env)).toEqual(actor);
+  }, 30000);
+  it('checks latest state if suspension happens between session lookup and actor authorization', async () => {
+    const login = await completeLogin();
+    let suspended = false;
+    const raced: D1AuthEnvironment = {
+      ...env,
+      DB: {
+        ...{
+          exec: () => {
+            throw new Error('Unexpected exec');
+          },
+        },
+        batch: (statements) => env.DB.batch(statements),
+        prepare(query) {
+          const statement = env.DB.prepare(query);
+          if (!query.includes('AS isAdmin FROM d1_user_management')) return statement;
+          return {
+            ...statement,
+            bind(...values: unknown[]) {
+              const bound = statement.bind(...values);
+              return {
+                ...bound,
+                async first<T>() {
+                  await env.DB.prepare("UPDATE d1_user_management SET status='suspended' WHERE user_id=?")
+                    .bind(values[0])
+                    .run();
+                  suspended = true;
+                  return bound.first<T>();
+                },
+              };
+            },
+          };
+        },
+      },
+    };
+    await expect(getD1Actor(request('/api/d1/projects', 'GET', login.cookie), raced)).rejects.toMatchObject({
+      status: 403,
+      code: 'account_suspended',
+    });
+    expect(suspended).toBe(true);
   });
   it('logout invalidates the server session immediately', async () => {
     const login = await completeLogin();

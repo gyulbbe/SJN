@@ -5,7 +5,7 @@ import { useAccess } from '../app-provider';
 import { useSharedCatalogAdmin } from './shared-access';
 import type { PublicMaterial } from '@/lib/catalog/public';
 import { categoryLabels } from '@/lib/types';
-import MaterialManager from './material-manager';
+import AdminLinks from '@/components/admin/admin-links';
 import styles from './catalog.module.css';
 export default function PublicCatalog() {
   const access = useAccess(),
@@ -18,7 +18,7 @@ export default function PublicCatalog() {
     [loading, setLoading] = useState(true),
     [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (!access.status || access.mode === 'local') return;
+    if (!access.ready || !access.userId) return;
     const controller = new AbortController();
     setLoading(true);
     fetch('/api/catalog/materials', { signal: controller.signal, cache: 'no-store' })
@@ -37,9 +37,7 @@ export default function PublicCatalog() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [access.mode, access.status, attempt]);
-  if (access.status && access.mode === 'local')
-    return access.ready ? <MaterialManager /> : <p role="status">작업 공간을 준비하고 있어요…</p>;
+  }, [access.ready, access.userId, attempt]);
   const matching = rows.filter(
     (row) =>
       (!category || row.category === category) &&
@@ -58,6 +56,7 @@ export default function PublicCatalog() {
           <>
             <Link href="/admin/materials">자재 관리</Link>
             <Link href="/admin/catalog">분류 관리</Link>
+            <AdminLinks />
           </>
         )}
         {access.userId ? (
@@ -74,9 +73,7 @@ export default function PublicCatalog() {
         )}
       </nav>
       <h1>내 공간을 완성할 자재</h1>
-      <p className={styles.muted}>
-        자재는 로그인 없이 둘러볼 수 있어요. 프로젝트를 만들고 저장하려면 Google로 시작해 주세요.
-      </p>
+      <p className={styles.muted}>등록된 자재를 확인하고 내 프로젝트에 적용해 보세요.</p>
       <Link className="btn primary" href={access.userId ? '/' : '/login'}>
         프로젝트 만들기
       </Link>

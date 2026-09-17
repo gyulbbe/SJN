@@ -1,7 +1,8 @@
-import { assetMetadataSchema, identifierSchema } from '../supabase/validation';
+import { assetMetadataSchema, identifierSchema } from '../storage/validation';
 import { decodeProductMesh, PRODUCT_MESH_MIME } from '../product3d/codec';
 import {
   assetAssertion,
+  dataOwnerId,
   assertion,
   batch,
   committedObject,
@@ -32,7 +33,13 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
     const row = await readableAsset(ctx, id);
     const metadata = JSON.parse(row.metadata_json);
     if (url.searchParams.get('raw') !== '1')
-      return json({ asset: metadata, url: `/api/d1/assets?id=${encodeURIComponent(id)}&raw=1` });
+      return json({
+        asset: metadata,
+        contentHash: row.content_hash,
+        url: ctx.adminProject
+          ? `/api/admin/project-assets?projectId=${encodeURIComponent(ctx.adminProject.id)}&id=${encodeURIComponent(id)}&raw=1`
+          : `/api/d1/assets?id=${encodeURIComponent(id)}&raw=1`,
+      });
     const object = await ctx.env.ASSET_BUCKET.get(row.object_key);
     if (!object)
       throw new D1StorageError(
@@ -81,10 +88,11 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
   } else format = validateD1Image(bytes);
   // Metadata is server-derived. A claimed MIME never chooses the decoder or response Content-Type.
   const contentHash = await hash(bytes);
-  const metadata = { ...input, ...format, ownerId: ctx.actor.id, size: bytes.length, createdAt: stamp() };
+  const metadata = { ...input, ...format, ownerId: dataOwnerId(ctx), size: bytes.length, createdAt: stamp() };
   const existing = await sql(ctx, 'SELECT * FROM d1_assets WHERE id=?', input.id).first<AssetRow>();
   if (existing) {
-    if (existing.owner_id !== ctx.actor.id) throw notFound();
+    if (ctx.adminProject) await readableAsset(ctx, input.id);
+    if (existing.owner_id !== dataOwnerId(ctx)) throw notFound();
     const old = JSON.parse(existing.metadata_json);
     if (
       existing.deleting ||
@@ -97,7 +105,7 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
       throw conflict();
     return json(null);
   }
-  const key = `assets/${encodeURIComponent(ctx.actor.id)}/${input.id}/${crypto.randomUUID()}`;
+  const key = `assets/${encodeURIComponent(dataOwnerId(ctx))}/${input.id}/${crypto.randomUUID()}`;
   await stageObject(ctx, key, bytes, format.mime, input.id);
   try {
     await batch(ctx, [
@@ -108,13 +116,25 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
         `INSERT INTO d1_assets(id,owner_id,object_key,source_asset_id,metadata_json,content_hash,created_at)
         VALUES(?,?,?,?,?,?,?)`,
         input.id,
-        ctx.actor.id,
+        dataOwnerId(ctx),
         key,
         input.sourceAssetId ?? null,
         JSON.stringify(metadata),
         contentHash,
         metadata.createdAt,
       ),
+      ...(ctx.adminProject
+        ? [
+            sql(
+              ctx,
+              'INSERT INTO d1_admin_project_assets(project_id,asset_id,actor_id,created_at) VALUES(?,?,?,?)',
+              ctx.adminProject.id,
+              input.id,
+              ctx.actor.id,
+              stamp(),
+            ),
+          ]
+        : []),
       committedObject(ctx, key),
     ]);
   } catch (error) {
@@ -122,9 +142,10 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
       ctx,
       'SELECT * FROM d1_assets WHERE id=? AND owner_id=?',
       input.id,
-      ctx.actor.id,
+      dataOwnerId(ctx),
     ).first<AssetRow>();
     if (committed && !committed.deleting && committed.content_hash === contentHash) {
+      if (ctx.adminProject) await readableAsset(ctx, input.id);
       const old = JSON.parse(committed.metadata_json);
       if (
         old.name === input.name &&

@@ -1,8 +1,18 @@
+import { downloadedArtifact } from './helpers/downloaded-artifact';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+import type { Page as AuthenticatedPage } from '@playwright/test';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import type { ProjectDocument } from '../src/lib/types';
 
+const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
+test.beforeEach(async ({ page }) => {
+  authenticatedTests.set(page, await authenticatedApp(page));
+});
+test.afterEach(async ({ page }) => {
+  await authenticatedTests.get(page)?.dispose();
+});
 test.use({ channel: 'chrome', actionTimeout: 20000 });
 const errors = new WeakMap<Page, string[]>();
 test.beforeEach(({ page }) => {
@@ -18,25 +28,10 @@ test.afterEach(async ({ page }, info) => {
   expect(errors.get(page)).toEqual([]);
 });
 async function stored(page: Page): Promise<ProjectDocument> {
-  return page.evaluate(async (id) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open('gongganmiri-v1');
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    try {
-      return await new Promise<ProjectDocument>((resolve, reject) => {
-        const r = db.transaction('projects').objectStore('projects').get(id);
-        r.onsuccess = () => resolve(r.result);
-        r.onerror = () => reject(r.error);
-      });
-    } finally {
-      db.close();
-    }
-  }, page.url().split('/').at(-1)!);
+  return authenticatedTests.get(page)!.project();
 }
 async function saved(page: Page) {
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨');
 }
 async function ready(page: Page) {
   await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 180000 });
@@ -213,12 +208,9 @@ test('표준 설비: 벽걸이·기둥·하부장 전환, 유리·거울장·선
   await exporting.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   const download = await pending,
     path = info.outputPath('standard-before-empty-after.png');
-  await download.saveAs(path);
-  const downloadStream = await download.createReadStream();
-  if (!downloadStream) throw new Error('PNG 다운로드 스트림을 읽을 수 없어요.');
-  const downloadChunks: Buffer[] = [];
-  for await (const chunk of downloadStream) downloadChunks.push(Buffer.from(chunk));
-  const image = await sharp(Buffer.concat(downloadChunks)).raw().toBuffer({ resolveWithObject: true });
+  const image = await sharp(await downloadedArtifact(download, path))
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   expect(image.info.width).toBe(4096);
   expect(image.info.height).toBe(Math.round(4096 / (configured.shared.comparison!.aspect * 2)));
   let different = 0;
@@ -329,29 +321,18 @@ test('이전 사진 거울은 명시 변환만 새 모형으로 바뀌고 크기
   fixture.roomPlacement!.u = 0.55;
   fixture.roomPlacement!.v = 0.45;
   legacy.shared.beforeHistory = { past: [], future: [] };
-  await page.evaluate(async (document) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const r = indexedDB.open('gongganmiri-v1');
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(['projects', 'versions'], 'readwrite');
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-      tx.objectStore('projects').put(document);
-      const fixture = document.shared.comparison!.before.fixtures[0];
-      const request = tx.objectStore('versions').get(fixture.materialVersionId);
-      request.onsuccess = () => {
-        const version = request.result;
-        version.reconstruction = { version: 1, kind: 'mirror' };
-        version.views[0].assetId = fixture.reconstruction!.appearanceAssetId;
-        tx.objectStore('versions').put(version);
-      };
-    });
-    db.close();
-  }, legacy);
+  // Seed a historical snapshot only in this isolated D1/R2 fixture, bypassing current normalization deliberately.
+  const app = authenticatedTests.get(page)!;
+  const row = await app.env.DB.prepare('SELECT object_key FROM d1_projects WHERE id=?')
+    .bind(legacy.id)
+    .first<{ object_key: string }>();
+  await app.env.ASSET_BUCKET.put(row!.object_key, JSON.stringify(legacy));
+  const oldVersion = (await app.versions()).find((version) => version.id === fixture.materialVersionId)!;
+  oldVersion.reconstruction = { version: 1, kind: 'mirror' };
+  oldVersion.views[0].assetId = fixture.reconstruction!.appearanceAssetId!;
+  await app.env.DB.prepare('UPDATE d1_material_versions SET payload_json=? WHERE id=?')
+    .bind(JSON.stringify(oldVersion), oldVersion.id)
+    .run();
   await page.reload();
   await ready(page);
   await page.getByRole('button', { name: '기존 공간 수정', exact: true }).click();

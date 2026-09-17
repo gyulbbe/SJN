@@ -5,7 +5,7 @@ import {
   legacyProjectSchema,
   materialInputSchema,
   reconstructionReviewSchema,
-} from '../src/lib/supabase/validation';
+} from '../src/lib/storage/validation';
 import {
   reconstructionDefaults,
   reconstructionLabels,

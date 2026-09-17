@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState, type CSSProperties } from 'react';
-import { getRepositories } from '@/lib/repositories';
+import { useRepositories } from '@/components/repository-context';
 import { isImageAsset, type ImageAssetRecord } from '@/lib/types';
 
 export function useAsset(assetId?: string) {
+  const repositories = useRepositories();
   const [state, setState] = useState<{
     asset?: ImageAssetRecord;
     url?: string;
@@ -16,7 +17,7 @@ export function useAsset(assetId?: string) {
     let objectUrl: string | undefined;
     setState({ loading: !!assetId });
     if (assetId) {
-      Promise.resolve(getRepositories())
+      Promise.resolve(repositories)
         .then((repos) => repos.assets.get(assetId))
         .then((asset) => {
           if (!alive) return;
@@ -36,7 +37,7 @@ export function useAsset(assetId?: string) {
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [assetId]);
+  }, [assetId, repositories]);
   return state;
 }
 

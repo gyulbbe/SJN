@@ -9,7 +9,7 @@ import {
   showerVariantDefaults,
   showerModelPartBounds,
 } from '../src/lib/reconstruction/fixture-variants';
-import { fixtureReconstructionSchema } from '../src/lib/supabase/validation';
+import { fixtureReconstructionSchema } from '../src/lib/storage/validation';
 import type { ReconstructionStandardOptions } from '../src/lib/reconstruction/types';
 import type { FixtureInstance, Scene } from '../src/lib/types';
 import Controls, {

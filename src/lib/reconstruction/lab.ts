@@ -1,3 +1,4 @@
+import { getRepositoryUserId } from '../repositories';
 import { labCandidateTraces, type LabCandidateTrace } from './lab-candidate-trace';
 import { runQualityPipeline } from './quality-core';
 import { SHOWER_DETAIL_ADOPTION_REVISION } from './shower-observation';
@@ -35,9 +36,7 @@ import {
   type CandidatePipeline,
   type ManualCandidatePlacement,
 } from './candidate-pipeline';
-import {
-  type LocalSceneAnalysis,
-} from './analysis-client';
+import { type LocalSceneAnalysis } from './analysis-client';
 import type { SceneUnderstanding } from './pipeline-contract';
 import { createReconstructionProject } from './index';
 import { TEMPLATE_RENDERER_REVISION } from './templates';
@@ -46,7 +45,7 @@ import { canvasBlob, readImageHeader } from '../images';
 import { sourceRoomView, type RoomViewState } from '../room-viewer/view-state';
 import { renderRoomSnapshotImage } from '../room-viewer/render-snapshot';
 import { ROOM_VIEWER_RENDERER_REVISION } from '../room-viewer/render-version';
-import type { Repositories } from '../repositories/contracts';
+import type { RepositoryOperations } from '../repositories/contracts';
 import type { AssetRecord, FixtureInstance, Material, MaterialVersion } from '../types';
 import type { RoomDefinition } from '../room-types';
 import type { ReconstructionReview } from './types';
@@ -163,9 +162,7 @@ export function memoryRepositories() {
   const forbidden = async (): Promise<never> => {
     throw new Error('사진 테스트에서는 프로젝트 저장이나 기존 자재 변경을 수행하지 않아요.');
   };
-  const repositories: Repositories = {
-    // The common interface has two production modes; every implementation below is memory-only.
-    mode: 'local',
+  const repositories: RepositoryOperations = {
     projects: {
       list: forbidden,
       load: forbidden,
@@ -228,6 +225,7 @@ export function memoryRepositories() {
       setActive: forbidden,
     },
   };
+  repositories.materials.createProjectResource = (input) => repositories.materials.create(input);
   return {
     repositories,
     snapshot() {
@@ -288,6 +286,7 @@ export async function runReconstructionLabCase(
     throw new Error('형태·관계 개선 실험은 정밀 후보 분석에서 선택해 주세요.');
   const start = performance.now();
   const startedAt = new Date().toISOString();
+  const diagnosticUserId = getRepositoryUserId();
   const runId = crypto.randomUUID();
   const diagnostic = createDiagnosticRun(
     runId,
@@ -414,7 +413,11 @@ export async function runReconstructionLabCase(
               const modelStarted = performance.now();
               const model = modelReused
                 ? options.reuseReport!.pipeline!.model
-                : (() => { throw new Error('기존 로컬 AI 실험은 종료됐어요. /reconstruction-performance에서 새 분석을 시작해 주세요.'); })();
+                : (() => {
+                    throw new Error(
+                      '기존 로컬 AI 실험은 종료됐어요. /reconstruction-performance에서 새 분석을 시작해 주세요.',
+                    );
+                  })();
               additionalModelMs = modelReused ? 0 : performance.now() - modelStarted;
               diagnostic.checkpoint('modelResponse', model);
               diagnostic.phase('placement');
@@ -618,10 +621,14 @@ export async function runReconstructionLabCase(
                           showerDetailAdoptionRevision: SHOWER_DETAIL_ADOPTION_REVISION,
                         }
                       : {}),
-                    ...(pipeline.quality.showerInstallation ? {
-                      showerInstallationDecisionRevision: pipeline.quality.showerInstallation.decisionRevision,
-                      showerInstallationTargetCount: pipeline.quality.showerInstallation.observations.length,
-                    } : {}),
+                    ...(pipeline.quality.showerInstallation
+                      ? {
+                          showerInstallationDecisionRevision:
+                            pipeline.quality.showerInstallation.decisionRevision,
+                          showerInstallationTargetCount:
+                            pipeline.quality.showerInstallation.observations.length,
+                        }
+                      : {}),
                     ...(pipeline.quality.dividerMaterials
                       ? {
                           dividerMaterialContract: pipeline.quality.dividerMaterials.outputContract,
@@ -633,7 +640,10 @@ export async function runReconstructionLabCase(
                       ? { reflectionRecheckRuleRevision: pipeline.quality.reflectionRecheck.ruleRevision }
                       : {}),
                     ...(pipeline.quality.classificationResolution
-                      ? { classificationResolutionRevision: pipeline.quality.classificationResolution.revision }
+                      ? {
+                          classificationResolutionRevision:
+                            pipeline.quality.classificationResolution.revision,
+                        }
                       : {}),
                     geometryModelId: pipeline.quality.geometry.observation.model.id,
                   }
@@ -779,29 +789,35 @@ export async function runReconstructionLabCase(
       timing: report.timing,
     });
     report.runLog = diagnostic.finish('complete');
-    report.logStorage = await saveDiagnosticArchive({
-      schemaVersion: 1,
-      runId,
-      startedAt,
-      status: 'complete',
-      input: report.runLog.input,
-      engine: engineId,
-      report,
-    });
+    report.logStorage = await saveDiagnosticArchive(
+      {
+        schemaVersion: 1,
+        runId,
+        startedAt,
+        status: 'complete',
+        input: report.runLog.input,
+        engine: engineId,
+        report,
+      },
+      diagnosticUserId,
+    );
     return { original: previewAsset.blob, before: blob, report, projectBundle };
   } catch (error) {
     const wasCancelled = signal.aborted || (error instanceof Error && error.name === 'AbortError');
     const runLog = diagnostic.finish(wasCancelled ? 'cancelled' : 'failed', error);
     const failure = new ReconstructionDiagnosticError(error, runLog);
-    failure.diagnostics.logStorage = await saveDiagnosticArchive({
-      schemaVersion: 1,
-      runId,
-      startedAt,
-      status: runLog.status,
-      input: runLog.input,
-      engine: engineId,
-      failure: failure.diagnostics,
-    });
+    failure.diagnostics.logStorage = await saveDiagnosticArchive(
+      {
+        schemaVersion: 1,
+        runId,
+        startedAt,
+        status: runLog.status,
+        input: runLog.input,
+        engine: engineId,
+        failure: failure.diagnostics,
+      },
+      diagnosticUserId,
+    );
     throw failure;
   } finally {
     clearInterval(timer);

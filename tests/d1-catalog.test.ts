@@ -99,6 +99,14 @@ beforeAll(async () => {
     ASSET_BUCKET: await mf.getR2Bucket('ASSET_BUCKET'),
   } as unknown as D1Bindings;
   await applyD1Migrations(env.DB, allD1Migrations);
+  expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM admin_roles').first()).toEqual({ count: 0 });
+  for (const actor of [admin, member, other])
+    await env.DB.prepare(
+      'INSERT INTO "user"(id,name,email,emailVerified,createdAt,updatedAt) VALUES(?,?,?,?,?,?)',
+    )
+      .bind(actor.id, '격리 테스트 회원', actor.id + '@example.test', 1, stamp, stamp)
+      .run();
+  await env.DB.prepare('INSERT INTO admin_roles(user_id) VALUES(?)').bind(admin.id).run();
   png = new Uint8Array(
     await sharp({ create: { width: 8, height: 8, channels: 3, background: '#aaccff' } })
       .png()
@@ -123,7 +131,9 @@ describe('catalog additive D1 migrations', () => {
     expect(await env.DB.prepare('SELECT version FROM d1_catalog_meta WHERE id=1').first()).toEqual({
       version: 1,
     });
-    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM admin_roles').first()).toEqual({ count: 0 });
+    expect(await env.DB.prepare('SELECT user_id FROM admin_roles').all()).toMatchObject({
+      results: [{ user_id: admin.id }],
+    });
   });
 
   it('upgrades pre-existing materials without changing historical JSON or publishing private models', async () => {
@@ -602,10 +612,13 @@ describe('material role isolation and public media', () => {
         .status,
     ).toBe(403);
     const body = { operation: 'create', input };
+    await env.DB.prepare('INSERT INTO admin_roles(user_id) VALUES(?)').bind(member.id).run();
     const created = await call('materials', body, { ...member, isAdmin: true }, 'demoted-admin');
+    await env.DB.prepare('DELETE FROM admin_roles WHERE user_id=?').bind(member.id).run();
     expect(created.status).toBe(200);
     const version = (await created.json()) as MaterialVersion;
     expect((await call('materials', body, member, 'demoted-admin')).status).toBe(403);
+    expect((await call('materials', body, { ...member, isAdmin: true }, 'demoted-admin')).status).toBe(403);
     expect(
       (
         await call(
@@ -798,5 +811,61 @@ describe('material role isolation and public media', () => {
         .bind(failed.id)
         .first(),
     ).toBeNull();
+  });
+});
+
+describe('catalog update rejection preserves committed versions', () => {
+  it('rejects malformed IDs in every selection field without changing versions, references, or seeds', async () => {
+    const { id, response } = await upload();
+    expect(response.status).toBe(200);
+    const selection = {
+      ...emptySelection(),
+      brandId: await optionId('brand', 'TOTO'),
+      colorIds: [await optionId('color', '그레이')],
+    };
+    const saved = await create(material(id, selection));
+    const snapshot = async () => ({
+      material: await env.DB.prepare('SELECT * FROM d1_materials WHERE id=?').bind(saved.materialId).first(),
+      versions: (
+        await env.DB.prepare('SELECT * FROM d1_material_versions WHERE material_id=? ORDER BY version')
+          .bind(saved.materialId)
+          .all()
+      ).results,
+      assets: (
+        await env.DB.prepare('SELECT * FROM d1_material_assets WHERE version_id=? ORDER BY asset_id')
+          .bind(saved.id)
+          .all()
+      ).results,
+      options: (
+        await env.DB.prepare(
+          'SELECT * FROM d1_material_version_options WHERE version_id=? ORDER BY option_id',
+        )
+          .bind(saved.id)
+          .all()
+      ).results,
+      catalog: await masters(),
+    });
+    const before = await snapshot();
+    const malformed = [
+      { ...selection, brandId: 'unregistered-brand' },
+      { ...selection, subcategoryId: 'unregistered-subcategory' },
+      { ...selection, colorIds: ['그레'] },
+      { ...selection, compositionIds: ['직접 입력 재질'] },
+      { ...selection, finishIds: ['새 마감'] },
+      { ...selection, brandId: [selection.brandId] },
+    ];
+    for (const catalog of malformed) {
+      const attempt = await call('materials', {
+        operation: 'update',
+        id: saved.materialId,
+        expectedVersionId: saved.id,
+        input: { ...material(id), catalog },
+      });
+      expect(attempt.status, await attempt.clone().text()).toBe(400);
+    }
+    expect(await snapshot()).toEqual(before);
+    expect(await (await call('materials', { operation: 'getVersion', id: saved.id }, member)).json()).toEqual(
+      saved,
+    );
   });
 });

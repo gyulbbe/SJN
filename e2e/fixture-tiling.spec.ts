@@ -1,13 +1,23 @@
+import { buffer as streamBuffer } from 'node:stream/consumers';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { getActiveDesign } from '../src/lib/designs';
 import { seedTestTiles, uploadBathroomPhoto } from '../tests/helpers/catalog-fixtures.mjs';
 import { selectFixture, selectSurface } from '../tests/helpers/editor-actions';
 import { test, expect, type Page, type Locator, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 import type { FixtureInstance, Point, ProjectDocument } from '../src/lib/types';
 import { maskContains } from '../src/lib/render/mask';
+
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page);
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 test.setTimeout(180000);
@@ -22,30 +32,11 @@ async function evidence(info: TestInfo, filename: string, body: Buffer, contentT
   return path;
 }
 async function stored(page: Page): Promise<ProjectDocument> {
-  return page.evaluate(
-    (id) =>
-      new Promise<ProjectDocument>((resolve, reject) => {
-        const request = indexedDB.open('gongganmiri-v1');
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const get = db.transaction('projects').objectStore('projects').get(id);
-          get.onsuccess = () => {
-            db.close();
-            resolve(get.result);
-          };
-          get.onerror = () => {
-            db.close();
-            reject(get.error);
-          };
-        };
-      }),
-    page.url().split('/').at(-1)!,
-  );
+  return app.project(page.url().split('/').at(-1)!);
 }
 async function saved(page: Page) {
-  await expect(page.getByTestId('save-status')).toHaveText('이 브라우저에 저장됨');
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await expect(page.locator('.editor-error')).toHaveCount(0);
   return stored(page);
 }
@@ -167,8 +158,8 @@ test('새 2D 위생도기 이동·복제·삭제 뒤 타일 무늬를 복원하�
   await page.goto('/');
   await seedTestTiles(page);
   await uploadBathroomPhoto(page);
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await page.getByRole('button', { name: '벽 타일', exact: true }).click();
   await page.locator('button.material-tile').filter({ hasText: '클라우드 화이트' }).click();
   await expect
@@ -290,7 +281,7 @@ test('새 2D 위생도기 이동·복제·삭제 뒤 타일 무늬를 복원하�
   await page.getByRole('button', { name: '지금 저장', exact: true }).click();
   await saved(page);
   await page.reload();
-  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   const reloaded = await saved(page);
   expect(getActiveDesign(reloaded)!.scene).toEqual(getActiveDesign(moved)!.scene);
   sameTiles(reloaded, 'save and reload');
@@ -308,8 +299,10 @@ test('새 2D 위생도기 이동·복제·삭제 뒤 타일 무늬를 복원하�
   await page.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   const directory = resolve('test-results/fixture-tiling-qa');
   const exportedPath = resolve(directory, 'fixture-on-tiles-export.png');
-  await (await download).saveAs(exportedPath);
-  const exported = await sharp(exportedPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const exportedDownload = await download;
+  const exportedBytes = await streamBuffer(await exportedDownload.createReadStream());
+  await exportedDownload.saveAs(exportedPath);
+  const exported = await sharp(exportedBytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   expect([exported.info.width, exported.info.height]).toEqual([1536, 1024]);
   const exportHash = createHash('sha256').update(exported.data).digest('hex');
   const exportRaster = { ...beforeExport, raw: exported.data, hash: exportHash };
@@ -331,12 +324,14 @@ test('새 2D 위생도기 이동·복제·삭제 뒤 타일 무늬를 복원하�
   const plainDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   const plainPath = resolve(directory, 'fixture-on-tiles-export-no-selection.png');
-  await (await plainDownload).saveAs(plainPath);
-  const plainExport = await sharp(plainPath).ensureAlpha().raw().toBuffer();
+  const plainExportDownload = await plainDownload;
+  const plainBytes = await streamBuffer(await plainExportDownload.createReadStream());
+  await plainExportDownload.saveAs(plainPath);
+  const plainExport = await sharp(plainBytes).ensureAlpha().raw().toBuffer();
   expect(createHash('sha256').update(plainExport).digest('hex')).toBe(exportHash);
   expect(getActiveDesign(await stored(page))!.scene).toEqual(getActiveDesign(moved)!.scene);
   expect(errors).toEqual([]);
-  await evidence(info, 'fixture-on-tiles-export.png', await readFile(exportedPath), 'image/png');
+  await evidence(info, 'fixture-on-tiles-export.png', exportedBytes, 'image/png');
   await evidence(
     info,
     'fixture-tiling-report.json',

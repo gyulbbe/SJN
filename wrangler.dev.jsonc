@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sjn-development",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "vinext/server/fetch-handler",
+  "d1_databases": [{
+    "binding": "DB", "database_name": "sjn-development",
+    "database_id": "00000000-0000-0000-0000-000000000005",
+    "migrations_dir": "migrations/d1", "remote": false
+  }],
+  "r2_buckets": [{ "binding": "ASSET_BUCKET", "bucket_name": "sjn-development-assets", "remote": false }],
+  "assets": { "directory": "dist/client", "not_found_handling": "none", "binding": "ASSETS" },
+  "vars": { "APP_ENV": "development", "STORAGE_MODE": "d1", "BETTER_AUTH_URL": "http://127.0.0.1:3000" }
+}

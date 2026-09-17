@@ -6,7 +6,7 @@ import {
   StrictPlacementError,
   type PlacementReview,
 } from '@/lib/reconstruction/strict-placement';
-import { reconstructionReviewSchema } from '@/lib/supabase/validation';
+import { reconstructionReviewSchema } from '@/lib/storage/validation';
 import { resolveProductColor } from '@/lib/reconstruction/product-color';
 import { resolveBathRimFixture } from '@/lib/reconstruction/bath-rim';
 import { useEffect, useRef, useState } from 'react';

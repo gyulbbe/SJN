@@ -19,7 +19,7 @@ import {
   Check,
   ExternalLink,
 } from 'lucide-react';
-import { getRepositories } from '@/lib/repositories';
+import { useRepositories } from '@/components/repository-context';
 import type { Repositories } from '@/lib/repositories';
 import {
   cloudRecovery,
@@ -80,12 +80,17 @@ import { detectSurfaces } from '@/lib/render/auto-surfaces';
 import type { RoomSegmentation } from '@/lib/segmentation';
 import { analyzeWallGeometry, applyWallGeometry } from '@/lib/render/wall-geometry';
 const pendingProjectSaves = new Map<string, Promise<boolean>>();
-export default function Editor({ id }: { id: string }) {
+export type AdminEditorContext = { actorUserId: string; owner: { id: string; name: string; email: string } };
+export default function Editor({ id, adminContext }: { id: string; adminContext?: AdminEditorContext }) {
+  const repositories = useRepositories();
+  const [adminConflict, setAdminConflict] = useState(false);
+  const [adminServer, setAdminServer] = useState<ProjectDocument | null>(null);
+  const [adminReloadBusy, setAdminReloadBusy] = useState(false);
   const st = useEditor(),
     router = useRouter(),
     { writable, ready, mode: storageMode, userId } = useAccess();
   const catalogAdmin = useSharedCatalogAdmin();
-  const canManageCatalog = storageMode === 'local' || catalogAdmin;
+  const canManageCatalog = catalogAdmin && !adminContext;
   const [catalog, setCatalog] = useState<{ material: Material; version: MaterialVersion }[]>([]),
     [materials, setMaterials] = useState<Record<string, MaterialVersion>>({}),
     [error, setError] = useState(''),
@@ -130,12 +135,16 @@ export default function Editor({ id }: { id: string }) {
   const [recoveryArchives, setRecoveryArchives] = useState<ProjectRecovery[]>([]);
   const scope = useMemo<RecoveryScope | null>(
     () =>
-      storageMode !== 'local' && userId && typeof window !== 'undefined'
+      !adminContext && userId && typeof window !== 'undefined'
         ? { origin: window.location.origin, backend: storageMode, userId, projectId: id }
         : null,
-    [id, storageMode, userId],
+    [id, storageMode, userId, adminContext],
   );
-  const scopeKey = scope ? recoveryKey(scope) : JSON.stringify(['local', id]);
+  const scopeKey = adminContext
+    ? JSON.stringify(['admin', adminContext.actorUserId, adminContext.owner.id, id])
+    : scope
+      ? recoveryKey(scope)
+      : JSON.stringify(['pending-account', id]);
   const currentScopeKey = useRef(scopeKey);
   currentScopeKey.current = scopeKey;
   const session = useRef<{ key: string; repo: Repositories; dead: boolean } | null>(null);
@@ -148,7 +157,7 @@ export default function Editor({ id }: { id: string }) {
   const recoveryCopy = useRef<ProjectDocument | null>(null);
   const activeDesign = st.project ? getActiveDesign(st.project) : undefined;
   const roomContext = st.project ? projectDesignPreviewRoomContext(st.project) : undefined;
-  const assetReader = useCallback((assetId: string) => getRepositories().assets.get(assetId), []);
+  const assetReader = useCallback((assetId: string) => repositories.assets.get(assetId), [repositories]);
   useDesignThumbnail({
     projectId: id,
     sharedRevision: st.project?.shared.revision ?? 0,
@@ -159,6 +168,13 @@ export default function Editor({ id }: { id: string }) {
     enabled: loaded && !roomViewerOpen && !comparisonOpen && !designsOpen && !st.draft && !detectionStatus,
     delayMs: 500,
   });
+  useEffect(() => {
+    if (!adminContext) return;
+    return () => {
+      if (useEditor.getState().project?.id === id)
+        useEditor.setState({ project: null, draft: null, selection: null, saveStatus: 'saved', error: '' });
+    };
+  }, [id, adminContext]);
   const renderer = useRef<PhotoCompositor | null>(null);
   const applyRequest = useRef(0);
   const roomRequest = useRef(0);
@@ -190,10 +206,10 @@ export default function Editor({ id }: { id: string }) {
   }, []);
   const onError = useCallback((message: string) => setError(message), []);
   const refresh = useCallback(async () => {
-    const list = await getRepositories().materials.list();
+    const list = await repositories.materials.list();
     setCatalog(list.filter((row) => !isBuiltInExampleMaterial(row)));
     setMaterials((prev) => ({ ...prev, ...Object.fromEntries(list.map((v) => [v.version.id, v.version])) }));
-  }, []);
+  }, [repositories]);
   useEffect(() => {
     const requests = applyRequest;
     setDetectionStatus('');
@@ -210,8 +226,8 @@ export default function Editor({ id }: { id: string }) {
     if (selected) setTab(selected.kind);
   }, [st.selection, id, st.editing]);
   useEffect(() => {
-    if (!ready || (storageMode !== 'local' && !scope)) return;
-    const operation = { key: scopeKey, repo: getRepositories(), dead: false };
+    if (!ready || (!scope && !adminContext)) return;
+    const operation = { key: scopeKey, repo: repositories, dead: false };
     session.current = operation;
     setLoaded(false);
     setRecoveryPrompt(null);
@@ -282,7 +298,7 @@ export default function Editor({ id }: { id: string }) {
     return () => {
       operation.dead = true;
     };
-  }, [id, ready, writable, storageMode, scope, scopeKey]);
+  }, [id, ready, writable, scope, scopeKey, repositories, adminContext]);
   const persistRecovery = useCallback(
     async (document?: ProjectDocument) => {
       if (!scope) return true;
@@ -343,7 +359,7 @@ export default function Editor({ id }: { id: string }) {
       const previousSaveError = state.error;
       state.saving();
       if (scope) await persistRecovery(sent);
-      if (operation.dead || currentScopeKey.current !== scopeKey || getRepositories() !== operation.repo)
+      if (operation.dead || currentScopeKey.current !== scopeKey || repositories !== operation.repo)
         return false;
       try {
         const result = await operation.repo.projects.save(sent, sent.storageRevision);
@@ -355,7 +371,7 @@ export default function Editor({ id }: { id: string }) {
             /* A retained recovery is safer than dropping a valid server save. */
           }
         }
-        if (operation.dead || currentScopeKey.current !== scopeKey || getRepositories() !== operation.repo)
+        if (operation.dead || currentScopeKey.current !== scopeKey || repositories !== operation.repo)
           return true;
         cloudCommittedContent.current = projectContentKey(result);
         useEditor.getState().saved(result);
@@ -368,12 +384,20 @@ export default function Editor({ id }: { id: string }) {
         setError((message) => (message === previousSaveError || message === clearedSaveError ? '' : message));
         return true;
       } catch (e) {
-        if (operation.dead || currentScopeKey.current !== scopeKey || getRepositories() !== operation.repo)
+        if (operation.dead || currentScopeKey.current !== scopeKey || repositories !== operation.repo)
           return false;
         const message = e instanceof Error ? e.message : String(e);
         lastSaveError.current = message;
         useEditor.getState().failed(message);
         setError(message);
+        if (
+          adminContext &&
+          e instanceof Error &&
+          (e.name === 'StorageConflictError' || ('status' in e && e.status === 409))
+        ) {
+          setAdminConflict(true);
+          setAdminServer(null);
+        }
         // A revision conflict is never resolved by changing expectedStorageRevision.
         if (
           scope &&
@@ -400,15 +424,15 @@ export default function Editor({ id }: { id: string }) {
     } finally {
       if (pendingProjectSaves.get(scopeKey) === promise) pendingProjectSaves.delete(scopeKey);
     }
-  }, [writable, id, scopeKey, scope, persistRecovery]);
+  }, [writable, id, scopeKey, scope, persistRecovery, repositories, adminContext]);
   const scheduler = useMemo(
     () =>
       createSaveScheduler(saveOnce, {
-        delayMs: scope ? 2000 : 500,
-        maxWaitMs: scope ? 15000 : 0,
-        retryOnChange: !scope,
+        delayMs: 2000,
+        maxWaitMs: 15000,
+        retryOnChange: false,
       }),
-    [saveOnce, scope],
+    [saveOnce],
   );
   const save = useCallback(() => scheduler.flush(), [scheduler]);
   useEffect(() => {
@@ -450,7 +474,20 @@ export default function Editor({ id }: { id: string }) {
   useEffect(
     () =>
       registerAccountChangeCheckpoint(async () => {
-        if (!loaded || !scope) return;
+        if (!loaded) return;
+        if (adminContext) {
+          scheduler.dispose();
+          if (session.current) session.current.dead = true;
+          applyRequest.current++;
+          roomRequest.current++;
+          setLoaded(false);
+          setMaterials({});
+          setCatalog([]);
+          setAdminServer(null);
+          useEditor.setState({ project: null, draft: null, selection: null, saveStatus: 'saved', error: '' });
+          return;
+        }
+        if (!scope) return;
         const operation = session.current;
         scheduler.dispose();
         if (operation) operation.dead = true;
@@ -477,7 +514,7 @@ export default function Editor({ id }: { id: string }) {
         setRecoveryArchives([]);
         useEditor.setState({ project: null, draft: null, selection: null, saveStatus: 'saved', error: '' });
       }),
-    [loaded, scope, scheduler, persistRecovery],
+    [loaded, scope, scheduler, persistRecovery, adminContext],
   );
   useEffect(() => {
     if (!loaded || !writable) return;
@@ -507,32 +544,9 @@ export default function Editor({ id }: { id: string }) {
         void cloudRecovery.write(scope, sent, materialsRef.current).catch(() => {});
         return;
       }
-      // Preserve the previous local editor's save-on-unmount contract, scoped and serialized.
-      const pending = pendingProjectSaves.get(scopeKey);
-      const departure = (async () => {
-        try {
-          if (pending) {
-            if (!(await pending)) return false;
-            const latest = await operation.repo.projects.load(id);
-            if (projectContentKey(latest) === projectContentKey(sent)) return true;
-            if (latest.storageRevision === sent.storageRevision + 1)
-              sent.storageRevision = latest.storageRevision;
-          }
-          const saved = await operation.repo.projects.save(sent, sent.storageRevision);
-          if (useEditor.getState().project === project) useEditor.getState().saved(saved);
-          return true;
-        } catch (failure) {
-          if (useEditor.getState().project === project)
-            useEditor.getState().failed(failure instanceof Error ? failure.message : String(failure));
-          return false;
-        }
-      })();
-      pendingProjectSaves.set(scopeKey, departure);
-      void departure.finally(() => {
-        if (pendingProjectSaves.get(scopeKey) === departure) pendingProjectSaves.delete(scopeKey);
-      });
+      // Administrator drafts stay in memory; never save after unmount/account changes.
     };
-  }, [loaded, writable, id, scope, scopeKey, save]);
+  }, [loaded, writable, id, scope, save]);
   useEffect(() => {
     const before = (e: BeforeUnloadEvent) => {
       if (useEditor.getState().saveStatus !== 'saved') {
@@ -544,7 +558,14 @@ export default function Editor({ id }: { id: string }) {
   }, []);
   useEffect(() => {
     function key(e: KeyboardEvent) {
-      if ((e.target as HTMLElement).matches('input,textarea,select,[contenteditable]')) return;
+      if (!loaded || !ready || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      const target = e.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.closest('input,textarea,select,[role="textbox"],[role="combobox"]'))
+      )
+        return;
       if (roomViewerOpen || wallEditor || designsOpen || comparisonOpen || legacyOpen) return;
       if (referenceOpen) {
         if (e.key === 'Escape') setReferenceOpen(false);
@@ -557,10 +578,21 @@ export default function Editor({ id }: { id: string }) {
         }
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && writable) {
+      // Dialogs own their shortcuts; never undo the project behind a form or preview.
+      if (document.querySelector('[aria-modal="true"], dialog[open]')) return;
+      const modifier = (e.ctrlKey || e.metaKey) && !e.altKey;
+      // Physical keys keep the shortcuts available when a Korean keyboard layout is active.
+      const letter = e.key.toLowerCase();
+      const usePhysicalKey = !/^[a-z]$/.test(letter);
+      const undoKey = letter === 'z' || (usePhysicalKey && e.code === 'KeyZ');
+      const redoKey = letter === 'y' || (usePhysicalKey && e.code === 'KeyY');
+      if (modifier && (undoKey || (redoKey && !e.shiftKey))) {
         e.preventDefault();
-        if (e.shiftKey) useEditor.getState().redo();
-        else useEditor.getState().undo();
+        const current = useEditor.getState();
+        if (!writable || current.draft || detectionStatus) return;
+        if (redoKey || e.shiftKey) current.redo();
+        else current.undo();
+        return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
@@ -579,7 +611,10 @@ export default function Editor({ id }: { id: string }) {
     return () => window.removeEventListener('keydown', key);
   }, [
     save,
+    loaded,
+    ready,
     writable,
+    detectionStatus,
     roomOpen,
     roomViewerOpen,
     wallEditor,
@@ -605,7 +640,7 @@ export default function Editor({ id }: { id: string }) {
       )
         return;
     }
-    router.push(path);
+    router.push(path === '/' && adminContext ? '/admin/projects' : path);
   }
   function downloadRecovery(record: ProjectRecovery) {
     const url = URL.createObjectURL(new Blob([JSON.stringify(record)], { type: 'application/json' }));
@@ -673,7 +708,7 @@ export default function Editor({ id }: { id: string }) {
   }
   async function analyzePhoto(source: Scene, request: number) {
     const photoId = source.backgroundAssetId || source.previewAssetId;
-    const asset = await getRepositories().assets.get(photoId);
+    const asset = await repositories.assets.get(photoId);
     if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
     let pending = detectedPhotos.current.get(photoId);
     if (!pending) {
@@ -793,7 +828,7 @@ export default function Editor({ id }: { id: string }) {
       const fixtureId = previous?.id || crypto.randomUUID();
       const viewIndex = getPreferredProductViewIndex(m);
       const view = m.views[viewIndex];
-      const asset = await getRepositories().assets.get(view.assetId);
+      const asset = await repositories.assets.get(view.assetId);
       if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
       if (
         useEditor.getState().project?.id !== id ||
@@ -904,7 +939,7 @@ export default function Editor({ id }: { id: string }) {
     const { original, preview } = await importImage(
       new File([image.blob], '기본 공간.png', { type: 'image/png' }),
       'original',
-      getRepositories().assets,
+      repositories.assets,
     );
     if (!current()) return;
     const background = {
@@ -1076,9 +1111,7 @@ export default function Editor({ id }: { id: string }) {
   const hasSaveError = st.saveStatus === 'error' || (!!scope && !!lastSaveError.current);
   const status =
     st.saveStatus === 'saved'
-      ? storageMode === 'local'
-        ? '이 브라우저에 저장됨'
-        : '클라우드에 저장됨'
+      ? '클라우드에 저장됨'
       : st.saveStatus === 'saving'
         ? '저장 중…'
         : hasSaveError
@@ -1088,8 +1121,26 @@ export default function Editor({ id }: { id: string }) {
   const applicableSurfaces = chosenSurface ? [chosenSurface] : scene.surfaces.filter((s) => s.kind === tab);
   return (
     <div className="editor-shell" data-comparison={!!st.project.shared.comparison}>
+      {adminContext && (
+        <div className="readonly-banner" role="status">
+          <strong>
+            관리자 편집 · {adminContext.owner.name} ({adminContext.owner.email})
+          </strong>
+          <span>
+            {' '}
+            · 소유자 ID: {adminContext.owner.id} · 프로젝트 ID: {id}
+          </span>
+          <br />
+          다른 회원의 프로젝트를 수정하고 있어요. 자동 저장되며 소유자는 바뀌지 않아요. 관리자 초안은
+          메모리에만 보관되고 이 기기에 영구 복구본을 남기지 않아요.
+        </div>
+      )}
       <header className="editor-top">
-        <button className="icon-btn" aria-label="프로젝트 목록으로" onClick={() => leave('/')}>
+        <button
+          className="icon-btn"
+          aria-label="프로젝트 목록으로"
+          onClick={() => leave(adminContext ? '/admin/projects' : '/')}
+        >
           <ArrowLeft size={18} />
         </button>
         <button
@@ -1130,8 +1181,11 @@ export default function Editor({ id }: { id: string }) {
               className="icon-btn"
               title="실행 취소 (Ctrl+Z)"
               aria-label="실행 취소"
+              aria-keyshortcuts="Control+Z Meta+Z"
               disabled={
                 !writable ||
+                !!st.draft ||
+                !!detectionStatus ||
                 !(st.editing === 'before'
                   ? st.project.shared.beforeHistory.past.length
                   : activeDesign?.history.past.length)
@@ -1142,10 +1196,13 @@ export default function Editor({ id }: { id: string }) {
             </button>
             <button
               className="icon-btn"
-              title="다시 실행 (Ctrl+Shift+Z)"
+              title="다시 실행 (Ctrl+Y)"
               aria-label="다시 실행"
+              aria-keyshortcuts="Control+Y Meta+Y Control+Shift+Z Meta+Shift+Z"
               disabled={
                 !writable ||
+                !!st.draft ||
+                !!detectionStatus ||
                 !(st.editing === 'before'
                   ? st.project.shared.beforeHistory.future.length
                   : activeDesign?.history.future.length)
@@ -1257,8 +1314,8 @@ export default function Editor({ id }: { id: string }) {
             <Columns2 size={15} />
             {hasCompared && !comparisonOpen ? '시안 비교로 돌아가기' : '시안 비교'}
           </button>
-          {st.project.shared.legacyHistory && (
-            <button className="text-button" onClick={() => setLegacyOpen(true)}>
+          {!adminContext && st.project.shared.legacyHistory && (
+            <button className="text-button" disabled={!!adminContext} onClick={() => setLegacyOpen(true)}>
               이전 편집 기록
             </button>
           )}
@@ -1742,6 +1799,82 @@ export default function Editor({ id }: { id: string }) {
           </div>
         </div>
       )}
+      {adminContext && adminConflict && (
+        <div className="modal" role="dialog" aria-modal="true" aria-label="관리자 저장 충돌">
+          <div className="modal-card" style={{ maxWidth: 760 }}>
+            <h2>서버에서 프로젝트가 변경됐어요</h2>
+            <p>
+              현재 수정은 메모리에 보존했어요. 덮어쓰지 않고 서버 저장본과 비교할 수 있어요. 이 창을 닫거나
+              새로고침하면 저장하지 않은 초안을 잃을 수 있어요.
+            </p>
+            <details>
+              <summary>현재 수정 내용 · revision {st.project.storageRevision}</summary>
+              <pre style={{ maxHeight: 220, overflow: 'auto' }}>{JSON.stringify(st.project, null, 2)}</pre>
+            </details>
+            {adminServer && (
+              <details>
+                <summary>서버 저장본 · revision {adminServer.storageRevision}</summary>
+                <pre style={{ maxHeight: 220, overflow: 'auto' }}>{JSON.stringify(adminServer, null, 2)}</pre>
+              </details>
+            )}
+            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+              <button
+                className="btn"
+                disabled={adminReloadBusy}
+                onClick={async () => {
+                  setAdminReloadBusy(true);
+                  try {
+                    setAdminServer(await repositories.projects.load(id));
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setAdminReloadBusy(false);
+                  }
+                }}
+              >
+                서버 저장본 확인
+              </button>
+              {adminServer && (
+                <button
+                  className="btn"
+                  disabled={adminReloadBusy}
+                  onClick={async () => {
+                    if (!confirm('현재 메모리 초안을 버리고 확인한 서버 저장본으로 바꿀까요?')) return;
+                    setAdminReloadBusy(true);
+                    try {
+                      const versions = { ...materials };
+                      for (const scene of projectScenes(adminServer))
+                        for (const versionId of [
+                          ...scene.surfaces.map((item) => item.materialVersionId),
+                          ...scene.fixtures.map((item) => item.materialVersionId),
+                        ])
+                          if (versionId && !versions[versionId])
+                            versions[versionId] = await repositories.materials.getVersion(versionId);
+                      setMaterials(versions);
+                      st.load(adminServer);
+                      scheduler.start();
+                      cloudCommittedContent.current = projectContentKey(adminServer);
+                      lastSaveError.current = '';
+                      setError('');
+                      setAdminConflict(false);
+                      setAdminServer(null);
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : String(e));
+                    } finally {
+                      setAdminReloadBusy(false);
+                    }
+                  }}
+                >
+                  서버본 사용 · 현재 초안 버리기
+                </button>
+              )}
+              <button className="btn" onClick={() => setAdminConflict(false)}>
+                현재 초안 유지
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {recoveryPrompt && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="클라우드 작업 복구">
           <div className="modal-card" style={{ maxWidth: 680 }}>
@@ -1794,7 +1927,7 @@ export default function Editor({ id }: { id: string }) {
           </div>
         </div>
       )}
-      {legacyOpen && st.project.shared.legacyHistory && (
+      {!adminContext && legacyOpen && st.project.shared.legacyHistory && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="이전 버전 편집 기록">
           <div className="modal-card">
             <div className="modal-header">
@@ -1825,7 +1958,7 @@ export default function Editor({ id }: { id: string }) {
                     try {
                       if (!prepareDesignAction()) return;
                       const restored = createProjectFromLegacyFrame(useEditor.getState().project!, frame);
-                      await getRepositories().projects.create(restored);
+                      await repositories.projects.create(restored);
                       await leave('/projects/' + restored.id);
                     } catch (failure) {
                       setError(failure instanceof Error ? failure.message : String(failure));
@@ -2020,7 +2153,8 @@ export default function Editor({ id }: { id: string }) {
                 <li>제품은 화면에서 선택해 이동·크기 조절·삭제하고, 잠금으로 고정할 수 있어요.</li>
                 <li>공간 크기에서 가로·깊이·높이를 바꾸면 타일과 제품 크기가 함께 맞춰져요.</li>
                 <li>
-                  Before / After 비교 후 이미지를 내려받으세요. Ctrl+S 저장, Ctrl+Z 실행 취소를 지원해요.
+                  Before / After 비교 후 이미지를 내려받으세요. Ctrl+S 저장, Ctrl+Z 실행 취소, Ctrl+Y 다시
+                  실행을 지원해요. 상단의 화살표 버튼으로도 되돌리거나 다시 실행할 수 있어요.
                 </li>
               </ol>
             )}

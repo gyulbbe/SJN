@@ -1,3 +1,14 @@
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+let app: AuthenticatedApp;
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, {
+    allowModelDownloads:
+      process.env.SJN_AI_BACKGROUND_REAL === '1' || process.env.SJN_AI_BACKGROUND_WASM === '1',
+  });
+});
+test.afterEach(async () => {
+  await app?.dispose();
+});
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -204,7 +215,7 @@ test('GPU 준비 실패 → 실제 CPU PNG 성공 후 FP16 정리 → GPU 복구
     if (request.url() === fp16Url || request.url() === fp32Url) modelRequests.push(request.url());
   });
   await injectGpuDeviceFailure(page);
-  await page.goto('/materials');
+  await page.goto('/admin/materials');
   const capabilities = await page.evaluate(async () => {
     const adapter = await navigator.gpu?.requestAdapter();
     return { adapter: !!adapter, fp16: !!adapter?.features.has('shader-f16') };

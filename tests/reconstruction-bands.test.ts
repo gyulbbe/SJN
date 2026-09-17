@@ -4,7 +4,7 @@ import { applyRoomSurfaceBand } from '../src/lib/room-surface-bands';
 import { normalizeRoomScene, resizedRoomScene, roomResetWarnings } from '../src/lib/room-editing';
 import { roomAreaForSurfaces } from '../src/lib/quote';
 import { homography, transformPoint } from '../src/lib/render/math';
-import { reconstructionBandSchema, fixtureReconstructionSchema } from '../src/lib/supabase/validation';
+import { reconstructionBandSchema, fixtureReconstructionSchema } from '../src/lib/storage/validation';
 import { DEFAULT_COLOR, EMPTY_MASK, type Scene } from '../src/lib/types';
 
 function scene(): Scene {

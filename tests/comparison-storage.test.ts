@@ -2,10 +2,10 @@ import { normalizeProjectDocument } from '../src/lib/comparison';
 import 'fake-indexeddb/auto';
 import { openDB } from 'idb';
 import { describe, expect, it } from 'vitest';
-import { createLocalRepositories } from '../src/lib/repositories/local';
+import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { projectReferences, StorageConflictError } from '../src/lib/repositories/references';
 import { captureProjectFrame } from '../src/lib/comparison';
-import { projectSchema } from '../src/lib/supabase/validation';
+import { projectSchema } from '../src/lib/storage/validation';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
 import {
   DEFAULT_COLOR,
@@ -18,7 +18,7 @@ import {
 const stamp = '2020-01-01T00:00:00.000Z';
 async function setup() {
   const databaseName = 'comparison-' + crypto.randomUUID();
-  const repo = createLocalRepositories(databaseName);
+  const repo = createLegacyLocalRepositories(databaseName);
   async function asset(name = 'room.png') {
     const id = crypto.randomUUID();
     await repo.assets.put({

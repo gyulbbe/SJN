@@ -3,7 +3,6 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { initializeRepositories, resetRepositories } from '@/lib/repositories';
 import { discoverStorage } from '@/lib/storage/bootstrap';
 import { usePathname } from 'next/navigation';
-import Link from 'next/link';
 import { STORAGE_MESSAGES, type StorageMode, type StorageStatus } from '@/lib/storage/config';
 import { checkpointBeforeAccountChange, flushBeforeStorageTransition } from '@/lib/storage/recovery';
 
@@ -15,7 +14,6 @@ type Access = {
   retry: () => void;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
-  openLocal: () => Promise<void>;
   error: string;
   status: StorageStatus | null;
   expired: boolean;
@@ -23,11 +21,10 @@ type Access = {
 const Context = createContext<Access>({
   writable: false,
   ready: false,
-  mode: 'local',
+  mode: 'd1',
   retry: () => {},
   signIn: async () => {},
   signOut: async () => {},
-  openLocal: async () => {},
   error: '',
   status: null,
   expired: false,
@@ -49,11 +46,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [expired, setExpired] = useState(false);
   const [accountChanged, setAccountChanged] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [lockAttempt, setLockAttempt] = useState(0);
   const initializing = useRef(0);
   const changingAccount = useRef(false);
   const transitionBusy = useRef(false);
-  const mode = status?.mode ?? 'local';
+  const mode = status?.mode ?? 'd1';
   const suspendChangedAccount = useCallback(async () => {
     if (changingAccount.current) return;
     changingAccount.current = true;
@@ -89,28 +85,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (dead || generation !== initializing.current) return;
       setStatus(value);
       setError('');
-      if (value.mode === 'local') {
-        initializeRepositories('local');
-        setUserId(undefined);
-        setReady(true);
-        return;
-      }
       if (!value.ready) {
         setUserId(undefined);
         return;
       }
       try {
-        if (value.mode === 'supabase' && value.supabase) {
-          const { configureBrowserSupabase } = await import('@/lib/supabase/client');
-          configureBrowserSupabase(value.supabase);
-        }
-        const response = await fetch(value.mode === 'd1' ? '/api/auth/get-session' : '/api/storage/session', {
+        const response = await fetch('/api/auth/get-session', {
           credentials: 'same-origin',
           cache: 'no-store',
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
         });
         if (dead || generation !== initializing.current) return;
-        if (response.status === 401) {
+        if ([401, 403].includes(response.status)) {
+          if (response.status === 403) setError('이용이 정지된 계정이에요. 관리자에게 문의해 주세요.');
           setUserId(undefined);
           setReady(false);
           return;
@@ -139,50 +126,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [attempt]);
 
   useEffect(() => {
-    if (!ready || mode !== 'local') return;
-    let released = false;
-    let release: () => void = () => {};
-    const controller = new AbortController();
-    if (!navigator.locks) {
-      setWritable(false);
-      return;
-    }
-    void navigator.locks
-      .request('gongganmiri-local-writer', { signal: controller.signal }, async () => {
-        if (released) return;
-        setWritable(true);
-        await new Promise<void>((resolve) => {
-          release = resolve;
-          if (released) resolve();
-        });
-      })
-      .catch((reason) => {
-        if (reason.name !== 'AbortError') setWritable(false);
-      });
-    return () => {
-      released = true;
-      controller.abort();
-      release();
-      setWritable(false);
-    };
-  }, [ready, mode, lockAttempt]);
-
-  useEffect(() => {
     function expiry(event: Event) {
-      if (mode === 'local') return;
       if ((event as CustomEvent)?.detail?.accountChanged) {
         void suspendChangedAccount();
         return;
       }
       setExpired(true);
-      setError('로그인이 만료됐어요. 작업은 유지되며 다시 로그인한 뒤 서버 저장을 재시도할 수 있어요.');
+      setWritable(false);
+      setError(
+        (event as CustomEvent)?.detail?.suspended
+          ? '이용이 정지된 계정이에요. 관리자에게 문의해 주세요.'
+          : '로그인이 만료됐어요. 다시 로그인하면 본인 계정의 저장 작업을 확인할 수 있어요.',
+      );
     }
     window.addEventListener('sjn-auth-expired', expiry);
     return () => window.removeEventListener('sjn-auth-expired', expiry);
   }, [mode, suspendChangedAccount]);
 
   useEffect(() => {
-    if (!ready || mode === 'local' || !userId) return;
+    if (!ready || !userId) return;
     let dead = false;
     let busy = false;
     let lastCheck = Date.now();
@@ -192,21 +154,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       busy = true;
       lastCheck = Date.now();
       try {
-        const response = await fetch(mode === 'd1' ? '/api/auth/get-session' : '/api/storage/session', {
+        const response = await fetch('/api/auth/get-session', {
           cache: 'no-store',
           credentials: 'same-origin',
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
         });
-        if (!response.ok && response.status !== 401) return;
-        const session = response.status === 401 ? null : await response.json();
+        if (!response.ok && ![401, 403].includes(response.status)) return;
+        const session = !response.ok ? null : await response.json();
         if (dead) return;
         if (!session?.user?.id) {
           setExpired(true);
+          setWritable(false);
           setError('로그인이 만료됐어요. 작업은 유지되며 다시 로그인한 뒤 서버 저장을 재시도할 수 있어요.');
         } else if (session.user.id !== userId) {
           void suspendChangedAccount();
         } else if (!accountChanged) {
           setExpired(false);
+          setWritable(true);
         }
       } catch {
         /* Connectivity failures never replace the active workspace. */
@@ -241,22 +205,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       transitionBusy.current = false;
     }
   }
-  async function openLocal() {
-    if (status?.mode !== 'local') return;
-    await transition(() => {
-      try {
-        sessionStorage.setItem('sjn-workspace', 'local');
-      } catch {}
-      resetRepositories();
-      reopenWorkspace();
-    });
-  }
   async function reconnect() {
     await transition(() => {
-      try {
-        sessionStorage.removeItem('sjn-workspace');
-      } catch {}
-      // Backend/account transitions always reopen at the list, never reuse a project ID.
+      // Account transitions always reopen at the list, never reuse a project ID.
       if (ready || accountChanged) {
         reopenWorkspace();
         return;
@@ -267,10 +218,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   async function signIn() {
     await transition(async () => {
       setError('');
-      if (mode === 'supabase') {
-        reopenWorkspace();
-        return;
-      }
       const response = await fetch('/api/auth/sign-in/social', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -293,31 +240,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }
   async function signOut() {
     await transition(async () => {
-      if (mode === 'supabase') {
-        const { createBrowserSupabase } = await import('@/lib/supabase/client');
-        const result = await createBrowserSupabase().auth.signOut();
-        if (result.error) throw result.error;
-      } else {
-        const response = await fetch('/api/auth/sign-out', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}',
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (!response.ok) throw new Error('로그아웃하지 못했어요. 다시 시도해 주세요.');
-      }
+      const response = await fetch('/api/auth/sign-out', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error('로그아웃하지 못했어요. 다시 시도해 주세요.');
       resetRepositories();
       reopenWorkspace();
     });
   }
-  const retry = () => {
-    if (mode === 'local' && ready && !writable) setLockAttempt((value) => value + 1);
-    else void reconnect();
-  };
+  const retry = () => void reconnect();
   return (
     <Context.Provider
-      value={{ writable, ready, mode, userId, retry, signIn, signOut, openLocal, error, status, expired }}
+      value={{ writable, ready, mode, userId, retry, signIn, signOut, error, status, expired }}
     >
       {status && STORAGE_MESSAGES[status.reason] && (
         <div className="readonly-banner" role="status">
@@ -327,21 +265,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )}
       {expired && (
         <div className="readonly-banner" role="alert">
-          {error}{' '}
-          <button onClick={() => void signIn()}>
-            {mode === 'd1' ? 'Google로 다시 로그인' : '다시 로그인'}
-          </button>
+          {error} <button onClick={() => void signIn()}>Google로 다시 로그인</button>
         </div>
       )}
       {ready && !expired && !accountChanged && error && (
         <div className="readonly-banner" role="alert">
           {error} {accountChanged && <button onClick={() => void reconnect()}>계정 다시 확인</button>}
-        </div>
-      )}
-      {ready && !writable && mode === 'local' && (
-        <div className="readonly-banner">
-          다른 탭에서 편집 중이에요. 이 탭은 읽기 전용입니다.{' '}
-          <button onClick={retry}>편집권 다시 확인</button>
         </div>
       )}
       {accountChanged && (
@@ -360,115 +289,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 }
 export function StorageBadge() {
-  const access = useAccess();
   return (
     <span className="storage-badge">
       <span />
-      {access.mode === 'local' ? '로컬 작업 공간' : '클라우드 작업 공간'}
-      {access.mode === 'local' && (
-        <button className="text-button" onClick={() => void access.openLocal()}>
-          로컬 자료 열기
-        </button>
-      )}
+      계정 작업 공간
     </span>
   );
 }
 export function BackendGuard({ children }: { children: React.ReactNode }) {
-  const { status, ready, mode, signIn, retry, error } = useAccess();
+  const { status, ready, expired, signIn, retry, error } = useAccess();
   const pathname = usePathname();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).has('authError'))
-      setAuthError('Google 로그인이 완료되지 않았어요. 설정과 동의 화면을 확인하고 다시 시도해 주세요.');
-  }, []);
-  async function supabaseAuth(signup: boolean) {
-    setBusy(true);
-    setAuthError('');
-    try {
-      const { createBrowserSupabase } = await import('@/lib/supabase/client');
-      const client = createBrowserSupabase();
-      const result = signup
-        ? await client.auth.signUp({ email, password })
-        : await client.auth.signInWithPassword({ email, password });
-      if (result.error) throw result.error;
-      if (result.data.session) reopenWorkspace();
-      else setAuthError('이메일의 가입 확인 링크를 열고 로그인해 주세요.');
-    } catch (reason) {
-      setAuthError(reason instanceof Error ? reason.message : '로그인에 실패했어요.');
-    } finally {
-      setBusy(false);
-    }
-  }
-  if (pathname === '/materials' || pathname === '/login' || ready) return children;
+  if (pathname === '/login' || (ready && !expired)) return children;
   if (!status)
     return (
       <main className="auth-page">
-        <p role="status">작업 공간을 준비하고 있어요…</p>
+        <p role="status">로그인 연결을 확인하고 있어요…</p>
       </main>
     );
   return (
     <main className="auth-page">
       <div className="panel auth-card">
         <h1>공간미리 로그인</h1>
-        <p className="muted">로그인 계정에 작업을 저장해요. 기존 로컬 자료는 자동 업로드되지 않아요.</p>
-        {mode === 'd1' ? (
-          <button
-            className="btn primary"
-            disabled={busy || !status.ready}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await signIn();
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            Google로 시작하기
-          </button>
-        ) : (
-          <>
-            <label className="field">
-              이메일
-              <input
-                className="input"
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-              />
-            </label>
-            <label className="field">
-              비밀번호
-              <input
-                className="input"
-                type="password"
-                minLength={8}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </label>
-            <button className="btn primary" disabled={busy} onClick={() => void supabaseAuth(false)}>
-              로그인
-            </button>
-            <button className="btn" disabled={busy} onClick={() => void supabaseAuth(true)}>
-              회원가입
-            </button>
-          </>
-        )}
-        {(error || authError) && (
+        <p>Google 계정으로 로그인하면 프로젝트와 자재를 이용할 수 있어요.</p>
+        <button
+          className="btn primary"
+          disabled={busy || !status.ready}
+          aria-busy={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await signIn();
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? 'Google 연결 중…' : 'Google로 시작하기'}
+        </button>
+        {!status.ready && <p role="alert">Google 로그인과 D1·R2 연결 설정을 먼저 확인해 주세요.</p>}
+        {error && (
           <p role="alert" className="error">
-            {error || authError}
+            {error}
           </p>
         )}
         <button className="btn" disabled={busy} onClick={retry}>
           로그인 상태 다시 확인
         </button>
-        <Link className="text-button" href="/materials">
-          로그인 없이 자재 둘러보기
-        </Link>
       </div>
     </main>
   );
