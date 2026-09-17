@@ -13,6 +13,9 @@
       "migrations_dir": "migrations/d1",
     },
   ],
+  "r2_buckets": [
+    { "binding": "ASSET_BUCKET", "bucket_name": "sjn" },
+  ],
   "assets": {
     "directory": "dist/client",
     "not_found_handling": "none",
@@ -21,5 +24,6 @@
   "vars": {
     "APP_ENV": "production",
     "STORAGE_MODE": "d1",
+    "BETTER_AUTH_URL": "https://sjn.gyulbbe.workers.dev",
   },
 }

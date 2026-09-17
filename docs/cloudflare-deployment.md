@@ -1,6 +1,8 @@
-# Cloudflare 첫 배포 (로그인·DB 없음)
+# Cloudflare 배포 (Google 로그인·D1/R2)
 
-기본 Cloudflare 구성은 `local` 저장 모드로 시작한다. 사이트는 인터넷으로 제공하고 사진·자재·프로젝트는 방문자의 브라우저 IndexedDB에 저장한다. 이 방식에는 DB·R2·로그인 설정이 필요하지 않다. 계정별 서버 저장을 준비할 때는 [D1 + R2 + Google 로그인 설정](cloudflare-storage-setup.md)을 따른다.
+현재 앱은 개발·운영 모두 Google 로그인과 D1/R2가 필요하다. 인증·저장소 준비 실패 시 익명 IndexedDB 작업 공간으로 전환하지 않는다. 설정은 [D1 + R2 + Google 로그인 설정](cloudflare-storage-setup.md)을 따른다.
+
+2026-09-17 원격 D1 `sjn`과 로컬 개발 DB에 0001~0006 적용을 완료했다. 기존 R2 `sjn`을 확인하고 소스 `wrangler.jsonc`에 `ASSET_BUCKET → sjn`을 추가했지만, 확인한 실배포 버전(2026-09-17 13:26:36 UTC 생성)에는 R2 바인딩과 Google/Better Auth 설정이 아직 없다. 소스 수정·DB 적용·실배포 반영은 각각 별개이며 실제 로그인·R2 업로드 검증은 남아 있다.
 
 ## 로컬 확인
 
@@ -13,7 +15,7 @@ npm run build:vinext
 npm run start:vinext
 ```
 
-`start:vinext`는 생성된 `dist/server/wrangler.json`을 사용해 로컬 Workers 런타임에서 실행한다. 표시된 로컬 주소로 접속한다. 기존 Next.js 개발은 `npm run dev`, Workers용 개발은 `npm run dev:vinext`이다.
+`start:vinext`는 생성된 `dist/server/wrangler.json`을 사용해 로컬 Workers 런타임에서 실행한다. 표시된 로컬 주소로 접속한다. 기본 개발은 `npm run dev` 또는 `npm run dev:vinext`이며, `.wrangler/development`의 로컬 D1/R2와 3000 포트를 사용한다. 별도 Next/Node 호환 개발은 `npm run dev:next`이고 Workers 바인딩은 없다.
 
 빌드 후 브라우저 검증:
 
@@ -21,11 +23,11 @@ npm run start:vinext
 npm run test:cloudflare
 ```
 
-테스트는 Chrome을 사용하고 8787 포트에서 Workers 서버를 시작한다. 기본 공간 생성·저장·새로고침, 사진 분석 자산, 비활성 서버 API를 확인한다.
+이 명령은 Chrome과 8787 포트 Workers 산출물을 사용한다. 현재 연결된 `e2e/cloudflare-local.spec.ts`에는 과거 무로그인 IndexedDB 시나리오가 남아 있으므로 현행 인증 필수 앱의 운영 연결 합격 기준으로 사용하지 않는다. 로그인·권한·저장 회귀는 현재 인증된 테스트 환경을 사용하는 관련 브라우저 테스트로 확인하고, 실제 Google 계정·운영 R2 검증은 별도로 수행한다.
 
 ## AI 배경 제거 테스트의 브라우저 실행
 
-제품 사진 미리보기의 AI 테스트는 Cloudflare AI나 별도 서버를 사용하지 않습니다. 브라우저의 모듈 Worker에서 ONNX 추론을 실행합니다. 결과 확인·다운로드만으로는 자재를 바꾸지 않으며, 투명 PNG 업로드를 누르면 선택한 저장소의 새 제품 자산으로 저장합니다. 로컬 모드에서는 IndexedDB에만 저장합니다. 모델은 고정 Hugging Face 리비전에서, ONNX WASM 실행 파일은 버전이 고정된 jsDelivr 주소에서 처음 실행할 때 다운로드합니다. 이 두 외부 호스트를 차단하면 테스트 창에 다운로드 실패를 안내합니다.
+제품 사진 미리보기의 AI 테스트는 Cloudflare AI나 별도 서버를 사용하지 않습니다. 브라우저의 모듈 Worker에서 ONNX 추론을 실행합니다. 결과 확인·다운로드만으로는 자재를 바꾸지 않으며, 투명 PNG를 적용해 저장하면 인증된 D1/R2 경로의 새 제품 자산으로 저장합니다. 원본과 기존 자재 버전은 유지합니다. 모델은 고정 Hugging Face 리비전에서, ONNX WASM 실행 파일은 버전이 고정된 jsDelivr 주소에서 처음 실행할 때 다운로드합니다. 이 두 외부 호스트를 차단하면 테스트 창에 다운로드 실패를 안내합니다.
 
 Vite는 Worker를 ES 모듈로 빌드하고, client 환경의 기본 resolve 조건에 `onnxruntime-web-use-extern-wasm`을 추가합니다. 실제 CDN 경로를 사용하는 실행 파일이 배포 파일에 중복 포함되는 것을 막습니다. 기존 TensorFlow Worker의 환경 보정도 유지합니다. 상세 버전·라이선스·조건은 [AI 테스트 문서](ai-background-removal.md)에 기록합니다.
 
@@ -50,18 +52,17 @@ npm run test:background-removal
 | Deploy command     | `npm run deploy:vinext`                |
 | 비운영 브랜치 빌드 | 처음에는 끔                            |
 
-`deploy:vinext`가 빌드와 배포를 함께 수행한다. Node 버전은 루트 `.node-version`으로 고정한다. `wrangler.jsonc`의 기본 `APP_ENV=local`이면 추가 변수나 DB 키 없이 로컬 저장으로 배포된다. D1 저장을 쓰려면 운영 변수·D1/R2 바인딩·Google 설정과 migrations를 명시적으로 준비한다. 이전 `NEXT_PUBLIC_STORAGE_MODE`보다 서버 `STORAGE_MODE` 설정이 우선한다.
+`deploy:vinext`가 빌드와 배포를 함께 수행한다. Node 버전은 루트 `.node-version`으로 고정한다. `wrangler.jsonc`는 `APP_ENV=production`, `STORAGE_MODE=d1`과 D1/R2 바인딩을 소스에 선언한다. DB 마이그레이션, 운영 Google/Better Auth 설정, 소스 변경의 배포 반영을 확인한 뒤 로그인과 저장을 검증한다. 이전 `NEXT_PUBLIC_STORAGE_MODE`보다 서버 `STORAGE_MODE` 설정이 우선한다.
 
 **Save and Deploy** 후 제공된 주소에서 동작을 확인한다. 이후 GitHub main으로 push하거나 PR을 merge하면 자동 배포된다. 로컬 commit만으로는 배포되지 않는다. 기존 Worker는 **Settings → Builds → Connect**에서 연결한다.
 
-개인 도메인은 Cloudflare에 활성화한 뒤 **Settings → Domains & Routes → Add → Custom Domain**으로 연결한다. 개발 주소, workers.dev 주소, 개인 도메인은 서로 다른 브라우저 저장 공간이다. 자료가 자동으로 이동하거나 기기 간 동기화되지 않는다.
+개인 도메인은 Cloudflare에 활성화한 뒤 **Settings → Domains & Routes → Add → Custom Domain**으로 연결한다. 서비스 origin과 `BETTER_AUTH_URL`, Google 승인 origin·callback을 일치시킨다. 서버 프로젝트는 로그인 계정의 D1/R2에 저장되고, 미저장 복구본과 캐시는 각 브라우저에 남는다. 과거 브라우저 자료를 자동 업로드하지 않는다.
 
-## 배포 경계와 나중에 DB 연결할 때
+## 배포와 저장소의 경계
 
-- `build/cloudflare-local.ts`는 Vite에서 `src/app/api/cloud/**/route.ts` 모듈을 의존성 없는 503 응답으로 대체한다. 이 경로의 sharp와 Supabase 서버 코드가 Workers 번들로 들어가지 않는다.
-- 원본 서버 API와 이미지 손상 검증 코드는 보존된다. 기존 Next.js 실행 경로는 이 Vite 플러그인을 사용하지 않는다.
-- Workers에는 `/api/d1/**`와 `/api/auth/**` 경로를 준비했다. 운영 준비 확인이 성공하면 D1/R2와 Google 로그인을 쓰고, 초기 설정·연결 실패는 이유를 알리고 로컬로 시작한다. 사용 중 서버 저장 실패는 자동으로 로컬 전환하지 않는다.
-- Supabase 어댑터는 Node/Next용으로 유지한다. Workers에서 `STORAGE_MODE=supabase`는 지원되지 않아 초기 상태에 `unsupported_runtime`을 표시한다. Supabase 변수만 추가하면 활성화되는 구성은 아니다.
+- 앱은 `/api/d1/**`와 `/api/auth/**`를 사용한다. 초기 설정·연결 실패는 안내 후 접근을 차단하며 익명 로컬 저장으로 우회하지 않는다.
+- 과거 `/api/cloud/**`는 410 응답이며 Supabase 실행 어댑터·SDK는 제거했다. 기존 SQL과 원본 데이터는 보존한다.
+- D1/R2와 인증 설정이 소스에 있다는 사실만으로 실제 Worker에 반영됐다고 판단하지 않는다. 배포된 버전의 바인딩·서버 secret·준비 상태를 각각 확인한다.
 - Vite의 Worker 전용 설정은 vinext의 `typeof window` 최적화를 수정한다. TensorFlow.js가 Web Worker에서 `window` 대신 실제 전역 객체를 선택하게 하며, 메인 화면의 환경 정의는 복사하여 보존한다.
 - 로컬 Workers 상태 파일은 `.wrangler/state`에 저장하여 Windows에서 `dist` 재빌드 시 파일 잠금을 피한다. 미리보기 서버는 빌드 전에 종료한다.
 - vinext와 Next.js가 `.next/types/routes.d.ts`를 각각 생성하므로 `typecheck`는 `next typegen`을 먼저 실행한다.

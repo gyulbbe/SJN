@@ -257,7 +257,7 @@ JOIN d1_user_management s ON s.user_id=u.id;
 
 ### 소스·로컬 준비
 
-2026-09-17 Wrangler 원격 목록에서 D1 `sjn` (`c43f3251-7795-4027-8846-f418ffc939d9`)을 확인했고, 앱 테이블이 없는 상태에서 `0001`~`0004` migration을 원격 적용했다. `wrangler.jsonc`는 이 DB의 `DB` 바인딩과 `migrations_dir: "migrations/d1"`을 포함한다. **운영 빌드 설정 `wrangler.jsonc`는 `APP_ENV=production`, `STORAGE_MODE=d1`이며 기존 DB/AI/ASSETS를 유지한다. R2 `ASSET_BUCKET`과 OAuth 설정은 별도로 준비해야 하며 준비 실패는 로그인·편집을 차단한다.** 이후 같은 날 사용자 승인으로 `0005`·`0006`을 원격에 추가 적용했고, 기존 적용 이력과 데이터를 보존했다. 개발 전용 `wrangler.dev.jsonc`는 별도 로컬 D1/R2와 `.wrangler/development`를 사용한다. 운영 Worker 연결·Google OAuth·R2는 미검증이며 관리자 지정·배포는 수행하지 않았다. 운영 전환에는 대상 자원과 R2·인증 설정을 확인하고 `APP_ENV=production`을 준비한다. 빌드 산출물 `dist/server/wrangler.json`을 직접 편집하지 않는다.
+2026-09-17 Wrangler 원격 목록에서 D1 `sjn` (`c43f3251-7795-4027-8846-f418ffc939d9`)을 확인했고, 앱 테이블이 없는 상태에서 `0001`~`0004` migration을 원격 적용했다. `wrangler.jsonc`는 이 DB의 `DB` 바인딩과 `migrations_dir: "migrations/d1"`을 포함한다. **운영 빌드 설정 `wrangler.jsonc`는 `APP_ENV=production`, `STORAGE_MODE=d1`이며 기존 DB/AI/ASSETS를 유지한다. 소스에 기존 R2 `sjn`의 `ASSET_BUCKET` 바인딩을 추가했지만 확인한 실배포 버전에는 아직 없다. OAuth/Better Auth 설정도 누락돼 있으며, 재배포·인증 준비가 완료되지 않으면 로그인·편집을 차단한다.** 이후 같은 날 사용자 승인으로 `0005`·`0006`을 원격에 추가 적용했고, 기존 적용 이력과 데이터를 보존했다. 개발 전용 `wrangler.dev.jsonc`는 별도 로컬 D1/R2와 `.wrangler/development`를 사용한다. 운영 Worker 연결·Google OAuth·R2는 미검증이며 관리자 지정·배포는 수행하지 않았다. 운영 전환에는 대상 자원과 R2·인증 설정을 확인하고 `APP_ENV=production`을 준비한다. 빌드 산출물 `dist/server/wrangler.json`을 직접 편집하지 않는다.
 
 아래는 `0005` 작성 전, 2026-09-17 `0001~0004` 원격 적용 직후 확인값이다. 현재 `0001~0006` 적용 후 확인과 구분해 보존하는 초기 이력이다:
 
@@ -282,6 +282,8 @@ JOIN d1_user_management s ON s.user_id=u.id;
 | 추가 스키마 | 진단 테이블 3개·인덱스 2개, 회원 관리 trigger 4개 확인 |
 | 회원 관리 상태 | admin meta `(id=1, version=1)`, 회원 상태 누락 0건 |
 | 무결성 | 원격·로컬 모두 `foreign_key_check` 빈 결과, `quick_check=ok` |
+
+후속 연결 조사에서 기존 R2 `sjn` 버킷(Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개)을 확인했고 소스 `wrangler.jsonc`에 `ASSET_BUCKET → sjn`을 추가했다. 2026-09-17 13:26:36 UTC에 생성된 실배포 버전에는 R2 바인딩과 Google/Better Auth 설정이 없었다. 소스 변경은 아직 재배포되지 않았으며 앱의 실제 R2 업로드·로그인 검증은 남아 있다. 상세 설정은 [저장소 설정 가이드](cloudflare-storage-setup.md)를 따른다.
 
 이 확인은 DB 스키마 적용과 읽기 검증이다. 데이터 파일 삭제·R2 업로드·버킷 생성·관리자 지정·배포·실제 Google 로그인·AI 실행은 포함하지 않았다.
 

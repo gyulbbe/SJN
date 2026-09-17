@@ -115,6 +115,7 @@ http://127.0.0.1:3000 에 접속합니다. Google 웹 OAuth의 origin과 `BETTER
 - **관리자:** `/admin/users`의 회원 역할·상태 관리, `/admin/projects`의 타인 프로젝트 조회·편집, 공용 자재·기준 데이터 관리를 제공합니다. 자기 정지와 마지막 활성 관리자 제거를 막고 관리자 작업을 감사에 기록합니다. 프로젝트 소유권은 유지합니다.
 - **저장:** D1은 회원·목록·revision·참조·감사, 비공개 R2는 사진·메시·프로젝트 JSON을 보관합니다. 서버 자동 저장은 2초 지연, 연속 편집 시 최대 15초 간격입니다. revision 충돌에서 서버본을 강제 덮어쓰지 않습니다.
 - **복구:** 본인 계정의 IndexedDB 복구본을 유지하며, 로그인 만료 시 편집 화면을 숨깁니다. 다른 계정이나 관리자 프로젝트로 기존 캐시를 자동 전송하지 않습니다.
+- **R2·로그인 연결:** 기존 R2 `sjn` 버킷을 확인하고 소스 `wrangler.jsonc`에 `ASSET_BUCKET → sjn`과 `BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev`를 추가했습니다. 확인한 실배포 버전에는 이 바인딩과 Google/Better Auth 설정이 없으므로 재배포와 인증 설정이 필요합니다. 버킷 존재 확인과 앱의 실제 업로드·로그인 검증은 별개입니다.
 - **DB 적용 상태:** 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 0005·0006을 추가 적용하고, 로컬 개발 DB에는 0001~0006을 순서대로 적용했습니다. 양쪽 스키마·초기 데이터·무결성을 확인했습니다. 관리자 지정·배포·R2 버킷 생성/운영 연결 검증·실제 Google 로그인·AI 호출은 수행하지 않았습니다.
 
 운영 로컬·Supabase 저장 어댑터는 제거했고 D1/R2만 사용합니다. 과거 IndexedDB·Supabase 자료와 SQL은 보존하며 자동 데이터 이전은 없습니다. 자산 캐시는 서버 권한 확인 후 Blob을 재사용하고 7일·100개·200MiB로 제한합니다. 진단 로그는 새 `0006_reconstruction_diagnostics.sql`의 D1/R2 계정별 아카이브를 사용합니다. 현재 원격 `sjn`과 `.wrangler/development`의 로컬 DB는 0001~0006 적용을 마쳤습니다. 다른 DB나 새 스키마 변경은 적용 이력을 확인한 뒤 별도로 진행합니다. [.dev.vars.example](.dev.vars.example), [wrangler.dev.jsonc](wrangler.dev.jsonc), [설정 가이드](docs/cloudflare-storage-setup.md), [DB 설계](docs/database-design.md)를 참고하세요. 비밀값을 `NEXT_PUBLIC_*`나 Git에 넣지 않습니다.

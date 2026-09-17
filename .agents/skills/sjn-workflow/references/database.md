@@ -12,7 +12,7 @@
 | 진단 D1/R2 | 진단 메타데이터·계정별 JSON 아카이브(20건/25MiB) |
 | Workers `ASSETS` | 앱 정적 파일; 사용자 자료 R2와 별개 |
 
-기본 개발은 [wrangler.dev.jsonc](../../../../wrangler.dev.jsonc)의 로컬 D1/R2를 `.wrangler/development`에 저장하며 Google 로그인이 필요하다. 운영 빌드 원본 [wrangler.jsonc](../../../../wrangler.jsonc)은 기존 `sjn` 바인딩을 보존한다. 여기의 R2 미선언·인증 준비 미완료를 DB 적용 완료와 혼동하지 않는다. 기존 IndexedDB 자료는 보존하지만 현재 앱에서 익명 편집으로 선택하는 경로는 없다.
+기본 개발은 [wrangler.dev.jsonc](../../../../wrangler.dev.jsonc)의 로컬 D1/R2를 `.wrangler/development`에 저장하며 Google 로그인이 필요하다. 운영 빌드 원본 [wrangler.jsonc](../../../../wrangler.jsonc)은 기존 `sjn` 바인딩을 보존한다. 소스에는 기존 R2 `sjn`을 연결하는 `ASSET_BUCKET`을 추가했다. 2026-09-17 확인한 실배포 버전에는 이 바인딩과 인증 설정이 아직 없어 소스 변경 후 재배포·인증 준비가 필요하다. 버킷 존재 확인이나 DB 적용 완료를 앱의 R2 업로드·Google 로그인 성공으로 해석하지 않는다. 기존 IndexedDB 자료는 보존하지만 현재 앱에서 익명 편집으로 선택하는 경로는 없다.
 
 ## 핵심 스키마
 
