@@ -1722,7 +1722,12 @@ svg {
 }
 
 .guest-login-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
   width: min(460px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 20px;
   padding: 32px;

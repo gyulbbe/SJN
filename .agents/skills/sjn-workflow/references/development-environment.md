@@ -1,6 +1,6 @@
 # 개발환경 참조
 
-확인 기준: **2026-09-17 현재 소스**. 2026-09-17 사용자 승인 후 D1 `sjn`의 기존 0001~0004에 0005·0006을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 0001~0006을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했다. 관리자 지정·배포·R2 버킷 생성·실제 Google 인증·AI 호출은 수행하지 않았다. 실제 secret은 문서·로그·Git에 기록하지 않는다. 기존 R2 `sjn`(Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개)을 읽기 확인했고 소스에 `ASSET_BUCKET → sjn`을 추가했다. 2026-09-17 13:26:36 UTC에 생성된 실배포 버전의 바인딩에는 R2와 `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`이 없다. vinext 빌드와 산출물의 R2·기존 DB/AI 바인딩 유지까지 확인했으나 재배포·인증 설정 및 실제 연결 검증은 남아 있다. 로컬 `.dev.vars`·`.env.local`도 확인 당시 없었다. 사용자가 확인한 운영 주소 `https://sjn.gyulbbe.workers.dev`를 소스 `BETTER_AUTH_URL`에 추가했으며 Google callback은 `https://sjn.gyulbbe.workers.dev/api/auth/callback/google`이다. 해당 사이트의 실제 `/api/storage/status`는 `ready=false`, `reason=missing_bindings`였고 OAuth 준비·secret·재배포는 남아 있다.
+확인 기준: **2026-09-17 현재 소스**. 2026-09-17 사용자 승인 후 D1 `sjn`의 기존 0001~0004에 0005·0006을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 0001~0006을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했다. 관리자 지정·배포·R2 버킷 생성·실제 Google 인증·AI 호출은 수행하지 않았다. 실제 secret은 문서·로그·Git에 기록하지 않는다. 기존 R2 `sjn`(Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개)을 읽기 확인했고 소스에 `ASSET_BUCKET → sjn`을 추가했다. 2026-09-17 14:46:54 UTC에 생성된 현재 실배포 버전(`d70ff6c6-bd4e-4bba-9758-9bd5bdd81911`)을 읽기 확인한 결과 `DB`·`ASSET_BUCKET`·`AI`·`ASSETS` 바인딩과 `APP_ENV=production`·`STORAGE_MODE=d1`·`BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev`가 있다. 운영 secret 목록은 비어 있고 전체 바인딩에도 `BETTER_AUTH_SECRET`·`GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`이 없어 로그인 준비 검사가 실패한다. 실제 `/api/storage/status`는 `ready=false`, `reason=invalid_configuration`이다. 이 확인은 운영 설정 변경·배포를 하지 않은 읽기 검사이며, 인증 준비 검사에서 중단되므로 현재 D1/R2 실제 읽기·쓰기나 Google 로그인이 성공했다는 뜻은 아니다. 실제 Google OAuth·R2 업로드 검증은 남아 있다. 로컬 `.dev.vars`·`.env.local`·`.env`·`.dev.vars.development`도 확인 당시 없었다. Google callback은 `https://sjn.gyulbbe.workers.dev/api/auth/callback/google`이다.
 
 ## 실행과 검사
 
@@ -22,7 +22,7 @@ Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [pack
 | 파일 | 역할 |
 | --- | --- |
 | [wrangler.dev.jsonc](../../../../wrangler.dev.jsonc) | 개발 전용 sjn-development. 로컬 DB/R2, `APP_ENV=development`, `STORAGE_MODE=d1`, `BETTER_AUTH_URL=http://127.0.0.1:3000`, AI 바인딩 없음 |
-| [wrangler.jsonc](../../../../wrangler.jsonc) | 기본 빌드/배포 원본. 기존 원격 sjn DB/AI/ASSETS. APP_ENV=production·STORAGE_MODE=d1, ASSET_BUCKET → 기존 R2 sjn, BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev 추가; 확인한 실배포 버전에는 아직 미반영 |
+| [wrangler.jsonc](../../../../wrangler.jsonc) | 기본 빌드/배포 원본. 원격 sjn DB/AI/ASSETS, APP_ENV=production·STORAGE_MODE=d1, ASSET_BUCKET → 기존 R2 sjn, BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev. 현재 실배포에 해당 바인딩·공개 변수 반영을 읽기 확인했으며 로그인 secret 3개는 미등록 |
 | [wrangler.d1.example.jsonc](../../../../wrangler.d1.example.jsonc) | 운영 설정 참고본; 이름·ID·도메인·버킷은 예시이며 자동 적용되지 않음 |
 | [.dev.vars.example](../../../../.dev.vars.example) | 실제 `.dev.vars`의 로컬 Workers secret 예시. 빈 Google/Better Auth 값을 직접 준비 |
 | [.env.example](../../../../.env.example) | Node/Next 변수 참고. `.env.local`은 Workers secret을 대신하지 않음 |
@@ -65,4 +65,4 @@ Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는
 
 체험 중에는 사진 업로드·AI 실행·진단 아카이브를 시작하지 않는다. MoGe·DeepLab·배경 제거·제품 입체화는 로그인한 기능의 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
 
-`deploy:vinext`는 실제 배포다. 소스에 추가한 R2 바인딩은 검증된 산출물로 재배포해야 실제 Worker에 반영되며, 누락된 Google/Better Auth 설정은 배포만으로 생성되지 않는다. 원격 sjn과 로컬 개발 DB는 2026-09-17 사용자 승인 후 0001~0006 적용을 완료했다. 이후 운영 DB 변경은 대상과 미적용 목록을 확인해 별도로 승인된 범위에서 진행한다. 로컬 개발 DB 적용과 원격 DB 적용은 다른 작업이다. 자세한 Google/secret/배포 준비는 [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 따른다.
+`deploy:vinext`는 실제 배포다. 현재 확인한 실배포에는 소스의 R2 바인딩과 공개 인증 URL이 반영되어 있다. 이후 소스 변경을 Worker에 반영하려면 검증된 산출물로 배포해야 하며, 누락된 Google/Better Auth secret 3개는 배포만으로 생성되지 않는다. 이 문서 갱신에서는 원격 설정·DB·배포를 변경하지 않았다. 원격 sjn과 로컬 개발 DB는 2026-09-17 사용자 승인 후 0001~0006 적용을 완료했다. 이후 운영 DB 변경은 대상과 미적용 목록을 확인해 별도로 승인된 범위에서 진행한다. 로컬 개발 DB 적용과 원격 DB 적용은 다른 작업이다. 자세한 Google/secret/배포 준비는 [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 따른다.

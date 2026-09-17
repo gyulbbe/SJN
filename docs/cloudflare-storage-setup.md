@@ -12,12 +12,12 @@
 | 기존 R2 `sjn` | Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개; 새 버킷은 생성하지 않음 |
 | 소스 R2·주소 설정 | `wrangler.jsonc`에 `ASSET_BUCKET → sjn`, `BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev` 추가 완료 |
 | 빌드 산출물 | vinext 빌드 성공. `dist/server/wrangler.json`에 `ASSET_BUCKET → sjn`과 기존 `DB → sjn`·`AI` 유지 확인 |
-| 확인한 실배포 버전 | 2026-09-17 13:26:36 UTC 생성 버전에 DB·AI·ASSETS·APP_ENV·STORAGE_MODE만 있음; 새 R2 바인딩은 아직 미반영 |
-| 운영 인증 설정 | 확인한 배포에는 `BETTER_AUTH_URL`·`BETTER_AUTH_SECRET`·`GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET` 없음. 소스 URL 추가는 아직 미배포이며 OAuth 클라이언트 준비 여부는 확인 중 |
-| 실제 준비 응답 | `https://sjn.gyulbbe.workers.dev/api/storage/status`는 `mode=d1`, `ready=false`, `reason=missing_bindings`, `authRequired=true` |
-| 로컬 인증 파일 | 확인 당시 `.dev.vars`·`.env.local` 없음 |
+| 확인한 실배포 버전 | 2026-09-17 14:46:54 UTC 생성 버전 `d70ff6c6-bd4e-4bba-9758-9bd5bdd81911`에 DB·ASSET_BUCKET·AI·ASSETS 바인딩과 APP_ENV·STORAGE_MODE·BETTER_AUTH_URL 확인 |
+| 운영 인증 설정 | `BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev` 반영 확인. 운영 secret 목록은 비어 있고 `BETTER_AUTH_SECRET`·`GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET` 미등록. Google 콘솔의 OAuth 클라이언트 준비 여부는 미확인 |
+| 실제 준비 응답 | `https://sjn.gyulbbe.workers.dev/api/storage/status`는 `mode=d1`, `ready=false`, `reason=invalid_configuration`, `authRequired=true` |
+| 로컬 인증 파일 | 확인 당시 `.dev.vars`·`.env.local`·`.env`·`.dev.vars.development` 없음 |
 
-R2 변경의 vinext 빌드와 산출물 바인딩은 검증했고, 실제 Worker 반영에는 재배포가 필요하다. Google/Better Auth 설정 준비와 실제 로그인·R2 업로드 검증은 남아 있다. DB 적용이나 버킷 존재만으로 앱의 연결이 완료되는 것은 아니다.
+현재 배포의 R2 바인딩과 공개 인증 URL은 반영되어 있다. 이번에는 준비 응답·배포 메타데이터·secret 이름만 읽었으며 원격 설정·DB·배포를 변경하지 않았다. 로그인 secret 3개가 없어 인증 준비 검사에서 중단되므로, 이 결과가 현재 D1/R2 실제 읽기·쓰기 성공을 보증하지는 않는다. Google/Better Auth 설정 준비와 실제 로그인·R2 업로드 검증은 남아 있다.
 
 ## 기본 로컬 개발
 
@@ -73,7 +73,7 @@ npx wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc --persis
 
 - [wrangler.dev.jsonc](../wrangler.dev.jsonc): 개발 전용 로컬 D1/R2, APP_ENV=development, STORAGE_MODE=d1, BETTER_AUTH_URL=http://127.0.0.1:3000.
 - [scripts/dev-local.mjs](../scripts/dev-local.mjs)와 [vite.config.ts](../vite.config.ts): SJN_DEV_BINDINGS=1일 때 위 설정과 .wrangler/development를 선택.
-- [wrangler.jsonc](../wrangler.jsonc): 기본 빌드/배포 원본. APP_ENV=production, STORAGE_MODE=d1, 기존 원격 sjn DB/AI/ASSETS를 유지. 기존 R2 sjn의 ASSET_BUCKET 바인딩을 소스에 추가했으며 실제 배포에는 아직 미반영. BETTER_AUTH_URL은 https://sjn.gyulbbe.workers.dev로 소스에 지정. OAuth/Better Auth secret은 별도 준비가 필요.
+- [wrangler.jsonc](../wrangler.jsonc): 기본 빌드/배포 원본. APP_ENV=production, STORAGE_MODE=d1, 기존 원격 sjn DB/AI/ASSETS를 유지. 기존 R2 sjn의 ASSET_BUCKET 바인딩과 BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev를 소스와 현재 실배포에서 확인. OAuth/Better Auth secret은 별도 준비가 필요.
 - [wrangler.d1.example.jsonc](../wrangler.d1.example.jsonc): 운영 참고본. 이름·ID·도메인·버킷 예시를 현재 설정 전체와 교체하지 않음.
 - [.dev.vars.example](../.dev.vars.example): 로컬 Workers secret 예시. 실제 .dev.vars는 커밋·배포하지 않음.
 - [.env.example](../.env.example): Node 변수 예시. .env.local은 Worker secret을 대신하지 않음.
@@ -146,7 +146,7 @@ Wrangler는 적용한 migration을 추적한다. 이후 스키마 변경은 기�
 
 Google Cloud Console에서 운영 프로젝트를 고르고 Google Auth Platform의 동의 화면과 **웹 애플리케이션 OAuth 클라이언트**를 만든다. 로고·앱 이름·지원 이메일·서비스 도메인을 설정한다. 테스트 상태면 로그인할 이메일을 테스트 사용자로 등록한다. 공개 서비스 전에는 Google의 게시/검증 조건을 확인한다.
 
-사용자가 확인한 현재 운영 주소는 `https://sjn.gyulbbe.workers.dev/`다. Google 콘솔에는 아래 값을 정확히 등록한다. 소스 URL은 반영했지만 OAuth 클라이언트 설정·secret 등록·재배포·실제 로그인은 아직 완료되지 않았다.
+사용자가 확인한 현재 운영 주소는 `https://sjn.gyulbbe.workers.dev/`다. Google 콘솔에는 아래 값을 정확히 등록한다. 공개 인증 URL은 현재 실배포에 반영되어 있다. Google 콘솔의 OAuth 클라이언트 설정은 미확인이고 운영 secret 3개는 미등록이며 실제 로그인 검증은 남아 있다.
 
 | 항목 | 현재 서비스 설정값 |
 | --- | --- |
@@ -187,7 +187,7 @@ npm run build
 npm run build:vinext
 ```
 
-Cloudflare 빌드 검증 후 설정 준비가 끝난 운영자가 `npm run deploy:vinext` 또는 기존 GitHub 연결 배포 절차를 실행한다. 이 단계는 실제 배포를 수행한다. 현재 D1 스키마는 적용됐으며 소스의 R2 바인딩은 재배포 시 반영된다. Google/Better Auth의 URL·secret은 배포만으로 생성되지 않으며 누락되면 접근을 차단한다. 이후 새 마이그레이션 역시 배포와 별도로 적용한다. [`Cloudflare 첫 배포 가이드`](cloudflare-deployment.md)도 함께 확인한다.
+Cloudflare 빌드 검증 후 설정 준비가 끝난 운영자가 `npm run deploy:vinext` 또는 기존 GitHub 연결 배포 절차를 실행한다. 이 단계는 실제 배포를 수행한다. 현재 D1 스키마 적용과 실배포의 R2 바인딩·공개 인증 URL 반영을 확인했다. 이후 소스 변경은 배포가 필요하며 Google/Better Auth secret은 배포만으로 생성되지 않는다. 누락된 인증 설정은 계정 기능 이용을 차단한다. 이후 새 마이그레이션 역시 배포와 별도로 적용한다. [`Cloudflare 첫 배포 가이드`](cloudflare-deployment.md)도 함께 확인한다.
 
 배포 후 브라우저에서 `/api/storage/status`를 열어 다음 응답을 확인한다. 준비 확인은 R2에 시험 파일을 쓰거나 Google에 로그인하는 작업을 하지 않는다. 따라서 `ready:true`만으로 Google 콘솔 설정의 실제 정상 동작까지 확인한 것은 아니다.
 
@@ -195,7 +195,7 @@ Cloudflare 빌드 검증 후 설정 준비가 끝난 운영자가 `npm run deplo
 { "mode": "d1", "ready": true, "reason": "ready", "authRequired": true }
 ```
 
-비로그인 메인·`/materials`·현재 공용 이미지·`/try`가 열리는지, 빈 공간 배치가 같은 탭 새로고침 뒤 복원되는지 확인한다. 계정/관리자/AI API 직접 요청은 차단되고 사진·정식 저장·비교·견적·출력은 로그인 안내로 이어져야 한다. 로그인 복귀 후 같은 초안이 본인 프로젝트로 저장되는지와 실패/재시도·계정 변경, 기존 개인 프로젝트 생성·새로고침·이미지 업로드·로그아웃도 확인한다. 두 계정과 두 브라우저로 소유권을 확인하고, 타 계정의 프로젝트/파일 URL을 직접 호출해 차단되는지도 검증한다. 원격 sjn과 로컬 개발 DB의 0001~0006 적용·초기 데이터·SQL 무결성 검증은 완료했다. 앱의 운영 Worker 연결·실제 Google 로그인·R2 접근과 Workers CPU 제한 검증은 미실행이다.
+비로그인 메인·`/materials`·현재 공용 이미지·`/try`가 열리는지, 빈 공간 배치가 같은 탭 새로고침 뒤 복원되는지 확인한다. 계정/관리자/AI API 직접 요청은 차단되고 사진·정식 저장·비교·견적·출력은 로그인 안내로 이어져야 한다. 로그인 복귀 후 같은 초안이 본인 프로젝트로 저장되는지와 실패/재시도·계정 변경, 기존 개인 프로젝트 생성·새로고침·이미지 업로드·로그아웃도 확인한다. 두 계정과 두 브라우저로 소유권을 확인하고, 타 계정의 프로젝트/파일 URL을 직접 호출해 차단되는지도 검증한다. 원격 sjn과 로컬 개발 DB의 0001~0006 적용·초기 데이터·SQL 무결성 검증은 완료했다. 운영 Worker의 바인딩·준비 응답은 읽기 확인했지만 실제 Google 로그인·R2 읽기/업로드와 Workers CPU 제한 검증은 미실행이다.
 
 ### 6. 최초 관리자와 이후 회원 관리
 
