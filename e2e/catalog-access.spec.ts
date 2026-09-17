@@ -212,17 +212,18 @@ test('비활성 분류는 자재 검색에서 제외되고 하위 분류는 제�
   await expect(form.getByRole('button', { name: '하위 카테고리 벽걸이 제거', exact: true })).toBeVisible();
 });
 
-test('비로그인 사용자는 자재와 프로젝트 모두 로그인 화면으로 보호된다', async ({ page }) => {
+test('비로그인은 메인·공개 자재를 보고 회원·관리자 자료는 로그인으로 보호된다', async ({ page }) => {
   const calls = await cloud(page);
-  for (const path of ['/materials', '/', '/admin/users', '/admin/projects']) {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await page.goto('/materials');
+  await expect(page.getByText(sample.name, { exact: true }).first()).toBeVisible();
+  for (const path of ['/projects/private-project', '/admin/users', '/admin/projects']) {
     await page.goto(path);
     await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeEnabled();
-    await expect(page.getByRole('heading', { name: sample.name, exact: true })).toHaveCount(0);
   }
-  expect(
-    calls.some((call) => call.path === '/api/catalog/materials' || call.path.startsWith('/api/d1/projects')),
-  ).toBe(false);
+  expect(calls.some((call) => call.path === '/api/catalog/materials')).toBe(true);
+  expect(calls.some((call) => call.path.startsWith('/api/d1/projects'))).toBe(false);
 });
 
 test('일반 회원은 관리자 화면과 등록 버튼에 접근할 수 없다', async ({ page }) => {
@@ -243,22 +244,21 @@ test('일반 회원은 관리자 화면과 등록 버튼에 접근할 수 없다
 });
 
 for (const failure of ['reported', 'network'] as const) {
-  test(`운영 연결 장애(${failure})에서 이전 로컬 선택이 있어도 익명 편집으로 전환하지 않는다`, async ({
-    page,
-  }) => {
-    await cloud(page, { broken: true });
-    if (failure === 'network') await page.route('**/api/storage/status', (route) => route.abort());
-    await page.addInitScript(() => sessionStorage.setItem('sjn-workspace', 'local'));
-    await page.goto('/');
-    await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
-    await expect(page.getByRole('button', { name: '기본 공간으로 시작', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /로컬 자료 열기|로그인 없이.*편집/ })).toHaveCount(0);
-    await page.goto('/materials');
-    await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
-    await expect(page.getByRole('heading', { name: sample.name, exact: true })).toHaveCount(0);
-  });
+  test(
+    '인증 준비 실패(' + failure + ')에도 공개 홈은 열리지만 기존 회원 프로젝트는 잠긴다',
+    async ({ page }) => {
+      await cloud(page, { broken: true });
+      if (failure === 'network') await page.route('**/api/storage/status', (route) => route.abort());
+      await page.addInitScript(() => sessionStorage.setItem('sjn-workspace', 'local'));
+      await page.goto('/');
+      await expect(page.getByRole('button', { name: '기본 공간으로 시작', exact: true })).toBeEnabled();
+      await page.goto('/materials');
+      await expect(page.getByText(sample.name, { exact: true }).first()).toBeVisible();
+      await page.goto('/projects/private-project');
+      await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
+    },
+  );
 }
 
 test('Google 로그인 요청 실패와 OAuth 취소 안내를 표시하고 다시 시도할 수 있다', async ({ page }) => {
@@ -279,15 +279,16 @@ test('Google 로그인 요청 실패와 OAuth 취소 안내를 표시하고 다�
   await expect(signIn).toBeEnabled();
 });
 
-test('회원 로그아웃 후 프로젝트와 자재 화면 모두 로그인으로 보호된다', async ({ page }) => {
+test('로그아웃 후 공개 홈·자재만 유지하고 계정 자료는 노출하지 않는다', async ({ page }) => {
   const calls = await cloud(page, { member: true });
   await page.goto('/materials');
   await page.getByRole('button', { name: '로그아웃', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeVisible();
   expect(calls.filter((call) => call.path === '/api/auth/sign-out')).toHaveLength(1);
   await page.goto('/materials');
-  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
+  await expect(page.getByText(sample.name, { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: '로그아웃', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeVisible();
+  await page.goto('/projects/private-project');
+  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
 });

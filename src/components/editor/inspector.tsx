@@ -9,7 +9,7 @@ import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import ReconstructionProperties from '@/components/reconstruction/reconstruction-properties';
 import { useRepositories } from '@/components/repository-context';
 import { DEFAULT_COLOR, type ColorAdjust, type MaterialVersion } from '@/lib/types';
-import { useAccess } from '../app-provider';
+import { LoginRequiredIcon, useEditingCapabilities } from './editing-capabilities';
 import { AssetImage } from '../materials/asset-image';
 import styles from './inspector-angles.module.css';
 export function Range({
@@ -74,7 +74,7 @@ export default function Inspector({
 }) {
   const repositories = useRepositories();
   const st = useEditor(),
-    { writable } = useAccess();
+    { writable, guest, requestLogin } = useEditingCapabilities();
   const [colorTarget, setColorTarget] = useState<'global' | 'selection'>('global');
   const [pendingView, setPendingView] = useState<number | null>(null);
   const [viewError, setViewError] = useState('');
@@ -204,6 +204,10 @@ export default function Inspector({
       else scene.color = { ...DEFAULT_COLOR };
     });
   function moveFixture(direction: number) {
+    if (guest) {
+      requestLogin('겹침 순서');
+      return;
+    }
     if (!fixture) return;
     st.change((scene) => {
       const i = scene.fixtures.findIndex((f) => f.id === fixture.id);
@@ -268,11 +272,13 @@ export default function Inspector({
             {onWallFeatures && (
               <button
                 className="btn small"
+                title={guest ? '로그인 필요' : undefined}
                 onClick={onWallFeatures}
                 disabled={!!st.draft}
                 style={{ marginLeft: 8 }}
               >
                 벽 구조 편집{s.wallFeatures?.length ? ' · ' + s.wallFeatures.length : ''}
+                {guest && <LoginRequiredIcon />}
               </button>
             )}
           </section>
@@ -308,80 +314,93 @@ export default function Inspector({
                   {material ? `${material.widthMm}×${material.heightMm}` : '자재 미선택'}
                 </span>
               </div>
-              <label className="field" style={{ marginBottom: 13 }}>
-                배열
-                <select
-                  className="input"
-                  aria-label="타일 배열"
-                  value={surface.tile.pattern}
-                  onChange={(e) =>
-                    changeSurface((v) => (v.tile.pattern = e.target.value as 'grid' | 'brick'))
-                  }
+              {guest ? (
+                <button
+                  className="btn small"
+                  title="로그인 필요"
+                  onClick={() => requestLogin('타일 시공 세부 설정')}
                 >
-                  <option value="grid">기본 격자</option>
-                  <option value="brick">반장 엇갈림</option>
-                </select>
-              </label>
-              <Range
-                label="타일 방향"
-                value={surface.tile.rotation}
-                min={-180}
-                max={180}
-                step={1}
-                unit="°"
-                onChange={(n) => changeSurface((v) => (v.tile.rotation = n), true)}
-                onCommit={st.commit}
-              />
-              <Range
-                label="가로 시작점"
-                value={surface.tile.offsetX}
-                min={-1000}
-                max={1000}
-                step={1}
-                unit=" mm"
-                onChange={(n) => changeSurface((v) => (v.tile.offsetX = n), true)}
-                onCommit={st.commit}
-              />
-              <Range
-                label="세로 시작점"
-                value={surface.tile.offsetY}
-                min={-1000}
-                max={1000}
-                step={1}
-                unit=" mm"
-                onChange={(n) => changeSurface((v) => (v.tile.offsetY = n), true)}
-                onCommit={st.commit}
-              />
-              <label className="color-field">
-                줄눈 색상
-                <input
-                  aria-label="줄눈 색상"
-                  type="color"
-                  value={surface.tile.groutColor}
-                  onChange={(e) => changeSurface((v) => (v.tile.groutColor = e.target.value))}
-                />
-              </label>
-              <Range
-                label="줄눈 폭"
-                value={surface.tile.groutWidth}
-                min={0}
-                max={15}
-                step={0.5}
-                unit=" mm"
-                onChange={(n) => changeSurface((v) => (v.tile.groutWidth = n), true)}
-                onCommit={st.commit}
-              />
-              <Range
-                label="원본 명암 보존"
-                value={surface.tile.shading}
-                min={0}
-                max={1}
-                onChange={(n) => changeSurface((v) => (v.tile.shading = n), true)}
-                onCommit={st.commit}
-              />
-              <p className="muted" style={{ fontSize: 10 }}>
-                기존 무늬가 남으면 명암 보존을 0으로 낮춰주세요.
-              </p>
+                  타일 시공 세부 설정
+                  <LoginRequiredIcon />
+                </button>
+              ) : (
+                <>
+                  <label className="field" style={{ marginBottom: 13 }}>
+                    배열
+                    <select
+                      className="input"
+                      aria-label="타일 배열"
+                      value={surface.tile.pattern}
+                      onChange={(e) =>
+                        changeSurface((v) => (v.tile.pattern = e.target.value as 'grid' | 'brick'))
+                      }
+                    >
+                      <option value="grid">기본 격자</option>
+                      <option value="brick">반장 엇갈림</option>
+                    </select>
+                  </label>
+                  <Range
+                    label="타일 방향"
+                    value={surface.tile.rotation}
+                    min={-180}
+                    max={180}
+                    step={1}
+                    unit="°"
+                    onChange={(n) => changeSurface((v) => (v.tile.rotation = n), true)}
+                    onCommit={st.commit}
+                  />
+                  <Range
+                    label="가로 시작점"
+                    value={surface.tile.offsetX}
+                    min={-1000}
+                    max={1000}
+                    step={1}
+                    unit=" mm"
+                    onChange={(n) => changeSurface((v) => (v.tile.offsetX = n), true)}
+                    onCommit={st.commit}
+                  />
+                  <Range
+                    label="세로 시작점"
+                    value={surface.tile.offsetY}
+                    min={-1000}
+                    max={1000}
+                    step={1}
+                    unit=" mm"
+                    onChange={(n) => changeSurface((v) => (v.tile.offsetY = n), true)}
+                    onCommit={st.commit}
+                  />
+                  <label className="color-field">
+                    줄눈 색상
+                    <input
+                      aria-label="줄눈 색상"
+                      type="color"
+                      value={surface.tile.groutColor}
+                      onChange={(e) => changeSurface((v) => (v.tile.groutColor = e.target.value))}
+                    />
+                  </label>
+                  <Range
+                    label="줄눈 폭"
+                    value={surface.tile.groutWidth}
+                    min={0}
+                    max={15}
+                    step={0.5}
+                    unit=" mm"
+                    onChange={(n) => changeSurface((v) => (v.tile.groutWidth = n), true)}
+                    onCommit={st.commit}
+                  />
+                  <Range
+                    label="원본 명암 보존"
+                    value={surface.tile.shading}
+                    min={0}
+                    max={1}
+                    onChange={(n) => changeSurface((v) => (v.tile.shading = n), true)}
+                    onCommit={st.commit}
+                  />
+                  <p className="muted" style={{ fontSize: 10 }}>
+                    기존 무늬가 남으면 명암 보존을 0으로 낮춰주세요.
+                  </p>
+                </>
+              )}
               <button
                 className="btn small"
                 style={{ marginTop: 12 }}
@@ -456,13 +475,29 @@ export default function Inspector({
                 </p>
               )}
               <div className="row" style={{ marginTop: 12 }}>
-                <button className="btn small" onClick={() => changeFixture((v) => (v.locked = !v.locked))}>
+                <button
+                  className="btn small"
+                  title={guest && !fixture.locked ? '로그인 필요' : undefined}
+                  onClick={() => {
+                    if (guest && !fixture.locked) {
+                      requestLogin('배치 잠금');
+                      return;
+                    }
+                    changeFixture((v) => (v.locked = !v.locked));
+                  }}
+                >
                   {fixture.locked ? <Lock size={13} /> : <Unlock size={13} />}{' '}
                   {fixture.locked ? '잠금 해제' : '배치 잠금'}
+                  {guest && !fixture.locked && <LoginRequiredIcon />}
                 </button>
                 <button
                   className="btn small"
+                  title={guest ? '로그인 필요' : undefined}
                   onClick={() => {
+                    if (guest) {
+                      requestLogin('제품 복제');
+                      return;
+                    }
                     const clone = {
                       ...structuredClone(fixture),
                       id: crypto.randomUUID(),
@@ -496,7 +531,7 @@ export default function Inspector({
                   }}
                 >
                   <Copy size={13} />
-                  복제
+                  복제{guest && <LoginRequiredIcon />}
                 </button>
               </div>
               <button
@@ -623,62 +658,82 @@ export default function Inspector({
                 </p>
               )}
             </section>
-            <section className="property-section">
-              <h4>접지 그림자</h4>
-              <Range
-                label="그림자 진하기"
-                value={fixture.shadow.opacity}
-                min={0}
-                max={1}
-                onChange={(n) => changeFixture((v) => (v.shadow.opacity = n), true)}
-                onCommit={st.commit}
-              />
-              <Range
-                label="그림자 부드러움"
-                value={fixture.shadow.blur}
-                min={0.001}
-                max={0.12}
-                step={0.001}
-                onChange={(n) => changeFixture((v) => (v.shadow.blur = n), true)}
-                onCommit={st.commit}
-              />
-              <Range
-                label="그림자 가로 위치"
-                value={fixture.shadow.x}
-                min={-0.2}
-                max={0.2}
-                step={0.002}
-                onChange={(n) => changeFixture((v) => (v.shadow.x = n), true)}
-                onCommit={st.commit}
-              />
-              <Range
-                label="그림자 세로 위치"
-                value={fixture.shadow.y}
-                min={-0.2}
-                max={0.2}
-                step={0.002}
-                onChange={(n) => changeFixture((v) => (v.shadow.y = n), true)}
-                onCommit={st.commit}
-              />
-              <Range
-                label="그림자 너비"
-                value={fixture.shadow.scale}
-                min={0.1}
-                max={2}
-                onChange={(n) => changeFixture((v) => (v.shadow.scale = n), true)}
-                onCommit={st.commit}
-              />
-              <div className="row">
-                <button className="btn small" onClick={() => moveFixture(1)}>
-                  <ArrowUp size={13} />
-                  앞으로
-                </button>
-                <button className="btn small" onClick={() => moveFixture(-1)}>
-                  <ArrowDown size={13} />
-                  뒤로
-                </button>
-              </div>
-            </section>
+            {guest ? (
+              <section className="property-section">
+                <h4>그림자와 겹침 순서</h4>
+                <div className="stack">
+                  <button
+                    className="btn small"
+                    title="로그인 필요"
+                    onClick={() => requestLogin('접지 그림자')}
+                  >
+                    접지 그림자 설정
+                    <LoginRequiredIcon />
+                  </button>
+                  <button className="btn small" title="로그인 필요" onClick={() => requestLogin('겹침 순서')}>
+                    겹침 순서 변경
+                    <LoginRequiredIcon />
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <section className="property-section">
+                <h4>접지 그림자</h4>
+                <Range
+                  label="그림자 진하기"
+                  value={fixture.shadow.opacity}
+                  min={0}
+                  max={1}
+                  onChange={(n) => changeFixture((v) => (v.shadow.opacity = n), true)}
+                  onCommit={st.commit}
+                />
+                <Range
+                  label="그림자 부드러움"
+                  value={fixture.shadow.blur}
+                  min={0.001}
+                  max={0.12}
+                  step={0.001}
+                  onChange={(n) => changeFixture((v) => (v.shadow.blur = n), true)}
+                  onCommit={st.commit}
+                />
+                <Range
+                  label="그림자 가로 위치"
+                  value={fixture.shadow.x}
+                  min={-0.2}
+                  max={0.2}
+                  step={0.002}
+                  onChange={(n) => changeFixture((v) => (v.shadow.x = n), true)}
+                  onCommit={st.commit}
+                />
+                <Range
+                  label="그림자 세로 위치"
+                  value={fixture.shadow.y}
+                  min={-0.2}
+                  max={0.2}
+                  step={0.002}
+                  onChange={(n) => changeFixture((v) => (v.shadow.y = n), true)}
+                  onCommit={st.commit}
+                />
+                <Range
+                  label="그림자 너비"
+                  value={fixture.shadow.scale}
+                  min={0.1}
+                  max={2}
+                  onChange={(n) => changeFixture((v) => (v.shadow.scale = n), true)}
+                  onCommit={st.commit}
+                />
+                <div className="row">
+                  <button className="btn small" onClick={() => moveFixture(1)}>
+                    <ArrowUp size={13} />
+                    앞으로
+                  </button>
+                  <button className="btn small" onClick={() => moveFixture(-1)}>
+                    <ArrowDown size={13} />
+                    뒤로
+                  </button>
+                </div>
+              </section>
+            )}
           </>
         )}
         {!surface && !fixture && (
@@ -688,63 +743,73 @@ export default function Inspector({
             타일 설정과 제품 배치를 바꿀 수 있어요.
           </div>
         )}
-        <section className="property-section">
-          <div className="row between" style={{ marginBottom: 14 }}>
-            <h4 style={{ margin: 0 }}>밝기와 색감</h4>
-            <button className="icon-btn" title="색감 기본값" onClick={resetColor}>
-              <RotateCcw size={13} />
+        {guest ? (
+          <section className="property-section">
+            <h4>밝기와 색감</h4>
+            <button className="btn small" title="로그인 필요" onClick={() => requestLogin('밝기와 색감')}>
+              밝기와 색감 조절
+              <LoginRequiredIcon />
             </button>
-          </div>
-          <div className="segmented" style={{ width: '100%', marginBottom: 17 }}>
-            <button
-              style={{ flex: 1 }}
-              className={colorTarget === 'global' ? 'active' : ''}
-              onClick={() => setColorTarget('global')}
-            >
-              전체 공간
-            </button>
-            <button
-              style={{ flex: 1 }}
-              disabled={!surface && !fixture}
-              className={colorTarget === 'selection' ? 'active' : ''}
-              onClick={() => setColorTarget('selection')}
-            >
-              선택 자재
-            </button>
-          </div>
-          <Range
-            label="노출"
-            value={color.exposure}
-            min={-2}
-            max={2}
-            onChange={(n) => editColor('exposure', n)}
-            onCommit={st.commit}
-          />
-          <Range
-            label="대비"
-            value={color.contrast}
-            min={0}
-            max={2}
-            onChange={(n) => editColor('contrast', n)}
-            onCommit={st.commit}
-          />
-          <Range
-            label="채도"
-            value={color.saturation}
-            min={0}
-            max={2}
-            onChange={(n) => editColor('saturation', n)}
-            onCommit={st.commit}
-          />
-          <Range
-            label="따뜻함"
-            value={color.warmth}
-            min={-1}
-            max={1}
-            onChange={(n) => editColor('warmth', n)}
-            onCommit={st.commit}
-          />
-        </section>
+          </section>
+        ) : (
+          <section className="property-section">
+            <div className="row between" style={{ marginBottom: 14 }}>
+              <h4 style={{ margin: 0 }}>밝기와 색감</h4>
+              <button className="icon-btn" title="색감 기본값" onClick={resetColor}>
+                <RotateCcw size={13} />
+              </button>
+            </div>
+            <div className="segmented" style={{ width: '100%', marginBottom: 17 }}>
+              <button
+                style={{ flex: 1 }}
+                className={colorTarget === 'global' ? 'active' : ''}
+                onClick={() => setColorTarget('global')}
+              >
+                전체 공간
+              </button>
+              <button
+                style={{ flex: 1 }}
+                disabled={!surface && !fixture}
+                className={colorTarget === 'selection' ? 'active' : ''}
+                onClick={() => setColorTarget('selection')}
+              >
+                선택 자재
+              </button>
+            </div>
+            <Range
+              label="노출"
+              value={color.exposure}
+              min={-2}
+              max={2}
+              onChange={(n) => editColor('exposure', n)}
+              onCommit={st.commit}
+            />
+            <Range
+              label="대비"
+              value={color.contrast}
+              min={0}
+              max={2}
+              onChange={(n) => editColor('contrast', n)}
+              onCommit={st.commit}
+            />
+            <Range
+              label="채도"
+              value={color.saturation}
+              min={0}
+              max={2}
+              onChange={(n) => editColor('saturation', n)}
+              onCommit={st.commit}
+            />
+            <Range
+              label="따뜻함"
+              value={color.warmth}
+              min={-1}
+              max={1}
+              onChange={(n) => editColor('warmth', n)}
+              onCommit={st.commit}
+            />
+          </section>
+        )}
       </fieldset>
     </div>
   );

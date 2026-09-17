@@ -7,7 +7,7 @@ import type { AssetReader } from '@/lib/render/compositor';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { RoomViewerRenderer } from '@/lib/room-viewer/renderer';
 import { normalizeRoomView, resetRoomView, rotateRoomView } from '@/lib/room-viewer/view-state';
-import { useAccess } from '../app-provider';
+import { useEditingCapabilities } from '../editor/editing-capabilities';
 
 /** The same world renderer used for comparison/export, with installation-plane editing. */
 export default function RoomCanvasWorkspace({
@@ -24,7 +24,7 @@ export default function RoomCanvasWorkspace({
   showInspector: () => void;
 }) {
   const st = useEditor(),
-    { writable } = useAccess();
+    { writable } = useEditingCapabilities();
   const scene = st.draft ?? (st.project ? getEditingScene(st.project, st.editing) : undefined);
   const context = st.project ? projectDesignPreviewRoomContext(st.project) : undefined;
   const before = st.editing === 'before' ? scene : context?.beforeScene;

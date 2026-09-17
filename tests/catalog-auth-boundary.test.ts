@@ -3,54 +3,82 @@ const state = vi.hoisted(() => ({
   actor: vi.fn(),
   materials: vi.fn(),
   image: vi.fn(),
-  env: { DB: {}, ASSET_BUCKET: {} },
+  placement: vi.fn(),
+  env: {} as Record<string, unknown>,
 }));
 vi.mock('../src/lib/auth/d1', () => ({ getD1Actor: state.actor }));
-vi.mock('../src/lib/storage/server', async (original) => ({
-  ...(await original<object>()),
-  requireD1Environment: () => state.env,
+vi.mock('../src/lib/platform/runtime', () => ({
+  getRuntimeEnvironment: () => state.env,
 }));
-vi.mock('../src/lib/catalog/public', () => ({ publicMaterials: state.materials, publicImage: state.image }));
+vi.mock('../src/lib/catalog/public', () => ({
+  publicMaterials: state.materials,
+  publicImage: state.image,
+  publicPlacement: state.placement,
+}));
 import { GET as catalog } from '../src/app/api/catalog/materials/route';
 import { GET as image } from '../src/app/api/catalog/images/route';
+import { GET as placement } from '../src/app/api/catalog/placement/route';
+const routes = [() => catalog(), image, placement];
 beforeEach(() => {
   vi.resetAllMocks();
+  state.env = {
+    platform: 'cloudflare',
+    DB: { prepare: vi.fn() },
+    ASSET_BUCKET: { get: vi.fn() },
+  };
   state.materials.mockResolvedValue(Response.json({ materials: [] }));
-  state.image.mockResolvedValue(new Response('private image'));
+  state.image.mockResolvedValue(new Response('public image'));
+  state.placement.mockResolvedValue(Response.json({ placements: [] }));
 });
-describe('catalog routes require a current account before any data access', () => {
-  it.each([catalog, image])(
-    'denies anonymous data requests without querying the catalog/R2',
-    async (route) => {
-      state.actor.mockRejectedValue(Object.assign(new Error('로그인이 필요해요.'), { status: 401 }));
-      const response = await route(new Request('https://sjn.test/api/catalog/images?id=private'));
-      expect(response.status).toBe(401);
+describe('public catalog routes are independent of account and OAuth readiness', () => {
+  it.each(routes)('serves only the public projection without authenticating a guest', async (route) => {
+    state.actor.mockRejectedValue(Object.assign(new Error('로그인이 필요해요.'), { status: 401 }));
+    const response = await route(new Request('https://sjn.test/api/catalog/placement'));
+    expect(response.status).toBe(200);
+    expect(state.actor).not.toHaveBeenCalled();
+    expect(state.env).not.toHaveProperty('GOOGLE_CLIENT_SECRET');
+    expect(state.env).not.toHaveProperty('BETTER_AUTH_SECRET');
+  });
+  it.each(routes)('does not depend on a stale or suspended account to read public data', async (route) => {
+    state.actor.mockRejectedValue(Object.assign(new Error('이용 정지'), { status: 403 }));
+    expect(
+      (
+        await route(
+          new Request('https://sjn.test/api/catalog/placement', {
+            headers: { 'X-SJN-User-Id': 'old-account', cookie: 'old-session' },
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    expect(state.actor).not.toHaveBeenCalled();
+  });
+  it.each(['DB', 'ASSET_BUCKET'])('fails closed when %s is unavailable', async (binding) => {
+    delete state.env[binding];
+    for (const route of routes) {
+      const response = await route(new Request('https://sjn.test/api/catalog/placement'));
+      expect(response.status).toBe(503);
       expect(response.headers.get('cache-control')).toContain('no-store');
-      expect(state.materials).not.toHaveBeenCalled();
-      expect(state.image).not.toHaveBeenCalled();
-    },
-  );
-  it.each([catalog, image])('denies suspended sessions before catalog/R2 access', async (route) => {
-    state.actor.mockRejectedValue(
-      Object.assign(new Error('이용 정지'), { status: 403, code: 'account_suspended' }),
-    );
-    const response = await route(new Request('https://sjn.test/api/catalog/images?id=private'));
-    expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ code: 'account_suspended' });
+    }
     expect(state.materials).not.toHaveBeenCalled();
     expect(state.image).not.toHaveBeenCalled();
+    expect(state.placement).not.toHaveBeenCalled();
   });
-  it('lets a signed-in ordinary member browse registered material projections', async () => {
-    state.actor.mockResolvedValue({ id: 'member', isAdmin: false });
-    expect((await catalog(new Request('https://sjn.test/api/catalog/materials'))).status).toBe(200);
+  it.each([{ platform: 'node' }, { STORAGE_MODE: 'local' }, { DB: {} }, { ASSET_BUCKET: {} }])(
+    'rejects an invalid runtime without querying public data: %j',
+    async (change) => {
+      Object.assign(state.env, change);
+      expect((await catalog()).status).toBe(503);
+      expect(state.materials).not.toHaveBeenCalled();
+    },
+  );
+  it('uses only the public data helpers', async () => {
+    await catalog();
+    const request = new Request('https://sjn.test/api/catalog/placement');
+    await placement(request);
+    await image(request);
     expect(state.materials).toHaveBeenCalledWith(state.env);
-  });
-  it('rejects a request whose expected account changed', async () => {
-    state.actor.mockResolvedValue({ id: 'other-member', isAdmin: false });
-    const response = await image(
-      new Request('https://sjn.test/api/catalog/images?id=x', { headers: { 'X-SJN-User-Id': 'member' } }),
-    );
-    expect(response.status).toBe(401);
-    expect(state.image).not.toHaveBeenCalled();
+    expect(state.placement).toHaveBeenCalledWith(state.env, request);
+    expect(state.image).toHaveBeenCalledWith(state.env, request);
+    expect(state.actor).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,327 @@
+import { test, expect, type Page } from '@playwright/test';
+import sharp from 'sharp';
+import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
+import { handleD1Request } from '../src/lib/d1';
+import { getActiveDesign } from '../src/lib/designs';
+import type { ProjectDocument, MaterialInput, MaterialVersion } from '../src/lib/types';
+
+test.use({ channel: 'chrome', hasTouch: true, actionTimeout: 15000 });
+test.setTimeout(150000);
+let app: AuthenticatedApp;
+let calls: { path: string; method: string; body: string | null }[];
+let versions: MaterialVersion[];
+let modelRequests: string[];
+const draftKey = 'sjn:guest-draft:v1';
+async function seed() {
+  const png = new Uint8Array(
+    await sharp({ create: { width: 120, height: 120, channels: 4, background: '#adc9bd' } })
+      .png()
+      .toBuffer(),
+  );
+  const results: MaterialVersion[] = [];
+  for (const category of ['tile', 'basin'] as const) {
+    const id = crypto.randomUUID();
+    const form = new FormData();
+    form.set(
+      'metadata',
+      JSON.stringify({ id, name: 'guest-test.png', kind: category === 'tile' ? 'texture' : 'product' }),
+    );
+    form.set('file', new Blob([png], { type: 'image/png' }), 'guest-test.png');
+    const uploaded = await handleD1Request(
+      'assets',
+      new Request('https://test/api/d1/assets', { method: 'POST', body: form }),
+      app.env,
+      app.actor,
+    );
+    expect(uploaded.status, await uploaded.clone().text()).toBe(200);
+    const input: MaterialInput = {
+      name: category === 'tile' ? '체험 그레이 타일' : '체험 벽걸이 세면대',
+      brand: '',
+      code: '',
+      category,
+      scope: 'shared',
+      description: '격리 검증 자재',
+      color: '',
+      finish: '',
+      widthMm: 600,
+      heightMm: category === 'tile' ? 600 : 450,
+      depthMm: 400,
+      usage: category === 'tile' ? 'both' : 'wall',
+      installation: 'wall',
+      coverAssetId: id,
+      imageAssetIds: [id],
+      textureAssetIds: category === 'tile' ? [id] : [],
+      views: category === 'tile' ? [] : [{ assetId: id, direction: '정면', anchor: { x: 0.5, y: 1 } }],
+      defaultGroutWidth: 2,
+      defaultGroutColor: '#ffffff',
+      defaultPattern: 'grid',
+    };
+    const created = await handleD1Request(
+      'materials',
+      new Request('https://test/api/d1/materials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operation: 'create', input }),
+      }),
+      app.env,
+      app.actor,
+    );
+    expect(created.status, await created.clone().text()).toBe(200);
+    results.push((await created.json()) as MaterialVersion);
+  }
+  await app.env.DB.prepare('DELETE FROM admin_roles WHERE user_id=?').bind(app.actor.id).run();
+  app.actor.isAdmin = false;
+  return results;
+}
+test.beforeEach(async ({ page }) => {
+  app = await authenticatedApp(page, { signedIn: false, admin: true });
+  versions = await seed();
+  modelRequests = [];
+  calls = [];
+  page.on('request', (r) => {
+    const u = new URL(r.url());
+    if (/\/models\/|\.(onnx|safetensors|gguf)(?:$|\?)/i.test(u.pathname)) modelRequests.push(u.pathname);
+    if (u.pathname.startsWith('/api/'))
+      calls.push({ path: u.pathname, method: r.method(), body: r.postData() });
+  });
+});
+test.afterEach(async () => {
+  try {
+    expect(modelRequests).toEqual([]);
+  } finally {
+    await app?.dispose();
+  }
+});
+async function draft(page: Page): Promise<ProjectDocument> {
+  return page.evaluate((key) => JSON.parse(sessionStorage.getItem(key)!).document, draftKey);
+}
+async function create(page: Page) {
+  await page.goto('/');
+  await page.getByRole('button', { name: '새 프로젝트', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '공간 크기 설정' });
+  await dialog.getByRole('spinbutton', { name: '가로 (m)' }).fill('2.8');
+  await dialog.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page).toHaveURL(/\/try$/);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0);
+}
+async function place(page: Page) {
+  await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
+  await page.getByRole('textbox', { name: '편집기 자재 검색' }).fill('그레이');
+  await page.locator('button.material-tile').filter({ hasText: '체험 그레이 타일' }).click();
+  await expect
+    .poll(async () =>
+      getActiveDesign(await draft(page))!.scene.surfaces.some((s) => s.materialVersionId === versions[0].id),
+    )
+    .toBe(true);
+  await page.getByRole('textbox', { name: '편집기 자재 검색' }).fill('');
+  await page.getByRole('button', { name: '위생도기', exact: true }).click();
+  await page.locator('button.material-tile').filter({ hasText: '체험 벽걸이 세면대' }).click();
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
+}
+function guestWrites() {
+  return calls.filter((c) => c.method !== 'GET' && !c.path.startsWith('/api/auth/'));
+}
+async function dialogLocked(page: Page, button: string) {
+  await page.getByRole('button', { name: button, exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
+  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+}
+
+test('게스트가 자재를 배치·실행 취소하고 새로고침해도 보존하며 회원 기능은 잠긴다', async ({ page }) => {
+  await create(page);
+  await place(page);
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(0);
+  await page.keyboard.press('Control+y');
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
+  const before = await draft(page);
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
+  expect((await draft(page)).id).toBe(before.id);
+  expect((await draft(page)).shared.baseline.room?.widthMm).toBe(2800);
+  for (const name of ['Before', '드래그 비교', '시안 관리', '내보내기', '지금 저장'])
+    await dialogLocked(page, name);
+  await page.keyboard.press('Control+s');
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
+  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  expect(guestWrites()).toEqual([]);
+  expect(calls.some((c) => /reconstruction|photoreal|diagnostics/.test(c.path))).toBe(false);
+  expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 0 });
+  await page.screenshot({ path: 'test-results/guest-workspace-desktop.png', fullPage: true });
+});
+
+test('모의 Google 왕복 후 같은 배치를 본인 프로젝트로 한 번만 저장한다', async ({ page }) => {
+  await create(page);
+  await place(page);
+  const before = await draft(page);
+  const origin = new URL(page.url()).origin;
+  await page.route('**/api/auth/sign-in/social', (route) =>
+    route.fulfill({ json: { url: 'https://accounts.google.com/o/oauth2/auth?sjn-fixture=1' } }),
+  );
+  await page.route('https://accounts.google.com/**', async (route) => {
+    app.signIn();
+    await route.fulfill({ status: 302, headers: { location: origin + '/try?resume=1' } });
+  });
+  await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp('/projects/' + before.id + '$'), { timeout: 60000 });
+  const saved = await app.project(before.id);
+  expect(saved.ownerId).toBe(app.actor.id);
+  expect(getActiveDesign(saved)!.scene.fixtures).toEqual(getActiveDesign(before)!.scene.fixtures);
+  expect(saved.shared.baseline.room).toEqual(before.shared.baseline.room);
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), draftKey)).toBeNull();
+  expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 1 });
+  const signIn = calls.find((c) => c.path === '/api/auth/sign-in/social');
+  expect(JSON.parse(signIn!.body!)).toMatchObject({
+    callbackURL: '/try?resume=1',
+    errorCallbackURL: '/login?authError=google&resume=guest',
+  });
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 1 });
+});
+
+test('로그인 취소와 sessionStorage 실패 때 체험 상태를 버리거나 OAuth로 이동하지 않는다', async ({
+  page,
+}) => {
+  await create(page);
+  await place(page);
+  const before = await draft(page);
+  await page.goto('/login?authError=google&error=access_denied&resume=guest');
+  await expect(page.locator('main').getByRole('alert')).toContainText('취소');
+  await page.getByRole('link', { name: '← 체험 작업으로 돌아가기' }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  expect((await draft(page)).id).toBe(before.id);
+  await page.evaluate(() => {
+    Storage.prototype.setItem = function () {
+      throw new DOMException('Full', 'QuotaExceededError');
+    };
+  });
+  await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('보관');
+  expect(calls.some((c) => c.path === '/api/auth/sign-in/social')).toBe(false);
+  expect((await draft(page)).id).toBe(before.id);
+});
+
+test('모바일 터치로 체험 생성하고 사진 기능은 로그인 안내로 연결한다', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: '사진으로 시작', exact: true }).tap();
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
+  await page.getByRole('button', { name: '체험 계속하기' }).tap();
+  await page.getByRole('button', { name: '새 프로젝트', exact: true }).tap();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).tap();
+  await expect(page).toHaveURL(/\/try$/);
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: '자재 목록', exact: true }).tap();
+  await page.getByRole('button', { name: '위생도기', exact: true }).tap();
+  await page.locator('button.material-tile').filter({ hasText: '체험 벽걸이 세면대' }).tap();
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
+  await page.getByRole('button', { name: '자재 수량·금액 및 속성', exact: true }).tap();
+  await expect(page.getByLabel('제품 배율', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '제품 삭제', exact: true }).tap();
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(0);
+  await page.getByRole('button', { name: '속성 패널 닫기', exact: true }).tap();
+  expect(guestWrites()).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/guest-workspace-mobile.png', fullPage: true });
+});
+
+test('체험 제품 이동·회전·크기와 공간 뷰어를 조작하고 공개 자재에서 이어간다', async ({ page }) => {
+  await create(page);
+  await place(page);
+  const before = getActiveDesign(await draft(page))!.scene.fixtures[0];
+  const box = await page.locator('rect[data-entity="' + before.id + '"]').boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 + 30, box!.y + box!.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].roomPlacement!.u)
+    .not.toBe(before.roomPlacement!.u);
+  await page.getByLabel('제품 배율', { exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Tab');
+  await expect
+    .poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].roomPlacement!.scale)
+    .toBe(1.01);
+  await page.getByLabel('이미지 평면 회전', { exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Tab');
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].rotation).toBe(1);
+  await page.getByRole('button', { name: '공간 크기', exact: true }).click();
+  const room = page.getByRole('dialog', { name: '공간 크기 설정' });
+  await room.getByLabel('깊이 (m)', { exact: true }).fill('3.1');
+  await room.getByRole('button', { name: '크기 적용', exact: true }).click();
+  await expect(room).toHaveCount(0);
+  await expect.poll(async () => (await draft(page)).shared.baseline.room?.depthMm).toBe(3100);
+  await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
+  const viewer = page.getByRole('dialog', { name: '공간 둘러보기', exact: true });
+  await expect(viewer.getByRole('button', { name: 'After', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await viewer.getByRole('button', { name: '오른쪽 90°', exact: true }).click();
+  await viewer.getByRole('button', { name: '공간 확대', exact: true }).click();
+  await expect(viewer.getByLabel('공간 확대율')).not.toHaveText('100%');
+  await viewer.getByRole('button', { name: '현재 시점 다운로드', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
+  await page.getByRole('button', { name: '체험 계속하기' }).click();
+  await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
+  await viewer.getByRole('button', { name: '나란히 비교', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
+  await page.getByRole('button', { name: '체험 계속하기' }).click();
+  const saved = await draft(page);
+  await page.getByRole('button', { name: '자재 라이브러리', exact: true }).click();
+  await expect(page).toHaveURL(/\/materials$/);
+  await page.goto('/try');
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  expect((await draft(page)).id).toBe(saved.id);
+  expect(getActiveDesign(await draft(page))!.scene.fixtures).toEqual(getActiveDesign(saved)!.scene.fixtures);
+  expect((await draft(page)).shared.baseline.room?.depthMm).toBe(3100);
+  const files = await page.evaluateHandle(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(['ignored'], 'photo.jpg', { type: 'image/jpeg' }));
+    return data;
+  });
+  await page.locator('.editor-shell').dispatchEvent('drop', { dataTransfer: files });
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toContainText(
+    '사진 업로드',
+  );
+  await files.dispose();
+  expect(guestWrites()).toEqual([]);
+});
+
+test('로그인 상태가 늦게 확인되어도 열린 공간 크기와 입력값을 보존하고 회원 프로젝트로 만든다', async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/auth/get-session', async (route) => {
+    await pending;
+    await route.fulfill({
+      json: { user: { id: app.actor.id, name: '지연 검증 회원', email: 'delayed@example.test' } },
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '새 프로젝트', exact: true }).click();
+  const room = page.getByRole('dialog', { name: '공간 크기 설정' });
+  await room.getByLabel('가로 (m)', { exact: true }).fill('3.6');
+  app.signIn();
+  release();
+  await expect(page.getByRole('button', { name: '로그아웃', exact: true, includeHidden: true })).toHaveCount(
+    1,
+  );
+  await expect(room).toBeVisible();
+  await expect(room.getByLabel('가로 (m)', { exact: true })).toHaveValue('3.6');
+  await room.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/[\w-]+$/, { timeout: 45000 });
+  expect((await app.project()).shared.baseline.room?.widthMm).toBe(3600);
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), draftKey)).toBeNull();
+});

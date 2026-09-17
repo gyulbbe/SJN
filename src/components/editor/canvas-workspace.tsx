@@ -6,7 +6,7 @@ import { useRepositories } from '@/components/repository-context';
 import { useEditor } from '@/lib/editor-store';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import type { MaterialVersion, Point, Scene } from '@/lib/types';
-import { useAccess } from '../app-provider';
+import { useEditingCapabilities } from './editing-capabilities';
 type Props = {
   materials: Record<string, MaterialVersion>;
   onRenderer: (r: PhotoCompositor | null) => void;
@@ -23,7 +23,7 @@ export default function CanvasWorkspace({
 }: Props) {
   const repositories = useRepositories();
   const st = useEditor(),
-    { writable } = useAccess();
+    { writable } = useEditingCapabilities();
   const scene = st.draft || (st.project ? getEditingScene(st.project, st.editing) : undefined);
   const beforeScene = st.editing === 'after' ? st.project?.shared.comparison?.before : undefined;
   const activeDesign = st.project ? getActiveDesign(st.project) : undefined;

@@ -19,8 +19,13 @@ import {
   Check,
   ExternalLink,
 } from 'lucide-react';
-import { useRepositories } from '@/components/repository-context';
-import type { Repositories } from '@/lib/repositories';
+import { useRepositories, type EditorRepositories } from '@/components/repository-context';
+import {
+  EditingCapabilitiesProvider,
+  LoginRequiredIcon,
+  type GuestEditorContext,
+} from './editing-capabilities';
+export type { GuestEditorContext } from './editing-capabilities';
 import {
   cloudRecovery,
   inspectRecovery,
@@ -81,16 +86,49 @@ import type { RoomSegmentation } from '@/lib/segmentation';
 import { analyzeWallGeometry, applyWallGeometry } from '@/lib/render/wall-geometry';
 const pendingProjectSaves = new Map<string, Promise<boolean>>();
 export type AdminEditorContext = { actorUserId: string; owner: { id: string; name: string; email: string } };
-export default function Editor({ id, adminContext }: { id: string; adminContext?: AdminEditorContext }) {
+type EditorProps = { id: string; adminContext?: AdminEditorContext; guestContext?: GuestEditorContext };
+export default function Editor(props: EditorProps) {
+  const repositories = useRepositories();
+  const access = useAccess();
+  const guest = !!props.guestContext && repositories.mode === 'guest' && !props.adminContext;
+  const requestLogin = props.guestContext?.requestLogin;
+  const capabilities = useMemo(
+    () => ({
+      writable: guest || access.writable,
+      guest,
+      requestLogin: (feature: string) => requestLogin?.(feature),
+    }),
+    [guest, access.writable, requestLogin],
+  );
+  return (
+    <EditingCapabilitiesProvider value={capabilities}>
+      <EditorWorkspace {...props} />
+    </EditingCapabilitiesProvider>
+  );
+}
+function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   const repositories = useRepositories();
   const [adminConflict, setAdminConflict] = useState(false);
   const [adminServer, setAdminServer] = useState<ProjectDocument | null>(null);
   const [adminReloadBusy, setAdminReloadBusy] = useState(false);
   const st = useEditor(),
     router = useRouter(),
-    { writable, ready, mode: storageMode, userId } = useAccess();
+    access = useAccess();
+  const isGuest = !!guestContext && repositories.mode === 'guest' && !adminContext;
+  const writable = isGuest || access.writable;
+  const ready = isGuest || access.ready;
+  const { mode: storageMode, userId } = access;
+  const requestLogin = guestContext?.requestLogin;
+  const requireLogin = useCallback(
+    (feature: string) => {
+      if (!isGuest) return false;
+      requestLogin?.(feature);
+      return true;
+    },
+    [isGuest, requestLogin],
+  );
   const catalogAdmin = useSharedCatalogAdmin();
-  const canManageCatalog = catalogAdmin && !adminContext;
+  const canManageCatalog = catalogAdmin && !adminContext && !isGuest;
   const [catalog, setCatalog] = useState<{ material: Material; version: MaterialVersion }[]>([]),
     [materials, setMaterials] = useState<Record<string, MaterialVersion>>({}),
     [error, setError] = useState(''),
@@ -135,19 +173,21 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
   const [recoveryArchives, setRecoveryArchives] = useState<ProjectRecovery[]>([]);
   const scope = useMemo<RecoveryScope | null>(
     () =>
-      !adminContext && userId && typeof window !== 'undefined'
+      !isGuest && !adminContext && userId && typeof window !== 'undefined'
         ? { origin: window.location.origin, backend: storageMode, userId, projectId: id }
         : null,
-    [id, storageMode, userId, adminContext],
+    [id, storageMode, userId, adminContext, isGuest],
   );
-  const scopeKey = adminContext
-    ? JSON.stringify(['admin', adminContext.actorUserId, adminContext.owner.id, id])
-    : scope
-      ? recoveryKey(scope)
-      : JSON.stringify(['pending-account', id]);
+  const scopeKey = isGuest
+    ? JSON.stringify(['guest', id])
+    : adminContext
+      ? JSON.stringify(['admin', adminContext.actorUserId, adminContext.owner.id, id])
+      : scope
+        ? recoveryKey(scope)
+        : JSON.stringify(['pending-account', id]);
   const currentScopeKey = useRef(scopeKey);
   currentScopeKey.current = scopeKey;
-  const session = useRef<{ key: string; repo: Repositories; dead: boolean } | null>(null);
+  const session = useRef<{ key: string; repo: EditorRepositories; dead: boolean } | null>(null);
   const materialsRef = useRef(materials);
   materialsRef.current = materials;
   const recoveryPromptRef = useRef(recoveryPrompt);
@@ -165,16 +205,24 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     materials,
     assetReader,
     roomContext,
-    enabled: loaded && !roomViewerOpen && !comparisonOpen && !designsOpen && !st.draft && !detectionStatus,
+    transient: isGuest,
+    enabled:
+      !isGuest &&
+      loaded &&
+      !roomViewerOpen &&
+      !comparisonOpen &&
+      !designsOpen &&
+      !st.draft &&
+      !detectionStatus,
     delayMs: 500,
   });
   useEffect(() => {
-    if (!adminContext) return;
+    if (!adminContext && !isGuest) return;
     return () => {
       if (useEditor.getState().project?.id === id)
         useEditor.setState({ project: null, draft: null, selection: null, saveStatus: 'saved', error: '' });
     };
-  }, [id, adminContext]);
+  }, [id, adminContext, isGuest]);
   const renderer = useRef<PhotoCompositor | null>(null);
   const applyRequest = useRef(0);
   const roomRequest = useRef(0);
@@ -199,8 +247,8 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     applyRequest.current++;
   }, [id, scopeKey, st.project?.activeDesignId]);
   useEffect(() => {
-    if (loaded && Object.keys(materials).length) useEditor.getState().initializeUsage(materials);
-  }, [loaded, materials]);
+    if (!isGuest && loaded && Object.keys(materials).length) useEditor.getState().initializeUsage(materials);
+  }, [loaded, materials, isGuest]);
   const onRenderer = useCallback((r: PhotoCompositor | null) => {
     renderer.current = r;
   }, []);
@@ -226,7 +274,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     if (selected) setTab(selected.kind);
   }, [st.selection, id, st.editing]);
   useEffect(() => {
-    if (!ready || (!scope && !adminContext)) return;
+    if (!ready || (!scope && !adminContext && !isGuest)) return;
     const operation = { key: scopeKey, repo: repositories, dead: false };
     session.current = operation;
     setLoaded(false);
@@ -282,7 +330,11 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
         if (operation.dead || currentScopeKey.current !== scopeKey) return;
         cloudCommittedContent.current = unavailable ? '' : projectContentKey(project);
         useEditor.getState().load(project);
-        useEditor.getState().initializeUsage(versions);
+        if (!isGuest) useEditor.getState().initializeUsage(versions);
+        if (isGuest) {
+          useEditor.getState().setEditing('after');
+          useEditor.getState().setMode('after');
+        }
         setCatalog(list.filter((row) => !isBuiltInExampleMaterial(row)));
         setMaterials(versions);
         if (recovery && scope) {
@@ -298,7 +350,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     return () => {
       operation.dead = true;
     };
-  }, [id, ready, writable, scope, scopeKey, repositories, adminContext]);
+  }, [id, ready, writable, scope, scopeKey, repositories, adminContext, isGuest]);
   const persistRecovery = useCallback(
     async (document?: ProjectDocument) => {
       if (!scope) return true;
@@ -330,6 +382,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     [scope, scopeKey, id],
   );
   const saveOnce = useCallback(async () => {
+    if (isGuest) return false;
     const operation = session.current;
     if (!writable || !operation || operation.dead || operation.key !== scopeKey || recoveryPromptRef.current)
       return false;
@@ -424,7 +477,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     } finally {
       if (pendingProjectSaves.get(scopeKey) === promise) pendingProjectSaves.delete(scopeKey);
     }
-  }, [writable, id, scopeKey, scope, persistRecovery, repositories, adminContext]);
+  }, [writable, id, scopeKey, scope, persistRecovery, repositories, adminContext, isGuest]);
   const scheduler = useMemo(
     () =>
       createSaveScheduler(saveOnce, {
@@ -434,15 +487,41 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
       }),
     [saveOnce],
   );
-  const save = useCallback(() => scheduler.flush(), [scheduler]);
+  const checkpointGuest = useCallback(async () => {
+    if (!isGuest) return false;
+    const operation = session.current;
+    const state = useEditor.getState();
+    if (!operation || operation.dead || operation.repo.mode !== 'guest' || state.project?.id !== id)
+      return false;
+    try {
+      const result = await operation.repo.projects.save(
+        structuredClone(state.project),
+        state.project.storageRevision,
+      );
+      if (!operation.dead && currentScopeKey.current === scopeKey) useEditor.getState().saved(result);
+      return true;
+    } catch (cause) {
+      if (!operation.dead)
+        setError(cause instanceof Error ? cause.message : '체험 초안을 보관하지 못했어요.');
+      return false;
+    }
+  }, [isGuest, id, scopeKey]);
+  const save = useCallback(
+    () => (isGuest ? checkpointGuest() : scheduler.flush()),
+    [isGuest, checkpointGuest, scheduler],
+  );
   useEffect(() => {
+    if (isGuest && loaded && st.saveStatus === 'dirty' && !st.draft) void checkpointGuest();
+  }, [isGuest, loaded, st.project, st.saveStatus, st.draft, checkpointGuest]);
+  useEffect(() => {
+    if (isGuest) return;
     scheduler.start();
     return () => scheduler.dispose();
-  }, [scheduler]);
+  }, [scheduler, isGuest]);
   useEffect(() => {
-    if (st.saveStatus !== 'dirty' || !loaded || !writable || recoveryPrompt) return;
+    if (isGuest || st.saveStatus !== 'dirty' || !loaded || !writable || recoveryPrompt) return;
     scheduler.changed();
-  }, [st.project, st.saveStatus, scheduler, loaded, writable, recoveryPrompt]);
+  }, [st.project, st.saveStatus, scheduler, loaded, writable, recoveryPrompt, isGuest]);
   useEffect(() => {
     if (!scope || !loaded || !writable || recoveryPrompt || st.saveStatus === 'saved') return;
     setRecoveryStatus('복구본 저장 대기');
@@ -559,6 +638,13 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
   useEffect(() => {
     function key(e: KeyboardEvent) {
       if (!loaded || !ready || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+      if (isGuest && (e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 's' || e.code === 'KeyS')) {
+        e.preventDefault();
+        setRoomViewerOpen(false);
+        setRoomOpen(false);
+        requireLogin('정식 저장');
+        return;
+      }
       const target = e.target;
       if (
         target instanceof HTMLElement &&
@@ -596,6 +682,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
+        if (requireLogin('정식 저장')) return;
         void save();
       }
       if (e.key === 'Escape') {
@@ -611,6 +698,8 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     return () => window.removeEventListener('keydown', key);
   }, [
     save,
+    requireLogin,
+    isGuest,
     loaded,
     ready,
     writable,
@@ -707,6 +796,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     }
   }
   async function analyzePhoto(source: Scene, request: number) {
+    if (isGuest) throw new Error('사진 AI 분석은 로그인 후 사용할 수 있어요.');
     const photoId = source.backgroundAssetId || source.previewAssetId;
     const asset = await repositories.assets.get(photoId);
     if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
@@ -772,6 +862,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
       };
       try {
         if (!targets.length) {
+          if (requireLogin('사진 AI 분석')) return;
           st.setTool('select');
           setDetectionNotice('');
           setDetectionStatus('사진에서 벽과 바닥을 찾을 준비를 하고 있어요…');
@@ -951,7 +1042,9 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     useEditor.getState().resizeAll(room, background);
     setRoomOpen(false);
     setDetectionNotice(
-      'Before와 모든 시안의 공간 크기·자재 수량·금액을 함께 맞췄어요. 공간 크기 설정에서 변경 직전 전체 복원을 할 수 있어요.',
+      isGuest
+        ? '공간 크기를 바꿨어요. 타일과 제품 배치를 확인해 주세요.'
+        : 'Before와 모든 시안의 공간 크기·자재 수량·금액을 함께 맞췄어요. 공간 크기 설정에서 변경 직전 전체 복원을 할 수 있어요.',
     );
   }
   async function captureExport(
@@ -959,6 +1052,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     comparison: boolean,
     maxEdge = 4096,
   ): Promise<Blob> {
+    if (isGuest) throw new Error('이미지 출력은 로그인 후 사용할 수 있어요.');
     if (!scene || !st.project || (!renderer.current && !roomContext))
       throw new Error('내보낼 공간이 아직 준비되지 않았어요.');
     try {
@@ -1001,6 +1095,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     }
   }
   async function exportImage() {
+    if (requireLogin('이미지 출력')) return;
     if (exporting || aiExporting) return;
     setExporting(true);
     setError('');
@@ -1020,6 +1115,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     }
   }
   async function saveWithThumbnail() {
+    if (requireLogin('정식 저장')) return;
     if (savingPreview || !writable || !flushMaterialUsageInputs()) return;
     setSavingPreview(true);
     try {
@@ -1032,6 +1128,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     }
   }
   function viewComparison(mode: 'before' | 'after' | 'split') {
+    if (mode !== 'after' && requireLogin('Before / After 비교')) return;
     if (!flushMaterialUsageInputs()) return;
     if (st.editing === 'before') {
       st.setEditing('after');
@@ -1049,6 +1146,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     return true;
   }
   function activateDesign(designId: string) {
+    if (requireLogin('시안 관리')) return;
     if (!prepareDesignAction()) return;
     useEditor.getState().selectDesign(designId);
     if (!writable) useEditor.setState({ saveStatus: 'saved' });
@@ -1056,12 +1154,14 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
     setComparisonOpen(false);
   }
   function toggleComparison(designId: string) {
+    if (requireLogin('시안 비교')) return;
     useEditor.getState().toggleDesignComparison(designId);
     if (!writable) useEditor.setState({ saveStatus: 'saved' });
     const message = useEditor.getState().error;
     if (message) throw new Error(message);
   }
   function openDesignComparison() {
+    if (requireLogin('시안 비교')) return;
     if (!prepareDesignAction()) return;
     if ((useEditor.getState().project?.comparisonDesignIds.length ?? 0) < 2) {
       setDesignsOpen(true);
@@ -1109,18 +1209,65 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
       `${v.name} ${v.brand} ${v.code}`.toLowerCase().includes(search.toLowerCase()),
   );
   const hasSaveError = st.saveStatus === 'error' || (!!scope && !!lastSaveError.current);
-  const status =
-    st.saveStatus === 'saved'
+  const status = isGuest
+    ? '비로그인 체험 · 이 탭에 임시 보관'
+    : st.saveStatus === 'saved'
       ? '클라우드에 저장됨'
       : st.saveStatus === 'saving'
         ? '저장 중…'
         : hasSaveError
           ? '저장 실패 · 다시 시도'
           : '변경사항 저장 대기';
+  const inspector = (
+    <details className="usage-properties" open>
+      <summary>편집 속성</summary>
+      <Inspector
+        embedded
+        materials={materials}
+        open={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        onRoomResize={() => setRoomOpen(true)}
+        onWallFeatures={() => {
+          if (requireLogin('벽 구조 편집') || !writable || !flushMaterialUsageInputs()) return;
+          useEditor.getState().commit();
+          const current = useEditor.getState();
+          if (!current.project) return;
+          setWallEditor({
+            projectId: current.project.id,
+            editRevision: current.project.editRevision,
+            activeDesignId: current.project.activeDesignId,
+            editing: current.editing,
+            scene: structuredClone(getEditingScene(current.project, current.editing)),
+          });
+        }}
+        onMaterialsChanged={refresh}
+      />
+    </details>
+  );
   const chosenSurface = scene.surfaces.find((s) => s.id === st.selection && s.kind === tab);
   const applicableSurfaces = chosenSurface ? [chosenSurface] : scene.surfaces.filter((s) => s.kind === tab);
   return (
-    <div className="editor-shell" data-comparison={!!st.project.shared.comparison}>
+    <div
+      className="editor-shell"
+      data-comparison={!!st.project.shared.comparison}
+      onDragOver={(event) => {
+        if (isGuest && event.dataTransfer.types.includes('Files')) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (!isGuest || !event.dataTransfer.files.length) return;
+        event.preventDefault();
+        setRoomViewerOpen(false);
+        setRoomOpen(false);
+        requireLogin('사진 업로드·공간 재구성');
+      }}
+      onPaste={(event) => {
+        if (!isGuest || !event.clipboardData.files.length) return;
+        event.preventDefault();
+        setRoomViewerOpen(false);
+        setRoomOpen(false);
+        requireLogin('사진 업로드·공간 재구성');
+      }}
+    >
       {adminContext && (
         <div className="readonly-banner" role="status">
           <strong>
@@ -1217,9 +1364,10 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
             <button
               disabled={!!st.draft || !!detectionStatus}
               className={st.mode === 'before' ? 'active' : ''}
+              title={isGuest ? '로그인 필요' : undefined}
               onClick={() => viewComparison('before')}
             >
-              Before
+              Before{isGuest && <LoginRequiredIcon />}
             </button>
             <button
               disabled={!!st.draft || !!detectionStatus}
@@ -1232,11 +1380,13 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
           <button
             className={`icon-btn ${st.mode === 'split' ? 'active' : ''}`}
             disabled={!!st.draft || !!detectionStatus}
-            title="드래그 비교"
+            title={isGuest ? '로그인 필요' : '드래그 비교'}
+            style={isGuest ? { position: 'relative' } : undefined}
             aria-label="드래그 비교"
             onClick={() => viewComparison(st.mode === 'split' ? 'after' : 'split')}
           >
             <Columns2 size={17} />
+            {isGuest && <LoginRequiredIcon badge />}
           </button>
           <div className="divider" />
           <button
@@ -1251,18 +1401,27 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
             <Layers size={16} />
             공간 둘러보기
           </button>
-          <button className="btn ai-button" onClick={() => setAi(true)}>
+          <button
+            className="btn ai-button"
+            title={isGuest ? '로그인 필요' : undefined}
+            onClick={() => {
+              if (!requireLogin('사진 AI 기능')) setAi(true);
+            }}
+          >
             <Sparkles size={15} />
             AI 고화질 보정<span className="badge">연결 필요</span>
+            {isGuest && <LoginRequiredIcon />}
           </button>
           <button
             className="icon-btn"
-            title="지금 저장"
+            title={isGuest ? '로그인 필요' : '지금 저장'}
+            style={isGuest ? { position: 'relative' } : undefined}
             aria-label="지금 저장"
             disabled={!writable || savingPreview}
             onClick={() => void saveWithThumbnail()}
           >
             <Save size={17} />
+            {isGuest && <LoginRequiredIcon badge />}
           </button>
           {scene.room && (
             <button
@@ -1279,11 +1438,15 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
           <button
             className="btn primary"
             aria-label="내보내기"
+            title={isGuest ? '로그인 필요' : undefined}
             disabled={comparisonOpen || !activeDesign || exporting || st.editing === 'before' || !!st.draft}
-            onClick={() => setExportModal(true)}
+            onClick={() => {
+              if (!requireLogin('이미지 출력')) setExportModal(true);
+            }}
           >
             <Download size={15} />
             <span className="export-label">내보내기</span>
+            {isGuest && <LoginRequiredIcon />}
           </button>
           <button className="icon-btn" title="사용 도움말" onClick={() => setHelp(true)}>
             <HelpCircle size={17} />
@@ -1298,21 +1461,27 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
           </span>
           <button
             className="btn small"
+            title={isGuest ? '로그인 필요' : undefined}
             onClick={() => {
-              if (!prepareDesignAction()) return;
+              if (requireLogin('시안 관리') || !prepareDesignAction()) return;
               setDesignsOpen(true);
             }}
           >
-            시안 관리
+            시안 관리{isGuest && <LoginRequiredIcon />}
           </button>
         </div>
         <div className="row">
           <span className="muted">
             비교 선택 {st.project.comparisonDesignIds.length}/{MAX_COMPARISON_DESIGNS}
           </span>
-          <button className="btn small" onClick={openDesignComparison}>
+          <button
+            className="btn small"
+            title={isGuest ? '로그인 필요' : undefined}
+            onClick={openDesignComparison}
+          >
             <Columns2 size={15} />
             {hasCompared && !comparisonOpen ? '시안 비교로 돌아가기' : '시안 비교'}
+            {isGuest && <LoginRequiredIcon />}
           </button>
           {!adminContext && st.project.shared.legacyHistory && (
             <button className="text-button" disabled={!!adminContext} onClick={() => setLegacyOpen(true)}>
@@ -1349,7 +1518,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
           ))}
         </details>
       )}
-      {st.project.shared.comparison && (
+      {!isGuest && st.project.shared.comparison && (
         <div className={reconstructionStyles.bar}>
           <div>
             <strong>
@@ -1442,7 +1611,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
           onClose={() => setRoomViewerOpen(false)}
         />
       )}
-      {comparisonOpen ? (
+      {!isGuest && comparisonOpen ? (
         <DesignComparison
           projectId={st.project.id}
           roomContext={roomContext}
@@ -1463,13 +1632,19 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
           <Layers size={32} />
           <h2>새 시안으로 시작하세요</h2>
           <p>기준 공간과 Before는 보관돼 있어요. 새 시안에서 타일과 제품을 배치할 수 있어요.</p>
-          <button className="btn primary" disabled={!writable} onClick={() => st.createDesign()}>
+          <button
+            className="btn primary"
+            disabled={!writable}
+            onClick={() => {
+              if (!requireLogin('시안 만들기')) st.createDesign();
+            }}
+          >
             새 시안 만들기
           </button>
         </main>
       ) : (
         <div className="editor-body">
-          {st.editing === 'before' && st.project.shared.comparison && (
+          {!isGuest && st.editing === 'before' && st.project.shared.comparison && (
             <ReconstructionReviewPanel
               open={reviewOpen}
               onClose={() => setReviewOpen(false)}
@@ -1590,8 +1765,14 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
               <div className="catalog-grid">
                 {items.length === 0 && (
                   <div className="empty-catalog">
-                    등록된 자재가 없어요.
-                    <br />내 상품 이미지를 등록해 주세요.
+                    {isGuest ? (
+                      '현재 체험할 수 있는 공용 자재가 없어요.'
+                    ) : (
+                      <>
+                        등록된 자재가 없어요.
+                        <br />내 상품 이미지를 등록해 주세요.
+                      </>
+                    )}
                   </div>
                 )}
                 {items.map(({ version: v }) => (
@@ -1624,8 +1805,12 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
                     <Plus size={14} />내 자재 등록하기
                   </button>
                 )}
-                <button className="text-button" style={{ fontSize: 11 }} onClick={() => leave('/materials')}>
-                  자재 관리 열기
+                <button
+                  className="text-button"
+                  style={{ fontSize: 11 }}
+                  onClick={() => leave('/materials')}
+                >
+                  자재 라이브러리
                   <ExternalLink size={12} />
                 </button>
               </div>
@@ -1667,46 +1852,40 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
             />
           )}
           <div className={`usage-drawer ${inspectorOpen ? 'open' : ''}`}>
-            <MaterialUsagePanel
-              key={activeDesign.id}
-              design={activeDesign}
-              materials={materials}
-              currentCatalog={catalog}
-              assetReader={assetReader}
-              writable={writable && st.editing === 'after' && !st.draft && !detectionStatus}
-              beforeViewing={st.mode !== 'after' || st.editing === 'before'}
-              onChange={st.changeMaterialUsage}
-              onClose={() => setInspectorOpen(false)}
-            >
-              <details className="usage-properties" open>
-                <summary>편집 속성</summary>
-                <Inspector
-                  embedded
-                  materials={materials}
-                  open={inspectorOpen}
-                  onClose={() => setInspectorOpen(false)}
-                  onRoomResize={() => setRoomOpen(true)}
-                  onWallFeatures={() => {
-                    if (!writable || !flushMaterialUsageInputs()) return;
-                    useEditor.getState().commit();
-                    const current = useEditor.getState();
-                    if (!current.project) return;
-                    setWallEditor({
-                      projectId: current.project.id,
-                      editRevision: current.project.editRevision,
-                      activeDesignId: current.project.activeDesignId,
-                      editing: current.editing,
-                      scene: structuredClone(getEditingScene(current.project, current.editing)),
-                    });
-                  }}
-                  onMaterialsChanged={refresh}
-                />
-              </details>
-            </MaterialUsagePanel>
+            {isGuest ? (
+              <div className="stack" style={{ padding: 12 }}>
+                <button
+                  className="icon-btn mobile-close"
+                  aria-label="속성 패널 닫기"
+                  onClick={() => setInspectorOpen(false)}
+                >
+                  <X size={17} />
+                </button>
+                <button className="btn" title="로그인 필요" onClick={() => requireLogin('견적 계산')}>
+                  로그인하고 견적 보기
+                  <LoginRequiredIcon />
+                </button>
+                {inspector}
+              </div>
+            ) : (
+              <MaterialUsagePanel
+                key={activeDesign.id}
+                design={activeDesign}
+                materials={materials}
+                currentCatalog={catalog}
+                assetReader={assetReader}
+                writable={writable && st.editing === 'after' && !st.draft && !detectionStatus}
+                beforeViewing={st.mode !== 'after' || st.editing === 'before'}
+                onChange={st.changeMaterialUsage}
+                onClose={() => setInspectorOpen(false)}
+              >
+                {inspector}
+              </MaterialUsagePanel>
+            )}
           </div>
         </div>
       )}
-      {designsOpen && (
+      {!isGuest && designsOpen && (
         <DesignManager
           projectId={st.project.id}
           roomContext={roomContext}
@@ -2044,7 +2223,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
           }}
         />
       )}
-      {exportModal && (
+      {!isGuest && exportModal && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="이미지 내보내기">
           <div className="modal-card" style={{ maxWidth: 1000 }}>
             <div className="modal-header">
@@ -2122,7 +2301,7 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
           </div>
         </div>
       )}
-      {(help || ai) && (
+      {(help || (!isGuest && ai)) && (
         <div className="modal" role="dialog" aria-modal="true">
           <div className="modal-card" style={{ maxWidth: 580 }}>
             <div className="modal-header">
@@ -2146,21 +2325,24 @@ export default function Editor({ id, adminContext }: { id: string; adminContext?
               <ol className="help-list">
                 <li>‘벽 타일’이나 ‘바닥 타일’을 선택한 뒤 원하는 자재를 누르면 해당 영역에 바로 적용돼요.</li>
                 <li>
-                  처음에는 사진에서 영역을 자동으로 찾아요. 적용 위치에서 전체 또는 개별 면을 선택할 수
-                  있어요.
+                  {isGuest
+                    ? '적용 위치에서 전체 또는 개별 벽·바닥을 선택할 수 있어요.'
+                    : '처음에는 사진에서 영역을 자동으로 찾아요. 적용 위치에서 전체 또는 개별 면을 선택할 수 있어요.'}
                 </li>
                 <li>기본 벽과 바닥은 삭제되지 않아요. 타일은 변경하거나 적용을 해제할 수 있어요.</li>
                 <li>제품은 화면에서 선택해 이동·크기 조절·삭제하고, 잠금으로 고정할 수 있어요.</li>
                 <li>공간 크기에서 가로·깊이·높이를 바꾸면 타일과 제품 크기가 함께 맞춰져요.</li>
                 <li>
-                  Before / After 비교 후 이미지를 내려받으세요. Ctrl+S 저장, Ctrl+Z 실행 취소, Ctrl+Y 다시
-                  실행을 지원해요. 상단의 화살표 버튼으로도 되돌리거나 다시 실행할 수 있어요.
+                  {isGuest
+                    ? 'Ctrl+Z 실행 취소, Ctrl+Y 다시 실행과 공간 둘러보기를 사용할 수 있어요. 비교·견적·이미지 출력·정식 저장은 로그인 후 사용할 수 있어요.'
+                    : 'Before / After 비교 후 이미지를 내려받으세요. Ctrl+S 저장, Ctrl+Z 실행 취소, Ctrl+Y 다시 실행을 지원해요. 상단의 화살표 버튼으로도 되돌리거나 다시 실행할 수 있어요.'}
                 </li>
               </ol>
             )}
             <p className="notice" style={{ fontSize: 12, marginTop: 20 }}>
-              로컬 프로젝트는 이 브라우저에만 저장됩니다. 브라우저 데이터를 삭제하면 프로젝트도 사라질 수
-              있어요. 이미지 내보내기는 편집 가능한 프로젝트 백업이 아닙니다.
+              {isGuest
+                ? '체험 내용은 이 탭에만 임시 보관돼요. 계속 보관하려면 로그인하고 저장하세요.'
+                : '프로젝트는 로그인 계정의 서버 저장소에 보관돼요. 저장 상태를 확인해 주세요. 이미지 내보내기는 편집 가능한 프로젝트 백업이 아니에요.'}
             </p>
           </div>
         </div>

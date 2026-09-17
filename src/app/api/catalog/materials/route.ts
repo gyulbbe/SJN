@@ -1,10 +1,10 @@
-import { authenticatedContext } from '@/lib/admin/server';
+import { publicCatalogEnvironment } from '@/lib/catalog/public-context';
 import { publicMaterials } from '@/lib/catalog/public';
 import { serverError } from '@/lib/storage/server';
 export const dynamic = 'force-dynamic';
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    return await publicMaterials((await authenticatedContext(request)).env);
+    return await publicMaterials(publicCatalogEnvironment());
   } catch (error) {
     return serverError(error);
   }

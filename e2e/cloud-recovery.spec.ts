@@ -274,12 +274,19 @@ test('SPA back navigation before the recovery debounce still retains the departi
     .toBe('즉시 뒤로 이동한 작업');
 });
 
-test('예전 로컬 설정 응답으로는 익명 편집기를 열 수 없다', async ({ page }) => {
+test('예전 로컬 설정은 공개 메인만 허용하고 계정 프로젝트 편집기를 열지 않는다', async ({ page }) => {
+  const requests: string[] = [];
+  page.on('request', (request) => requests.push(new URL(request.url()).pathname));
   await page.route('**/api/storage/status', (route) =>
     route.fulfill({ json: { mode: 'local', ready: true, reason: 'local_environment', authRequired: false } }),
   );
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '공간미리 로그인' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '내 공간에서 시작하세요.', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '기본 공간으로 시작', exact: true })).toBeEnabled();
+  await page.goto('/projects/' + crypto.randomUUID());
+  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '기본 공간으로 시작' })).toHaveCount(0);
+  await expect(page.getByLabel('프로젝트명', { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId('editor-canvas')).toHaveCount(0);
+  expect(requests.some((path) => path.startsWith('/api/auth/') || path.startsWith('/api/d1/'))).toBe(false);
 });

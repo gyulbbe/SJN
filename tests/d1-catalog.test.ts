@@ -3,7 +3,17 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import sharp from 'sharp';
 import { handleD1Request, checkD1Storage } from '../src/lib/d1';
 import type { D1Bindings, D1DatabaseLike, D1Resource, D1Statement } from '../src/lib/d1/types';
-import { publicImage, publicMaterials, type PublicMaterial } from '../src/lib/catalog/public';
+import {
+  publicImage,
+  publicMaterials,
+  publicPlacement,
+  type PublicMaterial,
+} from '../src/lib/catalog/public';
+import {
+  publicPlacementSchema,
+  placementToMaterialVersion,
+  type PublicPlacement,
+} from '../src/lib/catalog/placement-contract';
 import { emptySelection, type CatalogData, type CatalogSelection } from '../src/lib/catalog/contract';
 import { readCatalog } from '../src/lib/catalog/server';
 import type { MaterialInput, MaterialVersion } from '../src/lib/types';
@@ -867,5 +877,193 @@ describe('catalog update rejection preserves committed versions', () => {
     expect(await (await call('materials', { operation: 'getVersion', id: saved.id }, member)).json()).toEqual(
       saved,
     );
+  });
+});
+
+describe('anonymous placement projections', () => {
+  async function placement(materialId?: string) {
+    return publicPlacement(
+      env,
+      new Request(
+        'https://sjn.test/api/catalog/placement' +
+          (materialId === undefined ? '' : '?materialId=' + encodeURIComponent(materialId)),
+      ),
+    );
+  }
+  async function data(materialId: string) {
+    return (await (await placement(materialId)).json()) as PublicPlacement;
+  }
+  it('projects current placement dimensions, anchors and safe display metadata without nested private data', async () => {
+    const original = await upload(admin, 'original');
+    const shown = await upload(admin, 'product', original.id);
+    const hidden = await upload(admin, 'preview');
+    const version = await create(material(shown.id));
+    // Historical payloads may contain mesh provenance and stale legacy image references.
+    const stored = {
+      ...version,
+      coverAssetId: hidden.id,
+      imageAssetIds: [hidden.id],
+      views: [
+        {
+          ...version.views[0],
+          product3d: {
+            inputAssetId: original.id,
+            meshAssetId: crypto.randomUUID(),
+            modelId: 'private-model',
+          },
+        },
+      ],
+    };
+    await env.DB.prepare('UPDATE d1_material_versions SET payload_json=? WHERE id=?')
+      .bind(JSON.stringify(stored), version.id)
+      .run();
+    const result = await data(version.materialId);
+    expect(publicPlacementSchema.safeParse(result).success).toBe(true);
+    expect(result).toMatchObject({
+      materialId: version.materialId,
+      versionId: version.id,
+      version: 1,
+      widthMm: 600,
+      heightMm: 800,
+      depthMm: 400,
+      usage: 'wall',
+      installation: 'wall',
+      views: [{ assetId: shown.id, direction: '정면', anchor: { x: 0.5, y: 1 } }],
+      images: [
+        {
+          id: shown.id,
+          url: '/api/catalog/images?id=' + shown.id,
+          width: 8,
+          height: 8,
+          mime: 'image/png',
+          kind: 'product',
+        },
+      ],
+    });
+    const text = JSON.stringify(result);
+    for (const forbidden of [
+      'ownerId',
+      'sourceAssetId',
+      'product3d',
+      'inputAssetId',
+      'meshAssetId',
+      'object_key',
+      'payload_json',
+      'pricing',
+      'createdAt',
+      original.id,
+      hidden.id,
+      admin.id,
+    ]) {
+      expect(text).not.toContain(forbidden);
+    }
+    const list = (await (await placement()).json()) as { placements: PublicPlacement[] };
+    expect(list.placements.find((row) => row.materialId === version.materialId)).toEqual(result);
+    const converted = placementToMaterialVersion(result);
+    expect(converted.id).toBe(version.id);
+    expect(converted.scope).toBe('shared');
+    expect(converted.views).toEqual(result.views);
+    converted.views[0].anchor.x = 0;
+    expect(result.views[0].anchor.x).toBe(0.5);
+    expect(converted).not.toHaveProperty('product3d');
+  });
+
+  it('allows tile textures and legacy display fallbacks while rejecting non-display originals', async () => {
+    const texture = await upload(admin, 'texture');
+    const tile = await create({
+      ...material(texture.id),
+      category: 'tile',
+      usage: 'both',
+      installation: 'floor',
+      textureAssetIds: [texture.id],
+      views: [],
+    });
+    const tileData = await data(tile.materialId);
+    expect(tileData.textureAssetIds).toEqual([texture.id]);
+    expect(tileData.views).toEqual([]);
+    expect(tileData).not.toHaveProperty('coverAssetId');
+    const legacyImage = await upload(admin, 'preview');
+    const legacy = await create({ ...material(legacyImage.id), views: [] });
+    const legacyData = await data(legacy.materialId);
+    expect(legacyData.coverAssetId).toBe(legacyImage.id);
+    expect(legacyData.imageAssetIds).toEqual([legacyImage.id]);
+    expect(legacyData.images.map((image) => image.id)).toEqual([legacyImage.id]);
+    const original = await upload(admin, 'original');
+    const unusable = await create(material(original.id));
+    await expect(placement(unusable.materialId)).rejects.toMatchObject({ status: 404 });
+    const mixed = await create({
+      ...material(legacyImage.id),
+      views: [
+        { assetId: original.id, direction: '정면', anchor: { x: 0.5, y: 1 } },
+        { assetId: legacyImage.id, direction: '옆면', anchor: { x: 0.3, y: 1 } },
+      ],
+    });
+    // Omitting the private first view would silently turn guest viewIndex 0 into another view.
+    await expect(placement(mixed.materialId)).rejects.toMatchObject({ status: 404 });
+  }, 10000);
+
+  it('never resolves guessed private, past-version, inactive or reconstructed material IDs', async () => {
+    const shown = await upload();
+    const first = await create(material(shown.id));
+    const nextImage = await upload();
+    const update = await call('materials', {
+      operation: 'update',
+      id: first.materialId,
+      expectedVersionId: first.id,
+      input: material(nextImage.id),
+    });
+    expect(update.status).toBe(200);
+    const next = (await update.json()) as MaterialVersion;
+    expect((await data(first.materialId)).versionId).toBe(next.id);
+    await expect(placement(first.id)).rejects.toMatchObject({ status: 404 });
+    await expect(
+      publicPlacement(env, new Request('https://sjn.test/api/catalog/placement?versionId=' + first.id)),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(image(shown.id)).rejects.toMatchObject({ status: 404 });
+    expect(
+      (await call('materials', { operation: 'setActive', id: first.materialId, active: false })).status,
+    ).toBe(200);
+    await expect(placement(first.materialId)).rejects.toMatchObject({ status: 404 });
+    const privateSource = await upload(member, 'original');
+    const privateImage = await upload(member, 'product', privateSource.id);
+    const privateVersion = await create(
+      { ...material(privateImage.id), scope: 'personal' },
+      member,
+      'project-materials',
+    );
+    await expect(placement(privateVersion.materialId)).rejects.toMatchObject({ status: 404 });
+    const oldModel = await create(material(nextImage.id));
+    await env.DB.prepare(
+      "UPDATE d1_material_versions SET payload_json=json_set(payload_json,'$.reconstruction',json(?)) WHERE id=?",
+    )
+      .bind(JSON.stringify({ version: 2, kind: 'basin' }), oldModel.id)
+      .run();
+    await expect(placement(oldModel.materialId)).rejects.toMatchObject({ status: 404 });
+    await expect(placement('not-an-id')).rejects.toMatchObject({ status: 404 });
+  }, 15000);
+
+  it('rejects tampered stored DTO URLs, unknown fields and image references', async () => {
+    const shown = await upload();
+    const version = await create(material(shown.id));
+    const dto = await data(version.materialId);
+    expect(publicPlacementSchema.safeParse({ ...dto, ownerId: admin.id }).success).toBe(false);
+    expect(
+      publicPlacementSchema.safeParse({
+        ...dto,
+        views: [{ ...dto.views[0], product3d: { meshAssetId: crypto.randomUUID() } }],
+      }).success,
+    ).toBe(false);
+    expect(
+      publicPlacementSchema.safeParse({
+        ...dto,
+        images: [{ ...dto.images[0], url: '/api/d1/assets?id=' + shown.id }],
+      }).success,
+    ).toBe(false);
+    expect(
+      publicPlacementSchema.safeParse({
+        ...dto,
+        views: [{ ...dto.views[0], assetId: crypto.randomUUID() }],
+      }).success,
+    ).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import { discoverStorage } from '@/lib/storage/bootstrap';
 import { usePathname } from 'next/navigation';
 import { STORAGE_MESSAGES, type StorageMode, type StorageStatus } from '@/lib/storage/config';
 import { checkpointBeforeAccountChange, flushBeforeStorageTransition } from '@/lib/storage/recovery';
+import { isPublicPage, signInDestinations, type SignInOptions } from '@/lib/auth/public-routes';
 
 type Access = {
   writable: boolean;
@@ -12,7 +13,7 @@ type Access = {
   mode: StorageMode;
   userId?: string;
   retry: () => void;
-  signIn: () => Promise<void>;
+  signIn: (options?: SignInOptions) => Promise<void>;
   signOut: () => Promise<void>;
   error: string;
   status: StorageStatus | null;
@@ -38,6 +39,8 @@ function reopenWorkspace() {
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const publicPage = isPublicPage(pathname);
   const [status, setStatus] = useState<StorageStatus | null>(null);
   const [userId, setUserId] = useState<string>();
   const [ready, setReady] = useState(false);
@@ -50,6 +53,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const changingAccount = useRef(false);
   const transitionBusy = useRef(false);
   const mode = status?.mode ?? 'd1';
+  const protectAccountTransition = accountChanged && !['/materials', '/try', '/login'].includes(pathname);
   const suspendChangedAccount = useCallback(async () => {
     if (changingAccount.current) return;
     changingAccount.current = true;
@@ -215,8 +219,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAttempt((value) => value + 1);
     });
   }
-  async function signIn() {
-    await transition(async () => {
+  async function signIn(options: SignInOptions = {}) {
+    if (transitionBusy.current) return;
+    transitionBusy.current = true;
+    try {
+      if (options.resumeGuest) {
+        const { readGuestDraft, checkpointGuestDraft } = await import('@/lib/guest/session');
+        const { useEditor } = await import('@/lib/editor-store');
+        const draft = readGuestDraft();
+        if (!draft) throw new Error('이어서 저장할 체험 작업을 찾지 못했어요.');
+        const current = useEditor.getState();
+        if (current.project?.id === draft.document.id) {
+          current.commit();
+          await checkpointGuestDraft(useEditor.getState().project ?? undefined);
+        } else {
+          await checkpointGuestDraft();
+        }
+      } else if (!(await flushBeforeStorageTransition())) {
+        throw new Error('현재 작업을 보관하지 못했어요. 작업을 확인한 뒤 다시 로그인해 주세요.');
+      }
       setError('');
       const response = await fetch('/api/auth/sign-in/social', {
         method: 'POST',
@@ -225,8 +246,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         signal: AbortSignal.timeout(15_000),
         body: JSON.stringify({
           provider: 'google',
-          callbackURL: '/',
-          errorCallbackURL: '/login?authError=google',
+          ...signInDestinations(options),
         }),
       });
       const result = await response.json();
@@ -236,7 +256,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (target.protocol !== 'https:' || target.hostname !== 'accounts.google.com')
         throw new Error('Google 로그인 주소가 올바르지 않아요.');
       window.location.assign(target.href);
-    });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '로그인을 시작하지 못했어요.');
+      throw reason;
+    } finally {
+      transitionBusy.current = false;
+    }
   }
   async function signOut() {
     await transition(async () => {
@@ -257,23 +282,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <Context.Provider
       value={{ writable, ready, mode, userId, retry, signIn, signOut, error, status, expired }}
     >
-      {status && STORAGE_MESSAGES[status.reason] && (
+      {!publicPage && status && STORAGE_MESSAGES[status.reason] && (
         <div className="readonly-banner" role="status">
           {STORAGE_MESSAGES[status.reason]}{' '}
           <button onClick={() => void reconnect()}>서버 연결 다시 확인</button>
         </div>
       )}
-      {expired && (
+      {!publicPage && expired && (
         <div className="readonly-banner" role="alert">
-          {error} <button onClick={() => void signIn()}>Google로 다시 로그인</button>
+          {error} <button onClick={() => void signIn().catch(() => {})}>Google로 다시 로그인</button>
         </div>
       )}
-      {ready && !expired && !accountChanged && error && (
+      {(!publicPage || !!userId) && ready && !expired && !accountChanged && error && (
         <div className="readonly-banner" role="alert">
           {error} {accountChanged && <button onClick={() => void reconnect()}>계정 다시 확인</button>}
         </div>
       )}
-      {accountChanged && (
+      {protectAccountTransition && (
         <main className="auth-page">
           <div className="panel auth-card">
             <h1>로그인 계정이 변경됐어요</h1>
@@ -284,7 +309,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           </div>
         </main>
       )}
-      <div style={{ display: accountChanged ? 'none' : 'contents' }}>{children}</div>
+      <div style={{ display: protectAccountTransition ? 'none' : 'contents' }}>{children}</div>
     </Context.Provider>
   );
 }
@@ -300,7 +325,7 @@ export function BackendGuard({ children }: { children: React.ReactNode }) {
   const { status, ready, expired, signIn, retry, error } = useAccess();
   const pathname = usePathname();
   const [busy, setBusy] = useState(false);
-  if (pathname === '/login' || (ready && !expired)) return children;
+  if (isPublicPage(pathname) || (ready && !expired)) return children;
   if (!status)
     return (
       <main className="auth-page">
@@ -311,7 +336,7 @@ export function BackendGuard({ children }: { children: React.ReactNode }) {
     <main className="auth-page">
       <div className="panel auth-card">
         <h1>공간미리 로그인</h1>
-        <p>Google 계정으로 로그인하면 프로젝트와 자재를 이용할 수 있어요.</p>
+        <p>이 기능은 Google 로그인 후 이용할 수 있어요. 기본 공간과 자재는 로그인 없이 체험할 수 있어요.</p>
         <button
           className="btn primary"
           disabled={busy || !status.ready}
@@ -320,6 +345,8 @@ export function BackendGuard({ children }: { children: React.ReactNode }) {
             setBusy(true);
             try {
               await signIn();
+            } catch {
+              // AppProvider displays the error without navigating away.
             } finally {
               setBusy(false);
             }

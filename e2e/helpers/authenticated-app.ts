@@ -4,14 +4,14 @@ import type { Page, Route } from '@playwright/test';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { applyD1Migrations, allD1Migrations } from '../../tests/helpers/d1-migrations';
 import { handleD1Request } from '../../src/lib/d1';
-import { publicMaterials, publicImage } from '../../src/lib/catalog/public';
+import { publicMaterials, publicImage, publicPlacement } from '../../src/lib/catalog/public';
 import type { D1Bindings, D1Resource } from '../../src/lib/d1/types';
 import type { MaterialVersion, ProjectDocument } from '../../src/lib/types';
 
 /** Test-only signed-in identity; storage operations use real isolated D1/R2. No Google or remote service. */
 export async function authenticatedApp(
   page: Page,
-  options: { admin?: boolean; allowModelDownloads?: boolean } = {},
+  options: { admin?: boolean; allowModelDownloads?: boolean; signedIn?: boolean } = {},
 ) {
   const id = crypto.randomUUID();
   const worker = new Miniflare(
@@ -35,7 +35,7 @@ export async function authenticatedApp(
     .run();
   const actor = { id, isAdmin: options.admin ?? true };
   if (actor.isAdmin) await env.DB.prepare('INSERT INTO admin_roles(user_id) VALUES(?)').bind(id).run();
-  let signedIn = true;
+  let signedIn = options.signedIn ?? true;
   const pending = new Set<Promise<void>>();
   async function fulfill(route: Route, response: Response) {
     await route.fulfill({
@@ -69,7 +69,6 @@ export async function authenticatedApp(
       signedIn = false;
       return route.fulfill({ json: { success: true } });
     }
-    if (!signedIn) return route.fulfill({ status: 401, json: { error: '로그인이 필요해요.' } });
     const request = new Request(original.url(), {
       method: original.method(),
       headers: original.headers(),
@@ -79,6 +78,10 @@ export async function authenticatedApp(
           ? new Uint8Array(original.postDataBuffer()!)
           : undefined,
     });
+    if (path === '/api/catalog/materials') return fulfill(route, await publicMaterials(env));
+    if (path === '/api/catalog/images') return fulfill(route, await publicImage(env, request));
+    if (path === '/api/catalog/placement') return fulfill(route, await publicPlacement(env, request));
+    if (!signedIn) return route.fulfill({ status: 401, json: { error: '로그인이 필요해요.' } });
     if (path === '/api/admin/users') return fulfill(route, await handleAdminUsers(request, env, actor));
     if (path === '/api/admin/projects') return fulfill(route, await adminProjects({ env, actor }, request));
     if (path === '/api/admin/project-assets')
@@ -114,6 +117,9 @@ export async function authenticatedApp(
   return {
     env,
     actor,
+    signIn() {
+      signedIn = true;
+    },
     async project(projectId = page.url().split('/').at(-1)!): Promise<ProjectDocument> {
       const response = await handleD1Request(
         'projects',

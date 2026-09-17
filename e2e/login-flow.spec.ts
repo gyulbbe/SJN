@@ -95,6 +95,9 @@ test('Google 연결 진행 중 중복 실행을 막고 실패 후 재시도하�
   await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { name: '내 공간에서 시작하세요.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '로그아웃', exact: true, includeHidden: true })).toHaveCount(
+    1,
+  );
   expect(mock.calls.filter((call) => call.path === '/api/auth/sign-in/social')).toHaveLength(2);
   expect(mock.googleNavigations).toHaveLength(1);
   expect(mock.calls.find((call) => call.path === '/api/auth/sign-in/social')?.body).toEqual({
@@ -113,6 +116,9 @@ test('기존 세션으로 로그인 화면을 다시 열면 내 프로젝트로 
   await page.goto('/login');
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { name: '내 공간에서 시작하세요.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '로그아웃', exact: true, includeHidden: true })).toHaveCount(
+    1,
+  );
   expect(mock.calls.some((call) => call.path === '/api/auth/sign-in/social')).toBe(false);
   expect(mock.googleNavigations).toHaveLength(0);
 });
@@ -142,6 +148,9 @@ for (const viewport of [
     await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByRole('heading', { name: '내 공간에서 시작하세요.' })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: '로그아웃', exact: true, includeHidden: true }),
+    ).toHaveCount(1);
     expect(mock.googleNavigations).toHaveLength(1);
   });
 }
@@ -156,11 +165,20 @@ test('신뢰하지 않는 로그인 리디렉션은 열지 않고 재시도를 �
   expect(mock.googleNavigations).toHaveLength(0);
 });
 
-test('오래된 익명 로컬 설정을 거부하고 로그인 설정 확인을 안내한다', async ({ page }) => {
+test('오래된 로컬 설정은 계정 인증으로 받아들이지 않고 공개 메인 탐색은 유지한다', async ({ page }) => {
   const mock = await mockLogin(page, { local: true });
   await page.goto('/login');
   await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
-  await expect(page.getByText('로그인 없이 자재 둘러보기', { exact: true })).toHaveCount(0);
+  await expect(page.locator('main').getByRole('alert')).toContainText('로그인 연결을 준비하지 못했어요');
   await expect(page.getByRole('button', { name: /로컬로 시작/ })).toHaveCount(0);
-  expect(mock.calls.some((call) => call.path.startsWith('/api/auth'))).toBe(false);
+  await page.getByRole('link', { name: '← 메인으로', exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
+  await expect(
+    page.getByText('로그인 없이 빈 공간을 만들고, 마음에 드는 자재를 배치해 보세요.', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '로그아웃', exact: true })).toHaveCount(0);
+  expect(
+    mock.calls.some((call) => call.path.startsWith('/api/auth') || call.path.startsWith('/api/d1/')),
+  ).toBe(false);
 });

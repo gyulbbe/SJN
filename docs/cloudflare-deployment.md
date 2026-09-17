@@ -1,6 +1,6 @@
 # Cloudflare 배포 (Google 로그인·D1/R2)
 
-현재 앱은 개발·운영 모두 Google 로그인과 D1/R2가 필요하다. 인증·저장소 준비 실패 시 익명 IndexedDB 작업 공간으로 전환하지 않는다. 설정은 [D1 + R2 + Google 로그인 설정](cloudflare-storage-setup.md)을 따른다.
+현재 앱은 개발·운영 모두 메인·공용 자재 구경·`/try` 빈 공간 체험을 로그인 없이 제공한다. 계정 프로젝트·사진/AI·정식 저장·비교·견적·출력에는 Google 로그인과 D1/R2가 필요하다. 체험은 같은 탭 `sessionStorage`에만 임시 보관하고 로그인 후 본인 프로젝트로 저장한다. 인증·저장소 준비 실패나 세션 만료로 기존 계정 자료를 익명 작업 공간으로 전환하지 않는다. 설정은 [D1 + R2 + Google 로그인 설정](cloudflare-storage-setup.md)을 따른다.
 
 2026-09-17 원격 D1 `sjn`과 로컬 개발 DB에 0001~0006 적용을 완료했다. 기존 R2 `sjn`을 확인하고 소스 `wrangler.jsonc`에 `ASSET_BUCKET → sjn`을 추가했지만, 확인한 실배포 버전(2026-09-17 13:26:36 UTC 생성)에는 R2 바인딩과 Google/Better Auth 설정이 아직 없다. 소스 수정·DB 적용·실배포 반영은 각각 별개이며 실제 로그인·R2 업로드 검증은 남아 있다.
 
@@ -60,7 +60,7 @@ npm run test:background-removal
 
 ## 배포와 저장소의 경계
 
-- 앱은 `/api/d1/**`와 `/api/auth/**`를 사용한다. 초기 설정·연결 실패는 안내 후 접근을 차단하며 익명 로컬 저장으로 우회하지 않는다.
+- 계정 저장과 인증은 `/api/d1/**`, `/api/auth/**`를 사용한다. 초기 설정·연결 실패는 계정 작업공간을 차단한다. 공개 메인·체험은 로그인 준비와 분리하며 `/api/catalog/{materials,images,placement}`는 현재 활성 공용 표시·배치 자료만 읽는다. 이 API도 D1/R2 연결은 필요하지만 OAuth secret에는 의존하지 않는다. 개인 원본·메시·과거 버전과 관리자/AI API는 공개하지 않는다.
 - 과거 `/api/cloud/**`는 410 응답이며 Supabase 실행 어댑터·SDK는 제거했다. 기존 SQL과 원본 데이터는 보존한다.
 - D1/R2와 인증 설정이 소스에 있다는 사실만으로 실제 Worker에 반영됐다고 판단하지 않는다. 배포된 버전의 바인딩·서버 secret·준비 상태를 각각 확인한다.
 - Vite의 Worker 전용 설정은 vinext의 `typeof window` 최적화를 수정한다. TensorFlow.js가 Web Worker에서 `window` 대신 실제 전역 객체를 선택하게 하며, 메인 화면의 환경 정의는 복사하여 보존한다.

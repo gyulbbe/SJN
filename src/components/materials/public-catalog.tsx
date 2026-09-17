@@ -18,7 +18,6 @@ export default function PublicCatalog() {
     [loading, setLoading] = useState(true),
     [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (!access.ready || !access.userId) return;
     const controller = new AbortController();
     setLoading(true);
     fetch('/api/catalog/materials', { signal: controller.signal, cache: 'no-store' })
@@ -37,7 +36,7 @@ export default function PublicCatalog() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [access.ready, access.userId, attempt]);
+  }, [attempt]);
   const matching = rows.filter(
     (row) =>
       (!category || row.category === category) &&
@@ -59,7 +58,7 @@ export default function PublicCatalog() {
             <AdminLinks />
           </>
         )}
-        {access.userId ? (
+        {access.userId && !access.expired ? (
           <>
             <Link href="/">내 프로젝트</Link>
             <button className="btn" onClick={() => void access.signOut()}>
@@ -68,14 +67,14 @@ export default function PublicCatalog() {
           </>
         ) : (
           <Link className="btn" href="/login">
-            Google로 시작하기
+            로그인·회원가입
           </Link>
         )}
       </nav>
       <h1>내 공간을 완성할 자재</h1>
       <p className={styles.muted}>등록된 자재를 확인하고 내 프로젝트에 적용해 보세요.</p>
-      <Link className="btn primary" href={access.userId ? '/' : '/login'}>
-        프로젝트 만들기
+      <Link className="btn primary" href={access.userId && !access.expired ? '/' : '/try'}>
+        {access.userId && !access.expired ? '프로젝트 만들기' : '빈 공간으로 체험하기'}
       </Link>
       <div className={styles.form}>
         <label className="field">
@@ -150,8 +149,8 @@ export default function PublicCatalog() {
                 </div>
               ))}
             </dl>
-            <Link className="btn primary" href={access.userId ? '/' : '/login'}>
-              프로젝트 시작하기
+            <Link className="btn primary" href={access.userId && !access.expired ? '/' : '/try'}>
+              {access.userId && !access.expired ? '프로젝트 시작하기' : '빈 공간으로 체험하기'}
             </Link>
           </div>
         </div>

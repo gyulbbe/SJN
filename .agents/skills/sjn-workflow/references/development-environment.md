@@ -8,7 +8,7 @@ Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [pack
 
 | 목적 | 명령 | 동작 |
 | --- | --- | --- |
-| 기본 Workers 개발 | `npm run dev` 또는 `npm run dev:vinext` | vinext, `http://127.0.0.1:3000`, 로컬 D1/R2 + Google 로그인 |
+| 기본 Workers 개발 | `npm run dev` 또는 `npm run dev:vinext` | vinext, `http://127.0.0.1:3000`, 로컬 D1/R2; 계정 기능은 Google 로그인 |
 | 개발 migration | `npm run db:dev:migrate` | 0001~0006, 로컬 DB만, `.wrangler/development` |
 | 별도 Next 개발 | `npm run dev:next` | Node/Next, Cloudflare D1/R2/AI 바인딩 없음; 기본 앱 작업 공간 대체 아님 |
 | Next 빌드 | `npm run build` → `npm run start` | Node 빌드/실행 검사; Workers 바인딩은 생기지 않음 |
@@ -38,15 +38,15 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 4. `npm run db:dev:migrate` 후 `npm run dev`를 실행하고 준비 상태·Google 로그인을 확인한다.
 5. 최초 관리자 지정은 로그인한 검증된 회원만 대상으로 [bootstrap SQL](../../../../docs/database-design.md)을 로컬 개발 DB에 적용한다. 이후 역할/상태 변경은 관리자 UI를 사용한다.
 
-개발도 실제 Google 로그인이 필요하다. 격리 테스트의 서명된 Google fixture는 일반 실행용 우회 기능이 아니다. 로컬 D1/R2 구성 자체는 Cloudflare 운영 DB·버킷 생성이나 배포를 필요로 하지 않는다. 이 문서는 실제 Google 인증 완료를 의미하지 않는다.
+개발의 계정 프로젝트·관리·사진/AI 기능에는 실제 Google 로그인이 필요하다. 메인·공용 자재·`/try` 체험은 로그인 없이 열리며 공용 자재 읽기에는 로컬 D1/R2가 필요하다. 격리 테스트의 서명된 Google fixture는 일반 실행용 우회 기능이 아니다. 로컬 D1/R2 구성 자체는 Cloudflare 운영 DB·버킷 생성이나 배포를 필요로 하지 않는다. 이 문서는 실제 Google 인증 완료를 의미하지 않는다.
 
 ## 현재 저장소·접근 정책
 
-[storage/config](../../../../src/lib/storage/config.ts)와 [server](../../../../src/lib/storage/server.ts)를 기준으로 개발·운영 모두 D1 + Google 로그인을 요구한다. `auto/d1`만 현재 선택 경로이며 `local/supabase`는 설정 오류다. 과거 Supabase SQL과 브라우저 원본은 보존하지만 실행 어댑터·SDK는 제거했다. `/api/cloud/**`는 410이며 현재 `/api/d1/**`만 사용한다. IndexedDB에는 복구본·재사용 캐시만 새로 저장하고 진단 아카이브는 `/api/reconstruction/diagnostics`를 통해 D1/R2에 저장한다.
+[storage/config](../../../../src/lib/storage/config.ts)와 [server](../../../../src/lib/storage/server.ts)의 정식 계정 저장은 개발·운영 모두 D1 + Google 로그인을 요구한다. 공개 경로 `/`, `/materials`, `/try`, `/login`과 계정 작업공간의 준비 상태를 분리한다. `/try`는 같은 탭 `sessionStorage` 초안만 사용하며 빈 공간 생성·공개 자재 배치를 제공하고, 사진·AI·정식 저장·비교·견적·출력은 로그인 안내로 연결한다. `auto/d1`만 현재 선택 경로이며 `local/supabase`는 설정 오류다. 과거 Supabase SQL과 브라우저 원본은 보존하지만 실행 어댑터·SDK는 제거했다. `/api/cloud/**`는 410이며 계정 자료는 `/api/d1/**`, 익명 공개 읽기는 `/api/catalog/{materials,images,placement}`를 사용한다. IndexedDB에는 복구본·재사용 캐시만 새로 저장하고 진단 아카이브는 `/api/reconstruction/diagnostics`를 통해 D1/R2에 저장한다.
 
-누락된 바인딩·migration·secret·연결 실패·초기 timeout은 접근을 잠근다. 세션 만료 시 편집 화면을 숨기고 로그인 안내를 표시하되 본인 계정의 IndexedDB 복구본은 보존한다. 관리자 타인 프로젝트 편집은 명시적으로 범위가 지정된 저장소를 사용하고 캐시로 권한을 우회하지 않는다.
+누락된 바인딩·migration·secret·연결 실패·초기 timeout은 계정 작업공간 접근을 잠근다. 메인과 빈 공간 체험은 열리고, 공용 자재는 [독립 DB/R2 환경 검사](../../../../src/lib/catalog/public-context.ts)로 읽어 OAuth 준비 실패에 종속되지 않는다. DB/R2가 없으면 자재 영역에 오류·재시도를 표시한다. 세션 만료 시 기존 계정 편집 화면을 숨기고 로그인 안내를 표시하되 본인 계정의 IndexedDB 복구본은 보존한다. 관리자 타인 프로젝트 편집은 명시적으로 범위가 지정된 저장소를 사용하고 캐시로 권한을 우회하지 않는다.
 
-`GET /api/storage/status`는 서버 최대 4.5초, 브라우저 초기 확인 최대 5초다. D1 스키마와 R2 `HEAD __sjn_readiness__`를 읽기만 하며 sentinel 객체가 없어도 HEAD 성공이면 된다. `ready:true`는 실제 Google callback/R2 업로드 성공까지 보증하지 않는다. 원본: [status route](../../../../src/app/api/storage/status/route.ts), [database](../../../../src/lib/d1/database.ts), [auth](../../../../src/lib/auth/d1.ts).
+계정 저장용 `GET /api/storage/status`는 서버 최대 4.5초, 브라우저 초기 확인 최대 5초다. D1 스키마와 R2 `HEAD __sjn_readiness__`를 읽기만 하며 sentinel 객체가 없어도 HEAD 성공이면 된다. `ready:true`는 실제 Google callback/R2 업로드 성공까지 보증하지 않는다. 원본: [status route](../../../../src/app/api/storage/status/route.ts), [database](../../../../src/lib/d1/database.ts), [auth](../../../../src/lib/auth/d1.ts).
 
 ## R2 키와 접근 API
 
@@ -55,7 +55,7 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 | 이미지·메시 | `assets/{encodeURIComponent(userId)}/{assetId}/{randomUUID}` |
 | 프로젝트 문서 | `projects/{encodeURIComponent(userId)}/{projectId}/{randomUUID}.json` |
 
-객체 키와 브라우저 URL은 다르다. 일반 업로드·조회는 `/api/d1/assets`, raw 바이트는 `?id={assetId}&raw=1`다. 관리자 전용 경로는 `/api/admin/project-assets?projectId=...`이며 해당 프로젝트/행위자 범위만 허용한다. `/api/catalog/images?id=...`도 로그인한 회원에게 현재 활성 공용 자재의 표시 이미지(texture/product/preview)만 전달한다. source 원본·메시를 공용 이미지로 노출하지 않는다.
+객체 키와 브라우저 URL은 다르다. 일반 업로드·조회는 `/api/d1/assets`, raw 바이트는 `?id={assetId}&raw=1`다. 관리자 전용 경로는 `/api/admin/project-assets?projectId=...`이며 해당 프로젝트/행위자 범위만 허용한다. `/api/catalog/images?id=...`는 로그인 없이 현재 활성 공용 자재에서 직접 사용하는 표시 이미지(texture/product/preview)만 전달한다. `GET /api/catalog/placement`는 최소 배치 DTO 목록, `?materialId=...`는 현재 버전 한 건을 반환하며 과거 버전/개인 자재 조회 경로로 쓰지 않는다. source 원본·메시를 공용 이미지로 노출하지 않는다.
 
 이미지 업로드는 최대 25MB, 서버에서 형식·MIME·metadata를 검사한다. raw는 private/no-store이며 버킷 공개나 S3 관리 키 배포는 필요 없다. [assets](../../../../src/lib/d1/assets.ts), [projects](../../../../src/lib/d1/projects.ts), [admin projects](../../../../src/lib/admin/projects.ts), [catalog images](../../../../src/app/api/catalog/images/route.ts)를 확인한다. 과거 Supabase migration의 scene-assets 규칙은 현재 R2 경로와 별개다. 실행 어댑터와 SDK는 제거했다.
 
@@ -63,6 +63,6 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 
 Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는 `/api/export/photoreal`의 4B/9B다. 같은 `AI` 바인딩과 `sjn-gateway`를 사용하며 활성 로그인이 필요하다. 기본 개발 설정과 Next Node에는 AI 바인딩이 없다. 기본 개발 서버 시작만으로 원격 프록시를 연결하지 않도록 `wrangler.dev.jsonc`에서 AI를 제외했다. 실제 Workers AI 검증은 별도 승인된 원격 AI 바인딩 설정에서 실행한다. **로컬 D1/R2라는 사실은 AI가 로컬이라는 뜻이 아니다.** 명시적 AI 실행은 Cloudflare 사진 전송·사용량을 발생시킨다. 로그인·DB 준비·문서 갱신만으로 AI를 실행하지 않는다.
 
-MoGe·DeepLab·배경 제거·제품 입체화는 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
+체험 중에는 사진 업로드·AI 실행·진단 아카이브를 시작하지 않는다. MoGe·DeepLab·배경 제거·제품 입체화는 로그인한 기능의 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
 
 `deploy:vinext`는 실제 배포다. 소스에 추가한 R2 바인딩은 검증된 산출물로 재배포해야 실제 Worker에 반영되며, 누락된 Google/Better Auth 설정은 배포만으로 생성되지 않는다. 원격 sjn과 로컬 개발 DB는 2026-09-17 사용자 승인 후 0001~0006 적용을 완료했다. 이후 운영 DB 변경은 대상과 미적용 목록을 확인해 별도로 승인된 범위에서 진행한다. 로컬 개발 DB 적용과 원격 DB 적용은 다른 작업이다. 자세한 Google/secret/배포 준비는 [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 따른다.

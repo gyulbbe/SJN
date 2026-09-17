@@ -27,6 +27,7 @@ import {
   type RoomViewState,
 } from '@/lib/room-viewer/view-state';
 import styles from './room-viewer.module.css';
+import { LoginRequiredIcon, useEditingCapabilities } from '../editor/editing-capabilities';
 
 type Mode = 'before' | 'after' | 'split' | 'compare';
 type Props = {
@@ -60,12 +61,20 @@ export default function RoomViewer({
   onDesign,
   onClose,
 }: Props) {
+  const { guest, requestLogin } = useEditingCapabilities();
+  const requireLogin = (feature: string) => {
+    if (!guest) return false;
+    onClose();
+    requestLogin(feature);
+    return true;
+  };
   const dialog = useRef<HTMLDialogElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const [renderer, setRenderer] = useState<RoomViewerRenderer | null>(null);
   const [view, setView] = useState(() => normalizeRoomView(project.roomView));
-  const [mode, setMode] = useState<Mode>('split');
+  const [requestedMode, setMode] = useState<Mode>(() => (guest ? 'after' : 'split'));
+  const mode: Mode = guest ? 'after' : requestedMode;
   const [split, setSplit] = useState(0.5);
   const [box, setBox] = useState({ width: 1000, height: 650, dpr: 1 });
   const [readySnapshot, setReadySnapshot] = useState<{ renderer: RoomViewerRenderer; key: string } | null>(
@@ -258,6 +267,7 @@ export default function RoomViewer({
     };
   }
   async function download() {
+    if (requireLogin('이미지 출력')) return;
     if (!renderer || !prepared || exporting) return;
     setExporting(true);
     setError('');
@@ -298,7 +308,11 @@ export default function RoomViewer({
         <header className={styles.header}>
           <div>
             <h2 id="room-view-title">공간 둘러보기</h2>
-            <p>Before와 After를 같은 각도로 확인해요. 배치는 바뀌지 않아요.</p>
+            <p>
+              {guest
+                ? '공간을 회전·확대하며 배치를 확인해요.'
+                : 'Before와 After를 같은 각도로 확인해요. 배치는 바뀌지 않아요.'}
+            </p>
             {view.sourceCamera && (
               <p>
                 {after.room && sourceRoomViewAvailable(after.room, view)
@@ -387,18 +401,31 @@ export default function RoomViewer({
                 ['compare', '나란히 비교'],
               ] as const
             ).map(([value, label]) => (
-              <button type="button" aria-pressed={mode === value} key={value} onClick={() => setMode(value)}>
+              <button
+                type="button"
+                aria-pressed={mode === value}
+                key={value}
+                title={guest && value !== 'after' ? '로그인 필요' : undefined}
+                onClick={() => {
+                  if (value !== 'after' && requireLogin('Before / After 비교')) return;
+                  setMode(value);
+                }}
+              >
                 {label}
+                {guest && value !== 'after' && <LoginRequiredIcon />}
               </button>
             ))}
           </div>
           <label>
-            시안{' '}
+            시안{guest && <LoginRequiredIcon />}{' '}
             <select
               aria-label="둘러볼 시안"
+              title={guest ? '로그인 필요' : undefined}
               value={project.activeDesignId ?? ''}
               disabled={!project.designs.length}
-              onChange={(event) => onDesign(event.target.value)}
+              onChange={(event) => {
+                if (!requireLogin('시안 관리')) onDesign(event.target.value);
+              }}
             >
               {project.designs.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -535,7 +562,11 @@ export default function RoomViewer({
                 </button>
               </>
             ) : saveStatus === 'saved' ? (
-              '프로젝트에 시점 저장됨'
+              guest ? (
+                '이 탭에 시점 임시 보관됨'
+              ) : (
+                '프로젝트에 시점 저장됨'
+              )
             ) : (
               '시점 저장 중…'
             )}
@@ -583,11 +614,13 @@ export default function RoomViewer({
           <button
             type="button"
             className={styles.primary}
-            disabled={!prepared || exporting || !!error}
+            title={guest ? '로그인 필요' : undefined}
+            disabled={!guest && (!prepared || exporting || !!error)}
             onClick={() => void download()}
           >
             <Download size={17} />
             {exporting ? '이미지 준비 중…' : '현재 시점 다운로드'}
+            {guest && <LoginRequiredIcon />}
           </button>
         </footer>
       </div>
