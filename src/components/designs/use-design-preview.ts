@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useAdminProjectScope } from '@/components/repository-context';
+import { useEditingCapabilities } from '@/components/editor/editing-capabilities';
 import type { AssetReader } from '@/lib/render/compositor';
 import { designPreviewMaterialIds } from '@/lib/render/design-preview-context';
 import {
@@ -31,7 +32,13 @@ type State = {
 };
 export function useDesignPreview(source: Input) {
   const adminScope = useAdminProjectScope();
-  const input = { ...source, transient: !!adminScope || source.transient };
+  const { guest } = useEditingCapabilities();
+  const input = { ...source, transient: !!adminScope || guest || source.transient };
+  const sessionKey = adminScope
+    ? adminScope + input.projectId
+    : input.transient
+      ? `transient:${input.projectId}`
+      : input.projectId;
   const channel = useId(),
     currentInput = useRef(input),
     url = useRef<string | undefined>(undefined);
@@ -65,10 +72,7 @@ export function useDesignPreview(source: Input) {
   const enabled = input.enabled !== false && !!input.design;
   useEffect(() => {
     if (!enabled) return;
-    const session = acquireDesignPreviewSession(
-      adminScope ? adminScope + input.projectId : input.projectId,
-      input.assetReader,
-    );
+    const session = acquireDesignPreviewSession(sessionKey, input.assetReader);
     let alive = true;
     const timer = setTimeout(
       () => {
@@ -122,7 +126,7 @@ export function useDesignPreview(source: Input) {
     input.projectId,
     input.assetReader,
     input.delayMs,
-    adminScope,
+    sessionKey,
   ]);
   useEffect(
     () => () => {
@@ -152,11 +156,14 @@ export type ThumbnailIdentity = Omit<DesignPreviewIdentity, 'designId' | 'revisi
   sharedRevision?: number;
 };
 export function useCachedDesignThumbnail(identity: ThumbnailIdentity): string | undefined {
+  const adminScope = useAdminProjectScope();
+  const { guest } = useEditingCapabilities();
+  const transient = !!adminScope || guest;
   const [value, setValue] = useState<{ key: string; url?: string }>({ key: '' });
   const key = JSON.stringify(identity);
   const { projectId, designId, revision, sharedRevision, contextKey } = identity;
   useEffect(() => {
-    if (!designId || revision === undefined || sharedRevision === undefined) return;
+    if (transient || !designId || revision === undefined || sharedRevision === undefined) return;
     let alive = true,
       loadVersion = 0,
       currentUrl: string | undefined;
@@ -192,6 +199,6 @@ export function useCachedDesignThumbnail(identity: ThumbnailIdentity): string | 
       channel?.close();
       if (currentUrl) URL.revokeObjectURL(currentUrl);
     };
-  }, [key, projectId, designId, revision, sharedRevision, contextKey]);
-  return value.key === key ? value.url : undefined;
+  }, [key, projectId, designId, revision, sharedRevision, contextKey, transient]);
+  return !transient && value.key === key ? value.url : undefined;
 }

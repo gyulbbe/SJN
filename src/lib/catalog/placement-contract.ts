@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { materialPricingSchema } from '../quote-validation';
 import { categoryLabels, type MaterialCategory, type MaterialVersion } from '../types';
 
 const id = z.string().uuid();
@@ -40,6 +41,7 @@ export const publicPlacementSchema = z
     finish: z.string().max(2100),
     composition: z.string().max(2100).optional(),
     subcategoryName: z.string().max(100).optional(),
+    pricing: materialPricingSchema.optional(),
     widthMm: z.number().finite().positive().max(100000),
     heightMm: z.number().finite().positive().max(100000),
     depthMm: z.number().finite().nonnegative().max(100000),
@@ -91,6 +93,7 @@ export function placementToMaterialVersion(dto: PublicPlacement): MaterialVersio
     finish: dto.finish,
     composition: dto.composition,
     subcategoryName: dto.subcategoryName,
+    ...(dto.pricing ? { pricing: { ...dto.pricing } } : {}),
     widthMm: dto.widthMm,
     heightMm: dto.heightMm,
     depthMm: dto.depthMm,

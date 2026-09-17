@@ -247,8 +247,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     applyRequest.current++;
   }, [id, scopeKey, st.project?.activeDesignId]);
   useEffect(() => {
-    if (!isGuest && loaded && Object.keys(materials).length) useEditor.getState().initializeUsage(materials);
-  }, [loaded, materials, isGuest]);
+    if (loaded && Object.keys(materials).length) useEditor.getState().initializeUsage(materials);
+  }, [loaded, materials]);
   const onRenderer = useCallback((r: PhotoCompositor | null) => {
     renderer.current = r;
   }, []);
@@ -330,7 +330,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         if (operation.dead || currentScopeKey.current !== scopeKey) return;
         cloudCommittedContent.current = unavailable ? '' : projectContentKey(project);
         useEditor.getState().load(project);
-        if (!isGuest) useEditor.getState().initializeUsage(versions);
+        useEditor.getState().initializeUsage(versions);
         if (isGuest) {
           useEditor.getState().setEditing('after');
           useEditor.getState().setMode('after');
@@ -1128,7 +1128,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     }
   }
   function viewComparison(mode: 'before' | 'after' | 'split') {
-    if (mode !== 'after' && requireLogin('Before / After 비교')) return;
     if (!flushMaterialUsageInputs()) return;
     if (st.editing === 'before') {
       st.setEditing('after');
@@ -1146,7 +1145,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     return true;
   }
   function activateDesign(designId: string) {
-    if (requireLogin('시안 관리')) return;
     if (!prepareDesignAction()) return;
     useEditor.getState().selectDesign(designId);
     if (!writable) useEditor.setState({ saveStatus: 'saved' });
@@ -1154,14 +1152,12 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     setComparisonOpen(false);
   }
   function toggleComparison(designId: string) {
-    if (requireLogin('시안 비교')) return;
     useEditor.getState().toggleDesignComparison(designId);
     if (!writable) useEditor.setState({ saveStatus: 'saved' });
     const message = useEditor.getState().error;
     if (message) throw new Error(message);
   }
   function openDesignComparison() {
-    if (requireLogin('시안 비교')) return;
     if (!prepareDesignAction()) return;
     if ((useEditor.getState().project?.comparisonDesignIds.length ?? 0) < 2) {
       setDesignsOpen(true);
@@ -1228,7 +1224,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         onClose={() => setInspectorOpen(false)}
         onRoomResize={() => setRoomOpen(true)}
         onWallFeatures={() => {
-          if (requireLogin('벽 구조 편집') || !writable || !flushMaterialUsageInputs()) return;
+          if (!writable || !flushMaterialUsageInputs()) return;
           useEditor.getState().commit();
           const current = useEditor.getState();
           if (!current.project) return;
@@ -1364,10 +1360,9 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             <button
               disabled={!!st.draft || !!detectionStatus}
               className={st.mode === 'before' ? 'active' : ''}
-              title={isGuest ? '로그인 필요' : undefined}
               onClick={() => viewComparison('before')}
             >
-              Before{isGuest && <LoginRequiredIcon />}
+              Before
             </button>
             <button
               disabled={!!st.draft || !!detectionStatus}
@@ -1380,26 +1375,26 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           <button
             className={`icon-btn ${st.mode === 'split' ? 'active' : ''}`}
             disabled={!!st.draft || !!detectionStatus}
-            title={isGuest ? '로그인 필요' : '드래그 비교'}
-            style={isGuest ? { position: 'relative' } : undefined}
+            title="드래그 비교"
             aria-label="드래그 비교"
             onClick={() => viewComparison(st.mode === 'split' ? 'after' : 'split')}
           >
             <Columns2 size={17} />
-            {isGuest && <LoginRequiredIcon badge />}
           </button>
           <div className="divider" />
           <button
             className="btn room-open-button"
             aria-label="공간 둘러보기"
+            title={isGuest ? '로그인 필요' : undefined}
             disabled={!!detectionStatus || !activeDesign}
             onClick={() => {
-              if (!prepareDesignAction()) return;
+              if (requireLogin('공간 둘러보기') || !prepareDesignAction()) return;
               setRoomViewerOpen(true);
             }}
           >
             <Layers size={16} />
             공간 둘러보기
+            {isGuest && <LoginRequiredIcon />}
           </button>
           <button
             className="btn ai-button"
@@ -1427,12 +1422,15 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             <button
               className="btn room-open-button"
               aria-label="공간 크기"
-              title="공간 크기"
+              title={isGuest ? '로그인 필요' : '공간 크기'}
               disabled={!writable || !!st.draft || !!detectionStatus}
-              onClick={() => setRoomOpen(true)}
+              onClick={() => {
+                if (!requireLogin('공간 크기')) setRoomOpen(true);
+              }}
             >
               <Ruler size={16} />
               <span>공간 크기</span>
+              {isGuest && <LoginRequiredIcon />}
             </button>
           )}
           <button
@@ -1461,27 +1459,21 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           </span>
           <button
             className="btn small"
-            title={isGuest ? '로그인 필요' : undefined}
             onClick={() => {
-              if (requireLogin('시안 관리') || !prepareDesignAction()) return;
+              if (!prepareDesignAction()) return;
               setDesignsOpen(true);
             }}
           >
-            시안 관리{isGuest && <LoginRequiredIcon />}
+            시안 관리
           </button>
         </div>
         <div className="row">
           <span className="muted">
             비교 선택 {st.project.comparisonDesignIds.length}/{MAX_COMPARISON_DESIGNS}
           </span>
-          <button
-            className="btn small"
-            title={isGuest ? '로그인 필요' : undefined}
-            onClick={openDesignComparison}
-          >
+          <button className="btn small" onClick={openDesignComparison}>
             <Columns2 size={15} />
             {hasCompared && !comparisonOpen ? '시안 비교로 돌아가기' : '시안 비교'}
-            {isGuest && <LoginRequiredIcon />}
           </button>
           {!adminContext && st.project.shared.legacyHistory && (
             <button className="text-button" disabled={!!adminContext} onClick={() => setLegacyOpen(true)}>
@@ -1597,7 +1589,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           setInspectorOpen(false);
         }}
       />
-      {roomViewerOpen && (
+      {!isGuest && roomViewerOpen && (
         <RoomViewer
           project={st.project}
           materials={materials}
@@ -1611,7 +1603,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           onClose={() => setRoomViewerOpen(false)}
         />
       )}
-      {!isGuest && comparisonOpen ? (
+      {comparisonOpen ? (
         <DesignComparison
           projectId={st.project.id}
           roomContext={roomContext}
@@ -1636,7 +1628,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             className="btn primary"
             disabled={!writable}
             onClick={() => {
-              if (!requireLogin('시안 만들기')) st.createDesign();
+              st.createDesign();
             }}
           >
             새 시안 만들기
@@ -1805,11 +1797,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                     <Plus size={14} />내 자재 등록하기
                   </button>
                 )}
-                <button
-                  className="text-button"
-                  style={{ fontSize: 11 }}
-                  onClick={() => leave('/materials')}
-                >
+                <button className="text-button" style={{ fontSize: 11 }} onClick={() => leave('/materials')}>
                   자재 라이브러리
                   <ExternalLink size={12} />
                 </button>
@@ -1852,40 +1840,23 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             />
           )}
           <div className={`usage-drawer ${inspectorOpen ? 'open' : ''}`}>
-            {isGuest ? (
-              <div className="stack" style={{ padding: 12 }}>
-                <button
-                  className="icon-btn mobile-close"
-                  aria-label="속성 패널 닫기"
-                  onClick={() => setInspectorOpen(false)}
-                >
-                  <X size={17} />
-                </button>
-                <button className="btn" title="로그인 필요" onClick={() => requireLogin('견적 계산')}>
-                  로그인하고 견적 보기
-                  <LoginRequiredIcon />
-                </button>
-                {inspector}
-              </div>
-            ) : (
-              <MaterialUsagePanel
-                key={activeDesign.id}
-                design={activeDesign}
-                materials={materials}
-                currentCatalog={catalog}
-                assetReader={assetReader}
-                writable={writable && st.editing === 'after' && !st.draft && !detectionStatus}
-                beforeViewing={st.mode !== 'after' || st.editing === 'before'}
-                onChange={st.changeMaterialUsage}
-                onClose={() => setInspectorOpen(false)}
-              >
-                {inspector}
-              </MaterialUsagePanel>
-            )}
+            <MaterialUsagePanel
+              key={activeDesign.id}
+              design={activeDesign}
+              materials={materials}
+              currentCatalog={catalog}
+              assetReader={assetReader}
+              writable={writable && st.editing === 'after' && !st.draft && !detectionStatus}
+              beforeViewing={st.mode !== 'after' || st.editing === 'before'}
+              onChange={st.changeMaterialUsage}
+              onClose={() => setInspectorOpen(false)}
+            >
+              {inspector}
+            </MaterialUsagePanel>
           </div>
         </div>
       )}
-      {!isGuest && designsOpen && (
+      {designsOpen && (
         <DesignManager
           projectId={st.project.id}
           roomContext={roomContext}
@@ -2197,7 +2168,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 else delete target.wallFeatures;
               });
             setWallEditor(null);
-            setRoomViewerOpen(true);
+            if (!isGuest) setRoomViewerOpen(true);
           }}
         />
       )}
@@ -2334,7 +2305,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 <li>공간 크기에서 가로·깊이·높이를 바꾸면 타일과 제품 크기가 함께 맞춰져요.</li>
                 <li>
                   {isGuest
-                    ? 'Ctrl+Z 실행 취소, Ctrl+Y 다시 실행과 공간 둘러보기를 사용할 수 있어요. 비교·견적·이미지 출력·정식 저장은 로그인 후 사용할 수 있어요.'
+                    ? 'Ctrl+Z 실행 취소, Ctrl+Y 다시 실행과 시안 비교·견적·속성 조절을 사용할 수 있어요. 상단 공간 둘러보기·공간 크기·AI·정식 저장·내보내기는 로그인 후 사용할 수 있어요.'
                     : 'Before / After 비교 후 이미지를 내려받으세요. Ctrl+S 저장, Ctrl+Z 실행 취소, Ctrl+Y 다시 실행을 지원해요. 상단의 화살표 버튼으로도 되돌리거나 다시 실행할 수 있어요.'}
                 </li>
               </ol>

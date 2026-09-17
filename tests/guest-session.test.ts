@@ -5,9 +5,10 @@ import {
   type GuestSessionDependencies,
 } from '../src/lib/guest/session';
 import { placementToMaterialVersion, type PublicPlacement } from '../src/lib/catalog/placement-contract';
+import { calculateMaterialUsage } from '../src/lib/material-usage';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 import { useEditor } from '../src/lib/editor-store';
-import { getActiveDesign, projectScenes } from '../src/lib/comparison';
+import { getActiveDesign, projectScenes, MAX_DESIGNS } from '../src/lib/comparison';
 import { StorageNotFoundError } from '../src/lib/repositories/references';
 import type { Repositories } from '../src/lib/repositories/contracts';
 import type { AssetRecord, ImageAssetRecord, ProjectDocument } from '../src/lib/types';
@@ -172,6 +173,79 @@ describe('게스트의 탭 세션', () => {
     expect(
       await createGuestSessionManager({ ...s.deps, storage: () => new TabStorage() }).openGuestSession(),
     ).toBeNull();
+  });
+
+  it('등록 단가와 박스 규격으로 견적을 계산하고 새로고침 뒤 같은 가격과 편집값을 보존한다', async () => {
+    const s = setup();
+    s.placement.pricing = {
+      unit: 'box',
+      unitPrice: 12000,
+      boxCoverageM2: 1.44,
+      piecesPerBox: 4,
+      wastePercent: 0,
+    };
+    await s.engine.createGuestDraft(DEFAULT_ROOM);
+    await applyTile(s);
+    useEditor
+      .getState()
+      .initializeUsage({ [s.placement.versionId]: placementToMaterialVersion(s.placement) });
+    const design = getActiveDesign(useEditor.getState().project!)!;
+    const usage = calculateMaterialUsage(
+      design.scene,
+      { [s.placement.versionId]: placementToMaterialVersion(s.placement) },
+      design.materialUsage,
+    );
+    expect(usage.total).toBe(48000);
+    useEditor.getState().changeMaterialUsage((state) => {
+      state.assignments[design.scene.surfaces[0].id].pricing.unitPrice = 15000;
+    });
+    useEditor.getState().change((scene) => {
+      scene.color.exposure = 1.25;
+    });
+    await s.engine.checkpointGuestDraft(useEditor.getState().project!);
+    const restored = (await createGuestSessionManager(s.deps).openGuestSession())!;
+    const material = await restored.repositories.materials.getVersion(s.placement.versionId);
+    expect(material.pricing).toEqual(s.placement.pricing);
+    const savedDesign = getActiveDesign(restored.draft.document)!;
+    expect(savedDesign.scene.color.exposure).toBe(1.25);
+    const savedUsage = calculateMaterialUsage(
+      savedDesign.scene,
+      { [material.id]: material },
+      savedDesign.materialUsage,
+    );
+    expect(savedUsage.total).toBe(60000);
+    expect(s.request.mock.calls.every(([url]) => String(url).startsWith('/api/catalog/'))).toBe(true);
+  });
+
+  it('빈 공간의 여러 시안과 비교 선택을 복원하고 개수·비교 ID 제한은 유지한다', async () => {
+    const s = setup();
+    await s.engine.createGuestDraft(DEFAULT_ROOM);
+    await applyTile(s);
+    const first = useEditor.getState().project!.activeDesignId!;
+    const second = useEditor.getState().copyDesign(first)!;
+    useEditor.getState().change((scene) => {
+      scene.color.exposure = 0.5;
+    });
+    useEditor.getState().toggleDesignComparison(first);
+    useEditor.getState().toggleDesignComparison(second);
+    await s.engine.checkpointGuestDraft(useEditor.getState().project!);
+    const restored = (await createGuestSessionManager(s.deps).openGuestSession())!.draft.document;
+    expect(restored.designs).toHaveLength(2);
+    expect(restored.comparisonDesignIds).toEqual([first, second]);
+    expect(restored.designs.find((design) => design.id === second)!.scene.color.exposure).toBe(0.5);
+    expect(restored.designs.find((design) => design.id === first)!.scene.color.exposure).toBe(0);
+    await expect(
+      s.engine.checkpointGuestDraft({ ...restored, comparisonDesignIds: [crypto.randomUUID()] }),
+    ).rejects.toThrow();
+    const tooMany = {
+      ...restored,
+      designs: Array.from({ length: MAX_DESIGNS + 1 }, (_, index) => ({
+        ...restored.designs[0],
+        id: index === 0 ? first : crypto.randomUUID(),
+      })),
+    };
+    await expect(s.engine.checkpointGuestDraft(tooMany)).rejects.toThrow();
+    expect(s.engine.readGuestDraft()!.document).toEqual(restored);
   });
 
   it('저장소 용량 오류·잘못된 문서·새 공간 생성 실패에도 이전 초안을 덮어쓰지 않는다', async () => {

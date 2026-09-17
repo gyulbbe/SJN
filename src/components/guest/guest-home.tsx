@@ -129,7 +129,9 @@ export default function GuestHome({ onNewProject }: { onNewProject: () => void }
                 자재 둘러보기
               </Link>
             </div>
-            <small className="start-hint">사진 분석·비교·견적·다운로드는 로그인 후 이용할 수 있어요.</small>
+            <small className="start-hint">
+              견적과 속성 조절·시안 비교는 체험할 수 있어요. 사진 분석·저장·다운로드는 로그인이 필요해요.
+            </small>
           </div>
           <div className="start-steps">
             <span>

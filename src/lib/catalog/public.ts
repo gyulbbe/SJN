@@ -184,6 +184,7 @@ export async function publicPlacement(env: D1Bindings, request: Request): Promis
         finish: v.finish,
         composition: v.composition,
         subcategoryName: v.subcategoryName,
+        pricing: v.pricing,
         widthMm: v.widthMm,
         heightMm: v.heightMm,
         depthMm: v.depthMm,

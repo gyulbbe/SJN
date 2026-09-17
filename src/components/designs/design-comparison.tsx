@@ -2,6 +2,7 @@
 import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useAdminProjectScope } from '@/components/repository-context';
+import { LoginRequiredIcon, useEditingCapabilities } from '@/components/editor/editing-capabilities';
 import { ArrowLeft, Download, Expand, Maximize, Minus, Plus, X } from 'lucide-react';
 import type { DesignDocument, MaterialVersion } from '@/lib/types';
 import type { AssetReader } from '@/lib/render/compositor';
@@ -80,6 +81,7 @@ function ComparisonCard({
   onShowUsage,
   ...props
 }: CardProps) {
+  const { guest } = useEditingCapabilities();
   const usage = useMemo(
     () => calculateMaterialUsage(design.scene, props.materials, design.materialUsage, design.quote),
     [design.scene, design.materialUsage, design.quote, props.materials],
@@ -298,9 +300,11 @@ function ComparisonCard({
           disabled={downloading}
           onClick={onDownload}
           aria-label={`${design.name} PNG 다운로드`}
+          title={guest ? '로그인 후 이미지 출력' : undefined}
         >
           <Download size={14} />
           {downloading ? '이미지 만드는 중…' : 'PNG'}
+          {guest && <LoginRequiredIcon />}
         </button>
       </footer>
     </article>
@@ -318,6 +322,7 @@ function downloadBlob(blob: Blob, name: string) {
 }
 export default function DesignComparison(props: DesignComparisonProps) {
   const adminScope = useAdminProjectScope();
+  const { guest, requestLogin } = useEditingCapabilities();
   const exportSession = useRef<ReturnType<typeof acquireDesignPreviewSession> | null>(null);
   const container = useRef<HTMLElement>(null),
     alive = useRef(true),
@@ -364,8 +369,13 @@ export default function DesignComparison(props: DesignComparisonProps) {
     design,
     materials: props.materials,
     roomContext: props.roomContext,
+    transient: !!adminScope || guest,
   });
   async function exportImage(design?: DesignDocument) {
+    if (guest) {
+      requestLogin('이미지 출력');
+      return;
+    }
     if (exporting) return;
     const session = acquireDesignPreviewSession(
       adminScope ? adminScope + props.projectId : props.projectId,
@@ -444,10 +454,12 @@ export default function DesignComparison(props: DesignComparisonProps) {
           <button
             className={styles.primaryButton}
             disabled={!!exporting || designs.length < 2}
+            title={guest ? '로그인 후 이미지 출력' : undefined}
             onClick={() => void exportImage()}
           >
             <Download size={16} />
             {exporting === 'all' ? '비교 이미지 만드는 중…' : '비교 PNG'}
+            {guest && <LoginRequiredIcon />}
           </button>
         </div>
       </header>

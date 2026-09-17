@@ -1,5 +1,7 @@
 # 개발환경 참조
 
+체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
+
 확인 기준: **2026-09-17 현재 소스**. 2026-09-17 사용자 승인 후 D1 `sjn`의 기존 0001~0004에 0005·0006을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 0001~0006을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했다. 관리자 지정·배포·R2 버킷 생성·실제 Google 인증·AI 호출은 수행하지 않았다. 실제 secret은 문서·로그·Git에 기록하지 않는다. 기존 R2 `sjn`(Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개)을 읽기 확인했고 소스에 `ASSET_BUCKET → sjn`을 추가했다. 2026-09-17 14:46:54 UTC에 생성된 현재 실배포 버전(`d70ff6c6-bd4e-4bba-9758-9bd5bdd81911`)을 읽기 확인한 결과 `DB`·`ASSET_BUCKET`·`AI`·`ASSETS` 바인딩과 `APP_ENV=production`·`STORAGE_MODE=d1`·`BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev`가 있다. 운영 secret 목록은 비어 있고 전체 바인딩에도 `BETTER_AUTH_SECRET`·`GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`이 없어 로그인 준비 검사가 실패한다. 실제 `/api/storage/status`는 `ready=false`, `reason=invalid_configuration`이다. 이 확인은 운영 설정 변경·배포를 하지 않은 읽기 검사이며, 인증 준비 검사에서 중단되므로 현재 D1/R2 실제 읽기·쓰기나 Google 로그인이 성공했다는 뜻은 아니다. 실제 Google OAuth·R2 업로드 검증은 남아 있다. 로컬 `.dev.vars`·`.env.local`·`.env`·`.dev.vars.development`도 확인 당시 없었다. Google callback은 `https://sjn.gyulbbe.workers.dev/api/auth/callback/google`이다.
 
 ## 실행과 검사
@@ -42,7 +44,7 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 
 ## 현재 저장소·접근 정책
 
-[storage/config](../../../../src/lib/storage/config.ts)와 [server](../../../../src/lib/storage/server.ts)의 정식 계정 저장은 개발·운영 모두 D1 + Google 로그인을 요구한다. 공개 경로 `/`, `/materials`, `/try`, `/login`과 계정 작업공간의 준비 상태를 분리한다. `/try`는 같은 탭 `sessionStorage` 초안만 사용하며 빈 공간 생성·공개 자재 배치를 제공하고, 사진·AI·정식 저장·비교·견적·출력은 로그인 안내로 연결한다. `auto/d1`만 현재 선택 경로이며 `local/supabase`는 설정 오류다. 과거 Supabase SQL과 브라우저 원본은 보존하지만 실행 어댑터·SDK는 제거했다. `/api/cloud/**`는 410이며 계정 자료는 `/api/d1/**`, 익명 공개 읽기는 `/api/catalog/{materials,images,placement}`를 사용한다. IndexedDB에는 복구본·재사용 캐시만 새로 저장하고 진단 아카이브는 `/api/reconstruction/diagnostics`를 통해 D1/R2에 저장한다.
+[storage/config](../../../../src/lib/storage/config.ts)와 [server](../../../../src/lib/storage/server.ts)의 정식 계정 저장은 개발·운영 모두 D1 + Google 로그인을 요구한다. 공개 경로 `/`, `/materials`, `/try`, `/login`과 계정 작업공간의 준비 상태를 분리한다. `/try`는 같은 탭 `sessionStorage` 초안만 사용하며 빈 공간 생성·공개 자재 배치를 제공하고, 사진·AI·정식 저장·출력은 로그인 안내로 연결한다. `auto/d1`만 현재 선택 경로이며 `local/supabase`는 설정 오류다. 과거 Supabase SQL과 브라우저 원본은 보존하지만 실행 어댑터·SDK는 제거했다. `/api/cloud/**`는 410이며 계정 자료는 `/api/d1/**`, 익명 공개 읽기는 `/api/catalog/{materials,images,placement}`를 사용한다. IndexedDB에는 복구본·재사용 캐시만 새로 저장하고 진단 아카이브는 `/api/reconstruction/diagnostics`를 통해 D1/R2에 저장한다.
 
 누락된 바인딩·migration·secret·연결 실패·초기 timeout은 계정 작업공간 접근을 잠근다. 메인과 빈 공간 체험은 열리고, 공용 자재는 [독립 DB/R2 환경 검사](../../../../src/lib/catalog/public-context.ts)로 읽어 OAuth 준비 실패에 종속되지 않는다. DB/R2가 없으면 자재 영역에 오류·재시도를 표시한다. 세션 만료 시 기존 계정 편집 화면을 숨기고 로그인 안내를 표시하되 본인 계정의 IndexedDB 복구본은 보존한다. 관리자 타인 프로젝트 편집은 명시적으로 범위가 지정된 저장소를 사용하고 캐시로 권한을 우회하지 않는다.
 

@@ -949,7 +949,6 @@ describe('anonymous placement projections', () => {
       'meshAssetId',
       'object_key',
       'payload_json',
-      'pricing',
       'createdAt',
       original.id,
       hidden.id,
@@ -966,6 +965,49 @@ describe('anonymous placement projections', () => {
     converted.views[0].anchor.x = 0;
     expect(result.views[0].anchor.x).toBe(0.5);
     expect(converted).not.toHaveProperty('product3d');
+  });
+
+  it('includes only registered current prices and packaging without exposing old versions or inventing missing prices', async () => {
+    const shown = await upload(admin);
+    const pricing = {
+      unit: 'box' as const,
+      unitPrice: 24000,
+      boxCoverageM2: 1.44,
+      piecesPerBox: 4,
+      wastePercent: 5,
+    };
+    const original = await create({ ...material(shown.id), pricing });
+    const result = await data(original.materialId);
+    expect(result.pricing).toEqual(pricing);
+    const converted = placementToMaterialVersion(result);
+    expect(converted.pricing).toEqual(pricing);
+    converted.pricing!.unitPrice = 1;
+    expect(result.pricing!.unitPrice).toBe(24000);
+    const updated = await call('materials', {
+      operation: 'update',
+      id: original.materialId,
+      expectedVersionId: original.id,
+      input: { ...material(shown.id), pricing: { ...pricing, unitPrice: 28000 } },
+    });
+    expect(updated.status).toBe(200);
+    expect((await data(original.materialId)).pricing!.unitPrice).toBe(28000);
+    const old = await call('materials', { operation: 'getVersion', id: original.id }, member);
+    expect((await old.json()).pricing.unitPrice).toBe(24000);
+    const unpriced = await create(material(shown.id));
+    const legacy = await data(unpriced.materialId);
+    expect(legacy.pricing).toBeUndefined();
+    expect(placementToMaterialVersion(legacy).pricing).toBeUndefined();
+    expect(
+      publicPlacementSchema.safeParse({ ...legacy, pricing: { ...pricing, unitPrice: -1 } }).success,
+    ).toBe(false);
+    expect(
+      publicPlacementSchema.safeParse({ ...legacy, pricing: { ...pricing, piecesPerBox: 0 } }).success,
+    ).toBe(false);
+    const withUnknown = publicPlacementSchema.parse({
+      ...legacy,
+      pricing: { ...pricing, ownerId: 'private' },
+    });
+    expect(withUnknown.pricing).not.toHaveProperty('ownerId');
   });
 
   it('allows tile textures and legacy display fallbacks while rejecting non-display originals', async () => {

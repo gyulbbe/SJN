@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { normalizeProjectDocument, projectScenes, projectWorkspaces } from '../comparison';
+import { normalizeProjectDocument, projectComparisons, projectScenes } from '../comparison';
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
@@ -84,10 +84,8 @@ function validateDraft(value: unknown): GuestDraft {
   const doc = draft.document;
   if (doc.ownerId !== 'guest' || doc.storageRevision !== 0 || doc.thumbnailAssetId)
     throw new Error('체험 초안의 저장 정보를 확인할 수 없어요.');
-  for (const workspace of projectWorkspaces(doc)) {
-    if (workspace.designs.length !== 1 || workspace.shared.comparison || workspace.comparisonDesignIds.length)
-      throw new Error('체험에서는 빈 공간의 시안 하나만 사용할 수 있어요.');
-  }
+  if (projectComparisons(doc).length)
+    throw new Error('사진으로 만든 비교 공간은 로그인한 뒤 사용할 수 있어요.');
   for (const scene of projectScenes(doc)) {
     if (!scene.room || scene.backgroundAssetId || scene.fixtures.some((fixture) => fixture.reconstruction))
       throw new Error('체험에서는 직접 만든 빈 공간만 사용할 수 있어요.');

@@ -145,7 +145,7 @@ describe('guest editor capability boundaries', () => {
     expect(boundary.account.ready).toBe(false);
   });
 
-  it('allows product rotation, deletion, undo and redo while requiring login for duplication', () => {
+  it('allows guest product duplication, rotation, deletion, undo and redo', () => {
     const props = {
       materials: {},
       open: true,
@@ -157,10 +157,11 @@ describe('guest editor capability boundaries', () => {
     expect(elements(tree).find((node) => node.type === 'fieldset')?.props.disabled).toBe(false);
     click(tree, '공간 크기 변경');
     expect(props.onRoomResize).toHaveBeenCalledOnce();
-    const before = structuredClone(useEditor.getState().project);
     click(tree, '복제');
-    expect(boundary.requestLogin).toHaveBeenCalledWith('제품 복제');
-    expect(useEditor.getState().project).toEqual(before);
+    const duplicated = getActiveDesign(useEditor.getState().project!)!.scene.fixtures;
+    expect(duplicated).toHaveLength(2);
+    expect(duplicated[1].id).not.toBe(duplicated[0].id);
+    expect(duplicated[1].materialVersionId).toBe(duplicated[0].materialVersionId);
     const rotate = elements(tree).find(
       (node) => node.type === Range && node.props.label === '이미지 평면 회전',
     )!;
@@ -169,14 +170,15 @@ describe('guest editor capability boundaries', () => {
     expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures[0].rotation).toBe(45);
     tree = Inspector(props);
     click(tree, '제품 삭제');
-    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures).toHaveLength(0);
-    useEditor.getState().undo();
     expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures).toHaveLength(1);
+    useEditor.getState().undo();
+    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures).toHaveLength(2);
     useEditor.getState().redo();
-    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures).toHaveLength(0);
+    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures).toHaveLength(1);
+    expect(boundary.requestLogin).not.toHaveBeenCalled();
   });
 
-  it('keeps advanced product controls behind login while allowing an existing guest lock to be released', () => {
+  it('allows guest color, shadow, order and lock controls without changing account access', () => {
     const props = {
       materials: {},
       open: true,
@@ -185,50 +187,35 @@ describe('guest editor capability boundaries', () => {
       onMaterialsChanged: vi.fn(async () => {}),
     };
     let tree = Inspector(props);
-    const rangeLabels = elements(tree)
-      .filter((node) => node.type === Range)
-      .map((node) => node.props.label);
-    expect(rangeLabels).toContain('이미지 평면 회전');
-    expect(rangeLabels).not.toContain('노출');
-    expect(rangeLabels).not.toContain('그림자 진하기');
-    expect(
-      elements(tree).some(
-        (node) =>
-          node.type === 'button' &&
-          ['앞으로', '뒤로', '색감 기본값'].includes(text(node.props.children as ReactNode).trim()),
-      ),
-    ).toBe(false);
-    const before = structuredClone(useEditor.getState().project);
-    for (const [label, feature] of [
-      ['접지 그림자 설정', '접지 그림자'],
-      ['겹침 순서 변경', '겹침 순서'],
-      ['밝기와 색감 조절', '밝기와 색감'],
-      ['배치 잠금', '배치 잠금'],
-    ]) {
-      expect(button(tree, label).props.title).toBe('로그인 필요');
-      click(tree, label);
-      expect(boundary.requestLogin).toHaveBeenLastCalledWith(feature);
-    }
-    expect(useEditor.getState().project).toEqual(before);
-    useEditor.getState().change((scene) => {
-      scene.fixtures[0].locked = true;
-    });
-    boundary.requestLogin.mockClear();
+    const setRange = (label: string, value: number) => {
+      const range = elements(Inspector(props)).find(
+        (node) => node.type === Range && node.props.label === label,
+      )!;
+      expect(range, label).toBeDefined();
+      (range.props.onChange as (n: number) => void)(value);
+      (range.props.onCommit as () => void)();
+    };
+    setRange('노출', 0.3);
+    setRange('그림자 진하기', 0.6);
+    expect(getActiveDesign(useEditor.getState().project!)!.scene.color.exposure).toBe(0.3);
+    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures[0].shadow.opacity).toBe(0.6);
+    click(tree, '복제');
+    const selected = getActiveDesign(useEditor.getState().project!)!.scene.fixtures[0].id;
     tree = Inspector(props);
+    click(tree, '앞으로');
+    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures[1].id).toBe(selected);
+    tree = Inspector(props);
+    click(tree, '배치 잠금');
+    tree = Inspector(props);
+    expect(button(tree, '제품 삭제').props.disabled).toBe(true);
+    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures[1].locked).toBe(true);
     click(tree, '잠금 해제');
-    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures[0].locked).toBe(false);
+    expect(getActiveDesign(useEditor.getState().project!)!.scene.fixtures[1].locked).toBe(false);
     expect(boundary.requestLogin).not.toHaveBeenCalled();
-    boundary.capability = { writable: true, guest: false, requestLogin: boundary.requestLogin };
-    const memberTree = Inspector(props);
-    const memberRanges = elements(memberTree)
-      .filter((node) => node.type === Range)
-      .map((node) => node.props.label);
-    expect(memberRanges).toContain('노출');
-    expect(memberRanges).toContain('그림자 진하기');
-    expect(button(memberTree, '앞으로')).toBeDefined();
+    expect(boundary.account.writable).toBe(false);
   });
 
-  it('requires login for tile layout details but allows applied tiles to be removed', () => {
+  it('allows tile pattern, grout and shading controls and removing the applied guest tile', () => {
     const props = {
       materials: {},
       open: true,
@@ -241,25 +228,31 @@ describe('guest editor capability boundaries', () => {
       scene.surfaces[0].materialVersionId = versionId;
     });
     useEditor.getState().select(getActiveDesign(useEditor.getState().project!)!.scene.surfaces[0].id);
-    const before = structuredClone(useEditor.getState().project);
     const tree = Inspector(props);
-    expect(
-      elements(tree).some((node) => ['타일 배열', '줄눈 색상'].includes(String(node.props['aria-label']))),
-    ).toBe(false);
-    expect(elements(tree).filter((node) => node.type === Range)).toHaveLength(0);
-    click(tree, '타일 시공 세부 설정');
-    expect(boundary.requestLogin).toHaveBeenCalledWith('타일 시공 세부 설정');
-    expect(useEditor.getState().project).toEqual(before);
-    click(tree, '이 면의 타일 초기화');
+    const pattern = elements(tree).find((node) => node.props['aria-label'] === '타일 배열')!;
+    expect(pattern).toBeDefined();
+    (pattern.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: 'brick' },
+    });
+    const grout = elements(Inspector(props)).find((node) => node.props['aria-label'] === '줄눈 색상')!;
+    (grout.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: '#ccddee' },
+    });
+    const shading = elements(Inspector(props)).find(
+      (node) => node.type === Range && node.props.label === '원본 명암 보존',
+    )!;
+    (shading.props.onChange as (value: number) => void)(0.2);
+    (shading.props.onCommit as () => void)();
+    expect(getActiveDesign(useEditor.getState().project!)!.scene.surfaces[0].tile).toMatchObject({
+      pattern: 'brick',
+      groutColor: '#ccddee',
+      shading: 0.2,
+    });
+    click(Inspector(props), '이 면의 타일 초기화');
     expect(
       getActiveDesign(useEditor.getState().project!)!.scene.surfaces[0].materialVersionId,
     ).toBeUndefined();
-    boundary.capability = { writable: true, guest: false, requestLogin: boundary.requestLogin };
-    const memberTree = Inspector(props);
-    expect(elements(memberTree).some((node) => node.props['aria-label'] === '타일 배열')).toBe(true);
-    expect(
-      elements(memberTree).some((node) => node.type === Range && node.props.label === '원본 명암 보존'),
-    ).toBe(true);
+    expect(boundary.requestLogin).not.toHaveBeenCalled();
   });
 
   it('opens guest room viewing in After and intercepts all comparison modes and its own download', () => {

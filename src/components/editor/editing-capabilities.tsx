@@ -10,7 +10,7 @@ export type EditingCapabilities = {
   requestLogin: (feature: string) => void;
 };
 
-// Changes only basic editor controls, never the authenticated account's access.
+// Guest workspace editing never grants access to authenticated account resources.
 const EditingCapabilitiesContext = createContext<EditingCapabilities | null>(null);
 export const EditingCapabilitiesProvider = EditingCapabilitiesContext.Provider;
 export function useEditingCapabilities(): EditingCapabilities {

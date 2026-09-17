@@ -51,7 +51,13 @@ async function createGuestRoom(page: Page, navigate = true) {
   await expect(page).toHaveURL(/\/try$/);
   await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
   await expect(page.locator('.canvas-loading')).toHaveCount(0);
-  return (await readDraft(page))!.document;
+  // Guest usage is initialized as a read migration. Persist an actual edit before taking
+  // the baseline so recovery still compares every field of the frozen document exactly.
+  await page.getByRole('textbox', { name: '프로젝트명', exact: true }).fill('복구 검증 공간');
+  await expect.poll(async () => (await readDraft(page))?.document.name).toBe('복구 검증 공간');
+  const before = (await readDraft(page))!.document;
+  expect(before.designs[0].materialUsage?.version).toBe(1);
+  return before;
 }
 
 async function loginThroughFixture(page: Page) {

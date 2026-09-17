@@ -13,6 +13,8 @@ import type { AssetReader } from '@/lib/render/compositor';
 import type { DesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { deleteDesignPreviewCache } from '@/lib/render/design-preview-cache';
 import { useDesignThumbnail } from './use-design-preview';
+import { useAdminProjectScope } from '@/components/repository-context';
+import { useEditingCapabilities } from '@/components/editor/editing-capabilities';
 import styles from './designs.module.css';
 
 type Action = void | Promise<unknown>;
@@ -87,6 +89,8 @@ function Thumbnail({
   );
 }
 export default function DesignManager(props: DesignManagerProps) {
+  const adminScope = useAdminProjectScope();
+  const { guest } = useEditingCapabilities();
   const { designs, activeDesignId, comparisonDesignIds, writable, onClose } = props;
   const container = useRef<HTMLElement>(null),
     nameInput = useRef<HTMLInputElement>(null),
@@ -380,7 +384,7 @@ export default function DesignManager(props: DesignManagerProps) {
                   onClick={() =>
                     void act(async () => {
                       await props.onDelete(deleting.id);
-                      await deleteDesignPreviewCache(props.projectId, deleting.id);
+                      if (!guest && !adminScope) await deleteDesignPreviewCache(props.projectId, deleting.id);
                       setDeleting(null);
                     })
                   }

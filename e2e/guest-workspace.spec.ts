@@ -55,6 +55,10 @@ async function seed() {
       defaultGroutWidth: 2,
       defaultGroutColor: '#ffffff',
       defaultPattern: 'grid',
+      pricing:
+        category === 'tile'
+          ? { unit: 'box', unitPrice: 40000, boxCoverageM2: 1.44, piecesPerBox: 4, wastePercent: 0 }
+          : { unit: 'piece', unitPrice: 150000, boxCoverageM2: null, piecesPerBox: null, wastePercent: 0 },
     };
     const created = await handleD1Request(
       'materials',
@@ -141,8 +145,14 @@ test('게스트가 자재를 배치·실행 취소하고 새로고침해도 보�
   await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
   expect((await draft(page)).id).toBe(before.id);
   expect((await draft(page)).shared.baseline.room?.widthMm).toBe(2800);
-  for (const name of ['Before', '드래그 비교', '시안 관리', '내보내기', '지금 저장'])
-    await dialogLocked(page, name);
+  for (const name of ['공간 둘러보기', '공간 크기', '내보내기', '지금 저장']) await dialogLocked(page, name);
+  await page.getByRole('button', { name: /AI 고화질 보정/ }).click();
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
+  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  for (const name of ['Before', '드래그 비교', 'After']) {
+    await page.getByRole('button', { name, exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toHaveCount(0);
+  }
   await page.keyboard.press('Control+s');
   await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
   await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
@@ -152,10 +162,31 @@ test('게스트가 자재를 배치·실행 취소하고 새로고침해도 보�
   await page.screenshot({ path: 'test-results/guest-workspace-desktop.png', fullPage: true });
 });
 
-test('모의 Google 왕복 후 같은 배치를 본인 프로젝트로 한 번만 저장한다', async ({ page }) => {
+test('모의 Google 왕복 후 여러 시안·수정 견적·비교 선택을 본인 프로젝트로 한 번만 저장한다', async ({
+  page,
+}) => {
   await create(page);
   await place(page);
+  const price = page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true });
+  await price.fill('175000');
+  await price.press('Enter');
+  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
+  const original = getActiveDesign(await draft(page))!;
+  await page.getByRole('button', { name: '시안 관리', exact: true }).click();
+  const manager = page.getByRole('dialog', { name: /^시안 관리/ });
+  await manager.getByRole('button', { name: original.name + ' 복제', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).designs.length).toBe(2);
+  const copied = (await draft(page)).designs.find((design) => design.id !== original.id)!;
+  await manager.getByRole('checkbox', { name: original.name + ' 비교 선택', exact: true }).check();
+  await manager.getByRole('checkbox', { name: copied.name + ' 비교 선택', exact: true }).check();
+  await manager.getByRole('button', { name: '시안 관리 닫기', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).comparisonDesignIds.length).toBe(2);
   const before = await draft(page);
+  for (const design of before.designs) {
+    const fixture = design.scene.fixtures[0];
+    expect(design.materialUsage!.assignments[fixture.id].pricing.unitPrice).toBe(175000);
+  }
+  expect(guestWrites()).toEqual([]);
   const origin = new URL(page.url()).origin;
   await page.route('**/api/auth/sign-in/social', (route) =>
     route.fulfill({ json: { url: 'https://accounts.google.com/o/oauth2/auth?sjn-fixture=1' } }),
@@ -169,7 +200,9 @@ test('모의 Google 왕복 후 같은 배치를 본인 프로젝트로 한 번�
   await expect(page).toHaveURL(new RegExp('/projects/' + before.id + '$'), { timeout: 60000 });
   const saved = await app.project(before.id);
   expect(saved.ownerId).toBe(app.actor.id);
-  expect(getActiveDesign(saved)!.scene.fixtures).toEqual(getActiveDesign(before)!.scene.fixtures);
+  expect(saved.designs).toEqual(before.designs);
+  expect(saved.comparisonDesignIds).toEqual(before.comparisonDesignIds);
+  expect(saved.activeDesignId).toBe(before.activeDesignId);
   expect(saved.shared.baseline.room).toEqual(before.shared.baseline.room);
   expect(await page.evaluate((key) => sessionStorage.getItem(key), draftKey)).toBeNull();
   expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 1 });
@@ -222,15 +255,22 @@ test('모바일 터치로 체험 생성하고 사진 기능은 로그인 안내�
   await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
   await page.getByRole('button', { name: '자재 수량·금액 및 속성', exact: true }).tap();
   await expect(page.getByLabel('제품 배율', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('usage-total')).toHaveText('150,000원');
+  const mobilePrice = page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true });
+  await mobilePrice.tap();
+  await mobilePrice.fill('160000');
+  await mobilePrice.press('Enter');
+  await expect(page.getByTestId('usage-total')).toHaveText('160,000원');
+  await expect(page.getByLabel('노출', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '제품 삭제', exact: true }).tap();
   await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(0);
-  await page.getByRole('button', { name: '속성 패널 닫기', exact: true }).tap();
+  await page.getByRole('button', { name: '사용 내역 닫기', exact: true }).tap();
   expect(guestWrites()).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/guest-workspace-mobile.png', fullPage: true });
 });
 
-test('체험 제품 이동·회전·크기와 공간 뷰어를 조작하고 공개 자재에서 이어간다', async ({ page }) => {
+test('체험 제품과 오른쪽 공간 크기를 조절하고 상단 보호 기능은 로그인 안내로 연결한다', async ({ page }) => {
   await create(page);
   await place(page);
   const before = getActiveDesign(await draft(page))!.scene.fixtures[0];
@@ -253,28 +293,14 @@ test('체험 제품 이동·회전·크기와 공간 뷰어를 조작하고 공�
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('Tab');
   await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].rotation).toBe(1);
-  await page.getByRole('button', { name: '공간 크기', exact: true }).click();
+  await dialogLocked(page, '공간 크기');
+  await page.getByRole('button', { name: '공간 크기 변경', exact: true }).click();
   const room = page.getByRole('dialog', { name: '공간 크기 설정' });
   await room.getByLabel('깊이 (m)', { exact: true }).fill('3.1');
   await room.getByRole('button', { name: '크기 적용', exact: true }).click();
   await expect(room).toHaveCount(0);
   await expect.poll(async () => (await draft(page)).shared.baseline.room?.depthMm).toBe(3100);
-  await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
-  const viewer = page.getByRole('dialog', { name: '공간 둘러보기', exact: true });
-  await expect(viewer.getByRole('button', { name: 'After', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
-  await viewer.getByRole('button', { name: '오른쪽 90°', exact: true }).click();
-  await viewer.getByRole('button', { name: '공간 확대', exact: true }).click();
-  await expect(viewer.getByLabel('공간 확대율')).not.toHaveText('100%');
-  await viewer.getByRole('button', { name: '현재 시점 다운로드', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-  await page.getByRole('button', { name: '체험 계속하기' }).click();
-  await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
-  await viewer.getByRole('button', { name: '나란히 비교', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-  await page.getByRole('button', { name: '체험 계속하기' }).click();
+  await dialogLocked(page, '공간 둘러보기');
   const saved = await draft(page);
   await page.getByRole('button', { name: '자재 라이브러리', exact: true }).click();
   await expect(page).toHaveURL(/\/materials$/);
@@ -294,6 +320,110 @@ test('체험 제품 이동·회전·크기와 공간 뷰어를 조작하고 공�
   );
   await files.dispose();
   expect(guestWrites()).toEqual([]);
+});
+
+test('비로그인 견적·타일·색감·그림자·복제·잠금 조절이 저장되고 실행 취소된다', async ({ page }) => {
+  await create(page);
+  await place(page);
+  await expect(page.getByTestId('usage-total')).toHaveText('350,000원');
+  const price = page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true });
+  await expect(price).toBeEditable();
+  await price.fill('175000');
+  await price.press('Enter');
+  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
+  await page.getByRole('button', { name: '실행 취소', exact: true }).click();
+  await expect(page.getByTestId('usage-total')).toHaveText('350,000원');
+  await page.getByRole('button', { name: '다시 실행', exact: true }).click();
+  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
+  await page.getByLabel('그림자 진하기', { exact: true }).fill('0.6');
+  await page.getByLabel('그림자 진하기', { exact: true }).press('Tab');
+  await expect
+    .poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].shadow.opacity)
+    .toBe(0.6);
+  await page.getByLabel('노출', { exact: true }).fill('0.2');
+  await page.getByLabel('노출', { exact: true }).press('Tab');
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.color.exposure).toBe(0.2);
+  await page.getByRole('button', { name: '배치 잠금', exact: true }).click();
+  await expect(page.getByRole('button', { name: '제품 삭제', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '잠금 해제', exact: true }).click();
+  await page.locator('.inspector-embedded').getByRole('button', { name: '복제', exact: true }).click();
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(2);
+  await expect(page.getByTestId('usage-total')).toHaveText('550,000원');
+  await page.getByRole('button', { name: '실행 취소', exact: true }).click();
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
+  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
+  await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
+  const floor = getActiveDesign(await draft(page))!.scene.surfaces.find(
+    (surface) => surface.kind === 'floor',
+  )!;
+  await page.getByLabel('타일 적용 위치', { exact: true }).selectOption(floor.id);
+  await page.getByLabel('타일 배열', { exact: true }).selectOption('brick');
+  await page.getByLabel('줄눈 색상', { exact: true }).fill('#ccddee');
+  await page.getByLabel('줄눈 폭', { exact: true }).fill('4');
+  await page.getByLabel('줄눈 폭', { exact: true }).press('Tab');
+  await expect
+    .poll(
+      async () =>
+        getActiveDesign(await draft(page))!.scene.surfaces.find((surface) => surface.id === floor.id)!.tile
+          .groutWidth,
+    )
+    .toBe(4);
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toHaveCount(0);
+  const saved = getActiveDesign(await draft(page))!;
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
+  const restored = getActiveDesign(await draft(page))!;
+  expect(restored.materialUsage).toEqual(saved.materialUsage);
+  expect(restored.scene.color.exposure).toBe(0.2);
+  expect(restored.scene.fixtures[0].shadow.opacity).toBe(0.6);
+  expect(restored.scene.surfaces.find((surface) => surface.id === floor.id)!.tile).toMatchObject({
+    pattern: 'brick',
+    groutColor: '#ccddee',
+    groutWidth: 4,
+  });
+  expect(guestWrites()).toEqual([]);
+  expect(calls.some((call) => /reconstruction|photoreal|diagnostics/.test(call.path))).toBe(false);
+});
+
+test('체험 시안 추가·복제·비교와 재진입은 허용하고 비교 이미지 출력은 로그인으로 제한한다', async ({
+  page,
+}) => {
+  await create(page);
+  await place(page);
+  const original = getActiveDesign(await draft(page))!;
+  await page.getByRole('button', { name: '시안 관리', exact: true }).click();
+  const manager = page.getByRole('dialog', { name: /^시안 관리/ });
+  await manager.getByRole('button', { name: original.name + ' 복제', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).designs.length).toBe(2);
+  const copied = (await draft(page)).designs.find((design) => design.id !== original.id)!;
+  expect(copied.scene.fixtures).toHaveLength(1);
+  await manager.getByRole('button', { name: '새 시안', exact: true }).click();
+  await expect.poll(async () => (await draft(page)).designs.length).toBe(3);
+  await manager.getByRole('checkbox', { name: original.name + ' 비교 선택', exact: true }).check();
+  await manager.getByRole('checkbox', { name: copied.name + ' 비교 선택', exact: true }).check();
+  await manager.getByRole('button', { name: '선택한 시안 비교', exact: true }).click();
+  const comparison = page.getByRole('region', { name: '시안 나란히 비교', exact: true });
+  await expect(comparison).toBeVisible();
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toHaveCount(0);
+  await comparison.getByRole('button', { name: '비교 PNG', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
+  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  await comparison.getByRole('button', { name: original.name + ' PNG 다운로드', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
+  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  await comparison.getByRole('button', { name: '편집으로 돌아가기', exact: true }).click();
+  const saved = await draft(page);
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  expect((await draft(page)).designs.map((design) => design.id)).toEqual(
+    saved.designs.map((design) => design.id),
+  );
+  expect((await draft(page)).comparisonDesignIds).toEqual(saved.comparisonDesignIds);
+  await page.getByRole('button', { name: /시안 비교/ }).click();
+  await expect(comparison).toBeVisible();
+  expect(guestWrites()).toEqual([]);
+  expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 0 });
 });
 
 test('로그인 상태가 늦게 확인되어도 열린 공간 크기와 입력값을 보존하고 회원 프로젝트로 만든다', async ({
