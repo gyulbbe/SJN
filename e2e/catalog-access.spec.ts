@@ -220,7 +220,7 @@ test('비로그인은 메인·공개 자재를 보고 회원·관리자 자료�
   await expect(page.getByText(sample.name, { exact: true }).first()).toBeVisible();
   for (const path of ['/projects/private-project', '/admin/users', '/admin/projects']) {
     await page.goto(path);
-    await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '로그인 / 회원가입', exact: true })).toBeVisible();
   }
   expect(calls.some((call) => call.path === '/api/catalog/materials')).toBe(true);
   expect(calls.some((call) => call.path.startsWith('/api/d1/projects'))).toBe(false);
@@ -255,8 +255,8 @@ for (const failure of ['reported', 'network'] as const) {
       await page.goto('/materials');
       await expect(page.getByText(sample.name, { exact: true }).first()).toBeVisible();
       await page.goto('/projects/private-project');
-      await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
+      await expect(page.getByRole('heading', { name: '로그인 / 회원가입', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeDisabled();
     },
   );
 }
@@ -264,7 +264,7 @@ for (const failure of ['reported', 'network'] as const) {
 test('Google 로그인 요청 실패와 OAuth 취소 안내를 표시하고 다시 시도할 수 있다', async ({ page }) => {
   const calls = await cloud(page);
   await page.goto('/login');
-  const signIn = page.getByRole('button', { name: 'Google로 시작하기', exact: true });
+  const signIn = page.getByRole('button', { name: 'Google로 계속하기', exact: true });
   await expect(signIn).toBeEnabled();
   await signIn.click();
   await expect(page.locator('main [role="alert"]')).toContainText('Google 로그인 연결에 실패');
@@ -290,5 +290,5 @@ test('로그아웃 후 공개 홈·자재만 유지하고 계정 자료는 노�
   await expect(page.getByText(sample.name, { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: '로그아웃', exact: true })).toHaveCount(0);
   await page.goto('/projects/private-project');
-  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '로그인 / 회원가입', exact: true })).toBeVisible();
 });

@@ -250,7 +250,7 @@ export default function GuestWorkspace() {
           }}
         />
       )}
-      {feature && <LoginPrompt feature={feature} resumeGuest={!!session} onClose={() => setFeature('')} />}
+      {feature && <LoginPrompt resumeGuest={!!session} onClose={() => setFeature('')} />}
     </>
   );
 }

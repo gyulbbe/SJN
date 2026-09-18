@@ -284,8 +284,8 @@ test('예전 로컬 설정은 공개 메인만 허용하고 계정 프로젝트 
   await expect(page.getByRole('heading', { name: '내 공간에서 시작하세요.', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '기본 공간으로 시작', exact: true })).toBeEnabled();
   await page.goto('/projects/' + crypto.randomUUID());
-  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
+  await expect(page.getByRole('heading', { name: '로그인 / 회원가입', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeDisabled();
   await expect(page.getByLabel('프로젝트명', { exact: true })).toHaveCount(0);
   await expect(page.getByTestId('editor-canvas')).toHaveCount(0);
   expect(requests.some((path) => path.startsWith('/api/auth/') || path.startsWith('/api/d1/'))).toBe(false);

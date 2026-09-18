@@ -3,6 +3,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { initializeRepositories, resetRepositories } from '@/lib/repositories';
 import { discoverStorage } from '@/lib/storage/bootstrap';
 import { usePathname } from 'next/navigation';
+import Link from 'next/link';
+import GoogleSignInButton from './auth/google-sign-in-button';
 import { STORAGE_MESSAGES, type StorageMode, type StorageStatus } from '@/lib/storage/config';
 import { checkpointBeforeAccountChange, flushBeforeStorageTransition } from '@/lib/storage/recovery';
 import { isPublicPage, signInDestinations, type SignInOptions } from '@/lib/auth/public-routes';
@@ -334,13 +336,14 @@ export function BackendGuard({ children }: { children: React.ReactNode }) {
     );
   return (
     <main className="auth-page">
-      <div className="panel auth-card">
-        <h1>공간미리 로그인</h1>
-        <p>이 기능은 Google 로그인 후 이용할 수 있어요. 기본 공간과 자재는 로그인 없이 체험할 수 있어요.</p>
-        <button
-          className="btn primary"
-          disabled={busy || !status.ready}
-          aria-busy={busy}
+      <div className="panel auth-card auth-compact">
+        <Link className="auth-back" href="/">
+          ← 메인으로
+        </Link>
+        <h1>로그인 / 회원가입</h1>
+        <GoogleSignInButton
+          busy={busy}
+          disabled={!status.ready}
           onClick={async () => {
             setBusy(true);
             try {
@@ -351,18 +354,18 @@ export function BackendGuard({ children }: { children: React.ReactNode }) {
               setBusy(false);
             }
           }}
-        >
-          {busy ? 'Google 연결 중…' : 'Google로 시작하기'}
-        </button>
+        />
         {!status.ready && <p role="alert">Google 로그인과 D1·R2 연결 설정을 먼저 확인해 주세요.</p>}
         {error && (
           <p role="alert" className="error">
             {error}
           </p>
         )}
-        <button className="btn" disabled={busy} onClick={retry}>
-          로그인 상태 다시 확인
-        </button>
+        {(!status.ready || error || expired) && (
+          <button className="btn" disabled={busy} onClick={retry}>
+            로그인 상태 다시 확인
+          </button>
+        )}
       </div>
     </main>
   );

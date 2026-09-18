@@ -434,16 +434,6 @@ h2 {
   font-size: 13px;
   margin-bottom: var(--space-2);
 }
-.auth-emblem {
-  width: 46px;
-  height: 46px;
-  display: grid;
-  place-items: center;
-  color: var(--accent);
-  background: var(--accent-light);
-  border-radius: 13px;
-  margin-bottom: var(--space-1);
-}
 .auth-card [role='alert'],
 .guest-login-dialog [role='alert'] {
   padding: var(--space-3) 14px;
@@ -469,28 +459,51 @@ h2 {
   padding: 6px;
 }
 .guest-login-dialog {
+  width: min(380px, calc(100vw - 32px));
   border-radius: 18px;
-  padding: var(--space-8);
+  padding: var(--space-6);
   box-shadow: var(--shadow-float);
 }
 .guest-login-dialog::backdrop {
   background: #213a3366;
   backdrop-filter: blur(3px);
 }
-.guest-login-dialog h2 {
-  font-size: 24px;
+.auth-card.auth-compact {
+  width: min(380px, 100%);
+  padding: var(--space-6);
+  gap: 20px;
+}
+.auth-compact h1,
+.guest-login-heading h2 {
+  font-size: 22px;
   line-height: 1.4;
+  margin: 0;
+}
+.auth-compact .auth-back {
+  margin: 0;
+}
+.guest-login-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 20px;
+}
+.guest-login-heading h2 {
+  flex: 1;
+  min-width: 0;
 }
 .guest-login-dialog p {
   font-size: 14px;
   color: var(--muted);
+  margin: var(--space-4) 0 0;
 }
-.guest-dialog-close {
-  width: 40px;
-  height: 40px;
-}
-.guest-login-dialog > .btn {
-  min-height: 46px;
+.guest-login-heading .guest-dialog-close {
+  position: static;
+  flex: 0 0 44px;
+  min-width: 44px;
+  width: 44px;
+  height: 44px;
+  margin: -6px -8px -6px 0;
 }
 .guest-resume {
   border-left: 3px solid var(--accent);
@@ -672,8 +685,7 @@ h2 {
   .guest-resume {
     flex-wrap: wrap;
   }
-  .auth-card,
-  .guest-login-dialog {
+  .auth-card:not(.auth-compact) {
     padding: 28px 22px;
   }
   .guest-login-dialog h2 {

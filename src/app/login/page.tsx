@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Layers } from 'lucide-react';
+import GoogleSignInButton from '@/components/auth/google-sign-in-button';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { useAccess } from '@/components/app-provider';
@@ -48,17 +48,11 @@ export default function LoginPage() {
 
   return (
     <main className="auth-page">
-      <div className="panel auth-card">
+      <div className="panel auth-card auth-compact">
         <Link className="auth-back" href={resumeGuest ? '/try' : '/'}>
           {resumeGuest ? '← 체험 작업으로 돌아가기' : '← 메인으로'}
         </Link>
-        <span className="auth-emblem" aria-hidden="true">
-          <Layers size={25} />
-        </span>
-        <h1>공간미리 시작하기</h1>
-        <p>Google 계정 하나로 가입하고, 내 공간 프로젝트를 저장하세요.</p>
-        <p className="muted">처음 로그인하면 회원가입이 함께 진행돼요.</p>
-        {resumeGuest && <p>체험 작업은 유지돼요. 로그인하면 내 프로젝트로 저장해 이어갈 수 있어요.</p>}
+        <h1>로그인 / 회원가입</h1>
         {access.userId && access.ready && access.writable && !access.expired ? (
           <>
             <p role="status">로그인되어 있어요. 내 프로젝트로 이동하고 있어요…</p>
@@ -67,10 +61,9 @@ export default function LoginPage() {
             </Link>
           </>
         ) : (
-          <button
-            className="btn primary"
-            disabled={busy || !destinationReady || !access.status?.ready || access.mode !== 'd1'}
-            aria-busy={busy}
+          <GoogleSignInButton
+            busy={busy}
+            disabled={!destinationReady || !access.status?.ready || access.mode !== 'd1'}
             onClick={async () => {
               setBusy(true);
               setError('');
@@ -82,12 +75,9 @@ export default function LoginPage() {
                 setBusy(false);
               }
             }}
-          >
-            {busy ? 'Google 연결 중…' : 'Google로 시작하기'}
-          </button>
+          />
         )}
-        {busy && <p role="status">Google 계정 선택 화면을 열고 있어요…</p>}
-        {!access.status && <p role="status">로그인 연결을 확인하고 있어요…</p>}
+        {(!access.status || !destinationReady) && <p role="status">로그인 연결을 확인하고 있어요…</p>}
         {(error || access.error) && <p role="alert">{error || access.error}</p>}
         {access.status && !access.status.ready && (
           <p role="alert">

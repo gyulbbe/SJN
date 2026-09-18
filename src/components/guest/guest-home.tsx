@@ -144,7 +144,7 @@ export default function GuestHome({ onNewProject }: { onNewProject: () => void }
           </button>
         </section>
       </main>
-      {feature && <LoginPrompt feature={feature} resumeGuest={draftExists} onClose={() => setFeature('')} />}
+      {feature && <LoginPrompt resumeGuest={draftExists} onClose={() => setFeature('')} />}
     </div>
   );
 }

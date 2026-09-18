@@ -129,7 +129,7 @@ test('핵심 화면의 다섯 화면 폭 비교 캡처', async ({ page }) => {
     await expect(page.getByRole('heading', { name: '체험 그레이 타일' })).toBeVisible();
     await capture(page, 'catalog');
     await page.goto('/login');
-    await expect(page.getByRole('button', { name: 'Google로 시작하기' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Google로 계속하기' })).toBeEnabled();
     await capture(page, 'login');
     await page.setViewportSize({ width: 1440, height: 1000 });
     await create(page);
@@ -168,7 +168,7 @@ test('모바일 공개 메뉴와 로그인 팝업의 키보드·초점·중앙 �
     await noOverflow(page);
     await page.goto('/');
     await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).first().click();
-    const dialog = page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' });
+    const dialog = page.getByRole('dialog', { name: '로그인 / 회원가입' });
     await expect(dialog).toBeVisible();
     for (const height of [844, 420]) {
       await page.setViewportSize({ width: 390, height });
@@ -313,7 +313,7 @@ test('로그인 취소·실패 안내와 재시도는 외부 인증 없이 확�
     await expect(page.getByRole('alert').filter({ hasText: /검증용 연결 오류|Google 로그인/ })).toContainText(
       '완료되지',
     );
-    await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeEnabled();
   } finally {
     await app?.dispose();
   }
@@ -346,8 +346,8 @@ test('모바일 편집기 더보기의 로그인 제한과 견적·속성 이동
     await expect(more).toBeFocused();
     await more.click();
     await page.getByRole('button', { name: '내보내기', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-    await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toBeVisible();
+    await page.getByRole('button', { name: '로그인 안내 닫기', exact: true }).click();
     await page.getByRole('button', { name: '자재 수량·금액 및 속성', exact: true }).click();
     const price = page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true });
     await price.fill('175000');

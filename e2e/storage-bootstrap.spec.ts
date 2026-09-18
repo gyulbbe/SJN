@@ -32,7 +32,7 @@ async function list(page: Page) {
   return operations;
 }
 async function blocked(page: Page) {
-  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toBeVisible({
+  await expect(page.getByRole('heading', { name: '로그인 / 회원가입', exact: true })).toBeVisible({
     timeout: 10000,
   });
   await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toHaveCount(0);
@@ -44,7 +44,7 @@ async function publicHome(page: Page) {
     page.getByText('로그인 없이 빈 공간을 만들고, 마음에 드는 자재를 배치해 보세요.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled();
-  await expect(page.getByRole('heading', { name: '공간미리 로그인', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '로그인 / 회원가입', exact: true })).toHaveCount(0);
 }
 test('설정 없는 Next 실행에서도 메인은 공개하고 계정 프로젝트와 모델 실행은 차단한다', async ({ page }) => {
   const requests: string[] = [];
@@ -53,7 +53,7 @@ test('설정 없는 Next 실행에서도 메인은 공개하고 계정 프로젝
   await publicHome(page);
   await page.goto(privatePath);
   await blocked(page);
-  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeDisabled();
   expect(requests.some((p) => p.startsWith('/api/d1/') || p.startsWith('/api/reconstruction/'))).toBe(false);
   const response = await page.request.get('/api/storage/status');
   expect(response.headers()['cache-control']).toBe('no-store');
@@ -123,7 +123,7 @@ test('계정 전용 경로의 Google 연결 실패를 표시하고 재시도해�
   });
   await page.goto(privatePath);
   await blocked(page);
-  const signIn = page.getByRole('button', { name: 'Google로 시작하기', exact: true });
+  const signIn = page.getByRole('button', { name: 'Google로 계속하기', exact: true });
   await signIn.click();
   await expect(page.getByRole('alert').filter({ hasText: 'Google 로그인 연결에 실패' })).toBeVisible();
   expect(attempts).toBe(1);
@@ -142,14 +142,14 @@ test('잘못된 준비 응답은 계정 접근을 차단하고 재확인 후 로
   });
   await page.goto(privatePath);
   await blocked(page);
-  await expect(page.getByRole('status')).toContainText('서버 설정을 확인하지 못했어요');
-  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
+  await expect(page.getByRole('status').filter({ hasText: '서버 설정을 확인하지 못했어요' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeDisabled();
   const previousChecks = checks;
   repaired = true;
   await page.getByRole('button', { name: '로그인 상태 다시 확인', exact: true }).click();
   await expect.poll(() => checks).toBeGreaterThan(previousChecks);
   await blocked(page);
-  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeEnabled();
 });
 test('5초 준비 시간 초과 후 늦은 응답으로 계정 전용 화면을 열지 않는다', async ({ page }) => {
   let late = false,
@@ -164,7 +164,7 @@ test('5초 준비 시간 초과 후 늦은 응답으로 계정 전용 화면을 
   });
   await page.goto(privatePath);
   await blocked(page);
-  await expect(page.getByRole('status')).toContainText('서버 연결 확인 시간이 초과');
+  await expect(page.getByRole('status').filter({ hasText: '서버 연결 확인 시간이 초과' })).toBeVisible();
   await expect.poll(() => late, { timeout: 10000 }).toBe(true);
   await blocked(page);
   expect(auth).toBe(0);
@@ -243,9 +243,9 @@ test('세션 만료 후 개인 내용을 지우고 공개 메인과 계정 경�
   await publicHome(page);
   await expect(page.getByRole('heading', { name: project.name })).toHaveCount(0);
   await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).first().click();
-  const prompt = page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요', exact: true });
+  const prompt = page.getByRole('dialog', { name: '로그인 / 회원가입', exact: true });
   await expect(prompt).toBeVisible();
-  await expect(prompt.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeEnabled();
+  await expect(prompt.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeEnabled();
   await page.goto(privatePath);
   await blocked(page);
 });

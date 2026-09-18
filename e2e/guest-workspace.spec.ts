@@ -128,8 +128,8 @@ function guestWrites() {
 }
 async function dialogLocked(page: Page, button: string) {
   await page.getByRole('button', { name: button, exact: true }).click();
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toBeVisible();
+  await page.getByRole('button', { name: '로그인 안내 닫기', exact: true }).click();
 }
 
 test('게스트가 자재를 배치·실행 취소하고 새로고침해도 보존하며 회원 기능은 잠긴다', async ({ page }) => {
@@ -147,15 +147,15 @@ test('게스트가 자재를 배치·실행 취소하고 새로고침해도 보�
   expect((await draft(page)).shared.baseline.room?.widthMm).toBe(2800);
   for (const name of ['공간 둘러보기', '공간 크기', '내보내기', '지금 저장']) await dialogLocked(page, name);
   await page.getByRole('button', { name: /AI 고화질 보정/ }).click();
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toBeVisible();
+  await page.getByRole('button', { name: '로그인 안내 닫기', exact: true }).click();
   for (const name of ['Before', '드래그 비교', 'After']) {
     await page.getByRole('button', { name, exact: true }).click();
-    await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toHaveCount(0);
   }
   await page.keyboard.press('Control+s');
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toBeVisible();
+  await page.getByRole('button', { name: '로그인 안내 닫기', exact: true }).click();
   expect(guestWrites()).toEqual([]);
   expect(calls.some((c) => /reconstruction|photoreal|diagnostics/.test(c.path))).toBe(false);
   expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 0 });
@@ -196,7 +196,7 @@ test('모의 Google 왕복 후 여러 시안·수정 견적·비교 선택을 �
     await route.fulfill({ status: 302, headers: { location: origin + '/try?resume=1' } });
   });
   await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await page.getByRole('button', { name: 'Google로 계속하기', exact: true }).click();
   await expect(page).toHaveURL(new RegExp('/projects/' + before.id + '$'), { timeout: 60000 });
   const saved = await app.project(before.id);
   expect(saved.ownerId).toBe(app.actor.id);
@@ -233,7 +233,7 @@ test('로그인 취소와 sessionStorage 실패 때 체험 상태를 버리거�
     };
   });
   await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await page.getByRole('button', { name: 'Google로 계속하기', exact: true }).click();
   await expect(page.getByRole('dialog').getByRole('alert')).toContainText('보관');
   expect(calls.some((c) => c.path === '/api/auth/sign-in/social')).toBe(false);
   expect((await draft(page)).id).toBe(before.id);
@@ -243,8 +243,8 @@ test('모바일 터치로 체험 생성하고 사진 기능은 로그인 안내�
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await page.getByRole('button', { name: '사진으로 시작', exact: true }).tap();
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-  await page.getByRole('button', { name: '체험 계속하기' }).tap();
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toBeVisible();
+  await page.getByRole('button', { name: '로그인 안내 닫기' }).tap();
   await page.getByRole('button', { name: '새 프로젝트', exact: true }).tap();
   await page.getByRole('button', { name: '공간 만들기', exact: true }).tap();
   await expect(page).toHaveURL(/\/try$/);
@@ -315,9 +315,8 @@ test('체험 제품과 오른쪽 공간 크기를 조절하고 상단 보호 기
     return data;
   });
   await page.locator('.editor-shell').dispatchEvent('drop', { dataTransfer: files });
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toContainText(
-    '사진 업로드',
-  );
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeEnabled();
   await files.dispose();
   expect(guestWrites()).toEqual([]);
 });
@@ -368,7 +367,7 @@ test('비로그인 견적·타일·색감·그림자·복제·잠금 조절이 �
           .groutWidth,
     )
     .toBe(4);
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toHaveCount(0);
   const saved = getActiveDesign(await draft(page))!;
   await page.reload();
   await expect(page.getByTestId('editor-canvas')).toBeVisible();
@@ -405,13 +404,13 @@ test('체험 시안 추가·복제·비교와 재진입은 허용하고 비교 �
   await manager.getByRole('button', { name: '선택한 시안 비교', exact: true }).click();
   const comparison = page.getByRole('region', { name: '시안 나란히 비교', exact: true });
   await expect(comparison).toBeVisible();
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toHaveCount(0);
   await comparison.getByRole('button', { name: '비교 PNG', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toBeVisible();
+  await page.getByRole('button', { name: '로그인 안내 닫기', exact: true }).click();
   await comparison.getByRole('button', { name: original.name + ' PNG 다운로드', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: '로그인하고 이어서 이용하세요' })).toBeVisible();
-  await page.getByRole('button', { name: '체험 계속하기', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '로그인 / 회원가입' })).toBeVisible();
+  await page.getByRole('button', { name: '로그인 안내 닫기', exact: true }).click();
   await comparison.getByRole('button', { name: '편집으로 돌아가기', exact: true }).click();
   const saved = await draft(page);
   await page.reload();

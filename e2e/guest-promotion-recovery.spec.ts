@@ -72,7 +72,7 @@ async function loginThroughFixture(page: Page) {
     await route.fulfill({ status: 302, headers: { location: origin + '/try?resume=1' } });
   });
   await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await page.getByRole('button', { name: 'Google로 계속하기', exact: true }).click();
 }
 
 async function storedAssetIds() {
@@ -200,7 +200,7 @@ test('로그인 화면도 손상 초안을 보존하고 복구 확인 없이 Goo
   });
   await page.goto('/login');
   await expect(page.locator('main').getByRole('alert')).toContainText('체험 초안을 읽지 못했어요');
-  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await page.getByRole('button', { name: 'Google로 계속하기', exact: true }).click();
   await expect(page.locator('main').getByRole('alert')).toContainText('체험 초안을 읽지 못했어요');
   expect(signIns).toBe(0);
   expect(await page.evaluate((key) => sessionStorage.getItem(key), draftKey)).toBe(raw);

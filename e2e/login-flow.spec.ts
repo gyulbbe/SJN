@@ -85,14 +85,15 @@ test('Google 연결 진행 중 중복 실행을 막고 실패 후 재시도하�
 }) => {
   const mock = await mockLogin(page, { firstFailure: true });
   await page.goto('/login');
-  await expect(page.getByText('처음 로그인하면 회원가입이 함께 진행돼요.')).toBeVisible();
-  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '로그인 / 회원가입', exact: true })).toBeVisible();
+  await expect(page.getByText('처음 로그인하면 회원가입이 함께 진행돼요.')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Google로 계속하기', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Google 연결 중…', exact: true })).toBeDisabled();
   await expect(page.getByRole('status')).toContainText('Google 계정 선택 화면');
   expect(mock.calls.filter((call) => call.path === '/api/auth/sign-in/social')).toHaveLength(1);
   mock.releaseFirst();
   await expect(page.locator('main [role="alert"]')).toContainText('Google 로그인 연결에 실패');
-  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await page.getByRole('button', { name: 'Google로 계속하기', exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { name: '내 공간에서 시작하세요.' })).toBeVisible();
   await expect(page.getByRole('button', { name: '로그아웃', exact: true, includeHidden: true })).toHaveCount(
@@ -136,7 +137,7 @@ for (const viewport of [
     await page.goto('/login?authError=google&error=access_denied&error_description=PROVIDER_RAW_TEXT');
     await expect(page.locator('main [role="alert"]')).toContainText('Google 로그인을 취소했어요');
     await expect(page.getByText('PROVIDER_RAW_TEXT')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeEnabled();
     const dimensions = await page.evaluate(() => ({
       width: innerWidth,
       content: document.documentElement.scrollWidth,
@@ -145,7 +146,7 @@ for (const viewport of [
     const screenshot = testInfo.outputPath(`google-login-cancelled-${viewport.width}.png`);
     await page.screenshot({ path: screenshot, fullPage: true });
     await testInfo.attach('로그인 취소 안내', { path: screenshot, contentType: 'image/png' });
-    await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+    await page.getByRole('button', { name: 'Google로 계속하기', exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByRole('heading', { name: '내 공간에서 시작하세요.' })).toBeVisible();
     await expect(
@@ -158,17 +159,17 @@ for (const viewport of [
 test('신뢰하지 않는 로그인 리디렉션은 열지 않고 재시도를 제공한다', async ({ page }) => {
   const mock = await mockLogin(page, { invalidRedirect: true });
   await page.goto('/login');
-  await page.getByRole('button', { name: 'Google로 시작하기', exact: true }).click();
+  await page.getByRole('button', { name: 'Google로 계속하기', exact: true }).click();
   await expect(page.locator('main [role="alert"]')).toContainText('Google 로그인 주소가 올바르지 않아요');
   await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeEnabled();
   expect(mock.googleNavigations).toHaveLength(0);
 });
 
 test('오래된 로컬 설정은 계정 인증으로 받아들이지 않고 공개 메인 탐색은 유지한다', async ({ page }) => {
   const mock = await mockLogin(page, { local: true });
   await page.goto('/login');
-  await expect(page.getByRole('button', { name: 'Google로 시작하기', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Google로 계속하기', exact: true })).toBeDisabled();
   await expect(page.locator('main').getByRole('alert')).toContainText('로그인 연결을 준비하지 못했어요');
   await expect(page.getByRole('button', { name: /로컬로 시작/ })).toHaveCount(0);
   await page.getByRole('link', { name: '← 메인으로', exact: true }).click();
