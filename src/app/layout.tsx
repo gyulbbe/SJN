@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import './studio.css';
 import { AppProvider, BackendGuard } from '@/components/app-provider';
 export const metadata: Metadata = {
   title: '공간미리 — 사진으로 미리 보는 우리 공간',

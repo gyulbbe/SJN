@@ -43,7 +43,9 @@ export default function LoginPrompt({
       >
         <X size={19} />
       </button>
-      <LockKeyhole size={28} />
+      <span className="auth-emblem" aria-hidden="true">
+        <LockKeyhole size={24} />
+      </span>
       <h2 id="guest-login-title">로그인하고 이어서 이용하세요</h2>
       <p>{feature} 기능은 로그인 후 사용할 수 있어요.</p>
       {resumeGuest && <p>지금 배치한 공간은 로그인 후 내 프로젝트로 저장해 이어갈 수 있어요.</p>}
@@ -66,6 +68,7 @@ export default function LoginPrompt({
       >
         {busy ? 'Google 연결 중…' : 'Google로 시작하기'}
       </button>
+      {busy && <p role="status">Google 계정 선택 화면을 열고 있어요…</p>}
       {!access.status && <p role="status">로그인 연결을 확인하고 있어요…</p>}
       {access.status && !access.status.ready && (
         <p role="alert">

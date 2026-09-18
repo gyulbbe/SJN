@@ -222,6 +222,7 @@ export default function CanvasWorkspace({
     <button
       title={label}
       aria-label={label}
+      aria-pressed={st.tool === tool}
       className={`icon-btn ${st.tool === tool ? 'active' : ''}`}
       onClick={() => st.setTool(tool)}
     >

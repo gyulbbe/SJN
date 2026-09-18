@@ -1,6 +1,6 @@
 'use client';
 import { getMaterialImageAssetId, getPreferredProductViewIndex } from '@/lib/material-images';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   Columns2,
   Check,
   ExternalLink,
+  MoreHorizontal,
 } from 'lucide-react';
 import { useRepositories, type EditorRepositories } from '@/components/repository-context';
 import {
@@ -84,6 +85,7 @@ import { homography, transformPoint } from '@/lib/render/math';
 import { detectSurfaces } from '@/lib/render/auto-surfaces';
 import type { RoomSegmentation } from '@/lib/segmentation';
 import { analyzeWallGeometry, applyWallGeometry } from '@/lib/render/wall-geometry';
+import './editor-studio.css';
 const pendingProjectSaves = new Map<string, Promise<boolean>>();
 export type AdminEditorContext = { actorUserId: string; owner: { id: string; name: string; email: string } };
 type EditorProps = { id: string; adminContext?: AdminEditorContext; guestContext?: GuestEditorContext };
@@ -108,6 +110,26 @@ export default function Editor(props: EditorProps) {
 }
 function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   const repositories = useRepositories();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const moreId = useId();
+  useEffect(() => {
+    if (!moreOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !moreRef.current?.contains(event.target)) setMoreOpen(false);
+    };
+    const wideScreen = window.matchMedia('(min-width: 1281px)');
+    const onWideScreen = () => {
+      if (wideScreen.matches) setMoreOpen(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    wideScreen.addEventListener('change', onWideScreen);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      wideScreen.removeEventListener('change', onWideScreen);
+    };
+  }, [moreOpen]);
   const [adminConflict, setAdminConflict] = useState(false);
   const [adminServer, setAdminServer] = useState<ProjectDocument | null>(null);
   const [adminReloadBusy, setAdminReloadBusy] = useState(false);
@@ -1244,7 +1266,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   const applicableSurfaces = chosenSurface ? [chosenSurface] : scene.surfaces.filter((s) => s.kind === tab);
   return (
     <div
-      className="editor-shell"
+      className="editor-shell studio-editor"
       data-comparison={!!st.project.shared.comparison}
       onDragOver={(event) => {
         if (isGuest && event.dataTransfer.types.includes('Files')) event.preventDefault();
@@ -1319,136 +1341,193 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           )}
         </div>
         <div className="top-actions">
-          <div className="row undo-redo">
+          <div className="editor-action-group editor-history" role="group" aria-label="실행 취소와 다시 실행">
+            <div className="row undo-redo">
+              <button
+                className="icon-btn"
+                title="실행 취소 (Ctrl+Z)"
+                aria-label="실행 취소"
+                aria-keyshortcuts="Control+Z Meta+Z"
+                disabled={
+                  !writable ||
+                  !!st.draft ||
+                  !!detectionStatus ||
+                  !(st.editing === 'before'
+                    ? st.project.shared.beforeHistory.past.length
+                    : activeDesign?.history.past.length)
+                }
+                onClick={st.undo}
+              >
+                <Undo2 size={17} />
+              </button>
+              <button
+                className="icon-btn"
+                title="다시 실행 (Ctrl+Y)"
+                aria-label="다시 실행"
+                aria-keyshortcuts="Control+Y Meta+Y Control+Shift+Z Meta+Shift+Z"
+                disabled={
+                  !writable ||
+                  !!st.draft ||
+                  !!detectionStatus ||
+                  !(st.editing === 'before'
+                    ? st.project.shared.beforeHistory.future.length
+                    : activeDesign?.history.future.length)
+                }
+                onClick={st.redo}
+              >
+                <Redo2 size={17} />
+              </button>
+            </div>
+          </div>
+          <div className="editor-action-group editor-view-actions" role="group" aria-label="공간 비교 보기">
+            <div className="segmented">
+              <button
+                disabled={!!st.draft || !!detectionStatus}
+                className={st.mode === 'before' ? 'active' : ''}
+                aria-pressed={st.mode === 'before'}
+                onClick={() => viewComparison('before')}
+              >
+                Before
+              </button>
+              <button
+                disabled={!!st.draft || !!detectionStatus}
+                className={st.mode === 'after' && st.editing === 'after' ? 'active' : ''}
+                aria-pressed={st.mode === 'after' && st.editing === 'after'}
+                onClick={() => viewComparison('after')}
+              >
+                After
+              </button>
+            </div>
             <button
-              className="icon-btn"
-              title="실행 취소 (Ctrl+Z)"
-              aria-label="실행 취소"
-              aria-keyshortcuts="Control+Z Meta+Z"
-              disabled={
-                !writable ||
-                !!st.draft ||
-                !!detectionStatus ||
-                !(st.editing === 'before'
-                  ? st.project.shared.beforeHistory.past.length
-                  : activeDesign?.history.past.length)
-              }
-              onClick={st.undo}
+              className={`icon-btn ${st.mode === 'split' ? 'active' : ''}`}
+              disabled={!!st.draft || !!detectionStatus}
+              aria-pressed={st.mode === 'split'}
+              title="드래그 비교"
+              aria-label="드래그 비교"
+              onClick={() => viewComparison(st.mode === 'split' ? 'after' : 'split')}
             >
-              <Undo2 size={17} />
-            </button>
-            <button
-              className="icon-btn"
-              title="다시 실행 (Ctrl+Y)"
-              aria-label="다시 실행"
-              aria-keyshortcuts="Control+Y Meta+Y Control+Shift+Z Meta+Shift+Z"
-              disabled={
-                !writable ||
-                !!st.draft ||
-                !!detectionStatus ||
-                !(st.editing === 'before'
-                  ? st.project.shared.beforeHistory.future.length
-                  : activeDesign?.history.future.length)
-              }
-              onClick={st.redo}
-            >
-              <Redo2 size={17} />
+              <Columns2 size={17} />
             </button>
           </div>
-          <div className="divider" />
-          <div className="segmented">
-            <button
-              disabled={!!st.draft || !!detectionStatus}
-              className={st.mode === 'before' ? 'active' : ''}
-              onClick={() => viewComparison('before')}
-            >
-              Before
-            </button>
-            <button
-              disabled={!!st.draft || !!detectionStatus}
-              className={st.mode === 'after' && st.editing === 'after' ? 'active' : ''}
-              onClick={() => viewComparison('after')}
-            >
-              After
-            </button>
-          </div>
-          <button
-            className={`icon-btn ${st.mode === 'split' ? 'active' : ''}`}
-            disabled={!!st.draft || !!detectionStatus}
-            title="드래그 비교"
-            aria-label="드래그 비교"
-            onClick={() => viewComparison(st.mode === 'split' ? 'after' : 'split')}
-          >
-            <Columns2 size={17} />
-          </button>
-          <div className="divider" />
-          <button
-            className="btn room-open-button"
-            aria-label="공간 둘러보기"
-            title={isGuest ? '로그인 필요' : undefined}
-            disabled={!!detectionStatus || !activeDesign}
-            onClick={() => {
-              if (requireLogin('공간 둘러보기') || !prepareDesignAction()) return;
-              setRoomViewerOpen(true);
+          <div
+            className="editor-more"
+            ref={moreRef}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && moreOpen) {
+                event.preventDefault();
+                event.stopPropagation();
+                setMoreOpen(false);
+                moreButton.current?.focus();
+              }
             }}
           >
-            <Layers size={16} />
-            공간 둘러보기
-            {isGuest && <LoginRequiredIcon />}
-          </button>
-          <button
-            className="btn ai-button"
-            title={isGuest ? '로그인 필요' : undefined}
-            onClick={() => {
-              if (!requireLogin('사진 AI 기능')) setAi(true);
-            }}
-          >
-            <Sparkles size={15} />
-            AI 고화질 보정<span className="badge">연결 필요</span>
-            {isGuest && <LoginRequiredIcon />}
-          </button>
-          <button
-            className="icon-btn"
-            title={isGuest ? '로그인 필요' : '지금 저장'}
-            style={isGuest ? { position: 'relative' } : undefined}
-            aria-label="지금 저장"
-            disabled={!writable || savingPreview}
-            onClick={() => void saveWithThumbnail()}
-          >
-            <Save size={17} />
-            {isGuest && <LoginRequiredIcon badge />}
-          </button>
-          {scene.room && (
             <button
-              className="btn room-open-button"
-              aria-label="공간 크기"
-              title={isGuest ? '로그인 필요' : '공간 크기'}
-              disabled={!writable || !!st.draft || !!detectionStatus}
-              onClick={() => {
-                if (!requireLogin('공간 크기')) setRoomOpen(true);
+              ref={moreButton}
+              className="btn editor-more-toggle"
+              aria-expanded={moreOpen}
+              aria-controls={moreId}
+              onClick={() => setMoreOpen((value) => !value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowDown') return;
+                event.preventDefault();
+                setMoreOpen(true);
+                requestAnimationFrame(() => {
+                  moreRef.current
+                    ?.querySelector<HTMLButtonElement>('.editor-secondary-actions button:not(:disabled)')
+                    ?.focus();
+                });
               }}
             >
-              <Ruler size={16} />
-              <span>공간 크기</span>
-              {isGuest && <LoginRequiredIcon />}
+              <MoreHorizontal size={18} aria-hidden="true" />
+              더보기
             </button>
-          )}
-          <button
-            className="btn primary"
-            aria-label="내보내기"
-            title={isGuest ? '로그인 필요' : undefined}
-            disabled={comparisonOpen || !activeDesign || exporting || st.editing === 'before' || !!st.draft}
-            onClick={() => {
-              if (!requireLogin('이미지 출력')) setExportModal(true);
-            }}
-          >
-            <Download size={15} />
-            <span className="export-label">내보내기</span>
-            {isGuest && <LoginRequiredIcon />}
-          </button>
-          <button className="icon-btn" title="사용 도움말" onClick={() => setHelp(true)}>
-            <HelpCircle size={17} />
-          </button>
+            <div
+              id={moreId}
+              className="editor-action-group editor-secondary-actions"
+              data-open={moreOpen}
+              role="group"
+              aria-label="공간 및 저장 작업"
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest('button:not(:disabled)') && moreOpen) {
+                  moreButton.current?.focus();
+                  setMoreOpen(false);
+                }
+              }}
+            >
+              <button
+                className="btn room-open-button"
+                aria-label="공간 둘러보기"
+                title={isGuest ? '로그인 필요' : undefined}
+                disabled={!!detectionStatus || !activeDesign}
+                onClick={() => {
+                  if (requireLogin('공간 둘러보기') || !prepareDesignAction()) return;
+                  setRoomViewerOpen(true);
+                }}
+              >
+                <Layers size={16} />
+                공간 둘러보기
+                {isGuest && <LoginRequiredIcon />}
+              </button>
+              <button
+                className="btn ai-button"
+                title={isGuest ? '로그인 필요' : undefined}
+                onClick={() => {
+                  if (!requireLogin('사진 AI 기능')) setAi(true);
+                }}
+              >
+                <Sparkles size={15} />
+                AI 고화질 보정<span className="badge">연결 필요</span>
+                {isGuest && <LoginRequiredIcon />}
+              </button>
+              <button
+                className="icon-btn"
+                title={isGuest ? '로그인 필요' : '지금 저장'}
+                style={isGuest ? { position: 'relative' } : undefined}
+                aria-label="지금 저장"
+                disabled={!writable || savingPreview}
+                onClick={() => void saveWithThumbnail()}
+              >
+                <Save size={17} />
+                {isGuest && <LoginRequiredIcon badge />}
+              </button>
+              {scene.room && (
+                <button
+                  className="btn room-open-button"
+                  aria-label="공간 크기"
+                  title={isGuest ? '로그인 필요' : '공간 크기'}
+                  disabled={!writable || !!st.draft || !!detectionStatus}
+                  onClick={() => {
+                    if (!requireLogin('공간 크기')) setRoomOpen(true);
+                  }}
+                >
+                  <Ruler size={16} />
+                  <span>공간 크기</span>
+                  {isGuest && <LoginRequiredIcon />}
+                </button>
+              )}
+              <button
+                className="btn primary"
+                aria-label="내보내기"
+                title={isGuest ? '로그인 필요' : undefined}
+                disabled={
+                  comparisonOpen || !activeDesign || exporting || st.editing === 'before' || !!st.draft
+                }
+                onClick={() => {
+                  if (!requireLogin('이미지 출력')) setExportModal(true);
+                }}
+              >
+                <Download size={15} />
+                <span className="export-label">내보내기</span>
+                {isGuest && <LoginRequiredIcon />}
+              </button>
+              <button className="icon-btn" title="사용 도움말" onClick={() => setHelp(true)}>
+                <HelpCircle size={17} />
+              </button>
+            </div>
+          </div>
         </div>
       </header>
       <div className="design-toolbar">
@@ -1581,14 +1660,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           </div>
         </div>
       )}
-      <button
-        className={`drawer-scrim ${catalogOpen || inspectorOpen ? 'visible' : ''}`}
-        aria-label="패널 닫기"
-        onClick={() => {
-          setCatalogOpen(false);
-          setInspectorOpen(false);
-        }}
-      />
       {!isGuest && roomViewerOpen && (
         <RoomViewer
           project={st.project}
@@ -1636,6 +1707,15 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         </main>
       ) : (
         <div className="editor-body">
+          <button
+            className={`drawer-scrim ${catalogOpen || inspectorOpen ? 'visible' : ''}`}
+            aria-label="패널 닫기"
+            onClick={() => {
+              setCatalogOpen(false);
+              setInspectorOpen(false);
+            }}
+          />
+
           {!isGuest && st.editing === 'before' && st.project.shared.comparison && (
             <ReconstructionReviewPanel
               open={reviewOpen}
@@ -1644,7 +1724,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               onError={onError}
               onShowProperties={() => {
                 setInspectorOpen(true);
-                if (window.innerWidth <= 900) setReviewOpen(false);
+                if (window.innerWidth <= 1100) setReviewOpen(false);
               }}
             />
           )}
@@ -1676,6 +1756,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               <div className="catalog-tabs">
                 <button
                   className={tab === 'wall' ? 'active' : ''}
+                  aria-pressed={tab === 'wall'}
                   onClick={() => {
                     setTab('wall');
                     st.select(null);
@@ -1688,6 +1769,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 </button>
                 <button
                   className={tab === 'floor' ? 'active' : ''}
+                  aria-pressed={tab === 'floor'}
                   onClick={() => {
                     setTab('floor');
                     st.select(null);
@@ -1700,6 +1782,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 </button>
                 <button
                   className={tab === 'fixtures' ? 'active' : ''}
+                  aria-pressed={tab === 'fixtures'}
                   onClick={() => {
                     setTab('fixtures');
                     applyRequest.current++;
@@ -1771,6 +1854,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                   <button
                     key={v.id}
                     className={`material-tile ${applicableSurfaces.length > 0 && applicableSurfaces.every((s) => s.materialVersionId === v.id) ? 'selected' : ''}`}
+                    aria-pressed={
+                      applicableSurfaces.length > 0 &&
+                      applicableSurfaces.every((surface) => surface.materialVersionId === v.id)
+                    }
                     disabled={!writable}
                     onClick={() =>
                       void applyMaterial(v).catch((e) => setError(e instanceof Error ? e.message : String(e)))
@@ -1778,6 +1865,12 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                     title={`${v.name} 적용`}
                   >
                     <div className="swatch">
+                      {applicableSurfaces.length > 0 &&
+                        applicableSurfaces.every((surface) => surface.materialVersionId === v.id) && (
+                          <span className="material-selection-mark" aria-hidden="true">
+                            <Check size={14} />
+                          </span>
+                        )}
                       <AssetImage
                         assetId={getMaterialImageAssetId(v)}
                         alt={v.name}

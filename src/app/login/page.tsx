@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { Layers } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { useAccess } from '@/components/app-provider';
@@ -48,9 +49,12 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <div className="panel auth-card">
-        <Link href={resumeGuest ? '/try' : '/'}>
+        <Link className="auth-back" href={resumeGuest ? '/try' : '/'}>
           {resumeGuest ? '← 체험 작업으로 돌아가기' : '← 메인으로'}
         </Link>
+        <span className="auth-emblem" aria-hidden="true">
+          <Layers size={25} />
+        </span>
         <h1>공간미리 시작하기</h1>
         <p>Google 계정 하나로 가입하고, 내 공간 프로젝트를 저장하세요.</p>
         <p className="muted">처음 로그인하면 회원가입이 함께 진행돼요.</p>

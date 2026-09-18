@@ -1,8 +1,8 @@
 'use client';
 import { getMaterialImageAssetId } from '@/lib/material-images';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronDown, RotateCcw, X } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { ChevronDown, ReceiptText, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import type { AssetRecord, DesignDocument, Material, MaterialVersion } from '@/lib/types';
 import type {
   MaterialUsageRow,
@@ -213,6 +213,27 @@ export default function MaterialUsagePanel({
   beforeViewing,
   onEdit,
 }: MaterialUsagePanelProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const propertiesRef = useRef<HTMLDivElement>(null);
+  const quoteId = useId();
+  const propertiesId = useId();
+  const jumpTo = (section: 'quote' | 'properties') => {
+    if (!flushMaterialUsageInputs()) return;
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    const target = section === 'properties' ? propertiesRef.current : null;
+    if (target) {
+      const disclosure = target.querySelector<HTMLDetailsElement>(':scope > details');
+      if (disclosure) disclosure.open = true;
+      target.focus({ preventScroll: true });
+    }
+    scroll.scrollTo({
+      top: target
+        ? target.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop
+        : 0,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  };
   const result = calculateMaterialUsage(design.scene, materials, design.materialUsage, design.quote);
   const canEdit = writable && !!onChange;
   const [latestKey, setLatestKey] = useState<string | null>(null);
@@ -501,38 +522,68 @@ export default function MaterialUsagePanel({
           </button>
         )}
       </header>
-      <div className="mu-scroll">
-        {beforeViewing && (
-          <p className="mu-notice">Before를 보고 있어요. 아래 사용량과 금액은 이 시안의 After 기준이에요.</p>
-        )}
-        {!canEdit && (
-          <p className="mu-notice">
-            시안에 저장된 사용량과 단가예요.
-            {onEdit && (
-              <button className="mu-link" onClick={onEdit}>
-                이 시안 편집
-              </button>
-            )}
-          </p>
-        )}
-        {result.rows.length === 0 && (
-          <div className="mu-empty">
-            <strong>아직 적용한 자재가 없어요.</strong>
-            <p>타일이나 제품을 배치하면 사용량과 금액이 여기에 모여요.</p>
+      {children && (
+        <nav className="mu-shortcuts" aria-label="견적과 속성 바로가기">
+          <button
+            type="button"
+            aria-label="견적으로 이동"
+            aria-controls={quoteId}
+            onClick={() => jumpTo('quote')}
+          >
+            <ReceiptText size={16} aria-hidden="true" />
+            견적
+          </button>
+          <button
+            type="button"
+            aria-label="편집 속성으로 이동"
+            aria-controls={propertiesId}
+            onClick={() => jumpTo('properties')}
+          >
+            <SlidersHorizontal size={16} aria-hidden="true" />
+            편집 속성
+          </button>
+        </nav>
+      )}
+      <div className="mu-scroll" ref={scrollRef}>
+        <div id={quoteId} className="mu-quote">
+          {beforeViewing && (
+            <p className="mu-notice">
+              Before를 보고 있어요. 아래 사용량과 금액은 이 시안의 After 기준이에요.
+            </p>
+          )}
+          {!canEdit && (
+            <p className="mu-notice">
+              시안에 저장된 사용량과 단가예요.
+              {onEdit && (
+                <button className="mu-link" onClick={onEdit}>
+                  이 시안 편집
+                </button>
+              )}
+            </p>
+          )}
+          {result.rows.length === 0 && (
+            <div className="mu-empty">
+              <strong>아직 적용한 자재가 없어요.</strong>
+              <p>타일이나 제품을 배치하면 사용량과 금액이 여기에 모여요.</p>
+            </div>
+          )}
+          {(['tile', 'fixture'] as const).map((category) => {
+            const rows = result.rows.filter((row) => row.category === category);
+            return rows.length ? (
+              <section key={category} className="mu-group">
+                <h4>
+                  {category === 'tile' ? '타일' : '위생도기·기타 제품'} <span>{rows.length}</span>
+                </h4>
+                {rows.map(rowView)}
+              </section>
+            ) : null;
+          })}
+        </div>
+        {children && (
+          <div id={propertiesId} ref={propertiesRef} tabIndex={-1} className="mu-properties">
+            {children}
           </div>
         )}
-        {(['tile', 'fixture'] as const).map((category) => {
-          const rows = result.rows.filter((row) => row.category === category);
-          return rows.length ? (
-            <section key={category} className="mu-group">
-              <h4>
-                {category === 'tile' ? '타일' : '위생도기·기타 제품'} <span>{rows.length}</span>
-              </h4>
-              {rows.map(rowView)}
-            </section>
-          ) : null;
-        })}
-        {children && <div className="mu-properties">{children}</div>}
       </div>
       <footer className="mu-footer">
         <div>

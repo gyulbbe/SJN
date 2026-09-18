@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import AdminLinks from '@/components/admin/admin-links';
+import WorkspaceNav from '@/components/workspace-nav';
 import GuestHome from '@/components/guest/guest-home';
 import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
@@ -10,10 +10,8 @@ import {
   Plus,
   Copy,
   Trash2,
-  Layers,
   FolderOpen,
   ArrowRight,
-  Grid2X2,
   Search,
   ImagePlus,
   Columns2 as Columns2Icon,
@@ -30,11 +28,10 @@ import RoomDialog from '@/components/rooms/room-dialog';
 import ReconstructionDialog from '@/components/reconstruction/reconstruction-dialog';
 import SummaryDesignThumbnail from '@/components/designs/summary-design-thumbnail';
 import { AssetImage } from '@/components/materials/asset-image';
-import { StorageBadge, useAccess } from './app-provider';
-import { useSharedCatalogAdmin } from './materials/shared-access';
+import { useAccess } from './app-provider';
 export default function ProjectHome() {
-  const isAdmin = useSharedCatalogAdmin();
   const [projects, setProjects] = useState<ProjectSummary[]>([]),
+    [projectsLoading, setProjectsLoading] = useState(true),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [search, setSearch] = useState(''),
@@ -46,12 +43,15 @@ export default function ProjectHome() {
   const creationAttempt = useRef(0);
   const guestCreation = useRef<AbortController | null>(null);
   const router = useRouter();
-  const { writable, ready, userId, signOut, expired } = useAccess();
+  const { writable, ready, userId, expired } = useAccess();
   async function refresh() {
+    setProjectsLoading(true);
     try {
       setProjects(await getRepositories().projects.list());
     } catch (e) {
       setError(String(e));
+    } finally {
+      setProjectsLoading(false);
     }
   }
   useEffect(() => {
@@ -190,6 +190,9 @@ export default function ProjectHome() {
       setError(String(e));
     }
   }
+  const matchingProjects = projects.filter((project) =>
+    project.name.normalize('NFKC').toLowerCase().includes(search.normalize('NFKC').trim().toLowerCase()),
+  );
   const home =
     !ready || !userId || expired ? (
       <GuestHome
@@ -200,56 +203,8 @@ export default function ProjectHome() {
       />
     ) : (
       <div className="home-shell">
-        <aside className="app-nav">
-          <Link href="/" className="brand">
-            <span className="brand-mark">
-              <Layers size={21} />
-            </span>
-            공간미리<span className="beta">BETA</span>
-          </Link>
-          <div className="nav-section">작업 공간</div>
-          <Link href="/" className="nav-item active">
-            <FolderOpen size={18} />내 프로젝트
-          </Link>
-          <Link href="/materials" className="nav-item">
-            <Grid2X2 size={18} />
-            자재 라이브러리
-            <ArrowUpRight size={15} />
-          </Link>
-          <Link href="/reconstruction-lab" className="nav-item">
-            <FlaskConical size={18} />
-            사진 재구성 테스트
-          </Link>
-          <div className="nav-bottom">
-            {isAdmin && (
-              <Link href="/admin/materials" className="nav-item">
-                관리자 자재 관리
-              </Link>
-            )}
-            <AdminLinks className="nav-item" />
-            <StorageBadge />
-            <p>로그인 계정에 작업을 저장해요.</p>
-            <button
-              className="text-button"
-              style={{ display: 'block', marginBottom: 12 }}
-              onClick={() => void signOut()}
-            >
-              로그아웃
-            </button>
-            <span className="version">공간미리 · 0.1</span>
-          </div>
-        </aside>
+        <WorkspaceNav active="home" />
         <main className="home-main">
-          <div className="home-topline">
-            <span>WORKSPACE / PROJECTS</span>
-            {isAdmin && (
-              <Link href="/admin/materials" className="nav-item">
-                관리자 자재 관리
-              </Link>
-            )}
-            <AdminLinks className="nav-item" />
-            <StorageBadge />
-          </div>
           <div className="page-heading">
             <div>
               <div className="eyebrow">나의 리모델링 작업실</div>
@@ -294,6 +249,7 @@ export default function ProjectHome() {
             <div className="start-preview">
               <Image
                 src={BASE_ROOM_IMAGE}
+                loading="eager"
                 width={1536}
                 height={1024}
                 unoptimized
@@ -311,7 +267,7 @@ export default function ProjectHome() {
               </p>
               <div className="start-actions">
                 <button
-                  className="btn primary"
+                  className="btn"
                   disabled={!ready || !writable || busy}
                   onClick={() => startFromPhoto()}
                 >
@@ -356,7 +312,7 @@ export default function ProjectHome() {
                 <b>01</b>기본 공간 또는 내 사진
               </span>
               <span>
-                <b>02</b>내 자재와 제품 등록
+                <b>02</b>자재를 골라 배치
               </span>
               <span>
                 <b>03</b>비교하고 저장
@@ -370,66 +326,87 @@ export default function ProjectHome() {
             </h2>
             <label className="search-box">
               <Search size={16} />
-              <input placeholder="프로젝트 검색" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <input
+                aria-label="프로젝트 검색"
+                placeholder="프로젝트 검색"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </label>
           </div>
-          {projects.length === 0 ? (
+          {projectsLoading && projects.length === 0 ? (
+            <div className="empty-projects" role="status">
+              프로젝트를 불러오고 있어요…
+            </div>
+          ) : projects.length === 0 ? (
             <div className="empty-projects">
               <FolderOpen size={29} strokeWidth={1.2} />
               <h3>첫 번째 공간을 기다리고 있어요</h3>
               <p>기본 공간으로 시작하거나 내 사진을 올려보세요.</p>
+              <button
+                className="btn primary"
+                disabled={!ready || !writable || busy}
+                onClick={() => setRoomOpen(true)}
+              >
+                새 공간 만들기
+              </button>
+            </div>
+          ) : matchingProjects.length === 0 ? (
+            <div className="empty-projects" role="status">
+              <Search size={28} />
+              <h3>검색한 프로젝트가 없어요</h3>
+              <p>다른 이름으로 검색하거나 전체 프로젝트를 확인해 보세요.</p>
+              <button className="btn" onClick={() => setSearch('')}>
+                검색 초기화
+              </button>
             </div>
           ) : (
             <div className="project-grid">
-              {projects
-                .filter((p) => p.name.includes(search))
-                .map((p) => (
-                  <article className="project-card" key={p.id}>
-                    <Link href={`/projects/${p.id}`} className="project-photo">
-                      <SummaryDesignThumbnail
-                        projectId={p.id}
-                        designId={p.activeDesignId}
-                        revision={p.activeDesignRevision}
-                        sharedRevision={p.sharedRevision}
-                        contextKey={p.designPreviewContextKey}
-                        repositories={getRepositories()}
-                        alt={p.name}
-                        fallback={
-                          <AssetImage assetId={p.thumbnailAssetId || p.previewAssetId} alt={p.name} />
-                        }
-                      />
-                      <span className="photo-open">
-                        편집하기 <ArrowUpRight size={15} />
-                      </span>
+              {matchingProjects.map((p) => (
+                <article className="project-card" key={p.id}>
+                  <Link href={`/projects/${p.id}`} className="project-photo">
+                    <SummaryDesignThumbnail
+                      projectId={p.id}
+                      designId={p.activeDesignId}
+                      revision={p.activeDesignRevision}
+                      sharedRevision={p.sharedRevision}
+                      contextKey={p.designPreviewContextKey}
+                      repositories={getRepositories()}
+                      alt={p.name}
+                      fallback={<AssetImage assetId={p.thumbnailAssetId || p.previewAssetId} alt={p.name} />}
+                    />
+                    <span className="photo-open">
+                      편집하기 <ArrowUpRight size={15} />
+                    </span>
+                  </Link>
+                  <div className="project-meta">
+                    <Link href={`/projects/${p.id}`}>
+                      <h3>{p.name}</h3>
+                      <p>{new Date(p.updatedAt).toLocaleDateString('ko-KR')} 수정</p>
                     </Link>
-                    <div className="project-meta">
-                      <Link href={`/projects/${p.id}`}>
-                        <h3>{p.name}</h3>
-                        <p>{new Date(p.updatedAt).toLocaleDateString('ko-KR')} 수정</p>
-                      </Link>
-                      <div className="row">
-                        <button
-                          className="icon-btn"
-                          title="프로젝트 복제"
-                          aria-label={`${p.name} 복제`}
-                          disabled={!writable}
-                          onClick={() => action(p.id, 'duplicate')}
-                        >
-                          <Copy size={16} />
-                        </button>
-                        <button
-                          className="icon-btn"
-                          title="프로젝트 삭제"
-                          aria-label={`${p.name} 삭제`}
-                          disabled={!writable}
-                          onClick={() => action(p.id, 'remove')}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                    <div className="row">
+                      <button
+                        className="icon-btn"
+                        title="프로젝트 복제"
+                        aria-label={`${p.name} 복제`}
+                        disabled={!writable}
+                        onClick={() => action(p.id, 'duplicate')}
+                      >
+                        <Copy size={16} />
+                      </button>
+                      <button
+                        className="icon-btn"
+                        title="프로젝트 삭제"
+                        aria-label={`${p.name} 삭제`}
+                        disabled={!writable}
+                        onClick={() => action(p.id, 'remove')}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
-                  </article>
-                ))}
+                  </div>
+                </article>
+              ))}
             </div>
           )}
           <footer className="home-footer">

@@ -2,9 +2,10 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
-import { ArrowRight, FolderOpen, Grid2X2, Layers, LockKeyhole, Plus } from 'lucide-react';
+import { ArrowRight, FolderOpen, LockKeyhole, Plus } from 'lucide-react';
 import { BASE_ROOM_IMAGE } from '@/lib/base-room';
 import LoginPrompt from './login-prompt';
+import WorkspaceNav from '@/components/workspace-nav';
 
 export default function GuestHome({ onNewProject }: { onNewProject: () => void }) {
   const [feature, setFeature] = useState('');
@@ -38,7 +39,7 @@ export default function GuestHome({ onNewProject }: { onNewProject: () => void }
   }
   return (
     <div
-      className="home-shell"
+      className="home-shell guest-home"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
@@ -51,45 +52,22 @@ export default function GuestHome({ onNewProject }: { onNewProject: () => void }
         }
       }}
     >
-      <aside className="app-nav">
-        <Link href="/" className="brand">
-          <span className="brand-mark">
-            <Layers size={21} />
-          </span>
-          공간미리<span className="beta">BETA</span>
-        </Link>
-        <div className="nav-section">공간 체험</div>
-        <Link href="/" className="nav-item active">
-          <FolderOpen size={18} />
-          시작하기
-        </Link>
-        <Link href="/materials" className="nav-item">
-          <Grid2X2 size={18} />
-          자재 라이브러리
-        </Link>
-        <div className="nav-bottom">
-          <p>로그인 없이 자재를 배치해 보세요.</p>
-          <button className="btn primary" onClick={() => setFeature('프로젝트 저장')}>
-            로그인 / 회원가입
-          </button>
-        </div>
-      </aside>
+      <WorkspaceNav active="home" onLogin={() => setFeature('프로젝트 저장')} />
       <main className="home-main">
-        <div className="home-topline">
-          <span>공간미리 · 공간 체험</span>
-          <button className="btn" onClick={() => setFeature('프로젝트 저장')}>
-            로그인 / 회원가입
-          </button>
-        </div>
         <div className="page-heading">
           <div>
             <div className="eyebrow">나의 리모델링 작업실</div>
             <h1>내 공간에서 시작하세요.</h1>
             <p>로그인 없이 빈 공간을 만들고, 마음에 드는 자재를 배치해 보세요.</p>
           </div>
-          <button className="btn primary" onClick={onNewProject}>
-            <Plus size={18} />새 프로젝트
-          </button>
+          <div className="page-heading-actions">
+            <button className="btn" onClick={() => setFeature('프로젝트 저장')}>
+              로그인 / 회원가입
+            </button>
+            <button className="btn primary" onClick={onNewProject}>
+              <Plus size={18} />새 프로젝트
+            </button>
+          </div>
         </div>
         {error && (
           <p role="alert" className="error notice">

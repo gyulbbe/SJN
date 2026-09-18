@@ -312,12 +312,14 @@ export default function RoomCanvasWorkspace({
         </button>
         <button
           className={'btn small ' + (st.tool === 'select' ? 'active' : '')}
+          aria-pressed={st.tool === 'select'}
           onClick={() => st.setTool('select')}
         >
           선택 / 이동
         </button>
         <button
           className={'btn small ' + (st.tool === 'pan' ? 'active' : '')}
+          aria-pressed={st.tool === 'pan'}
           onClick={() => st.setTool('pan')}
         >
           화면 이동

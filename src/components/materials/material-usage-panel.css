@@ -5,9 +5,10 @@
   width: 100%;
   height: 100%;
   min-height: 0;
-  color: #33372f;
+  color: var(--ink);
   background: #fff;
-  font-size: 12px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 .material-usage-panel button,
 .material-usage-panel input,
@@ -20,12 +21,12 @@
   justify-content: space-between;
   gap: 10px;
   padding: 19px 18px 15px;
-  border-bottom: 1px solid #e8e9e3;
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
 .mu-eyebrow {
-  color: #96998e;
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
   letter-spacing: 0.13em;
   font-weight: 700;
 }
@@ -35,7 +36,7 @@
   overflow-wrap: anywhere;
 }
 .mu-header p {
-  color: #73786b;
+  color: var(--muted);
   margin: 0;
 }
 .mu-close {
@@ -44,7 +45,7 @@
   place-items: center;
   border: 0;
   background: none;
-  color: #747a6c;
+  color: var(--muted);
   cursor: pointer;
 }
 .mu-scroll {
@@ -65,15 +66,15 @@
   margin: 0 0 10px;
 }
 .mu-group > h4 > span {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   border-radius: 12px;
-  background: #edf0e8;
+  background: var(--line);
   padding: 2px 7px;
-  color: #61764e;
+  color: var(--accent);
 }
 .mu-row {
-  border: 1px solid #e3e7dc;
+  border: 1px solid var(--line);
   border-radius: 11px;
   margin-bottom: 12px;
   padding: 12px;
@@ -91,13 +92,13 @@
 }
 .mu-row-heading strong {
   display: block;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
 }
 .mu-row-heading span {
   display: block;
-  color: #818678;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.65;
 }
 .mu-image {
@@ -106,24 +107,24 @@
   flex-shrink: 0;
   border-radius: 7px;
   object-fit: contain;
-  background: #f4f4ef;
+  background: var(--bg);
 }
 .mu-image-empty {
   display: grid;
   place-items: center;
-  color: #959a8e;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .mu-locations {
-  color: #727b67;
-  font-size: 10px;
-  background: #f3f5ef;
+  color: var(--muted);
+  font-size: 12px;
+  background: var(--bg);
   margin: 10px 0;
   border-radius: 5px;
   padding: 5px 7px;
 }
 .mu-areas {
-  border-bottom: 1px solid #edf0e8;
+  border-bottom: 1px solid var(--line);
   padding-bottom: 5px;
   margin-bottom: 10px;
 }
@@ -137,31 +138,33 @@
 }
 .mu-field > span {
   display: block;
-  font-size: 10px;
-  color: #69725f;
+  font-size: 13px;
+  color: var(--muted);
   margin-bottom: 5px;
   line-height: 1.5;
 }
 .mu-field input,
 .mu-field select {
   background: #fff;
-  color: #333c2a;
-  border: 1px solid #dce2d4;
+  color: var(--ink);
+  border: 1px solid var(--line);
   border-radius: 6px;
   width: 100%;
   min-width: 0;
-  padding: 7px 8px;
+  padding: 9px 10px;
+  min-height: 40px;
+  font-size: 14px;
   outline: none;
 }
 .mu-field input:focus,
 .mu-field select:focus {
-  border-color: #83976a;
-  box-shadow: 0 0 0 2px #92a57d22;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px #246a5d22;
 }
 .mu-field input[readonly],
 .mu-field select:disabled {
-  background: #f6f7f3;
-  color: #5d6654;
+  background: var(--bg);
+  color: var(--muted);
 }
 .mu-field input[aria-invalid='true'] {
   border-color: #bc6d4e;
@@ -174,8 +177,8 @@
   margin-bottom: 8px;
 }
 .mu-hint-row small {
-  font-size: 9px;
-  color: #8a9080;
+  font-size: 12px;
+  color: var(--muted);
   line-height: 1.6;
 }
 .mu-link {
@@ -185,8 +188,8 @@
   padding: 0;
   background: none;
   border: 0;
-  color: #657d48;
-  font-size: 10px !important;
+  color: var(--accent);
+  font-size: 12px !important;
   flex-shrink: 0;
   cursor: pointer;
 }
@@ -194,11 +197,11 @@
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  color: #707966;
+  color: var(--muted);
   margin: 8px 0;
 }
 .mu-summary strong {
-  color: #434f37;
+  color: var(--ink);
   font-weight: 600;
 }
 .mu-price-grid {
@@ -215,27 +218,27 @@
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
-  color: #7f8776;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
   padding: 4px 0;
 }
 .mu-pack[open] summary {
   margin-bottom: 8px;
 }
 .mu-price-source {
-  color: #939889;
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.6;
   margin: 7px 0;
 }
 .mu-latest {
   width: 100%;
-  background: #f4f7ef;
-  border: 1px solid #d9e3cc;
+  background: var(--accent-light);
+  border: 1px solid var(--line);
   padding: 7px;
-  color: #58703c;
+  color: var(--accent);
   border-radius: 5px;
-  font-size: 10px !important;
+  font-size: 12px !important;
   cursor: pointer;
 }
 .mu-latest:disabled {
@@ -248,7 +251,7 @@
   background: #fbf6ea;
   padding: 7px 8px;
   border-radius: 5px;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.6;
   margin: 8px 0;
 }
@@ -258,7 +261,7 @@
 .mu-error {
   display: block;
   color: #ae5139;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.6;
   margin-top: 4px;
 }
@@ -268,24 +271,24 @@
   align-items: center;
   gap: 8px;
   padding-top: 10px;
-  border-top: 1px solid #eef0e9;
+  border-top: 1px solid var(--line);
   margin: 10px 0 0;
 }
 .mu-amount span {
-  color: #848b7a;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .mu-amount strong {
-  color: #475c36;
+  color: var(--accent);
   font-size: 13px;
 }
 .mu-notice {
-  background: #f2f5ed;
-  color: #68745b;
+  background: var(--accent-light);
+  color: var(--muted);
   border-radius: 7px;
   padding: 10px;
   line-height: 1.6;
-  font-size: 11px;
+  font-size: 12px;
   margin: 14px 0;
 }
 .mu-notice .mu-link {
@@ -295,22 +298,22 @@
 .mu-empty {
   text-align: center;
   padding: 35px 10px;
-  color: #8c9481;
+  color: var(--muted);
   line-height: 1.7;
 }
 .mu-empty strong {
   font-size: 12px;
-  color: #68775a;
+  color: var(--muted);
 }
 .mu-properties {
-  border-top: 1px solid #e4e8de;
+  border-top: 1px solid var(--line);
   margin-top: 20px;
   padding-top: 15px;
 }
 .mu-footer {
   flex-shrink: 0;
-  border-top: 1px solid #dfe5d6;
-  background: #f9fbf5;
+  border-top: 1px solid var(--line);
+  background: var(--accent-light);
   padding: 15px 18px;
   box-shadow: 0 -5px 15px #35492106;
 }
@@ -322,18 +325,18 @@
 }
 .mu-footer strong {
   font-size: 20px;
-  color: #4c6439;
+  color: var(--accent);
 }
 .mu-footer p {
   margin: 8px 0 0;
   color: #947242;
-  font-size: 10px;
+  font-size: 12px;
 }
 .mu-footer small {
   display: block;
-  color: #8e9684;
+  color: var(--muted);
   margin-top: 7px;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.5;
 }
 .mu-confirm-backdrop {
@@ -359,7 +362,7 @@
 }
 .mu-confirm p {
   line-height: 1.7;
-  color: #777f6d;
+  color: var(--muted);
 }
 .mu-confirm table {
   width: 100%;
@@ -369,12 +372,12 @@
 .mu-confirm th,
 .mu-confirm td {
   padding: 9px 5px;
-  border-bottom: 1px solid #e9ede3;
+  border-bottom: 1px solid var(--line);
   text-align: left;
-  font-size: 11px;
+  font-size: 12px;
 }
 .mu-confirm th {
-  color: #7e8973;
+  color: var(--muted);
   font-weight: 500;
 }
 .mu-confirm-actions {
@@ -386,13 +389,77 @@
 .mu-quantity-note {
   padding: 8px;
   margin: 8px 0;
-  background: #f7f8f3;
-  color: #727e63;
+  background: var(--bg);
+  color: var(--muted);
   border-radius: 5px;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.65;
 }
 .mu-quantity-note small {
-  color: #929a88;
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mu-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.mu-shortcuts button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  color: var(--ink);
+  background: var(--bg);
+  cursor: pointer;
+  font-weight: 600;
+}
+.mu-shortcuts button:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mu-shortcuts button:focus-visible,
+.mu-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.mu-properties:focus {
+  outline: none;
+}
+.mu-properties:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm, 8px);
+}
+.mu-footer strong {
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+.mu-close {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: var(--radius-sm, 8px);
+}
+.mu-close:hover {
+  background: var(--bg);
+}
+@media (max-width: 1100px) {
+  .mu-shortcuts button,
+  .mu-close,
+  .mu-field input,
+  .mu-field select {
+    min-height: 44px;
+  }
+  .mu-close {
+    min-width: 44px;
+  }
 }

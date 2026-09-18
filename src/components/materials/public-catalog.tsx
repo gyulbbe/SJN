@@ -1,15 +1,165 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ArrowRight,
+  ArrowUpRight,
+  ImageOff,
+  Layers3,
+  RotateCcw,
+  Search,
+  SlidersHorizontal,
+  X,
+} from 'lucide-react';
 import { useAccess } from '../app-provider';
-import { useSharedCatalogAdmin } from './shared-access';
 import type { PublicMaterial } from '@/lib/catalog/public';
 import { categoryLabels } from '@/lib/types';
-import AdminLinks from '@/components/admin/admin-links';
-import styles from './catalog.module.css';
+import WorkspaceNav from '@/components/workspace-nav';
+import styles from './public-catalog.module.css';
+
+function MaterialImage({
+  src,
+  alt,
+  tile = false,
+  eager = false,
+}: {
+  src?: string;
+  alt: string;
+  tile?: boolean;
+  eager?: boolean;
+}) {
+  const [failedSource, setFailedSource] = useState<string>();
+  const failed = !!src && failedSource === src;
+  return (
+    <div className={styles.imageFrame} data-kind={tile ? 'tile' : 'product'}>
+      {src && !failed ? (
+        <img src={src} alt={alt} loading={eager ? 'eager' : 'lazy'} onError={() => setFailedSource(src)} />
+      ) : (
+        <div className={styles.imageFallback}>
+          <ImageOff size={28} strokeWidth={1.4} aria-hidden="true" />
+          <span>{failed ? '이미지를 불러오지 못했어요' : '등록된 이미지가 없어요'}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function dimensions(material: PublicMaterial) {
+  const values = [material.widthMm, material.heightMm, material.depthMm].filter((value) => value > 0);
+  return values.length
+    ? values.map((value) => value.toLocaleString('ko-KR')).join(' × ') + ' mm'
+    : '규격 미지정';
+}
+
+function MaterialDetail({
+  material,
+  member,
+  onClose,
+}: {
+  material: PublicMaterial;
+  member: boolean;
+  onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [selectedImage, setSelectedImage] = useState(0);
+  useEffect(() => {
+    const node = dialog.current;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    node?.showModal();
+    return () => {
+      node?.close();
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
+  const selected = material.images[selectedImage];
+  return (
+    <dialog
+      ref={dialog}
+      className={styles.detailDialog}
+      aria-label="자재 상세"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className={styles.detailBody}>
+        <div className={styles.detailTop}>
+          <span>
+            <Layers3 size={17} aria-hidden="true" /> 자재 상세
+          </span>
+          <button className={styles.closeButton} onClick={onClose} aria-label="닫기" autoFocus>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+        <div className={styles.detailLayout}>
+          <div className={styles.gallery}>
+            <div className={styles.detailMainImage}>
+              <MaterialImage
+                src={selected?.url}
+                alt={material.name + (selected?.label ? ' · ' + selected.label : '')}
+                tile={material.category === 'tile'}
+                eager
+              />
+            </div>
+            {material.images.length > 1 && (
+              <div className={styles.thumbnails} aria-label="자재 이미지 선택">
+                {material.images.map((image, index) => (
+                  <button
+                    key={image.url}
+                    className={styles.thumbnail}
+                    aria-label={'이미지 ' + (index + 1) + ' · ' + image.label}
+                    aria-pressed={selectedImage === index}
+                    onClick={() => setSelectedImage(index)}
+                  >
+                    <MaterialImage src={image.url} alt={image.label} tile={material.category === 'tile'} />
+                  </button>
+                ))}
+              </div>
+            )}
+            <p className={styles.imageNote}>화면의 색상과 질감은 실제 자재와 다를 수 있어요.</p>
+          </div>
+          <div className={styles.detailInfo}>
+            <span className={styles.kind}>{categoryLabels[material.category]}</span>
+            <p className={styles.brand}>{material.brand || '브랜드 미지정'}</p>
+            <h2>{material.name}</h2>
+            {material.description && <p className={styles.description}>{material.description}</p>}
+            <dl className={styles.specifications}>
+              {[
+                ['브랜드', material.brand],
+                [
+                  '분류',
+                  [categoryLabels[material.category], material.subcategoryName].filter(Boolean).join(' · '),
+                ],
+                ['색상', material.color],
+                ['재질', material.composition],
+                ['마감', material.finish],
+                ['규격', dimensions(material)],
+                ['제품 코드', material.code],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value || '미지정'}</dd>
+                </div>
+              ))}
+            </dl>
+            <Link className="btn primary" href={member ? '/' : '/try'}>
+              {member ? '프로젝트 시작하기' : '빈 공간으로 체험하기'}{' '}
+              <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+            <p className={styles.imageNote}>공간을 연 뒤 자재 라이브러리에서 선택해 배치하세요.</p>
+          </div>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
 export default function PublicCatalog() {
-  const access = useAccess(),
-    admin = useSharedCatalogAdmin();
+  const access = useAccess();
+  const member = !!access.userId && !access.expired;
   const [rows, setRows] = useState<PublicMaterial[]>([]),
     [query, setQuery] = useState(''),
     [category, setCategory] = useState(''),
@@ -20,6 +170,7 @@ export default function PublicCatalog() {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
+    setError('');
     fetch('/api/catalog/materials', { signal: controller.signal, cache: 'no-store' })
       .then(async (r) => {
         const data = await r.json();
@@ -29,8 +180,9 @@ export default function PublicCatalog() {
           setError('');
         }
       })
-      .catch((e) => {
-        if (!controller.signal.aborted) setError(e.message);
+      .catch((e: unknown) => {
+        if (!controller.signal.aborted)
+          setError(e instanceof Error ? e.message : '자재 목록을 불러오지 못했어요.');
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -46,115 +198,158 @@ export default function PublicCatalog() {
         .toLowerCase()
         .includes(query.normalize('NFKC').trim().toLowerCase()),
   );
+  const filtered = !!query.trim() || !!category;
+  function clearFilters() {
+    setQuery('');
+    setCategory('');
+  }
   return (
-    <main className={styles.shell}>
-      <nav className={styles.nav}>
-        <Link href="/">공간미리</Link>
-        <strong>자재 라이브러리</strong>
-        {admin && (
-          <>
-            <Link href="/admin/materials">자재 관리</Link>
-            <Link href="/admin/catalog">분류 관리</Link>
-            <AdminLinks />
-          </>
-        )}
-        {access.userId && !access.expired ? (
-          <>
-            <Link href="/">내 프로젝트</Link>
-            <button className="btn" onClick={() => void access.signOut()}>
-              로그아웃
-            </button>
-          </>
-        ) : (
-          <Link className="btn" href="/login">
-            로그인·회원가입
-          </Link>
-        )}
-      </nav>
-      <h1>내 공간을 완성할 자재</h1>
-      <p className={styles.muted}>등록된 자재를 확인하고 내 프로젝트에 적용해 보세요.</p>
-      <Link className="btn primary" href={access.userId && !access.expired ? '/' : '/try'}>
-        {access.userId && !access.expired ? '프로젝트 만들기' : '빈 공간으로 체험하기'}
-      </Link>
-      <div className={styles.form}>
-        <label className="field">
-          자재 검색
-          <input
-            className="input"
-            value={query}
-            placeholder="이름, 브랜드, 색상, 재질"
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          제품 종류
-          <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="">전체</option>
-            {Object.entries(categoryLabels).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {loading && <p role="status">자재를 불러오는 중…</p>}
-      {error && (
-        <p role="alert" className={styles.error}>
-          {error} <button onClick={() => setAttempt((x) => x + 1)}>다시 시도</button>
-        </p>
-      )}
-      <div className={styles.grid}>
-        {matching.map((row) => (
-          <button className={styles.card} key={row.id} onClick={() => setDetail(row)}>
-            {row.images[0] && <img src={row.images[0].url} alt={row.name} />}
-            <h2>{row.name}</h2>
-            <p>{row.brand || '브랜드 미지정'}</p>
-            <p className={styles.muted}>
-              {[categoryLabels[row.category], row.subcategoryName, row.color, row.finish]
-                .filter(Boolean)
-                .join(' · ')}
+    <div className="home-shell">
+      <WorkspaceNav active="materials" />
+      <main className={'home-main ' + styles.main}>
+        <header className={styles.heading}>
+          <div>
+            <p className="eyebrow">공간을 채우는 재료</p>
+            <h1>내 공간을 완성할 자재</h1>
+            <p className={styles.intro}>
+              타일의 질감부터 제품의 형태까지, 공간에 어울리는 자재를 찾아보세요.
             </p>
-          </button>
-        ))}
-      </div>
-      {!loading && !error && !matching.length && <p>조건에 맞는 자재가 없어요.</p>}
-      {detail && (
-        <div className="modal" role="dialog" aria-modal="true" aria-label="자재 상세">
-          <div className="modal-card">
-            <div className="modal-header">
-              <h2>{detail.name}</h2>
-              <button className="btn" onClick={() => setDetail(undefined)}>
-                닫기
+          </div>
+          <Link className="btn primary" href={member ? '/' : '/try'}>
+            {member ? '프로젝트 만들기' : '빈 공간으로 체험하기'} <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+        </header>
+        <section className={styles.filters} aria-label="자재 검색 및 필터">
+          <div className={styles.filterFields}>
+            <label className={styles.searchField}>
+              <span>자재 검색</span>
+              <span className={styles.searchInput}>
+                <Search size={18} aria-hidden="true" />
+                <input
+                  className="input"
+                  value={query}
+                  placeholder="이름, 브랜드, 색상, 재질"
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </span>
+            </label>
+            <label className={styles.categoryField}>
+              <span>
+                <SlidersHorizontal size={14} aria-hidden="true" /> 제품 종류
+              </span>
+              <select
+                className="input"
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+              >
+                <option value="">전체</option>
+                {Object.entries(categoryLabels).map(([key, value]) => (
+                  <option key={key} value={key}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className={styles.filterSummary}>
+            <p role="status" aria-live="polite">
+              {loading ? (
+                '자재를 불러오는 중…'
+              ) : error ? (
+                '자재 연결을 확인해 주세요.'
+              ) : (
+                <>
+                  <strong>{matching.length.toLocaleString('ko-KR')}</strong>개의 자재
+                  {filtered && <span> · 전체 {rows.length.toLocaleString('ko-KR')}개</span>}
+                </>
+              )}
+            </p>
+            {filtered && (
+              <button className={styles.resetButton} onClick={clearFilters}>
+                <RotateCcw size={14} aria-hidden="true" /> 조건 초기화
               </button>
+            )}
+          </div>
+        </section>
+        {loading ? (
+          <div className={styles.grid} aria-hidden="true">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div className={styles.skeleton} key={index}>
+                <div />
+                <span />
+                <span />
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <div className={styles.empty} role="alert">
+            <div className={styles.stateIcon}>
+              <ImageOff size={26} aria-hidden="true" />
             </div>
-            <div className={styles.detailImages}>
-              {detail.images.map((image, i) => (
-                <img key={i} src={image.url} alt={image.label} />
-              ))}
+            <h2>자재 목록을 불러오지 못했어요.</h2>
+            <p>{error}</p>
+            <button className="btn" onClick={() => setAttempt((value) => value + 1)}>
+              <RotateCcw size={16} aria-hidden="true" /> 다시 시도
+            </button>
+          </div>
+        ) : !rows.length ? (
+          <div className={styles.empty}>
+            <div className={styles.stateIcon}>
+              <Layers3 size={26} aria-hidden="true" />
             </div>
-            <p>{detail.description}</p>
-            <dl>
-              {[
-                ['브랜드', detail.brand],
-                ['분류', `${categoryLabels[detail.category]} ${detail.subcategoryName}`],
-                ['색상', detail.color],
-                ['재질', detail.composition],
-                ['마감', detail.finish],
-                ['규격', `${detail.widthMm} × ${detail.heightMm} × ${detail.depthMm} mm`],
-              ].map(([k, v]) => (
-                <div key={k}>
-                  <dt>{k}</dt>
-                  <dd>{v || '미지정'}</dd>
-                </div>
-              ))}
-            </dl>
-            <Link className="btn primary" href={access.userId && !access.expired ? '/' : '/try'}>
-              {access.userId && !access.expired ? '프로젝트 시작하기' : '빈 공간으로 체험하기'}
+            <h2>아직 등록된 자재가 없어요.</h2>
+            <p>
+              자재가 등록되면 이곳에서 이미지와 규격을 확인할 수 있어요.
+              <br />
+              먼저 빈 공간을 만들어 크기와 구도를 살펴보세요.
+            </p>
+            <Link className="btn" href={member ? '/' : '/try'}>
+              {member ? '프로젝트 만들기' : '빈 공간으로 체험하기'}{' '}
+              <ArrowRight size={16} aria-hidden="true" />
             </Link>
           </div>
-        </div>
+        ) : !matching.length ? (
+          <div className={styles.empty}>
+            <div className={styles.stateIcon}>
+              <Search size={26} aria-hidden="true" />
+            </div>
+            <h2>조건에 맞는 자재가 없어요.</h2>
+            <p>검색어를 짧게 입력하거나 제품 종류를 바꿔보세요.</p>
+          </div>
+        ) : (
+          <div className={styles.grid}>
+            {matching.map((row) => (
+              <button className={styles.card} key={row.id} onClick={() => setDetail(row)}>
+                <div className={styles.cardImage}>
+                  <MaterialImage src={row.images[0]?.url} alt={row.name} tile={row.category === 'tile'} />
+                  <span className={styles.imageKind}>{categoryLabels[row.category]}</span>
+                  <span className={styles.cardArrow}>
+                    <ArrowUpRight size={18} aria-hidden="true" />
+                  </span>
+                </div>
+                <div className={styles.cardBody}>
+                  <p className={styles.brand}>{row.brand || '브랜드 미지정'}</p>
+                  <h2>{row.name}</h2>
+                  <p className={styles.dimensions}>{dimensions(row)}</p>
+                  <p className={styles.attributes}>
+                    {[row.subcategoryName, row.color, row.composition, row.finish]
+                      .filter(Boolean)
+                      .join(' · ') || '상세 정보를 확인해 보세요'}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </main>
+      {detail && (
+        <MaterialDetail
+          key={detail.id}
+          material={detail}
+          member={member}
+          onClose={() => setDetail(undefined)}
+        />
       )}
-    </main>
+    </div>
   );
 }
