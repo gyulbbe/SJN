@@ -4,7 +4,19 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'rea
 import { getRepositories } from '@/lib/repositories';
 import { canvasBlob, makeAsset, previewDimensions } from '@/lib/images';
 import { rectifyImage } from '@/lib/render/crop';
-import type { Quad } from '@/lib/types';
+import {
+  MIN_CROP,
+  dragCropRect,
+  editCropRect,
+  fitAspect,
+  hitCropRect,
+  initialCropRect,
+  quadBounds,
+  rectToQuad,
+  type CropHandle,
+  type CropRect,
+} from '@/lib/crop-rect';
+import type { Point, Quad } from '@/lib/types';
 import styles from './materials.module.css';
 
 const INITIAL_QUAD: Quad = [
@@ -13,6 +25,21 @@ const INITIAL_QUAD: Quad = [
   { x: 0.95, y: 0.95 },
   { x: 0.05, y: 0.95 },
 ];
+type Mode = 'rect' | 'quad';
+const CURSORS: Record<string, string> = {
+  0: 'nwse-resize',
+  2: 'nwse-resize',
+  1: 'nesw-resize',
+  3: 'nesw-resize',
+  move: 'move',
+  draw: 'crosshair',
+};
+const RECT_FIELDS = [
+  ['x', '왼쪽'],
+  ['y', '위'],
+  ['width', '가로'],
+  ['height', '세로'],
+] as const;
 
 export function ImagePreparer({
   assetId,
@@ -34,10 +61,22 @@ export function ImagePreparer({
   const cornerRef = useRef<number | null>(null);
   const [quad, setQuad] = useState<Quad>(INITIAL_QUAD.map((point) => ({ ...point })) as Quad);
   const quadRef = useRef(quad);
+  // Front-facing photos only need a rectangle; the four-point mode stays for photos taken at an angle.
+  const [mode, setMode] = useState<Mode>('rect');
+  const modeRef = useRef(mode);
+  const validSpec = widthMm > 0 && heightMm > 0;
+  const [aspectLocked, setAspectLocked] = useState(validSpec);
+  const [rect, setRect] = useState<CropRect>(initialCropRect());
+  const rectRef = useRef(rect);
+  const dragRef = useRef<{ handle: CropHandle; from: Point; start: CropRect } | null>(null);
+  const [cursor, setCursor] = useState('crosshair');
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Normalized width/height that makes the selected pixels match the tile's mm ratio.
+  const specAspect = validSpec ? (widthMm / heightMm) * (size.height / size.width) : undefined;
+  const aspect = aspectLocked ? specAspect : undefined;
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current,
@@ -45,10 +84,11 @@ export function ImagePreparer({
     if (!canvas || !source) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const rectMode = modeRef.current === 'rect';
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.globalCompositeOperation = 'source-over';
     ctx.drawImage(source, 0, 0);
-    const points = quadRef.current.map((point) => ({
+    const points = (rectMode ? rectToQuad(rectRef.current) : quadRef.current).map((point) => ({
       x: point.x * canvas.width,
       y: point.y * canvas.height,
     }));
@@ -61,6 +101,16 @@ export function ImagePreparer({
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = Math.max(2, canvas.width / 500);
     ctx.stroke();
+    if (rectMode) {
+      const handle = Math.max(12, canvas.width / 55);
+      points.forEach((point) => {
+        ctx.fillStyle = '#245e51';
+        ctx.fillRect(point.x - handle / 2, point.y - handle / 2, handle, handle);
+        ctx.strokeStyle = '#fff';
+        ctx.strokeRect(point.x - handle / 2, point.y - handle / 2, handle, handle);
+      });
+      return;
+    }
     const radius = Math.max(10, canvas.width / 65);
     points.forEach((point, i) => {
       ctx.beginPath();
@@ -97,6 +147,14 @@ export function ImagePreparer({
       sourceRef.current = source;
       assetSourceRef.current = original.id;
       setSize(dimensions);
+      // Start with the tile ratio so the first rectangle already matches the spec.
+      setRect(
+        initialCropRect(
+          widthMm > 0 && heightMm > 0
+            ? (widthMm / heightMm) * (dimensions.height / dimensions.width)
+            : undefined,
+        ),
+      );
       setReady(true);
     })().catch((reason) => {
       if (alive) setError(reason instanceof Error ? reason.message : '이미지를 열지 못했어요.');
@@ -105,12 +163,14 @@ export function ImagePreparer({
       alive = false;
       sourceRef.current = null;
     };
-  }, [assetId]);
+  }, [assetId, widthMm, heightMm]);
 
   useEffect(() => {
     quadRef.current = quad;
+    rectRef.current = rect;
+    modeRef.current = mode;
     draw();
-  }, [draw, quad, ready, size]);
+  }, [draw, quad, rect, mode, ready, size]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busy) onCancel();
@@ -126,10 +186,27 @@ export function ImagePreparer({
       y: Math.max(0, Math.min(size.height, ((event.clientY - rect.top) / rect.height) * size.height)),
     };
   };
+  /** Unclamped normalized pointer, so a drag past the edge still reaches the image border. */
+  const normalizedAt = (event: PointerEvent<HTMLCanvasElement>): Point => {
+    const box = event.currentTarget.getBoundingClientRect();
+    return { x: (event.clientX - box.left) / box.width, y: (event.clientY - box.top) / box.height };
+  };
+  const handleTolerance = (event: PointerEvent<HTMLCanvasElement>): Point => {
+    const box = event.currentTarget.getBoundingClientRect(),
+      reach = event.pointerType === 'touch' ? 24 : 14;
+    return { x: reach / box.width, y: reach / box.height };
+  };
   const down = (event: PointerEvent<HTMLCanvasElement>) => {
     if (!ready || busy) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    if (modeRef.current === 'rect') {
+      const point = normalizedAt(event);
+      const handle = hitCropRect(rectRef.current, point, handleTolerance(event));
+      dragRef.current = { handle, from: point, start: rectRef.current };
+      setCursor(CURSORS[handle]);
+      return;
+    }
     const point = pointAt(event);
     activeRef.current = true;
     let nearest = 0,
@@ -150,6 +227,17 @@ export function ImagePreparer({
     );
   };
   const move = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (modeRef.current === 'rect') {
+      if (!ready) return;
+      const point = normalizedAt(event),
+        drag = dragRef.current;
+      if (!drag) {
+        setCursor(CURSORS[hitCropRect(rectRef.current, point, handleTolerance(event))]);
+        return;
+      }
+      if (!busy) setRect(dragCropRect(drag.start, drag.handle, drag.from, point, aspect));
+      return;
+    }
     if (!activeRef.current || busy) return;
     const point = pointAt(event);
     setQuad(
@@ -162,7 +250,18 @@ export function ImagePreparer({
   const finish = () => {
     activeRef.current = false;
     cornerRef.current = null;
+    dragRef.current = null;
   };
+  function switchMode(next: Mode) {
+    if (next === mode || busy) return;
+    if (next === 'quad') setQuad(rectToQuad(rect));
+    else {
+      const bounds = fitAspect(quadBounds(quad), aspect);
+      setRect(bounds.width < MIN_CROP || bounds.height < MIN_CROP ? initialCropRect(aspect) : bounds);
+    }
+    setMode(next);
+    setCursor('crosshair');
+  }
   const save = async () => {
     if (!sourceRef.current || !canvasRef.current) return;
     setBusy(true);
@@ -174,7 +273,7 @@ export function ImagePreparer({
       const height = ratio >= 1 ? Math.round(1600 / ratio) : 1600;
       const blob = await rectifyImage(
         await canvasBlob(sourceRef.current),
-        quadRef.current,
+        modeRef.current === 'rect' ? rectToQuad(rectRef.current) : quadRef.current,
         Math.max(16, width),
         Math.max(16, height),
       );
@@ -203,7 +302,9 @@ export function ImagePreparer({
             <span className={styles.eyebrow}>IMAGE STUDIO</span>
             <h2 id="prepare-title">타일 한 장 선택·정면 보정</h2>
             <p className="muted">
-              1 좌상 → 2 우상 → 3 우하 → 4 좌하 순서로 타일 한 장의 모서리를 맞춰 주세요.
+              {mode === 'rect'
+                ? '타일 한 장을 드래그해 감싸세요. 안쪽을 끌면 이동, 모서리를 끌면 크기를 바꿔요.'
+                : '1 좌상 → 2 우상 → 3 우하 → 4 좌하 순서로 타일 한 장의 모서리를 맞춰 주세요.'}
             </p>
           </div>
           <button
@@ -219,6 +320,46 @@ export function ImagePreparer({
         <p className={styles.note}>
           원본에서 새로 편집해요. 기존 결과와 원본 파일은 보존되며, 적용을 눌러야 새 결과로 바뀌어요.
         </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div
+            role="group"
+            aria-label="선택 방식"
+            className="inline-grid grid-cols-2 gap-1 rounded-[var(--radius-sm)] bg-[color:var(--surface-soft)] p-1"
+          >
+            {(
+              [
+                ['rect', '사각형'],
+                ['quad', '네 점 (기울어진 사진)'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={mode === value}
+                disabled={busy}
+                onClick={() => switchMode(value)}
+                className="min-h-9 rounded-md px-3 text-[13px] font-semibold text-[color:var(--muted)] aria-pressed:bg-[color:var(--paper)] aria-pressed:text-[color:var(--ink)] aria-pressed:shadow-sm max-[620px]:min-h-11"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {mode === 'rect' && (
+            <label className="flex min-h-9 cursor-pointer items-center gap-2 text-[13px] text-[color:var(--ink)]">
+              <input
+                type="checkbox"
+                checked={aspectLocked && validSpec}
+                disabled={!validSpec || busy}
+                onChange={(event) => {
+                  setAspectLocked(event.target.checked);
+                  if (event.target.checked) setRect((current) => fitAspect(current, specAspect));
+                }}
+                className="size-4 accent-[var(--accent)]"
+              />
+              규격 비율 고정{validSpec ? ` (${widthMm}:${heightMm})` : ''}
+            </label>
+          )}
+        </div>
         <div className={styles.preparationCanvas}>
           {!ready && !error && <p>원본을 준비하고 있어요…</p>}
           <canvas
@@ -229,57 +370,83 @@ export function ImagePreparer({
             onPointerMove={move}
             onPointerUp={finish}
             onPointerCancel={finish}
-            aria-label="타일 모서리 네 점 편집 화면"
-            style={{ display: ready ? 'block' : 'none', cursor: 'crosshair' }}
+            aria-label={mode === 'rect' ? '타일 한 장 사각형 선택 화면' : '타일 모서리 네 점 편집 화면'}
+            style={{ display: ready ? 'block' : 'none', cursor: mode === 'rect' ? cursor : 'crosshair' }}
           />
         </div>
-        <div className={styles.cornerInputs}>
-          {quad.map((corner, i) => (
-            <label key={i}>
-              모서리 {i + 1}
-              <span>
-                <input
-                  aria-label={`모서리 ${i + 1} 가로 위치`}
-                  type="number"
-                  min="0"
-                  max="100"
-                  step=".1"
-                  value={Number((corner.x * 100).toFixed(1))}
-                  onChange={(event) =>
-                    setQuad(
-                      (current) =>
-                        current.map((p, n) =>
-                          n === i
-                            ? { ...p, x: Math.max(0, Math.min(1, Number(event.target.value) / 100)) }
-                            : p,
-                        ) as Quad,
-                    )
-                  }
-                />
-                % ·{' '}
-                <input
-                  aria-label={`모서리 ${i + 1} 세로 위치`}
-                  type="number"
-                  min="0"
-                  max="100"
-                  step=".1"
-                  value={Number((corner.y * 100).toFixed(1))}
-                  onChange={(event) =>
-                    setQuad(
-                      (current) =>
-                        current.map((p, n) =>
-                          n === i
-                            ? { ...p, y: Math.max(0, Math.min(1, Number(event.target.value) / 100)) }
-                            : p,
-                        ) as Quad,
-                    )
-                  }
-                />
-                %
-              </span>
-            </label>
-          ))}
-        </div>
+        {mode === 'rect' ? (
+          <div className={styles.cornerInputs}>
+            {RECT_FIELDS.map(([field, label]) => (
+              <label key={field}>
+                {label}
+                <span>
+                  <input
+                    aria-label={`선택 영역 ${label} (%)`}
+                    type="number"
+                    min="0"
+                    max="100"
+                    step=".1"
+                    value={Number((rect[field] * 100).toFixed(1))}
+                    onChange={(event) =>
+                      setRect((current) =>
+                        editCropRect(current, field, Number(event.target.value) / 100, aspect),
+                      )
+                    }
+                  />
+                  %
+                </span>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.cornerInputs}>
+            {quad.map((corner, i) => (
+              <label key={i}>
+                모서리 {i + 1}
+                <span>
+                  <input
+                    aria-label={`모서리 ${i + 1} 가로 위치`}
+                    type="number"
+                    min="0"
+                    max="100"
+                    step=".1"
+                    value={Number((corner.x * 100).toFixed(1))}
+                    onChange={(event) =>
+                      setQuad(
+                        (current) =>
+                          current.map((p, n) =>
+                            n === i
+                              ? { ...p, x: Math.max(0, Math.min(1, Number(event.target.value) / 100)) }
+                              : p,
+                          ) as Quad,
+                      )
+                    }
+                  />
+                  % ·{' '}
+                  <input
+                    aria-label={`모서리 ${i + 1} 세로 위치`}
+                    type="number"
+                    min="0"
+                    max="100"
+                    step=".1"
+                    value={Number((corner.y * 100).toFixed(1))}
+                    onChange={(event) =>
+                      setQuad(
+                        (current) =>
+                          current.map((p, n) =>
+                            n === i
+                              ? { ...p, y: Math.max(0, Math.min(1, Number(event.target.value) / 100)) }
+                              : p,
+                          ) as Quad,
+                      )
+                    }
+                  />
+                  %
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
         {error && (
           <p role="alert" className={styles.error}>
             {error}
