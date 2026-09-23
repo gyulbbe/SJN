@@ -146,7 +146,7 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
       runtime.value = ready;
       expect(await storageStatus()).toMatchObject({ mode: 'd1', ready: false, reason: 'connection_failed' });
     } finally {
-      await db.prepare('UPDATE d1_auth_meta SET version = 2').run();
+      await db.prepare('UPDATE d1_auth_meta SET version = 1').run();
     }
   });
   it('rejects the inactive Supabase execution path in both runtimes', async () => {

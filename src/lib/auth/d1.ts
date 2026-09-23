@@ -64,7 +64,8 @@ export async function checkD1AuthSchema(env: Pick<D1AuthEnvironment, 'DB'>) {
     const metadata = await env.DB.prepare('SELECT version FROM d1_auth_meta WHERE id = 1').first<{
       version: number;
     }>();
-    if (metadata?.version !== 2) throw new Error('schema version');
+    // 0007 is additive (meta stays 1); the column probe below proves the username columns exist.
+    if (metadata?.version !== 1) throw new Error('schema version');
     // LIMIT 0 still checks required columns, including optional columns Better Auth writes.
     await env.DB.prepare(
       `SELECT

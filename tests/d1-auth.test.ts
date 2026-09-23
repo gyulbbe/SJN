@@ -180,8 +180,17 @@ describe('D1 Google auth configuration and migrations', () => {
         code: 'auth_schema_unavailable',
       });
     } finally {
-      await env.DB.prepare('UPDATE d1_auth_meta SET version = 2').run();
+      await env.DB.prepare('UPDATE d1_auth_meta SET version = 1').run();
     }
+  });
+  it('fails readiness until the username columns from 0007 exist', async () => {
+    await env.DB.prepare('ALTER TABLE "user" DROP COLUMN "displayUsername"').run();
+    try {
+      await expect(checkD1AuthSchema(env)).rejects.toMatchObject({ code: 'auth_schema_unavailable' });
+    } finally {
+      await env.DB.prepare('ALTER TABLE "user" ADD COLUMN "displayUsername" TEXT').run();
+    }
+    await expect(checkD1AuthSchema(env)).resolves.toBeUndefined();
   });
   it('allows ID passwords without email verification, keeps linking off and enables secure cookies', () => {
     const auth = createD1Auth(env);

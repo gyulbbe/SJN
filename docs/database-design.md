@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0007_username_auth.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼을 추가한다. **`0007`은 2026-09-23 소스에 추가했으며 원격 `sjn`에는 미적용이다.**
+이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0007_username_auth.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼을 추가한다. **2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했다(auth meta version 1 유지). 같은 날 읽기 확인에서 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록은 없었다. 기록이 없으면 `migrations apply`가 0007을 다시 실행하다 중복 컬럼으로 실패하므로 남은 인덱스·기록을 맞춘 뒤 다음 migration을 적용한다.**
 
 **코드·SQL 파일을 작성하는 것과 운영 DB에 적용하는 것은 별도 단계다.** 2026-09-17 사용자 승인 후 원격 D1 `sjn`의 기존 `0001~0004`에 `0005`·`0006`을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 `0001~0006`을 순서대로 적용했다. 양쪽 적용 이력·초기 데이터·무결성을 확인했다. 상세 확인값은 8절을 따른다. 앱의 운영 연결·실제 Google OAuth·운영 R2 검증과 관리자 지정·배포·R2 버킷 생성·AI 호출은 별도이며 이번 작업에서 수행하지 않았다. Google 비밀키, Better Auth secret, 로그인 토큰은 이 문서나 소스에 넣지 않는다.
 
@@ -782,10 +782,11 @@ CREATE TABLE d1_diagnostic_checks (
 -- Better Auth username plugin: ID/password members alongside optional Google OAuth.
 -- Credential members store a server-generated, non-deliverable email (<username>@users.sjn.invalid)
 -- because "user"."email" stays NOT NULL UNIQUE. Existing Google members keep a NULL username.
+-- Additive only: d1_auth_meta stays at version 1 so an already deployed Worker keeps working;
+-- readiness detects this migration through the username columns instead.
 ALTER TABLE "user" ADD COLUMN "username" TEXT;
 ALTER TABLE "user" ADD COLUMN "displayUsername" TEXT;
 CREATE UNIQUE INDEX "user_username_idx" ON "user" ("username");
-UPDATE "d1_auth_meta" SET "version" = 2 WHERE "id" = 1;
 ```
 
-앱 준비 검사는 auth meta version 2와 두 컬럼을 확인한다. 원격 DB에 0007을 적용하기 전에 이 코드를 배포하면 로그인 준비가 실패한다.
+0007은 추가만 하는 변경이라 auth meta를 1로 유지해 이미 배포된 Worker가 계속 동작한다. 앱 준비 검사는 두 컬럼 조회로 0007 적용을 확인하므로 컬럼이 없는 DB에 이 코드를 배포하면 로그인 준비가 실패한다.
