@@ -3,8 +3,9 @@ import { roomSurfaceAreaM2 } from '@/lib/room-surface-areas';
 import { productContentBounds } from '@/lib/room-fixtures';
 import type { RoomFace } from '@/lib/room-types';
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Trash2, Lock, Unlock, ArrowUp, ArrowDown, RotateCcw, X } from 'lucide-react';
+import { Copy, CopyCheck, Trash2, Lock, Unlock, ArrowUp, ArrowDown, RotateCcw, X } from 'lucide-react';
 import { useEditor } from '@/lib/editor-store';
+import { applyTileSettingsToAllSurfaces } from '@/lib/tile-settings';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import ReconstructionProperties from '@/components/reconstruction/reconstruction-properties';
 import { useRepositories } from '@/components/repository-context';
@@ -78,6 +79,8 @@ export default function Inspector({
   const [colorTarget, setColorTarget] = useState<'global' | 'selection'>('global');
   const [pendingView, setPendingView] = useState<number | null>(null);
   const [viewError, setViewError] = useState('');
+  // Which surface's settings were last copied to every surface; the notice hides once another is selected.
+  const [tileShared, setTileShared] = useState<{ surfaceId: string; count: number } | null>(null);
   const viewRequest = useRef(0);
   const projectId = st.project?.id;
   useEffect(() => {
@@ -384,6 +387,27 @@ export default function Inspector({
                   기존 무늬가 남으면 명암 보존을 0으로 낮춰주세요.
                 </p>
               </>
+              <button
+                className="btn small"
+                style={{ marginTop: 12 }}
+                title="배열·방향·시작점·줄눈·명암 보존을 모든 벽·바닥에 적용"
+                disabled={!writable || !!st.draft || s.surfaces.length < 2}
+                onClick={() => {
+                  let count = 0;
+                  st.change((scene) => {
+                    count = applyTileSettingsToAllSurfaces(scene, surface.id);
+                  });
+                  if (count) setTileShared({ surfaceId: surface.id, count });
+                }}
+              >
+                <CopyCheck size={13} />
+                시공 설정 전체 적용
+              </button>
+              {tileShared?.surfaceId === surface.id && (
+                <p role="status" className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+                  모든 면({tileShared.count}개)에 같은 시공 설정을 적용했어요. Ctrl+Z로 되돌릴 수 있어요.
+                </p>
+              )}
               <button
                 className="btn small"
                 style={{ marginTop: 12 }}

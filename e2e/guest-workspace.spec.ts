@@ -216,6 +216,43 @@ test('모의 Google 왕복 후 여러 시안·수정 견적·비교 선택을 �
   expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 1 });
 });
 
+test('시공 설정 전체 적용으로 모든 벽·바닥에 같은 시공 설정을 적용하고 되돌린다', async ({ page }) => {
+  await create(page);
+  const surfaces = async () => getActiveDesign(await draft(page))!.scene.surfaces;
+  const initial = await surfaces();
+  expect(new Set(initial.map((surface) => surface.kind))).toEqual(new Set(['wall', 'floor']));
+  await page.getByRole('button', { name: '벽 타일', exact: true }).click();
+  const target = page.getByRole('combobox', { name: '타일 적용 위치' });
+  const wallId = (await target.locator('option').nth(1).getAttribute('value'))!;
+  await target.selectOption(wallId);
+  await page.getByRole('combobox', { name: '타일 배열' }).selectOption('brick');
+  const grout = page.getByRole('slider', { name: '줄눈 폭' });
+  const groutBefore = initial.find((surface) => surface.id === wallId)!.tile.groutWidth;
+  await grout.focus();
+  for (let i = 0; i < 4; i++) await grout.press('ArrowRight');
+  await expect
+    .poll(async () => (await surfaces()).find((surface) => surface.id === wallId)!.tile.groutWidth)
+    .toBe(groutBefore + 2);
+  await page.getByRole('button', { name: '시공 설정 전체 적용', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: '같은 시공 설정을 적용했어요' })).toContainText(
+    `모든 면(${initial.length}개)`,
+  );
+  const applied = await surfaces();
+  const source = applied.find((surface) => surface.id === wallId)!;
+  expect(source.tile).toMatchObject({ pattern: 'brick', groutWidth: groutBefore + 2 });
+  for (const surface of applied) {
+    const original = initial.find((item) => item.id === surface.id)!;
+    expect(surface.tile).toEqual({ ...source.tile, seed: original.tile.seed });
+    expect(surface.materialVersionId).toBe(original.materialVersionId);
+  }
+  // One undo removes only the copy; the chosen wall keeps its own edits.
+  await page.keyboard.press('Control+z');
+  await expect
+    .poll(async () => (await surfaces()).filter((surface) => surface.id !== wallId).map((s) => s.tile))
+    .toEqual(initial.filter((surface) => surface.id !== wallId).map((s) => s.tile));
+  expect((await surfaces()).find((surface) => surface.id === wallId)!.tile.pattern).toBe('brick');
+});
+
 test('Delete 키로 선택한 제품을 삭제하고 선택한 면의 타일을 초기화한다', async ({ page }) => {
   await create(page);
   await place(page);
