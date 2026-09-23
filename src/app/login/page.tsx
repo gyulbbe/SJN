@@ -1,17 +1,20 @@
 'use client';
 import Link from 'next/link';
-import GoogleSignInButton from '@/components/auth/google-sign-in-button';
+import CredentialAuthForm from '@/components/auth/credential-auth-form';
 import { useRouter } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { useAccess } from '@/components/app-provider';
 
 export default function LoginPage() {
   const access = useAccess();
   const router = useRouter();
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [resumeGuest, setResumeGuest] = useState(false);
   const [destinationReady, setDestinationReady] = useState(false);
+  // A new attempt replaces the message from a previous Google return.
+  const clearErrorOnStart = useCallback((busy: boolean) => {
+    if (busy) setError('');
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -61,20 +64,10 @@ export default function LoginPage() {
             </Link>
           </>
         ) : (
-          <GoogleSignInButton
-            busy={busy}
+          <CredentialAuthForm
+            resumeGuest={resumeGuest}
             disabled={!destinationReady || !access.status?.ready || access.mode !== 'd1'}
-            onClick={async () => {
-              setBusy(true);
-              setError('');
-              try {
-                await access.signIn({ resumeGuest });
-              } catch (e) {
-                setError(e instanceof Error ? e.message : '로그인에 실패했어요.');
-              } finally {
-                setBusy(false);
-              }
-            }}
+            onBusyChange={clearErrorOnStart}
           />
         )}
         {(!access.status || !destinationReady) && <p role="status">로그인 연결을 확인하고 있어요…</p>}

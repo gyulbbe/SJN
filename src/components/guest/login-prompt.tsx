@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useAccess } from '@/components/app-provider';
-import GoogleSignInButton from '@/components/auth/google-sign-in-button';
+import CredentialAuthForm from '@/components/auth/credential-auth-form';
 
 export default function LoginPrompt({
   resumeGuest = false,
@@ -14,7 +14,6 @@ export default function LoginPrompt({
   const access = useAccess();
   const dialog = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const node = dialog.current;
@@ -45,20 +44,10 @@ export default function LoginPrompt({
           <X size={20} />
         </button>
       </div>
-      <GoogleSignInButton
-        busy={busy}
+      <CredentialAuthForm
+        resumeGuest={resumeGuest}
         disabled={!access.status?.ready}
-        onClick={async () => {
-          setBusy(true);
-          setError('');
-          try {
-            await access.signIn({ resumeGuest });
-          } catch (reason) {
-            setError(reason instanceof Error ? reason.message : '로그인을 시작하지 못했어요.');
-          } finally {
-            setBusy(false);
-          }
-        }}
+        onBusyChange={setBusy}
       />
       {!access.status && <p role="status">로그인 연결을 확인하고 있어요…</p>}
       {access.status && !access.status.ready && (
@@ -66,9 +55,9 @@ export default function LoginPrompt({
           로그인 연결을 준비하지 못했어요. <button onClick={access.retry}>다시 확인</button>
         </p>
       )}
-      {(error || access.error) && (
+      {access.error && (
         <p className="error" role="alert">
-          {error || access.error}
+          {access.error}
         </p>
       )}
     </dialog>

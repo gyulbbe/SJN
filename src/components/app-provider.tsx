@@ -4,11 +4,17 @@ import { initializeRepositories, resetRepositories } from '@/lib/repositories';
 import { discoverStorage } from '@/lib/storage/bootstrap';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import GoogleSignInButton from './auth/google-sign-in-button';
 import { STORAGE_MESSAGES, type StorageMode, type StorageStatus } from '@/lib/storage/config';
 import { checkpointBeforeAccountChange, flushBeforeStorageTransition } from '@/lib/storage/recovery';
 import { isPublicPage, signInDestinations, type SignInOptions } from '@/lib/auth/public-routes';
+import { credentialErrorMessage } from '@/lib/auth/credential-account';
+import CredentialAuthForm from './auth/credential-auth-form';
 
+export type PasswordSignIn = SignInOptions & {
+  mode: 'sign-in' | 'sign-up';
+  username: string;
+  password: string;
+};
 type Access = {
   writable: boolean;
   ready: boolean;
@@ -16,6 +22,8 @@ type Access = {
   userId?: string;
   retry: () => void;
   signIn: (options?: SignInOptions) => Promise<void>;
+  /** Resolves true once the browser is navigating to the signed-in destination. */
+  signInWithPassword: (input: PasswordSignIn) => Promise<boolean>;
   signOut: () => Promise<void>;
   error: string;
   status: StorageStatus | null;
@@ -27,6 +35,7 @@ const Context = createContext<Access>({
   mode: 'd1',
   retry: () => {},
   signIn: async () => {},
+  signInWithPassword: async () => false,
   signOut: async () => {},
   error: '',
   status: null,
@@ -221,26 +230,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAttempt((value) => value + 1);
     });
   }
+  /** Both sign-in methods preserve the guest draft or current work before leaving the page. */
+  async function prepareSignIn(options: SignInOptions) {
+    if (options.resumeGuest) {
+      const { readGuestDraft, checkpointGuestDraft } = await import('@/lib/guest/session');
+      const { useEditor } = await import('@/lib/editor-store');
+      const draft = readGuestDraft();
+      if (!draft) throw new Error('이어서 저장할 체험 작업을 찾지 못했어요.');
+      const current = useEditor.getState();
+      if (current.project?.id === draft.document.id) {
+        current.commit();
+        await checkpointGuestDraft(useEditor.getState().project ?? undefined);
+      } else {
+        await checkpointGuestDraft();
+      }
+    } else if (!(await flushBeforeStorageTransition())) {
+      throw new Error('현재 작업을 보관하지 못했어요. 작업을 확인한 뒤 다시 로그인해 주세요.');
+    }
+    setError('');
+  }
+  async function signInWithPassword({ mode, username, password, ...options }: PasswordSignIn) {
+    if (transitionBusy.current) return false;
+    transitionBusy.current = true;
+    try {
+      await prepareSignIn(options);
+      const response = await fetch(
+        mode === 'sign-up' ? '/api/auth/sign-up/email' : '/api/auth/sign-in/username',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          signal: AbortSignal.timeout(15_000),
+          // The server derives the account email from the ID; the client never supplies one.
+          body: JSON.stringify({ username, password }),
+        },
+      );
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        throw new Error(credentialErrorMessage(mode, response.status, result?.code));
+      }
+      // Same full navigation as the Google return so account storage starts fresh.
+      window.location.assign(signInDestinations(options).callbackURL);
+      return true;
+    } finally {
+      transitionBusy.current = false;
+    }
+  }
   async function signIn(options: SignInOptions = {}) {
     if (transitionBusy.current) return;
     transitionBusy.current = true;
     try {
-      if (options.resumeGuest) {
-        const { readGuestDraft, checkpointGuestDraft } = await import('@/lib/guest/session');
-        const { useEditor } = await import('@/lib/editor-store');
-        const draft = readGuestDraft();
-        if (!draft) throw new Error('이어서 저장할 체험 작업을 찾지 못했어요.');
-        const current = useEditor.getState();
-        if (current.project?.id === draft.document.id) {
-          current.commit();
-          await checkpointGuestDraft(useEditor.getState().project ?? undefined);
-        } else {
-          await checkpointGuestDraft();
-        }
-      } else if (!(await flushBeforeStorageTransition())) {
-        throw new Error('현재 작업을 보관하지 못했어요. 작업을 확인한 뒤 다시 로그인해 주세요.');
-      }
-      setError('');
+      await prepareSignIn(options);
       const response = await fetch('/api/auth/sign-in/social', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -282,7 +322,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const retry = () => void reconnect();
   return (
     <Context.Provider
-      value={{ writable, ready, mode, userId, retry, signIn, signOut, error, status, expired }}
+      value={{
+        writable,
+        ready,
+        mode,
+        userId,
+        retry,
+        signIn,
+        signInWithPassword,
+        signOut,
+        error,
+        status,
+        expired,
+      }}
     >
       {!publicPage && status && STORAGE_MESSAGES[status.reason] && (
         <div className="readonly-banner" role="status">
@@ -292,7 +344,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )}
       {!publicPage && expired && (
         <div className="readonly-banner" role="alert">
-          {error} <button onClick={() => void signIn().catch(() => {})}>Google로 다시 로그인</button>
+          {error}{' '}
+          {/* The member guard below also offers ID sign-in; this is the one-click Google shortcut. */}
+          {status?.googleSignIn !== false && (
+            <button onClick={() => void signIn().catch(() => {})}>Google로 다시 로그인</button>
+          )}
         </div>
       )}
       {(!publicPage || !!userId) && ready && !expired && !accountChanged && error && (
@@ -324,7 +380,7 @@ export function StorageBadge() {
   );
 }
 export function BackendGuard({ children }: { children: React.ReactNode }) {
-  const { status, ready, expired, signIn, retry, error } = useAccess();
+  const { status, ready, expired, retry, error } = useAccess();
   const pathname = usePathname();
   const [busy, setBusy] = useState(false);
   if (isPublicPage(pathname) || (ready && !expired)) return children;
@@ -341,21 +397,8 @@ export function BackendGuard({ children }: { children: React.ReactNode }) {
           ← 메인으로
         </Link>
         <h1>로그인 / 회원가입</h1>
-        <GoogleSignInButton
-          busy={busy}
-          disabled={!status.ready}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await signIn();
-            } catch {
-              // AppProvider displays the error without navigating away.
-            } finally {
-              setBusy(false);
-            }
-          }}
-        />
-        {!status.ready && <p role="alert">Google 로그인과 D1·R2 연결 설정을 먼저 확인해 주세요.</p>}
+        <CredentialAuthForm disabled={!status.ready} onBusyChange={setBusy} />
+        {!status.ready && <p role="alert">로그인과 D1·R2 연결 설정을 먼저 확인해 주세요.</p>}
         {error && (
           <p role="alert" className="error">
             {error}

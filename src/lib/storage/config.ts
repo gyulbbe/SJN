@@ -11,6 +11,8 @@ export type StorageStatus = {
   ready: boolean;
   reason: StorageReason;
   authRequired: boolean;
+  /** Only sent when ready; ID/password sign-in works without Google. */
+  googleSignIn?: boolean;
 };
 export type RuntimeSettings = {
   APP_ENV?: string;

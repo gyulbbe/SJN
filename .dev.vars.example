@@ -1,10 +1,12 @@
 # Copy to .dev.vars for local Workers only. Never commit secrets.
-# npm run dev uses isolated local D1/R2 with the same real Google authentication as production.
+# npm run dev uses isolated local D1/R2 and the same Better Auth sign-in as production.
+# BETTER_AUTH_SECRET alone enables ID/password sign-up; Google is optional.
 APP_ENV=development
 STORAGE_MODE=d1
 BETTER_AUTH_URL=http://127.0.0.1:3000
-# Register this exact redirect URI in Google: http://127.0.0.1:3000/api/auth/callback/google
 BETTER_AUTH_SECRET=
+# Optional: set both Google values or leave both empty.
+# Register this exact redirect URI in Google: http://127.0.0.1:3000/api/auth/callback/google
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 # Production values are configured as Worker secrets, not from this file.

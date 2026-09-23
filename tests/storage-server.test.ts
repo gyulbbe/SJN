@@ -84,7 +84,17 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
       expect(await storageStatus()).toMatchObject({ mode: 'd1', ready: false, reason });
     }
   });
-  it('blocks invalid Google settings before probing D1', async () => {
+  it('reports ready without Google so ID sign-in can still be used', async () => {
+    runtime.value = { ...ready, GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '' };
+    expect(await storageStatus()).toEqual({
+      mode: 'd1',
+      ready: true,
+      reason: 'ready',
+      authRequired: true,
+      googleSignIn: false,
+    });
+  });
+  it('blocks half-configured Google settings before probing D1', async () => {
     const prepare = vi.fn();
     runtime.value = { ...ready, GOOGLE_CLIENT_SECRET: '', DB: { prepare } };
     expect(await storageStatus()).toMatchObject({
@@ -97,7 +107,7 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
   it('confirms migrations and R2 access without writing a health object or creating a member', async () => {
     runtime.value = ready;
     const result = await storageStatus();
-    expect(result).toEqual({ mode: 'd1', ready: true, reason: 'ready', authRequired: true });
+    expect(result).toEqual({ mode: 'd1', ready: true, reason: 'ready', authRequired: true, googleSignIn: true });
     const db = await mf.getD1Database('DB');
     expect(await db.prepare('SELECT COUNT(*) AS count FROM user').first()).toEqual({ count: 0 });
     const bucket = (await mf.getR2Bucket('ASSET_BUCKET')) as unknown as {
@@ -136,7 +146,7 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
       runtime.value = ready;
       expect(await storageStatus()).toMatchObject({ mode: 'd1', ready: false, reason: 'connection_failed' });
     } finally {
-      await db.prepare('UPDATE d1_auth_meta SET version = 1').run();
+      await db.prepare('UPDATE d1_auth_meta SET version = 2').run();
     }
   });
   it('rejects the inactive Supabase execution path in both runtimes', async () => {

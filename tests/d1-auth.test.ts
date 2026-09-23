@@ -163,6 +163,15 @@ describe('D1 Google auth configuration and migrations', () => {
       validateD1AuthConfig({ ...env, APP_ENV: 'local', BETTER_AUTH_URL: 'http://127.0.0.1:8787' }).origin,
     ).toBe('http://127.0.0.1:8787');
   });
+  it('treats Google as optional only when both client values are absent', () => {
+    const withoutGoogle = { ...env, GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: undefined };
+    expect(validateD1AuthConfig(withoutGoogle).google).toBeUndefined();
+    expect(validateD1AuthConfig(env).google).toEqual({
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+    });
+    expect(createD1Auth(withoutGoogle).options.socialProviders).toEqual({});
+  });
   it('fails readiness on a missing migration version', async () => {
     await env.DB.prepare('UPDATE d1_auth_meta SET version = 999').run();
     try {
@@ -171,12 +180,15 @@ describe('D1 Google auth configuration and migrations', () => {
         code: 'auth_schema_unavailable',
       });
     } finally {
-      await env.DB.prepare('UPDATE d1_auth_meta SET version = 1').run();
+      await env.DB.prepare('UPDATE d1_auth_meta SET version = 2').run();
     }
   });
-  it('keeps passwords and account auto-linking disabled and enables secure cookies', () => {
+  it('allows ID passwords without email verification, keeps linking off and enables secure cookies', () => {
     const auth = createD1Auth(env);
-    expect(auth.options.emailAndPassword.enabled).toBe(false);
+    expect(auth.options.emailAndPassword).toMatchObject({ enabled: true, requireEmailVerification: false });
+    expect(auth.options.disabledPaths).toEqual(
+      expect.arrayContaining(['/sign-in/email', '/request-password-reset', '/reset-password']),
+    );
     expect(auth.options.account.accountLinking.enabled).toBe(false);
     expect(auth.options.advanced.useSecureCookies).toBe(true);
     expect(auth.options.telemetry.enabled).toBe(false);
@@ -404,6 +416,142 @@ describe('real auth handlers with an isolated Google provider fixture', () => {
     );
     expect(response.status).toBe(429);
   }, 20_000);
+});
+
+describe('ID/password members', () => {
+  const signUp = (body: Record<string, unknown>, ip = '203.0.113.20', environment = env) =>
+    createD1Auth(environment).handler(request('/api/auth/sign-up/email', 'POST', undefined, body, ip));
+  const signIn = (body: Record<string, unknown>, ip = '203.0.113.30') =>
+    createD1Auth(env).handler(request('/api/auth/sign-in/username', 'POST', undefined, body, ip));
+  const code = async (response: Response) => ((await response.json()) as { code?: string }).code;
+
+  it('registers a regular member with a server-made placeholder email and signs in again', async () => {
+    const created = await signUp({
+      username: 'Gildong_01',
+      password: 'correct horse battery',
+      name: '다른 이름',
+      email: 'victim@gmail.com',
+      image: 'https://attacker.test/avatar.png',
+    });
+    expect(created.status).toBe(200);
+    const first = await getD1Actor(request('/api/d1/projects', 'GET', cookies(created)), env);
+    expect(first.isAdmin).toBe(false);
+    expect(
+      await env.DB.prepare('SELECT name,email,emailVerified,image,username,displayUsername FROM user').first(),
+    ).toEqual({
+      name: 'Gildong_01',
+      email: 'gildong_01@users.sjn.invalid',
+      emailVerified: 0,
+      image: null,
+      username: 'gildong_01',
+      displayUsername: 'Gildong_01',
+    });
+    const account = await env.DB.prepare('SELECT providerId,password FROM account').first<{
+      providerId: string;
+      password: string;
+    }>();
+    expect(account?.providerId).toBe('credential');
+    expect(account?.password).not.toContain('correct horse');
+    expect(
+      await env.DB.prepare('SELECT status FROM d1_user_management WHERE user_id=?').bind(first.id).first(),
+    ).toEqual({ status: 'active' });
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM admin_roles').first()).toEqual({ count: 0 });
+
+    const again = await signIn({ username: 'GILDONG_01', password: 'correct horse battery' });
+    expect(again.status).toBe(200);
+    expect(await getD1Actor(request('/api/d1/projects', 'GET', cookies(again)), env)).toEqual(first);
+  }, 30_000);
+
+  it('rejects taken IDs, wrong passwords and invalid input without creating members', async () => {
+    expect((await signUp({ username: 'member1', password: 'password-one' })).status).toBe(200);
+    const taken = await signUp({ username: 'MEMBER1', password: 'password-two' }, '203.0.113.21');
+    expect(taken.status).toBe(400);
+    expect(await code(taken)).toBe('USERNAME_IS_ALREADY_TAKEN');
+    for (const body of [
+      { username: 'member1', password: 'wrong-password' },
+      { username: 'nobody', password: 'password-one' },
+    ]) {
+      const response = await signIn(body);
+      expect(response.status).toBe(401);
+      expect(await code(response)).toBe('INVALID_USERNAME_OR_PASSWORD');
+    }
+    const invalid: [Record<string, unknown>, string][] = [
+      [{ username: 'short_pw', password: 'short' }, 'PASSWORD_TOO_SHORT'],
+      [{ username: 'abc', password: 'password-one' }, 'USERNAME_TOO_SHORT'],
+      [{ username: 'bad id!', password: 'password-one' }, 'INVALID_USERNAME'],
+      [{ password: 'password-one', email: 'victim@gmail.com', name: 'x' }, 'USERNAME_REQUIRED'],
+    ];
+    for (const [index, [body, expected]] of invalid.entries()) {
+      const response = await signUp(body, `203.0.113.${40 + index}`);
+      expect(response.status).toBe(400);
+      expect(await code(response)).toBe(expected);
+    }
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM user').first()).toEqual({ count: 1 });
+  }, 30_000);
+
+  it('reports suspension only after the password matches and never creates a session', async () => {
+    const created = await signUp({ username: 'paused', password: 'password-one' });
+    const actor = await getD1Actor(request('/api/d1/projects', 'GET', cookies(created)), env);
+    await env.DB.prepare(
+      "UPDATE d1_user_management SET status='suspended',revision=revision+1 WHERE user_id=?",
+    )
+      .bind(actor.id)
+      .run();
+    const wrong = await signIn({ username: 'paused', password: 'wrong-password' });
+    expect(wrong.status).toBe(401);
+    const suspended = await signIn({ username: 'paused', password: 'password-one' });
+    expect(suspended.status).toBe(403);
+    expect(await code(suspended)).toBe('ACCOUNT_SUSPENDED');
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM session').first()).toEqual({ count: 0 });
+  }, 30_000);
+
+  it('closes email sign-in and rate limits repeated ID attempts', async () => {
+    await signUp({ username: 'limited', password: 'password-one' });
+    const email = await createD1Auth(env).handler(
+      request('/api/auth/sign-in/email', 'POST', undefined, {
+        email: 'limited@users.sjn.invalid',
+        password: 'password-one',
+      }),
+    );
+    expect(email.status).toBe(404);
+    for (let i = 0; i < 5; i++)
+      expect((await signIn({ username: 'limited', password: 'wrong-password' }, '203.0.113.50')).status).toBe(
+        401,
+      );
+    expect((await signIn({ username: 'limited', password: 'password-one' }, '203.0.113.50')).status).toBe(429);
+  }, 30_000);
+
+  it('keeps IDs fixed after sign-up, including for Google members without one', async () => {
+    const google = await completeLogin();
+    const idMember = await signUp({ username: 'fixed_id', password: 'password-one' });
+    for (const [cookie, username] of [
+      [google.cookie, 'claimed_id'],
+      [cookies(idMember), 'renamed_id'],
+    ]) {
+      const response = await createD1Auth(env).handler(
+        request('/api/auth/update-user', 'POST', cookie, { username }),
+      );
+      expect(response.status).toBe(400);
+      expect(await code(response)).toBe('USERNAME_IS_IMMUTABLE');
+    }
+    expect(
+      (await env.DB.prepare('SELECT username FROM user ORDER BY username').all()).results.map(
+        (row) => row.username,
+      ),
+    ).toEqual([null, 'fixed_id']);
+  }, 30_000);
+
+  it('signs members up without any Google configuration', async () => {
+    const withoutGoogle = { ...env, GOOGLE_CLIENT_ID: undefined, GOOGLE_CLIENT_SECRET: undefined };
+    const created = await signUp({ username: 'no_google', password: 'password-one' }, undefined, withoutGoogle);
+    expect(created.status).toBe(200);
+    const actor = await getD1Actor(request('/api/d1/projects', 'GET', cookies(created)), withoutGoogle);
+    expect(actor.isAdmin).toBe(false);
+    const social = await createD1Auth(withoutGoogle).handler(
+      request('/api/auth/sign-in/social', 'POST', undefined, { provider: 'google', callbackURL: '/' }),
+    );
+    expect(social.ok).toBe(false);
+  }, 30_000);
 });
 
 describe('cookie-authenticated cloud mutation origin boundary', () => {

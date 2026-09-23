@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-이 문서는 Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0006_reconstruction_diagnostics.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브를 추가한다.
+이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0007_username_auth.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼을 추가한다. **`0007`은 2026-09-23 소스에 추가했으며 원격 `sjn`에는 미적용이다.**
 
 **코드·SQL 파일을 작성하는 것과 운영 DB에 적용하는 것은 별도 단계다.** 2026-09-17 사용자 승인 후 원격 D1 `sjn`의 기존 `0001~0004`에 `0005`·`0006`을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 `0001~0006`을 순서대로 적용했다. 양쪽 적용 이력·초기 데이터·무결성을 확인했다. 상세 확인값은 8절을 따른다. 앱의 운영 연결·실제 Google OAuth·운영 R2 검증과 관리자 지정·배포·R2 버킷 생성·AI 호출은 별도이며 이번 작업에서 수행하지 않았다. Google 비밀키, Better Auth secret, 로그인 토큰은 이 문서나 소스에 넣지 않는다.
 
@@ -33,7 +33,7 @@
 | 회원 검색·관리자 승격/강등·계정 정지/해제 | 불가 | 불가 | 가능; 자기 정지·마지막 활성 관리자 해제/정지 금지 |
 | 사진 분석용 프로젝트 전용 모형 | 불가 | 본인 프로젝트 범위 | 본인 또는 명시적으로 편집 중인 프로젝트 범위 |
 
-정지 회원은 계정·관리자 기능을 사용할 수 없다. 공개 메인·공용 자료·새 빈 공간 체험은 누구나 볼 수 있지만 기존 정지 계정 자료를 체험으로 가져오지 않는다. `/login`에서 **Google로 시작하기**를 누르면 첫 접속은 일반 회원 가입, 이후 접속은 기존 계정 로그인이다. 비밀번호 가입·최초 가입자 자동 관리자 지정은 없다. callback은 `/api/auth/callback/google`이며 공급자 오류 원문 대신 진행·취소·실패·재시도를 안내한다.
+정지 회원은 계정·관리자 기능을 사용할 수 없다. 공개 메인·공용 자료·새 빈 공간 체험은 누구나 볼 수 있지만 기존 정지 계정 자료를 체험으로 가져오지 않는다. `/login`·로그인 팝업에서 아이디(영문·숫자·밑줄 4~20자, 소문자 정규화·변경 불가)와 비밀번호(8~128자)로 회원가입·로그인한다. 가입은 일반 회원으로 즉시 로그인하며 이메일 입력·인증·비밀번호 찾기는 없다. 서버에 Google client ID·secret이 모두 있으면 **Google로 계속하기**도 표시하며 첫 접속은 일반 회원 가입, 이후 접속은 기존 계정 로그인이다. 아이디 계정과 Google 계정은 자동 연결하지 않고 최초 가입자 자동 관리자 지정도 없다. callback은 `/api/auth/callback/google`이며 공급자 오류 원문 대신 진행·취소·실패·재시도를 안내한다.
 
 기존 일반 프로젝트 API의 `id + owner_id` 검사는 유지한다. 관리자 권한은 별도 `/api/admin/projects` 경로에서만 소유권과 분리해 행사하며, 타인 프로젝트의 소유자는 바꾸지 않는다. 새 창이나 화면 전환 후에도 현재 활성 관리자 여부를 확인한다. 전용 편집기는 관리자·프로젝트 범위의 저장 경로를 사용하고 일반 회원 저장소나 과거 브라우저 캐시로 우회하지 않는다.
 
@@ -117,9 +117,9 @@ ID는 앱에서 UUID를 사용한다. 기존 SQL의 ID 컬럼은 `TEXT`이고 UU
 
 | 테이블         | 컬럼                                                                                                                                                                                | 의미                                                                                                                                    |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `user`         | `id`, `name`, `email`, `emailVerified`, `image`, `createdAt`, `updatedAt`                                                                                                           | 회원 ID, 표시 이름, 고유 이메일, 이메일 검증 여부, 프로필 이미지, 가입/변경 시각                                                        |
+| `user`         | `id`, `name`, `email`, `emailVerified`, `image`, `createdAt`, `updatedAt`, `username`, `displayUsername`                                                                            | 회원 ID, 표시 이름, 고유 이메일, 이메일 검증 여부, 프로필 이미지, 가입/변경 시각. 0007의 `username`은 소문자 아이디(고유, Google 회원은 NULL), `displayUsername`은 입력한 표기. 아이디 회원의 `email`은 서버가 만든 발송 불가 주소 `아이디@users.sjn.invalid` |
 | `session`      | `id`, `expiresAt`, `token`, `createdAt`, `updatedAt`, `ipAddress`, `userAgent`, `userId`                                                                                            | 세션 식별자·만료·고유 토큰·시각·접속 정보·회원 FK. 회원 삭제 시 cascade                                                                 |
-| `account`      | `id`, `accountId`, `providerId`, `userId`, `accessToken`, `refreshToken`, `idToken`, `accessTokenExpiresAt`, `refreshTokenExpiresAt`, `scope`, `password`, `createdAt`, `updatedAt` | Google 계정 연결과 OAuth 토큰·만료·scope. `providerId,accountId` 고유. `password`는 라이브러리 호환 컬럼이며 비밀번호 로그인은 비활성화 |
+| `account`      | `id`, `accountId`, `providerId`, `userId`, `accessToken`, `refreshToken`, `idToken`, `accessTokenExpiresAt`, `refreshTokenExpiresAt`, `scope`, `password`, `createdAt`, `updatedAt` | Google 계정 연결과 OAuth 토큰·만료·scope, 아이디 회원의 `providerId='credential'` 비밀번호 해시(`password`). `providerId,accountId` 고유 |
 | `verification` | `id`, `identifier`, `value`, `expiresAt`, `createdAt`, `updatedAt`                                                                                                                  | OAuth state 등 인증 검증 자료. 공개 API 반환 금지                                                                                       |
 | `rateLimit`    | `id`, `key`, `count`, `lastRequest`                                                                                                                                                 | Better Auth 요청 속도 제한. 마지막 요청은 정수 시각                                                                                     |
 | `admin_roles`  | `user_id`, `created_at`                                                                                                                                                             | 해당 회원에게 관리자 역할 부여. `user_id`가 PK이자 회원 FK                                                                              |
@@ -240,7 +240,7 @@ Seed는 고정 ID와 `ON CONFLICT DO NOTHING`을 사용한다. 동일 seed를 �
 
 ## 7. 최초 관리자 지정 SQL
 
-최초 관리자도 먼저 정상 Google 로그인으로 회원·Google account 행을 만들어야 한다. 아래는 **관리자가 한 명도 없는 DB의 최초 지정** 예시다. 대상 DB·회원 ID·검증된 이메일을 직접 확인한 운영자가 실행한다. 로컬 개발에는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`, 운영에는 확인한 운영 DB를 사용하며 서로 대체하지 않는다. 이번 작업에서는 지정 SQL을 실행하지 않았다.
+최초 관리자도 먼저 정상 로그인으로 회원·account 행을 만들어야 한다. 아이디 회원이면 아래 Google 조건 대신 `u.username='확인한-아이디' AND a.providerId='credential'`로 확인·지정하며 `emailVerified` 조건은 쓰지 않는다. 아래는 **관리자가 한 명도 없는 DB의 최초 지정** 예시다. 대상 DB·회원 ID·검증된 이메일을 직접 확인한 운영자가 실행한다. 로컬 개발에는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`, 운영에는 확인한 운영 DB를 사용하며 서로 대체하지 않는다. 이번 작업에서는 지정 SQL을 실행하지 않았다.
 
 ```sql
 SELECT u.id,u.email,u.emailVerified,a.providerId,s.status
@@ -775,3 +775,17 @@ CREATE TABLE d1_diagnostic_checks (
   conflict_ok INTEGER NOT NULL DEFAULT 1 CONSTRAINT diagnostic_conflict CHECK(conflict_ok=1)
 );
 ```
+
+### 10.7 아이디 로그인 — `0007_username_auth.sql`
+
+```sql
+-- Better Auth username plugin: ID/password members alongside optional Google OAuth.
+-- Credential members store a server-generated, non-deliverable email (<username>@users.sjn.invalid)
+-- because "user"."email" stays NOT NULL UNIQUE. Existing Google members keep a NULL username.
+ALTER TABLE "user" ADD COLUMN "username" TEXT;
+ALTER TABLE "user" ADD COLUMN "displayUsername" TEXT;
+CREATE UNIQUE INDEX "user_username_idx" ON "user" ("username");
+UPDATE "d1_auth_meta" SET "version" = 2 WHERE "id" = 1;
+```
+
+앱 준비 검사는 auth meta version 2와 두 컬럼을 확인한다. 원격 DB에 0007을 적용하기 전에 이 코드를 배포하면 로그인 준비가 실패한다.

@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-확인 기준: **2026-09-17 현재 소스와 별도로 확인한 원격 이력**. 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 기존 `0001~0004`를 보존하며 `0005_admin_management.sql`과 `0006_reconstruction_diagnostics.sql`을 추가 적용했다. `.wrangler/development`의 빈 로컬 개발 DB에도 `0001~0006`을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했으며 관리자 지정·배포·R2 버킷 생성·실제 Google 로그인·AI 호출은 수행하지 않았다. 운영 R2 연결도 미검증이다. 정확한 DDL은 [migrations/d1](../../../../migrations/d1), ERD·인덱스·전체 SQL·과거 확인값은 [DB 설계](../../../../docs/database-design.md)를 따른다.
+확인 기준: **2026-09-17 현재 소스와 별도로 확인한 원격 이력**. 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 기존 `0001~0004`를 보존하며 `0005_admin_management.sql`과 `0006_reconstruction_diagnostics.sql`을 추가 적용했다. `.wrangler/development`의 빈 로컬 개발 DB에도 `0001~0006`을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했으며 관리자 지정·배포·R2 버킷 생성·실제 Google 로그인·AI 호출은 수행하지 않았다. 2026-09-23 소스에 아이디 로그인용 `0007_username_auth.sql`을 추가했으며 **원격 `sjn`에는 미적용**이다. 코드는 auth meta version 2를 준비 조건으로 보므로 원격 적용 전에 이 코드를 배포하면 로그인 준비 검사가 실패한다. 운영 R2 연결도 미검증이다. 정확한 DDL은 [migrations/d1](../../../../migrations/d1), ERD·인덱스·전체 SQL·과거 확인값은 [DB 설계](../../../../docs/database-design.md)를 따른다.
 
 ## 저장 경계
 
@@ -15,7 +15,7 @@
 | 진단 D1/R2 | 진단 메타데이터·계정별 JSON 아카이브(20건/25MiB) |
 | Workers `ASSETS` | 앱 정적 파일; 사용자 자료 R2와 별개 |
 
-기본 개발은 [wrangler.dev.jsonc](../../../../wrangler.dev.jsonc)의 로컬 D1/R2를 `.wrangler/development`에 저장하며 계정 프로젝트·관리·사진/AI 기능에는 Google 로그인이 필요하다. 운영 빌드 원본 [wrangler.jsonc](../../../../wrangler.jsonc)은 기존 `sjn` 바인딩을 보존한다. 소스에는 기존 R2 `sjn`을 연결하는 `ASSET_BUCKET`을 추가했다. 2026-09-17 확인한 실배포 버전에는 이 바인딩과 인증 설정이 아직 없어 소스 변경 후 재배포·인증 준비가 필요하다. 버킷 존재 확인이나 DB 적용 완료를 앱의 R2 업로드·Google 로그인 성공으로 해석하지 않는다. 기존 IndexedDB 자료는 보존한다. 익명 체험은 이 원본이나 계정 복구본을 열지 않는 별도 `/try` 경로다.
+기본 개발은 [wrangler.dev.jsonc](../../../../wrangler.dev.jsonc)의 로컬 D1/R2를 `.wrangler/development`에 저장하며 계정 프로젝트·관리·사진/AI 기능에는 로그인(아이디 또는 설정된 경우 Google)이 필요하다. 운영 빌드 원본 [wrangler.jsonc](../../../../wrangler.jsonc)은 기존 `sjn` 바인딩을 보존한다. 소스에는 기존 R2 `sjn`을 연결하는 `ASSET_BUCKET`을 추가했다. 2026-09-17 확인한 실배포 버전에는 이 바인딩과 인증 설정이 아직 없어 소스 변경 후 재배포·인증 준비가 필요하다. 버킷 존재 확인이나 DB 적용 완료를 앱의 R2 업로드·Google 로그인 성공으로 해석하지 않는다. 기존 IndexedDB 자료는 보존한다. 익명 체험은 이 원본이나 계정 복구본을 열지 않는 별도 `/try` 경로다.
 
 ## 핵심 스키마
 
@@ -27,12 +27,13 @@
 | [0004](../../../../migrations/d1/0004_catalog_seed.sql) | 속성 33개·하위 분류 21개. 고정 ID/`ON CONFLICT DO NOTHING`, 정확히 일치하는 과거 문자열만 연결 |
 | [0005](../../../../migrations/d1/0005_admin_management.sql) | `d1_user_management`, `d1_admin_audit`, `d1_admin_checks`, 관리자 프로젝트 자산/버전 범위, admin meta·목록/감사 인덱스 |
 | [0006](../../../../migrations/d1/0006_reconstruction_diagnostics.sql) | `d1_reconstruction_diagnostics`, `d1_diagnostic_cleanup`, `d1_diagnostic_checks`; 계정별 목록/정리 인덱스 |
+| [0007](../../../../migrations/d1/0007_username_auth.sql) | `user.username`(고유 인덱스)·`displayUsername`, auth meta version 2. 기존 Google 회원은 username NULL |
 
-`0001~0004`는 수정하지 않는다. `0005`는 기존 회원을 active/revision 0으로 backfill하고 기존 역할·세션·자료를 보존한다. 신규 회원 상태 생성, 정지 시 세션 삭제, 정지 회원 session INSERT/UPDATE 거부는 SQL trigger로도 보장한다. `owner_id`·`current_version_id`는 기존 논리 관계이며 새 FK를 만들려고 기존 테이블을 재생성하지 않는다. 카탈로그·새 프로젝트 편집 범위의 참조는 FK를 사용한다.
+`0001~0006`은 수정하지 않는다. `0005`는 기존 회원을 active/revision 0으로 backfill하고 기존 역할·세션·자료를 보존한다. 신규 회원 상태 생성, 정지 시 세션 삭제, 정지 회원 session INSERT/UPDATE 거부는 SQL trigger로도 보장한다. `owner_id`·`current_version_id`는 기존 논리 관계이며 새 FK를 만들려고 기존 테이블을 재생성하지 않는다. 카탈로그·새 프로젝트 편집 범위의 참조는 FK를 사용한다.
 
 ## 로그인·회원 관리
 
-[인증](../../../../src/lib/auth/d1.ts)은 Google + D1 세션이다. 검증된 세션 ID와 최신 회원 상태·`admin_roles`를 확인한다. 비밀번호 가입·계정 자동 연결·첫 가입자 자동 승격은 없다. 개발·운영 모두 메인·공용 자재 구경·`/try`의 빈 공간 생성과 기본 자재 검색/배치를 공개한다. 사진·AI·정식 저장·출력과 기존 계정 프로젝트는 로그인 필수다. 세션 만료·정지·강등 후 계정/관리자 자료 접근을 차단하며 해당 작업을 게스트 초안으로 자동 전환하지 않는다. 운영 저장 계약은 D1 전용이다. 로컬 저장 어댑터·Supabase 실행 코드와 SDK는 제거했으며 `/api/cloud/**`는 410으로 종료를 안내한다. 과거 데이터 형식 검증용 IndexedDB 구현은 테스트 전용이며 앱 번들에서 참조하지 않는다.
+[인증](../../../../src/lib/auth/d1.ts)은 아이디/비밀번호 + 선택적 Google OAuth와 D1 세션이다. 검증된 세션 ID와 최신 회원 상태·`admin_roles`를 확인한다. 아이디 회원은 Better Auth `username` 플러그인으로 가입하며 비밀번호 해시는 `account.password`(`providerId=credential`)에 둔다. 아이디는 영문·숫자·밑줄 4~20자, 소문자로 정규화하며 변경할 수 없다. `user.email`이 필수·고유이므로 서버 hook이 클라이언트 입력 대신 발송 불가 주소 `아이디@users.sjn.invalid`를 저장한다([계정 규칙](../../../../src/lib/auth/credential-account.ts)). 이메일 로그인·비밀번호 찾기/변경 경로는 막았고 이메일 인증·계정 자동 연결·첫 가입자 자동 승격은 없다. Google은 client ID·secret이 둘 다 있을 때만 켜지며 한쪽만 있으면 설정 오류다. 정지 회원은 비밀번호가 맞은 뒤에만 `ACCOUNT_SUSPENDED`를 받고 세션은 만들어지지 않는다. 개발·운영 모두 메인·공용 자재 구경·`/try`의 빈 공간 생성과 기본 자재 검색/배치를 공개한다. 사진·AI·정식 저장·출력과 기존 계정 프로젝트는 로그인 필수다. 세션 만료·정지·강등 후 계정/관리자 자료 접근을 차단하며 해당 작업을 게스트 초안으로 자동 전환하지 않는다. 운영 저장 계약은 D1 전용이다. 로컬 저장 어댑터·Supabase 실행 코드와 SDK는 제거했으며 `/api/cloud/**`는 410으로 종료를 안내한다. 과거 데이터 형식 검증용 IndexedDB 구현은 테스트 전용이며 앱 번들에서 참조하지 않는다.
 
 [회원 API](../../../../src/lib/admin/users.ts)는 이름/email/id 부분 검색·role/status 필터와 25개 cursor 페이지, `setRole/setStatus`를 제공한다. 변경에는 `expectedRevision`과 `X-Idempotency-Key`가 필수다. [access](../../../../src/lib/admin/access.ts)는 현재 활성 관리자·대상 revision·자기 정지·마지막 활성 관리자 보호를 변경·감사·재시도 결과와 같은 batch에서 확인한다. 정상 값 변경만 revision을 증가시키며 중복 요청은 감사/변경을 반복하지 않는다.
 
@@ -55,15 +56,15 @@ R2와 D1은 하나의 트랜잭션이 아니다. `stageObject`가 업로드 전�
 
 ## 적용·검증
 
-`npm run db:dev:migrate`는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`의 로컬 DB에만 적용한다. 원격 `sjn`과 로컬 개발 DB는 2026-09-17 승인 후 0001~0006 적용을 완료했다. 이후 원격 변경은 승인된 대상과 미적용 목록을 다시 확인한다. migration 작성이나 문서 변경을 운영 적용 허가로 해석하지 않는다.
+`npm run db:dev:migrate`는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`의 로컬 DB에만 적용한다. 원격 `sjn`과 로컬 개발 DB는 2026-09-17 승인 후 0001~0006 적용을 완료했다. 0007은 원격 미적용이다. 이후 원격 변경은 승인된 대상과 미적용 목록을 다시 확인한다. migration 작성이나 문서 변경을 운영 적용 허가로 해석하지 않는다.
 
-빈 DB 0001~0006, 기존 DB upgrade, seed 중복 방지, FK·불변 참조·관리자 감사·정지·동시 변경·재시도를 격리 Miniflare로 검사한다. 주된 테스트는 `tests/d1-auth.test.ts`, `d1-admin-users.test.ts`, `admin-projects.test.ts`, `d1-storage.test.ts`, `d1-catalog.test.ts`다. 브라우저 fixture와 로컬 Google provider를 실제 Google·운영 R2 검증으로 보고하지 않는다. 준비 확인은 읽기 전용이며 앱이 테이블을 자동 생성하지 않는다.
+빈 DB 0001~0007, 기존 DB upgrade, seed 중복 방지, FK·불변 참조·관리자 감사·정지·동시 변경·재시도를 격리 Miniflare로 검사한다. 주된 테스트는 `tests/d1-auth.test.ts`, `d1-admin-users.test.ts`, `admin-projects.test.ts`, `d1-storage.test.ts`, `d1-catalog.test.ts`다. 아이디 가입·로그인·중복·정지·속도 제한은 `tests/d1-auth.test.ts`가 실제 Better Auth와 Miniflare D1로 검사한다. 브라우저 fixture와 로컬 Google provider를 실제 Google·운영 R2 검증으로 보고하지 않는다. 준비 확인은 읽기 전용이며 앱이 테이블을 자동 생성하지 않는다.
 
 관련 스키마·권한·참조·실행 경계가 바뀌면 이 요약과 [상세 설계](../../../../docs/database-design.md), [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 함께 갱신한다.
 
 ## 브라우저 저장과 진단 아카이브
 
-프로젝트·자재·기준값의 정식 저장은 D1/R2다. [게스트 세션](../../../../src/lib/guest/session.ts)은 `sessionStorage`의 `sjn:guest-draft:v1`에 같은 탭 초안을 보관하여 새로고침·Google 로그인 이동 뒤 복원한다. 탭을 닫으면 사라질 수 있으며 계정 IndexedDB나 기존 자료를 열지 않는다. 체험에서 로그인을 선택해 돌아오면 현재 계정과 자재 참조를 재검증하여 본인 D1/R2 프로젝트로 저장한다. 저장 확정 전에는 임시 초안을 지우지 않고 실패·계정 변경을 처리하며, 익명 상태에서는 D1/R2 쓰기·AI·진단 아카이브를 실행하지 않는다. 기준값 선택은 D1 API만 사용하며 과거 localStorage 분류를 읽거나 저장하지 않는다. 본인 프로젝트의 IndexedDB 복구본은 500ms 지연·서버 저장 전에 작성하고 확인된 동일 내용은 정리한다. 충돌 보관본은 삭제하지 않는다.
+프로젝트·자재·기준값의 정식 저장은 D1/R2다. [게스트 세션](../../../../src/lib/guest/session.ts)은 `sessionStorage`의 `sjn:guest-draft:v1`에 같은 탭 초안을 보관하여 새로고침·Google 로그인 이동 뒤 복원한다. 탭을 닫으면 사라질 수 있으며 계정 IndexedDB나 기존 자료를 열지 않는다. 체험에서 로그인(아이디 가입·로그인 또는 Google)을 마치고 `/try?resume=1`로 돌아오면 현재 계정과 자재 참조를 재검증하여 본인 D1/R2 프로젝트로 저장한다. 저장 확정 전에는 임시 초안을 지우지 않고 실패·계정 변경을 처리하며, 익명 상태에서는 D1/R2 쓰기·AI·진단 아카이브를 실행하지 않는다. 기준값 선택은 D1 API만 사용하며 과거 localStorage 분류를 읽거나 저장하지 않는다. 본인 프로젝트의 IndexedDB 복구본은 500ms 지연·서버 저장 전에 작성하고 확인된 동일 내용은 정리한다. 충돌 보관본은 삭제하지 않는다.
 
 자산 캐시는 매번 서버가 계정 권한을 승인한 뒤 동일 SHA-256 Blob만 재사용한다. 저장 후 7일 만료, 모든 계정 합산 100개/200MiB, 개별 25MiB 제한을 적용한다. 서버 권한 오류나 연결 실패에 캐시로 우회하지 않으며 관리자 타인 프로젝트 자산에는 캐시를 사용하지 않는다. 시안 미리보기와 AI 단계 캐시는 반복 렌더링·추론 방지를 위해 유지하고 모델 파일은 별도 CacheStorage를 쓴다.
 

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import type { AdminUser, UserRole, UserStatus } from '@/lib/admin/contracts';
 import { useAccess } from '@/components/app-provider';
+import { accountLabel } from '@/lib/auth/credential-account';
 import AdminShell from './admin-shell';
 import { adminRequest, AdminRequestError, useAdminPage } from './data';
 import styles from './admin.module.css';
@@ -138,7 +139,7 @@ export default function AdminUsers() {
               <tr key={user.id}>
                 <td>
                   {user.name}
-                  <small>{user.email}</small>
+                  <small>{accountLabel(user.email)}</small>
                   <small>{user.id}</small>
                   {user.id === userId && <small>내 계정</small>}
                 </td>
@@ -188,7 +189,7 @@ export default function AdminUsers() {
             <p>
               <strong>{change.user.name}</strong>
               <br />
-              {change.user.email}
+              {accountLabel(change.user.email)}
               <br />
               {change.user.id}
             </p>

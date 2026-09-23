@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-확인 기준: **2026-09-17 현재 소스**. 2026-09-17 사용자 승인 후 D1 `sjn`의 기존 0001~0004에 0005·0006을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 0001~0006을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했다. 관리자 지정·배포·R2 버킷 생성·실제 Google 인증·AI 호출은 수행하지 않았다. 실제 secret은 문서·로그·Git에 기록하지 않는다. 기존 R2 `sjn`(Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개)을 읽기 확인했고 소스에 `ASSET_BUCKET → sjn`을 추가했다. 2026-09-17 14:46:54 UTC에 생성된 현재 실배포 버전(`d70ff6c6-bd4e-4bba-9758-9bd5bdd81911`)을 읽기 확인한 결과 `DB`·`ASSET_BUCKET`·`AI`·`ASSETS` 바인딩과 `APP_ENV=production`·`STORAGE_MODE=d1`·`BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev`가 있다. 운영 secret 목록은 비어 있고 전체 바인딩에도 `BETTER_AUTH_SECRET`·`GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`이 없어 로그인 준비 검사가 실패한다. 실제 `/api/storage/status`는 `ready=false`, `reason=invalid_configuration`이다. 이 확인은 운영 설정 변경·배포를 하지 않은 읽기 검사이며, 인증 준비 검사에서 중단되므로 현재 D1/R2 실제 읽기·쓰기나 Google 로그인이 성공했다는 뜻은 아니다. 실제 Google OAuth·R2 업로드 검증은 남아 있다. 로컬 `.dev.vars`·`.env.local`·`.env`·`.dev.vars.development`도 확인 당시 없었다. Google callback은 `https://sjn.gyulbbe.workers.dev/api/auth/callback/google`이다.
+확인 기준: **2026-09-17 현재 소스**. 2026-09-17 사용자 승인 후 D1 `sjn`의 기존 0001~0004에 0005·0006을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 0001~0006을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했다. 관리자 지정·배포·R2 버킷 생성·실제 Google 인증·AI 호출은 수행하지 않았다. 실제 secret은 문서·로그·Git에 기록하지 않는다. 기존 R2 `sjn`(Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개)을 읽기 확인했고 소스에 `ASSET_BUCKET → sjn`을 추가했다. 2026-09-17 14:46:54 UTC에 생성된 현재 실배포 버전(`d70ff6c6-bd4e-4bba-9758-9bd5bdd81911`)을 읽기 확인한 결과 `DB`·`ASSET_BUCKET`·`AI`·`ASSETS` 바인딩과 `APP_ENV=production`·`STORAGE_MODE=d1`·`BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev`가 있다. 운영 secret 목록은 비어 있고 전체 바인딩에도 `BETTER_AUTH_SECRET`·`GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`이 없어 로그인 준비 검사가 실패한다. 2026-09-23 소스부터 로그인 준비에 필수인 secret은 `BETTER_AUTH_SECRET`뿐이고 Google 두 값은 선택이다(둘 다 없으면 아이디 로그인만, 한쪽만 있으면 설정 오류). 이 소스는 `0007_username_auth.sql` 적용(auth meta version 2)을 준비 조건으로 보며 원격 `sjn`에는 아직 적용하지 않았다. 실제 `/api/storage/status`는 `ready=false`, `reason=invalid_configuration`이다. 이 확인은 운영 설정 변경·배포를 하지 않은 읽기 검사이며, 인증 준비 검사에서 중단되므로 현재 D1/R2 실제 읽기·쓰기나 Google 로그인이 성공했다는 뜻은 아니다. 실제 Google OAuth·R2 업로드 검증은 남아 있다. 로컬 `.dev.vars`·`.env.local`·`.env`·`.dev.vars.development`도 확인 당시 없었다. Google callback은 `https://sjn.gyulbbe.workers.dev/api/auth/callback/google`이다.
 
 ## 실행과 검사
 
@@ -10,8 +10,8 @@ Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [pack
 
 | 목적 | 명령 | 동작 |
 | --- | --- | --- |
-| 기본 Workers 개발 | `npm run dev` 또는 `npm run dev:vinext` | vinext, `http://127.0.0.1:3000`, 로컬 D1/R2; 계정 기능은 Google 로그인 |
-| 개발 migration | `npm run db:dev:migrate` | 0001~0006, 로컬 DB만, `.wrangler/development` |
+| 기본 Workers 개발 | `npm run dev` 또는 `npm run dev:vinext` | vinext, `http://127.0.0.1:3000`, 로컬 D1/R2; 계정 기능은 아이디 가입·로그인(Google은 설정 시) |
+| 개발 migration | `npm run db:dev:migrate` | 0001~0007 중 미적용 번호, 로컬 DB만, `.wrangler/development` |
 | 별도 Next 개발 | `npm run dev:next` | Node/Next, Cloudflare D1/R2/AI 바인딩 없음; 기본 앱 작업 공간 대체 아님 |
 | Next 빌드 | `npm run build` → `npm run start` | Node 빌드/실행 검사; Workers 바인딩은 생기지 않음 |
 | Workers 빌드·미리보기 | `npm run build:vinext` → `npm run start:vinext` | 빌드 설정과 `dist/server/wrangler.json`, 포트 8787, `.wrangler/state` |
@@ -30,21 +30,21 @@ Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [pack
 | [.env.example](../../../../.env.example) | Node/Next 변수 참고. `.env.local`은 Workers secret을 대신하지 않음 |
 | `dist/server/wrangler.json` | 생성물; 직접 편집하지 않고 원본 설정을 고쳐 재빌드 |
 
-D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아니다. `ASSETS`는 정적 파일이고 R2 사용자 자료와 다르다. `AI`는 Gemma/FLUX 공통 Workers AI 바인딩이다. `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`은 서버 전용이다. `NEXT_PUBLIC_*`·Wrangler vars·커밋에 비밀값을 넣지 않는다.
+D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아니다. `ASSETS`는 정적 파일이고 R2 사용자 자료와 다르다. `AI`는 Gemma/FLUX 공통 Workers AI 바인딩이다. `BETTER_AUTH_SECRET`(필수), `GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`(선택, 둘 다 넣거나 둘 다 비움)은 서버 전용이다. 준비 응답 `/api/storage/status`는 ready일 때 값 없이 `googleSignIn` 여부만 알려 주고 화면은 이에 따라 Google 버튼을 숨긴다. `NEXT_PUBLIC_*`·Wrangler vars·커밋에 비밀값을 넣지 않는다.
 
 ## 첫 로컬 실행
 
 1. `.dev.vars.example`을 `.dev.vars`로 복사한다(이미 있으면 덮어쓰지 않는다).
-2. Google 웹 OAuth 클라이언트의 origin을 `http://127.0.0.1:3000`, redirect URI를 `http://127.0.0.1:3000/api/auth/callback/google`로 맞추고 개발용 credentials를 로컬 secret에 입력한다. 테스트 상태라면 계정이 Google 테스트 사용자에 포함되어야 한다.
-3. 길이 32자 이상 안전한 `BETTER_AUTH_SECRET`을 준비한다. 경로 없는 `BETTER_AUTH_URL`과 실제 접속 origin을 맞춘다.
-4. `npm run db:dev:migrate` 후 `npm run dev`를 실행하고 준비 상태·Google 로그인을 확인한다.
-5. 최초 관리자 지정은 로그인한 검증된 회원만 대상으로 [bootstrap SQL](../../../../docs/database-design.md)을 로컬 개발 DB에 적용한다. 이후 역할/상태 변경은 관리자 UI를 사용한다.
+2. 길이 32자 이상 안전한 `BETTER_AUTH_SECRET`을 준비한다. 경로 없는 `BETTER_AUTH_URL`과 실제 접속 origin을 맞춘다. 이것만으로 아이디 가입·로그인을 쓸 수 있다.
+3. Google도 쓰려면 웹 OAuth 클라이언트의 origin을 `http://127.0.0.1:3000`, redirect URI를 `http://127.0.0.1:3000/api/auth/callback/google`로 맞추고 개발용 credentials 두 값을 모두 로컬 secret에 입력한다. 테스트 상태라면 계정이 Google 테스트 사용자에 포함되어야 한다.
+4. `npm run db:dev:migrate` 후 `npm run dev`를 실행하고 준비 상태·아이디 가입/로그인(설정 시 Google)을 확인한다.
+5. 최초 관리자 지정은 로그인한 회원만 대상으로 [bootstrap SQL](../../../../docs/database-design.md)을 로컬 개발 DB에 적용한다. 아이디 회원은 `user.username`으로 확인한다. 이후 역할/상태 변경은 관리자 UI를 사용한다.
 
-개발의 계정 프로젝트·관리·사진/AI 기능에는 실제 Google 로그인이 필요하다. 메인·공용 자재·`/try` 체험은 로그인 없이 열리며 공용 자재 읽기에는 로컬 D1/R2가 필요하다. 격리 테스트의 서명된 Google fixture는 일반 실행용 우회 기능이 아니다. 로컬 D1/R2 구성 자체는 Cloudflare 운영 DB·버킷 생성이나 배포를 필요로 하지 않는다. 이 문서는 실제 Google 인증 완료를 의미하지 않는다.
+개발의 계정 프로젝트·관리·사진/AI 기능에는 로그인이 필요하며 Google 없이 아이디 가입으로 시작할 수 있다. 메인·공용 자재·`/try` 체험은 로그인 없이 열리며 공용 자재 읽기에는 로컬 D1/R2가 필요하다. 격리 테스트의 서명된 Google fixture는 일반 실행용 우회 기능이 아니다. 로컬 D1/R2 구성 자체는 Cloudflare 운영 DB·버킷 생성이나 배포를 필요로 하지 않는다. 이 문서는 실제 Google 인증 완료를 의미하지 않는다.
 
 ## 현재 저장소·접근 정책
 
-[storage/config](../../../../src/lib/storage/config.ts)와 [server](../../../../src/lib/storage/server.ts)의 정식 계정 저장은 개발·운영 모두 D1 + Google 로그인을 요구한다. 공개 경로 `/`, `/materials`, `/try`, `/login`과 계정 작업공간의 준비 상태를 분리한다. `/try`는 같은 탭 `sessionStorage` 초안만 사용하며 빈 공간 생성·공개 자재 배치를 제공하고, 사진·AI·정식 저장·출력은 로그인 안내로 연결한다. `auto/d1`만 현재 선택 경로이며 `local/supabase`는 설정 오류다. 과거 Supabase SQL과 브라우저 원본은 보존하지만 실행 어댑터·SDK는 제거했다. `/api/cloud/**`는 410이며 계정 자료는 `/api/d1/**`, 익명 공개 읽기는 `/api/catalog/{materials,images,placement}`를 사용한다. IndexedDB에는 복구본·재사용 캐시만 새로 저장하고 진단 아카이브는 `/api/reconstruction/diagnostics`를 통해 D1/R2에 저장한다.
+[storage/config](../../../../src/lib/storage/config.ts)와 [server](../../../../src/lib/storage/server.ts)의 정식 계정 저장은 개발·운영 모두 D1 + 로그인(아이디 또는 Google)을 요구한다. 공개 경로 `/`, `/materials`, `/try`, `/login`과 계정 작업공간의 준비 상태를 분리한다. `/try`는 같은 탭 `sessionStorage` 초안만 사용하며 빈 공간 생성·공개 자재 배치를 제공하고, 사진·AI·정식 저장·출력은 로그인 안내로 연결한다. `auto/d1`만 현재 선택 경로이며 `local/supabase`는 설정 오류다. 과거 Supabase SQL과 브라우저 원본은 보존하지만 실행 어댑터·SDK는 제거했다. `/api/cloud/**`는 410이며 계정 자료는 `/api/d1/**`, 익명 공개 읽기는 `/api/catalog/{materials,images,placement}`를 사용한다. IndexedDB에는 복구본·재사용 캐시만 새로 저장하고 진단 아카이브는 `/api/reconstruction/diagnostics`를 통해 D1/R2에 저장한다.
 
 누락된 바인딩·migration·secret·연결 실패·초기 timeout은 계정 작업공간 접근을 잠근다. 메인과 빈 공간 체험은 열리고, 공용 자재는 [독립 DB/R2 환경 검사](../../../../src/lib/catalog/public-context.ts)로 읽어 OAuth 준비 실패에 종속되지 않는다. DB/R2가 없으면 자재 영역에 오류·재시도를 표시한다. 세션 만료 시 기존 계정 편집 화면을 숨기고 로그인 안내를 표시하되 본인 계정의 IndexedDB 복구본은 보존한다. 관리자 타인 프로젝트 편집은 명시적으로 범위가 지정된 저장소를 사용하고 캐시로 권한을 우회하지 않는다.
 
@@ -67,4 +67,4 @@ Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는
 
 체험 중에는 사진 업로드·AI 실행·진단 아카이브를 시작하지 않는다. MoGe·DeepLab·배경 제거·제품 입체화는 로그인한 기능의 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
 
-`deploy:vinext`는 실제 배포다. 현재 확인한 실배포에는 소스의 R2 바인딩과 공개 인증 URL이 반영되어 있다. 이후 소스 변경을 Worker에 반영하려면 검증된 산출물로 배포해야 하며, 누락된 Google/Better Auth secret 3개는 배포만으로 생성되지 않는다. 이 문서 갱신에서는 원격 설정·DB·배포를 변경하지 않았다. 원격 sjn과 로컬 개발 DB는 2026-09-17 사용자 승인 후 0001~0006 적용을 완료했다. 이후 운영 DB 변경은 대상과 미적용 목록을 확인해 별도로 승인된 범위에서 진행한다. 로컬 개발 DB 적용과 원격 DB 적용은 다른 작업이다. 자세한 Google/secret/배포 준비는 [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 따른다.
+`deploy:vinext`는 실제 배포다. 현재 확인한 실배포에는 소스의 R2 바인딩과 공개 인증 URL이 반영되어 있다. 이후 소스 변경을 Worker에 반영하려면 검증된 산출물로 배포해야 하며, 누락된 Better Auth secret(과 선택한 경우 Google 두 값)은 배포만으로 생성되지 않는다. 아이디 로그인 코드를 배포하기 전에 원격 `sjn`에 0007을 승인받아 적용해야 한다. 이 문서 갱신에서는 원격 설정·DB·배포를 변경하지 않았다. 원격 sjn과 로컬 개발 DB는 2026-09-17 사용자 승인 후 0001~0006 적용을 완료했다. 이후 운영 DB 변경은 대상과 미적용 목록을 확인해 별도로 승인된 범위에서 진행한다. 로컬 개발 DB 적용과 원격 DB 적용은 다른 작업이다. 자세한 Google/secret/배포 준비는 [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 따른다.

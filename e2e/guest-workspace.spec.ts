@@ -253,6 +253,31 @@ test('체험 자재 패널에서 사이즈 분류를 열어 선택하고 해제�
     .toBe(true);
 });
 
+test('체험 중 아이디로 회원가입하면 체험 작업을 본인 프로젝트로 저장한다', async ({ page }) => {
+  await create(page);
+  await place(page);
+  const before = await draft(page);
+  const signUps: unknown[] = [];
+  await page.route('**/api/auth/sign-up/email', async (route) => {
+    signUps.push(route.request().postDataJSON());
+    app.signIn();
+    await route.fulfill({ json: { token: 'test-only', user: { id: app.actor.id } } });
+  });
+  await page.getByRole('button', { name: '로그인 / 회원가입', exact: true }).first().click();
+  const dialog = page.getByRole('dialog', { name: '로그인 / 회원가입', exact: true });
+  await dialog.getByRole('button', { name: '회원가입', exact: true }).click();
+  await dialog.getByRole('textbox', { name: '아이디', exact: true }).fill('guest_member');
+  await dialog.getByLabel('비밀번호', { exact: true }).fill('password-1');
+  await dialog.getByLabel('비밀번호 확인', { exact: true }).fill('password-1');
+  await dialog.getByRole('button', { name: '회원가입하기', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp('/projects/' + before.id + '$'), { timeout: 60000 });
+  expect(signUps).toEqual([{ username: 'guest_member', password: 'password-1' }]);
+  const saved = await app.project(before.id);
+  expect(saved.ownerId).toBe(app.actor.id);
+  expect(saved.designs).toEqual(before.designs);
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), draftKey)).toBeNull();
+});
+
 test('로그인 취소와 sessionStorage 실패 때 체험 상태를 버리거나 OAuth로 이동하지 않는다', async ({
   page,
 }) => {

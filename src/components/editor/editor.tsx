@@ -72,6 +72,7 @@ import Inspector from './inspector';
 import AiExport from './ai-export';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
+import { accountLabel } from '@/lib/auth/credential-account';
 import { effectiveFacets, emptyFacets, facetOptions, matchesFacets } from '@/lib/catalog/facets';
 import { importImage } from '@/lib/images';
 import RoomDialog from '@/components/rooms/room-dialog';
@@ -1298,7 +1299,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       {adminContext && (
         <div className="readonly-banner" role="status">
           <strong>
-            관리자 편집 · {adminContext.owner.name} ({adminContext.owner.email})
+            관리자 편집 · {adminContext.owner.name} ({accountLabel(adminContext.owner.email)})
           </strong>
           <span>
             {' '}

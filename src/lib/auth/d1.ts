@@ -1,5 +1,8 @@
 import { betterAuth, type BetterAuthOptions } from 'better-auth';
+import { APIError, createAuthMiddleware } from 'better-auth/api';
+import { username } from 'better-auth/plugins/username';
 import type { D1DatabaseLike } from '@/lib/d1/types';
+import { credentialEmail, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, USERNAME_PATTERN } from './credential-account';
 
 export interface D1AuthEnvironment {
   DB: D1DatabaseLike;
@@ -23,7 +26,7 @@ export class D1AuthError extends Error {
 
 export function validateD1AuthConfig(env: D1AuthEnvironment) {
   const fail = () => {
-    throw new D1AuthError(503, 'auth_configuration_invalid', 'Google 로그인 설정을 확인해 주세요.');
+    throw new D1AuthError(503, 'auth_configuration_invalid', '로그인 설정을 확인해 주세요.');
   };
   let url: URL;
   try {
@@ -44,9 +47,15 @@ export function validateD1AuthConfig(env: D1AuthEnvironment) {
   const secret = env.BETTER_AUTH_SECRET?.trim();
   const clientId = env.GOOGLE_CLIENT_ID?.trim();
   const clientSecret = env.GOOGLE_CLIENT_SECRET?.trim();
-  if (!secret || secret.length < 32 || !clientId || !clientSecret) return fail();
+  if (!secret || secret.length < 32) return fail();
   if (/^(?:change[-_ ]?me|replace|your[-_ ]|example|better-auth-secret)/i.test(secret)) return fail();
-  return { origin: url.origin, secret, clientId, clientSecret };
+  // Google is optional, but a half-configured client is a deployment mistake rather than "off".
+  if (!!clientId !== !!clientSecret) return fail();
+  return {
+    origin: url.origin,
+    secret,
+    google: clientId && clientSecret ? { clientId, clientSecret } : undefined,
+  };
 }
 
 /** Explicit, read-only readiness probe. Auth never creates tables in request handlers. */
@@ -55,11 +64,11 @@ export async function checkD1AuthSchema(env: Pick<D1AuthEnvironment, 'DB'>) {
     const metadata = await env.DB.prepare('SELECT version FROM d1_auth_meta WHERE id = 1').first<{
       version: number;
     }>();
-    if (metadata?.version !== 1) throw new Error('schema version');
+    if (metadata?.version !== 2) throw new Error('schema version');
     // LIMIT 0 still checks required columns, including optional columns Better Auth writes.
     await env.DB.prepare(
       `SELECT
-      u.id, u.name, u.email, u.emailVerified, u.image, u.createdAt, u.updatedAt,
+      u.id, u.name, u.email, u.emailVerified, u.image, u.createdAt, u.updatedAt, u.username, u.displayUsername,
       s.id, s.token, s.userId, s.expiresAt, s.ipAddress, s.userAgent, s.createdAt, s.updatedAt,
       a.id, a.accountId, a.providerId, a.userId, a.accessToken, a.refreshToken, a.idToken,
       a.accessTokenExpiresAt, a.refreshTokenExpiresAt, a.scope, a.password, a.createdAt, a.updatedAt,
@@ -90,17 +99,63 @@ export function createD1Auth(env: D1AuthEnvironment) {
     secret: config.secret,
     database: env.DB as unknown as NonNullable<BetterAuthOptions['database']>,
     trustedOrigins: [config.origin],
-    emailAndPassword: { enabled: false },
-    socialProviders: {
-      google: {
-        clientId: config.clientId,
-        clientSecret: config.clientSecret,
-        prompt: 'select_account',
-        accessType: 'online',
-        includeGrantedScopes: false,
-        requireEmailVerification: true,
-        disableIdTokenSignIn: true,
-      },
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: false,
+      minPasswordLength: PASSWORD_MIN_LENGTH,
+      maxPasswordLength: PASSWORD_MAX_LENGTH,
+    },
+    plugins: [
+      username({
+        minUsernameLength: 4,
+        maxUsernameLength: 20,
+        usernameValidator: (value) => USERNAME_PATTERN.test(value),
+        // The placeholder email is derived from the ID, so the ID never changes.
+        immutableUsername: true,
+      }),
+    ],
+    socialProviders: config.google
+      ? {
+          google: {
+            clientId: config.google.clientId,
+            clientSecret: config.google.clientSecret,
+            prompt: 'select_account',
+            accessType: 'online',
+            includeGrantedScopes: false,
+            requireEmailVerification: true,
+            disableIdTokenSignIn: true,
+          },
+        }
+      : {},
+    // Email sign-in and password recovery need a real mailbox; ID members have none.
+    disabledPaths: [
+      '/sign-in/email',
+      '/is-username-available',
+      '/forget-password',
+      '/request-password-reset',
+      '/reset-password',
+      '/change-password',
+    ],
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        const body = (ctx.body ?? {}) as Record<string, unknown>;
+        // IDs are only chosen at sign-up; Google members must not claim one later.
+        if (ctx.path === '/update-user' && ('username' in body || 'displayUsername' in body))
+          throw APIError.from('BAD_REQUEST', {
+            code: 'USERNAME_IS_IMMUTABLE',
+            message: '아이디는 변경할 수 없어요.',
+          });
+        if (ctx.path !== '/sign-up/email') return;
+        if (typeof body.username !== 'string' || !body.username.trim())
+          throw APIError.from('BAD_REQUEST', {
+            code: 'USERNAME_REQUIRED',
+            message: '아이디를 입력해 주세요.',
+          });
+        // Never trust a client email: it could claim someone else's Google address.
+        body.email = credentialEmail(body.username);
+        body.name = body.username.trim();
+        delete body.image;
+      }),
     },
     account: {
       encryptOAuthTokens: true,
@@ -115,12 +170,19 @@ export function createD1Auth(env: D1AuthEnvironment) {
     databaseHooks: {
       session: {
         create: {
-          before: async (session) => {
+          before: async (session, context) => {
             const state = await env.DB.prepare('SELECT status FROM d1_user_management WHERE user_id=?')
               .bind(session.userId)
               .first<{ status: string }>();
             // SQL triggers repeat this check atomically if suspension races OAuth.
-            if (state?.status !== 'active') return false;
+            if (state?.status === 'active') return;
+            // Reached only after the password matched; OAuth keeps its error redirect.
+            if (context?.path === '/sign-in/username')
+              throw APIError.from('FORBIDDEN', {
+                code: 'ACCOUNT_SUSPENDED',
+                message: '이용이 정지된 계정이에요. 관리자에게 문의해 주세요.',
+              });
+            return false;
           },
         },
       },
@@ -145,7 +207,12 @@ export function createD1Auth(env: D1AuthEnvironment) {
       storage: 'database',
       window: 60,
       max: 100,
-      customRules: { '/get-session': false, '/sign-in/social': { window: 60, max: 10 } },
+      customRules: {
+        '/get-session': false,
+        '/sign-in/social': { window: 60, max: 10 },
+        '/sign-in/username': { window: 60, max: 5 },
+        '/sign-up/email': { window: 60, max: 3 },
+      },
     },
     telemetry: { enabled: false },
   });

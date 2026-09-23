@@ -10,7 +10,7 @@
 
 | 항목 | 확인 상태 |
 | --- | --- |
-| 원격 D1 `sjn` | 0001~0006 적용·무결성 확인 완료 |
+| 원격 D1 `sjn` | 0001~0006 적용·무결성 확인 완료. 아이디 로그인용 0007(2026-09-23 추가)은 미적용 |
 | 기존 R2 `sjn` | Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개; 새 버킷은 생성하지 않음 |
 | 소스 R2·주소 설정 | `wrangler.jsonc`에 `ASSET_BUCKET → sjn`, `BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev` 추가 완료 |
 | 빌드 산출물 | vinext 빌드 성공. `dist/server/wrangler.json`에 `ASSET_BUCKET → sjn`과 기존 `DB → sjn`·`AI` 유지 확인 |
@@ -29,7 +29,7 @@
 npm ci
 # .dev.vars가 없을 때만 예시를 복사한다. 기존 secret 파일을 덮어쓰지 않는다.
 if (!(Test-Path -LiteralPath .dev.vars)) { Copy-Item .dev.vars.example .dev.vars }
-# .dev.vars의 빈 BETTER_AUTH_SECRET / GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET를 준비한다.
+# .dev.vars의 BETTER_AUTH_SECRET을 준비한다. Google도 쓸 때만 GOOGLE_CLIENT_ID·GOOGLE_CLIENT_SECRET을 함께 넣는다.
 npm run db:dev:migrate
 npm run dev
 ```
@@ -79,7 +79,7 @@ npx wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc --persis
 - [wrangler.d1.example.jsonc](../wrangler.d1.example.jsonc): 운영 참고본. 이름·ID·도메인·버킷 예시를 현재 설정 전체와 교체하지 않음.
 - [.dev.vars.example](../.dev.vars.example): 로컬 Workers secret 예시. 실제 .dev.vars는 커밋·배포하지 않음.
 - [.env.example](../.env.example): Node 변수 예시. .env.local은 Worker secret을 대신하지 않음.
-- [migrations/d1](../migrations/d1): 0001~0006. 앱은 요청 중 테이블을 생성하지 않음.
+- [migrations/d1](../migrations/d1): 0001~0007. 앱은 요청 중 테이블을 생성하지 않음.
 
 생성물 `dist/server/wrangler.json`을 직접 수정하지 않는다. 비밀값은 `NEXT_PUBLIC_*`, vars, 소스, 로그에 넣지 않는다. Workers runtime secret과 빌드 환경변수는 별개다. [Cloudflare secrets](https://developers.cloudflare.com/workers/configuration/secrets/).
 
@@ -139,8 +139,9 @@ npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 - `0004_catalog_seed.sql`: 기본 속성 33개·하위 분류 21개, 정확히 일치하는 과거 문자열 연결.
 - `0005_admin_management.sql`: 회원 상태/revision·기존 회원 backfill·세션 정지 trigger, 관리자 감사/원자 조건 검사, 프로젝트별 관리자 자산·버전 범위와 인덱스.
 - `0006_reconstruction_diagnostics.sql`: 계정별 진단 메타데이터·비공개 R2 JSON, 활성 계정·실행 ID 충돌 검사, 별도 정리 대기열. 기존 브라우저 로그를 자동 이전하지 않는다.
+- `0007_username_auth.sql`: 아이디 로그인용 `user.username`(고유)·`displayUsername`, auth meta version 2. 기존 회원 자료는 바꾸지 않는다.
 
-빈 DB는 0001~0006를 순서대로 적용한다. 현재 원격 sjn과 로컬 개발 DB는 0001~0006 적용을 완료했다. 다른 DB나 이후 새 파일은 적용 이력을 확인한 뒤 미적용 번호만 진행한다. 기존 SQL을 수동 재실행하지 않는다. 기본 INSERT는 기존 관리자 변경을 덮어쓰지 않는다.
+빈 DB는 0001~0007을 순서대로 적용한다. 원격 sjn과 로컬 개발 DB는 2026-09-17에 0001~0006 적용을 완료했고, 0007은 원격 미적용이다. 아이디 로그인 코드를 배포하기 전에 승인받아 원격에 0007을 적용해야 준비 검사가 통과한다. 다른 DB나 이후 새 파일은 적용 이력을 확인한 뒤 미적용 번호만 진행한다. 기존 SQL을 수동 재실행하지 않는다. 기본 INSERT는 기존 관리자 변경을 덮어쓰지 않는다.
 
 Wrangler는 적용한 migration을 추적한다. 이후 스키마 변경은 기존 SQL을 수정하지 말고 새 번호의 파일로 추가한다. 이번 Better Auth 버전은 `1.7.4`로 고정했고 실제 D1에서 로그인 테이블 동작을 테스트했다. 라이브러리 업데이트 때에는 스키마 차이를 검토한다. `npx ...@latest migrate`로 기존 운영 테이블을 무검토 변경하지 않는다. [D1 migrations 문서](https://developers.cloudflare.com/d1/reference/migrations/)
 
@@ -158,16 +159,17 @@ Google Cloud Console에서 운영 프로젝트를 고르고 Google Auth Platform
 
 `BETTER_AUTH_URL`에는 origin만 넣는다. `/api/auth`나 query/hash를 붙이지 않는다. 운영은 HTTPS만 허용하며, 다른 도메인·preview URL을 자동으로 신뢰하지 않는다. 접속 주소와 callback 주소가 달라지면 로그인 실패한다. 하나의 정식 도메인을 정하고 별칭은 그 주소로 연결한다.
 
-Google은 신원 확인만 맡고 앱의 세션은 **Better Auth + D1**에 저장된다. D1 모드에는 별도 비밀번호 가입을 만들지 않았다. 이메일이 검증된 Google 계정만 허용하고 임의 OAuth 계정 자동 연결은 끈다. [Better Auth Google 안내](https://better-auth.com/docs/authentication/google)
+기본 로그인은 아이디·비밀번호이며 Google은 선택이다. Google은 신원 확인만 맡고 앱의 세션은 **Better Auth + D1**에 저장된다. client ID·secret을 둘 다 등록한 경우에만 Google 버튼이 나타나고, 한쪽만 등록하면 설정 오류로 로그인 준비가 실패한다. 이메일이 검증된 Google 계정만 허용하고 아이디 계정과의 자동 연결을 포함한 계정 자동 연결은 끈다. [Better Auth Google 안내](https://better-auth.com/docs/authentication/google)
 
 ### 4. 서버 secrets 등록
 
 운영 Worker가 아직 없다면 승인된 배포 절차나 Cloudflare 대시보드에서 별도로 준비한다. 로컬 개발의 .dev.vars는 운영 secret 등록을 대신하지 않는다. 다음 명령은 해당 Worker의 런타임 secret을 등록한다. Google에서 발급받은 값을 명령의 대화형 입력에 넣는다.
 
 ```powershell
+npx wrangler secret put BETTER_AUTH_SECRET --config wrangler.jsonc
+# Google 로그인도 제공할 때만 두 값을 모두 등록한다.
 npx wrangler secret put GOOGLE_CLIENT_ID --config wrangler.jsonc
 npx wrangler secret put GOOGLE_CLIENT_SECRET --config wrangler.jsonc
-npx wrangler secret put BETTER_AUTH_SECRET --config wrangler.jsonc
 ```
 
 `BETTER_AUTH_SECRET`은 비밀번호처럼 임의로 짧게 정하지 말고 안전한 난수 32바이트 이상으로 만든다. 로컬에서 생성한 값을 비밀 관리 도구에 보관하고 secret 입력에 사용한다.
@@ -241,7 +243,7 @@ Workers/D1은 우선 Free 플랜을 유지한다. R2는 사용량·객체 개수
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | 개발/배포 후 접근이 차단됨 | 선택한 설정 파일, STORAGE_MODE=d1, DB/ASSET_BUCKET, 인증 변수, /api/storage/status의 reason |
 | `missing_bindings`                            | 바인딩 철자, 실제 배포 Worker/환경, 빌드 산출물의 설정                                                      |
-| `connection_failed` / `invalid_configuration` | migration 0001~0006, DB 권한, R2 연결, origin·secret·Google 값. 브라우저 응답에는 비밀값을 노출하지 않는다. |
+| `connection_failed` / `invalid_configuration` | migration 0001~0007, DB 권한, R2 연결, origin·`BETTER_AUTH_SECRET`, Google 값(둘 다 있거나 둘 다 없어야 함). 브라우저 응답에는 비밀값을 노출하지 않는다. |
 | `unsupported_runtime`                         | D1은 Workers용 vinext 경로에서 사용. 기본 Node `next start`에 D1 바인딩은 없다.                             |
 | Google redirect 오류                          | 접속 origin = BETTER_AUTH_URL = 콘솔 승인 URI의 origin, `/api/auth/callback/google` 경로, 테스트 사용자     |
 | 서버 저장 실패                                | 화면의 실제 이유 확인 후 재시도. 로컬로 자동 우회하지 않는다. 용량·권한·revision 충돌은 각각 해결해야 한다. |

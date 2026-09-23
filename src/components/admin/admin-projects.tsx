@@ -5,6 +5,7 @@ import type { AdminProjectSummary } from '@/lib/admin/contracts';
 import AdminShell from './admin-shell';
 import { useAdminPage } from './data';
 import styles from './admin.module.css';
+import { accountLabel } from '@/lib/auth/credential-account';
 export default function AdminProjects({ initialOwnerId = '' }: { initialOwnerId?: string }) {
   const [query, setQuery] = useState(''),
     [ownerId, setOwnerId] = useState(initialOwnerId),
@@ -70,7 +71,7 @@ export default function AdminProjects({ initialOwnerId = '' }: { initialOwnerId?
                 </td>
                 <td>
                   {project.ownerName}
-                  <small>{project.ownerEmail}</small>
+                  <small>{accountLabel(project.ownerEmail)}</small>
                   <small>{project.ownerId}</small>
                 </td>
                 <td>{new Date(project.updatedAt).toLocaleString('ko-KR')}</td>

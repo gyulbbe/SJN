@@ -12,9 +12,12 @@ export async function storageStatus(): Promise<StorageStatus> {
   if (selection.reason === 'invalid_configuration') return selection;
   if (env.platform !== 'cloudflare') return blockedStatus('unsupported_runtime');
   if (!env.DB || !env.ASSET_BUCKET) return blockedStatus('missing_bindings');
+  let googleSignIn: boolean;
   try {
     const auth = await import('../auth/d1');
-    auth.validateD1AuthConfig(env as unknown as Parameters<typeof auth.validateD1AuthConfig>[0]);
+    googleSignIn = !!auth.validateD1AuthConfig(
+      env as unknown as Parameters<typeof auth.validateD1AuthConfig>[0],
+    ).google;
   } catch {
     return blockedStatus('invalid_configuration');
   }
@@ -24,7 +27,7 @@ export async function storageStatus(): Promise<StorageStatus> {
       checkD1Storage(env as unknown as D1Bindings),
       auth.checkD1AuthSchema(env as unknown as Parameters<typeof auth.checkD1AuthSchema>[0]),
     ]);
-    return { ...selection, ready: true };
+    return { ...selection, ready: true, googleSignIn };
   } catch {
     return blockedStatus('connection_failed');
   }
