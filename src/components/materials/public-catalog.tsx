@@ -13,8 +13,16 @@ import {
 } from 'lucide-react';
 import { useAccess } from '../app-provider';
 import type { PublicMaterial } from '@/lib/catalog/public';
+import {
+  effectiveFacets,
+  emptyFacets,
+  facetOptions,
+  hasFacets,
+  matchesFacets,
+} from '@/lib/catalog/facets';
 import { categoryLabels } from '@/lib/types';
 import WorkspaceNav from '@/components/workspace-nav';
+import { MaterialFacets } from './material-facets';
 import styles from './public-catalog.module.css';
 
 function MaterialImage({
@@ -163,6 +171,7 @@ export default function PublicCatalog() {
   const [rows, setRows] = useState<PublicMaterial[]>([]),
     [query, setQuery] = useState(''),
     [category, setCategory] = useState(''),
+    [facets, setFacets] = useState(emptyFacets),
     [detail, setDetail] = useState<PublicMaterial>(),
     [error, setError] = useState(''),
     [loading, setLoading] = useState(true),
@@ -189,19 +198,23 @@ export default function PublicCatalog() {
       });
     return () => controller.abort();
   }, [attempt]);
-  const matching = rows.filter(
+  const scoped = rows.filter((row) => !category || row.category === category);
+  const options = facetOptions(scoped);
+  const activeFacets = effectiveFacets(facets, options);
+  const matching = scoped.filter(
     (row) =>
-      (!category || row.category === category) &&
+      matchesFacets(row, activeFacets) &&
       [row.name, row.brand, row.code, row.subcategoryName, row.color, row.composition, row.finish]
         .join(' ')
         .normalize('NFKC')
         .toLowerCase()
         .includes(query.normalize('NFKC').trim().toLowerCase()),
   );
-  const filtered = !!query.trim() || !!category;
+  const filtered = !!query.trim() || !!category || hasFacets(activeFacets);
   function clearFilters() {
     setQuery('');
     setCategory('');
+    setFacets(emptyFacets());
   }
   return (
     <div className="home-shell">
@@ -251,6 +264,7 @@ export default function PublicCatalog() {
               </select>
             </label>
           </div>
+          <MaterialFacets className="mt-5" options={options} value={facets} onChange={setFacets} />
           <div className={styles.filterSummary}>
             <p role="status" aria-live="polite">
               {loading ? (
@@ -314,7 +328,7 @@ export default function PublicCatalog() {
               <Search size={26} aria-hidden="true" />
             </div>
             <h2>조건에 맞는 자재가 없어요.</h2>
-            <p>검색어를 짧게 입력하거나 제품 종류를 바꿔보세요.</p>
+            <p>검색어·제품 종류·사이즈·색상·표면 조건을 바꿔보세요.</p>
           </div>
         ) : (
           <div className={styles.grid}>

@@ -65,12 +65,14 @@ import {
 import { AssetImage } from '@/components/materials/asset-image';
 import { useSharedCatalogAdmin } from '@/components/materials/shared-access';
 import { MaterialForm } from '@/components/materials/material-form';
+import { MaterialFacets } from '@/components/materials/material-facets';
 import { useAccess } from '../app-provider';
 import CanvasWorkspace from './canvas-workspace';
 import Inspector from './inspector';
 import AiExport from './ai-export';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
+import { effectiveFacets, emptyFacets, facetOptions, matchesFacets } from '@/lib/catalog/facets';
 import { importImage } from '@/lib/images';
 import RoomDialog from '@/components/rooms/room-dialog';
 import RoomViewer from '@/components/rooms/room-viewer';
@@ -156,6 +158,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     [error, setError] = useState(''),
     [tab, setTab] = useState<'wall' | 'floor' | 'fixtures'>('floor'),
     [search, setSearch] = useState(''),
+    [facets, setFacets] = useState(emptyFacets),
     [form, setForm] = useState(false),
     [help, setHelp] = useState(false),
     [ai, setAi] = useState(false),
@@ -1218,13 +1221,19 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         </div>
       </main>
     );
-  const items = catalog.filter(
+  const scopedItems = catalog.filter(
     ({ material, version: v }) =>
       material.active &&
       (tab === 'fixtures'
         ? v.category !== 'tile'
-        : v.category === 'tile' && (v.usage === 'both' || v.usage === tab)) &&
-      `${v.name} ${v.brand} ${v.code}`.toLowerCase().includes(search.toLowerCase()),
+        : v.category === 'tile' && (v.usage === 'both' || v.usage === tab)),
+  );
+  const catalogFacets = facetOptions(scopedItems.map(({ version }) => version));
+  const activeFacets = effectiveFacets(facets, catalogFacets);
+  const items = scopedItems.filter(
+    ({ version: v }) =>
+      `${v.name} ${v.brand} ${v.code}`.toLowerCase().includes(search.toLowerCase()) &&
+      matchesFacets(v, activeFacets),
   );
   const hasSaveError = st.saveStatus === 'error' || (!!scope && !!lastSaveError.current);
   const status = isGuest
@@ -1837,10 +1846,30 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </label>
+              <MaterialFacets
+                className="mx-3.5 mb-3 max-h-44 overflow-y-auto"
+                options={catalogFacets}
+                value={facets}
+                onChange={setFacets}
+              />
               <div className="catalog-grid">
                 {items.length === 0 && (
                   <div className="empty-catalog">
-                    {isGuest ? (
+                    {scopedItems.length > 0 ? (
+                      <>
+                        조건에 맞는 자재가 없어요.
+                        <br />
+                        <button
+                          className="text-button"
+                          onClick={() => {
+                            setSearch('');
+                            setFacets(emptyFacets());
+                          }}
+                        >
+                          필터 초기화
+                        </button>
+                      </>
+                    ) : isGuest ? (
                       '현재 체험할 수 있는 공용 자재가 없어요.'
                     ) : (
                       <>

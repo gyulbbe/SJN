@@ -229,6 +229,8 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
     const rows = Array.from({ length: 28 }, (_, i) => ({
       ...base.materials[i % base.materials.length],
       id: 'studio-' + i,
+      color: ['화이트', '그레이', '베이지'][i % 3],
+      finish: i % 2 ? '유광' : '무광',
       name:
         i === 0
           ? '긴 자재명 '.repeat(12)
@@ -265,6 +267,15 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
     await expect(page.getByText('조건에 맞는 자재가 없어요.', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '조건 초기화', exact: true }).click();
     await expect(page.getByLabel('자재 검색', { exact: true })).toHaveValue('');
+    const beige = page.getByRole('group', { name: '색상' }).getByRole('button', { name: '베이지', exact: true });
+    await beige.click();
+    await expect(beige).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('status').filter({ hasText: '개의 자재' })).toContainText('9개의 자재');
+    await page.getByRole('group', { name: '표면' }).getByRole('button', { name: '유광', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: '개의 자재' })).toContainText('4개의 자재');
+    await page.getByRole('button', { name: '조건 초기화', exact: true }).click();
+    await expect(beige).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('status').filter({ hasText: '개의 자재' })).toContainText('28개의 자재');
     await page.getByLabel('자재 검색', { exact: true }).fill('쇼룸 자재 3');
     const card = page
       .getByRole('button')
