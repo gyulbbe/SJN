@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Copy, CopyCheck, Trash2, Lock, Unlock, ArrowUp, ArrowDown, RotateCcw, X } from 'lucide-react';
 import { useEditor } from '@/lib/editor-store';
 import { applyTileSettingsToAllSurfaces } from '@/lib/tile-settings';
+import { parseRangeInput, stepRangeValue } from '@/lib/range-input';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import ReconstructionProperties from '@/components/reconstruction/reconstruction-properties';
 import { useRepositories } from '@/components/repository-context';
@@ -32,14 +33,49 @@ export function Range({
   onCommit: () => void;
   unit?: string;
 }) {
+  // Typing only edits this draft; Enter or leaving the field applies it like one slider drag.
+  const [draft, setDraft] = useState<string | null>(null);
+  const bounds = { min, max, step };
+  const apply = (next: number | null) => {
+    setDraft(null);
+    if (next === null) return;
+    if (next !== value) onChange(next);
+    onCommit();
+  };
   return (
-    <label className="range-field">
+    <div className="range-field">
       <span className="range-label">
         {label}
-        <output>
-          {Number(value.toFixed(2))}
-          {unit}
-        </output>
+        <span className="flex items-center gap-1">
+          <input
+            aria-label={`${label} 숫자 입력`}
+            type="number"
+            inputMode="decimal"
+            min={min}
+            max={max}
+            step={step}
+            value={draft ?? String(Number(value.toFixed(2)))}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            onBlur={() => {
+              if (draft !== null) apply(parseRangeInput(draft, bounds));
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (draft !== null) apply(parseRangeInput(draft, bounds));
+              } else if (e.key === 'Escape') {
+                setDraft(null);
+              } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                const base = draft === null ? value : (parseRangeInput(draft, bounds) ?? value);
+                apply(stepRangeValue(base, e.key === 'ArrowUp' ? 1 : -1, bounds, e.shiftKey ? 10 : 1));
+              }
+            }}
+            className="h-7 w-16 rounded-md border border-[color:var(--line)] bg-[color:var(--paper)] px-1.5 text-right text-xs text-[color:var(--ink)] tabular-nums [appearance:textfield] max-[620px]:h-9 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+          {unit.trim() && <span className="text-xs text-[color:var(--muted)]">{unit.trim()}</span>}
+        </span>
       </span>
       <input
         aria-label={label}
@@ -53,7 +89,7 @@ export function Range({
         onKeyUp={onCommit}
         onBlur={onCommit}
       />
-    </label>
+    </div>
   );
 }
 export default function Inspector({

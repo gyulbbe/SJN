@@ -253,6 +253,53 @@ test('시공 설정 전체 적용으로 모든 벽·바닥에 같은 시공 설�
   expect((await surfaces()).find((surface) => surface.id === wallId)!.tile.pattern).toBe('brick');
 });
 
+test('속성 패널 슬라이더 값을 숫자로 입력해 적용하고 되돌린다', async ({ page }) => {
+  await create(page);
+  await page.getByRole('button', { name: '벽 타일', exact: true }).click();
+  const target = page.getByRole('combobox', { name: '타일 적용 위치' });
+  const wallId = (await target.locator('option').nth(1).getAttribute('value'))!;
+  await target.selectOption(wallId);
+  const scene = async () => getActiveDesign(await draft(page))!.scene;
+  const tile = async () => (await scene()).surfaces.find((surface) => surface.id === wallId)!.tile;
+  // Typed values follow the slider step (0.5 mm) and update the slider too.
+  const grout = page.getByRole('spinbutton', { name: '줄눈 폭 숫자 입력', exact: true });
+  await grout.fill('3.2');
+  await grout.press('Enter');
+  await expect.poll(async () => (await tile()).groutWidth).toBe(3);
+  await expect(grout).toHaveValue('3');
+  await expect(page.getByRole('slider', { name: '줄눈 폭', exact: true })).toHaveValue('3');
+  const rotation = page.getByRole('spinbutton', { name: '타일 방향 숫자 입력', exact: true });
+  await rotation.fill('90');
+  await rotation.press('Tab');
+  await expect.poll(async () => (await tile()).rotation).toBe(90);
+  await rotation.focus();
+  await rotation.press('ArrowUp');
+  await expect.poll(async () => (await tile()).rotation).toBe(91);
+  // An empty field or Escape reverts instead of applying.
+  await rotation.fill('');
+  await rotation.blur();
+  await expect(rotation).toHaveValue('91');
+  await rotation.fill('45');
+  await rotation.press('Escape');
+  await expect(rotation).toHaveValue('91');
+  await rotation.blur();
+  expect((await tile()).rotation).toBe(91);
+  // Each applied value is one edit: Ctrl+Z undoes the arrow nudge.
+  await page.keyboard.press('Control+z');
+  await expect.poll(async () => (await tile()).rotation).toBe(90);
+  const exposure = page.getByRole('spinbutton', { name: '노출 숫자 입력', exact: true });
+  await exposure.fill('0.25');
+  await exposure.press('Enter');
+  await expect.poll(async () => (await scene()).color.exposure).toBe(0.25);
+  await page
+    .locator('details.usage-properties')
+    .screenshot({ path: 'test-results/range-input/properties-1440.png', animations: 'disabled' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+    .toBe(true);
+});
+
 test('Delete 키로 선택한 제품을 삭제하고 선택한 면의 타일을 초기화한다', async ({ page }) => {
   await create(page);
   await place(page);
