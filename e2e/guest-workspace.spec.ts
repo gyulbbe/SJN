@@ -216,6 +216,42 @@ test('모의 Google 왕복 후 여러 시안·수정 견적·비교 선택을 �
   expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 1 });
 });
 
+test('Delete 키로 선택한 제품을 삭제하고 선택한 면의 타일을 초기화한다', async ({ page }) => {
+  await create(page);
+  await place(page);
+  const fixtures = async () => getActiveDesign(await draft(page))!.scene.fixtures.length;
+  const floorTiles = async () =>
+    getActiveDesign(await draft(page))!.scene.surfaces.filter(
+      (surface) => surface.kind === 'floor' && surface.materialVersionId === versions[0].id,
+    ).length;
+  expect(await fixtures()).toBe(1);
+  // Typing Delete in a text field edits the text, not the project.
+  await page.getByRole('textbox', { name: '편집기 자재 검색' }).focus();
+  await page.keyboard.press('Delete');
+  expect(await fixtures()).toBe(1);
+  // The placed product stays selected; Delete removes it and Ctrl+Z brings it back.
+  await page.getByRole('textbox', { name: '편집기 자재 검색' }).blur();
+  await page.keyboard.press('Delete');
+  await expect.poll(fixtures).toBe(0);
+  await page.keyboard.press('Control+z');
+  await expect.poll(fixtures).toBe(1);
+  // Pick one floor surface, leave the dropdown, then Backspace (the Mac delete key) clears its tile.
+  await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
+  const target = page.getByRole('combobox', { name: '타일 적용 위치' });
+  const floorId = await target.locator('option').nth(1).getAttribute('value');
+  const before = await floorTiles();
+  expect(before).toBeGreaterThan(0);
+  await target.selectOption(floorId!);
+  await target.blur();
+  await page.keyboard.press('Backspace');
+  await expect.poll(floorTiles).toBe(before - 1);
+  expect(await fixtures()).toBe(1);
+  await expect(page.getByRole('button', { name: '이 면의 타일 초기화', exact: true })).toHaveAttribute(
+    'aria-keyshortcuts',
+    'Delete Backspace',
+  );
+});
+
 test('체험 자재 패널에서 사이즈 분류를 열어 선택하고 해제한다', async ({ page }) => {
   await create(page);
   const catalog = page.locator('aside.catalog-panel');

@@ -387,6 +387,8 @@ export default function Inspector({
               <button
                 className="btn small"
                 style={{ marginTop: 12 }}
+                title="이 면의 타일 초기화 (Delete)"
+                aria-keyshortcuts="Delete Backspace"
                 onClick={() =>
                   changeSurface((v) => {
                     delete v.materialVersionId;
@@ -510,6 +512,8 @@ export default function Inspector({
               <button
                 className="btn danger small"
                 style={{ marginTop: 12 }}
+                title="제품 삭제 (Delete)"
+                aria-keyshortcuts="Delete Backspace"
                 disabled={!writable || fixture.locked || !!st.draft}
                 onClick={() => {
                   if (!writable || fixture.locked || st.draft) return;
