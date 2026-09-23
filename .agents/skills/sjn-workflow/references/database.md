@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-확인 기준: **2026-09-17 현재 소스와 별도로 확인한 원격 이력**. 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 기존 `0001~0004`를 보존하며 `0005_admin_management.sql`과 `0006_reconstruction_diagnostics.sql`을 추가 적용했다. `.wrangler/development`의 빈 로컬 개발 DB에도 `0001~0006`을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했으며 관리자 지정·배포·R2 버킷 생성·실제 Google 로그인·AI 호출은 수행하지 않았다. 2026-09-23 소스에 아이디 로그인용 `0007_username_auth.sql`을 추가했다. 0007은 컬럼·인덱스만 더하고 auth meta는 version 1로 두며, 준비 검사는 `username`·`displayUsername` 컬럼 존재로 적용 여부를 확인한다. 2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했다(auth meta version 1 유지). 같은 날 읽기 확인에서 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록은 없었다. 기록이 없으면 `migrations apply`가 0007을 다시 실행하다 중복 컬럼으로 실패하므로 남은 인덱스·기록을 맞춘 뒤 다음 migration을 적용한다. 운영 R2 연결도 미검증이다. 정확한 DDL은 [migrations/d1](../../../../migrations/d1), ERD·인덱스·전체 SQL·과거 확인값은 [DB 설계](../../../../docs/database-design.md)를 따른다.
+확인 기준: **2026-09-17 현재 소스와 별도로 확인한 원격 이력**. 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 기존 `0001~0004`를 보존하며 `0005_admin_management.sql`과 `0006_reconstruction_diagnostics.sql`을 추가 적용했다. `.wrangler/development`의 빈 로컬 개발 DB에도 `0001~0006`을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했으며 관리자 지정·배포·R2 버킷 생성·실제 Google 로그인·AI 호출은 수행하지 않았다. 2026-09-23 소스에 아이디 로그인용 `0007_username_auth.sql`을 추가했다. 0007은 컬럼·인덱스만 더하고 auth meta는 version 1로 두며, 준비 검사는 `username`·`displayUsername` 컬럼 존재로 적용 여부를 확인한다. 2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다. 운영 R2 연결도 미검증이다. 정확한 DDL은 [migrations/d1](../../../../migrations/d1), ERD·인덱스·전체 SQL·과거 확인값은 [DB 설계](../../../../docs/database-design.md)를 따른다.
 
 ## 저장 경계
 
@@ -56,7 +56,7 @@ R2와 D1은 하나의 트랜잭션이 아니다. `stageObject`가 업로드 전�
 
 ## 적용·검증
 
-`npm run db:dev:migrate`는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`의 로컬 DB에만 적용한다. 원격 `sjn`과 로컬 개발 DB는 2026-09-17 승인 후 0001~0006 적용을 완료했다. 원격 0007은 컬럼만 직접 적용된 상태다(위 확인 기준 참고). 이후 원격 변경은 승인된 대상과 미적용 목록을 다시 확인한다. migration 작성이나 문서 변경을 운영 적용 허가로 해석하지 않는다.
+`npm run db:dev:migrate`는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`의 로컬 DB에만 적용한다. 원격 `sjn`과 로컬 개발 DB는 2026-09-17 승인 후 0001~0006 적용을 완료했다. 원격 0007은 2026-09-23 적용을 마쳤다(위 확인 기준 참고). 이후 원격 변경은 승인된 대상과 미적용 목록을 다시 확인한다. migration 작성이나 문서 변경을 운영 적용 허가로 해석하지 않는다.
 
 빈 DB 0001~0007, 기존 DB upgrade, seed 중복 방지, FK·불변 참조·관리자 감사·정지·동시 변경·재시도를 격리 Miniflare로 검사한다. 주된 테스트는 `tests/d1-auth.test.ts`, `d1-admin-users.test.ts`, `admin-projects.test.ts`, `d1-storage.test.ts`, `d1-catalog.test.ts`다. 아이디 가입·로그인·중복·정지·속도 제한은 `tests/d1-auth.test.ts`가 실제 Better Auth와 Miniflare D1로 검사한다. 브라우저 fixture와 로컬 Google provider를 실제 Google·운영 R2 검증으로 보고하지 않는다. 준비 확인은 읽기 전용이며 앱이 테이블을 자동 생성하지 않는다.
 

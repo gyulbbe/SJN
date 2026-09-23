@@ -10,7 +10,7 @@
 
 | 항목 | 확인 상태 |
 | --- | --- |
-| 원격 D1 `sjn` | 0001~0006 적용·무결성 확인 완료. 0007은 2026-09-23 사용자가 두 컬럼만 직접 추가(고유 인덱스·`d1_migrations` 기록 없음, auth meta 1) |
+| 원격 D1 `sjn` | 0001~0006 적용·무결성 확인 완료. 0007은 2026-09-23 적용 완료(두 컬럼은 사용자가 직접 추가, 고유 인덱스·`d1_migrations` 기록은 승인 후 추가, auth meta 1) |
 | 기존 R2 `sjn` | Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개; 새 버킷은 생성하지 않음 |
 | 소스 R2·주소 설정 | `wrangler.jsonc`에 `ASSET_BUCKET → sjn`, `BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev` 추가 완료 |
 | 빌드 산출물 | vinext 빌드 성공. `dist/server/wrangler.json`에 `ASSET_BUCKET → sjn`과 기존 `DB → sjn`·`AI` 유지 확인 |
@@ -141,7 +141,7 @@ npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 - `0006_reconstruction_diagnostics.sql`: 계정별 진단 메타데이터·비공개 R2 JSON, 활성 계정·실행 ID 충돌 검사, 별도 정리 대기열. 기존 브라우저 로그를 자동 이전하지 않는다.
 - `0007_username_auth.sql`: 아이디 로그인용 `user.username`(고유 인덱스)·`displayUsername` 추가만 한다. auth meta는 1로 유지해 기존 배포가 계속 동작하며 기존 회원 자료는 바꾸지 않는다.
 
-빈 DB는 0001~0007을 순서대로 적용한다. 원격 sjn과 로컬 개발 DB는 2026-09-17에 0001~0006 적용을 완료했고, 원격 0007은 컬럼만 직접 추가된 상태라 고유 인덱스와 `d1_migrations` 기록을 맞춰야 한다. 기록 없이 `migrations apply`를 실행하면 0007을 다시 시도해 중복 컬럼 오류가 난다. 다른 DB나 이후 새 파일은 적용 이력을 확인한 뒤 미적용 번호만 진행한다. 기존 SQL을 수동 재실행하지 않는다. 기본 INSERT는 기존 관리자 변경을 덮어쓰지 않는다.
+빈 DB는 0001~0007을 순서대로 적용한다. 원격 sjn과 로컬 개발 DB는 2026-09-17에 0001~0006 적용을 완료했고, 원격 sjn은 2026-09-23 0007까지 적용을 마쳐 `No migrations to apply` 상태다. 다른 DB나 이후 새 파일은 적용 이력을 확인한 뒤 미적용 번호만 진행한다. 기존 SQL을 수동 재실행하지 않는다. 기본 INSERT는 기존 관리자 변경을 덮어쓰지 않는다.
 
 Wrangler는 적용한 migration을 추적한다. 이후 스키마 변경은 기존 SQL을 수정하지 말고 새 번호의 파일로 추가한다. 이번 Better Auth 버전은 `1.7.4`로 고정했고 실제 D1에서 로그인 테이블 동작을 테스트했다. 라이브러리 업데이트 때에는 스키마 차이를 검토한다. `npx ...@latest migrate`로 기존 운영 테이블을 무검토 변경하지 않는다. [D1 migrations 문서](https://developers.cloudflare.com/d1/reference/migrations/)
 
