@@ -216,6 +216,43 @@ test('모의 Google 왕복 후 여러 시안·수정 견적·비교 선택을 �
   expect(await app.env.DB.prepare('SELECT COUNT(*) AS n FROM d1_projects').first()).toEqual({ n: 1 });
 });
 
+test('체험 자재 패널에서 사이즈 분류를 열어 선택하고 해제한다', async ({ page }) => {
+  await create(page);
+  const catalog = page.locator('aside.catalog-panel');
+  await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
+  await catalog.screenshot({ path: 'test-results/facets/editor-1440-closed.png', animations: 'disabled' });
+  const toggle = catalog.getByRole('button', { name: /^사이즈/ });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  const size = catalog.getByRole('group', { name: '사이즈' }).getByRole('checkbox', { name: '600X600', exact: true });
+  await size.check();
+  await expect(toggle).toHaveAccessibleName('사이즈 1개 선택');
+  await expect(catalog.locator('button.material-tile').filter({ hasText: '체험 그레이 타일' })).toBeVisible();
+  await catalog.screenshot({ path: 'test-results/facets/editor-1440-open.png', animations: 'disabled' });
+  // Fixtures have no 600X600 option, so the tile-only choice is ignored there.
+  await page.getByRole('button', { name: '위생도기', exact: true }).click();
+  await expect(catalog.locator('button.material-tile').filter({ hasText: '체험 벽걸이 세면대' })).toBeVisible();
+  await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
+  await size.uncheck();
+  await expect(toggle).toHaveAccessibleName('사이즈');
+  // Escape closes only the panel, not the editor's catalog drawer.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '자재 목록', exact: true }).click();
+  await expect(catalog).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await size.check();
+  await page.screenshot({ path: 'test-results/facets/editor-390-drawer-open.png', animations: 'disabled' });
+  // From the button (not an input) the editor's window Escape would otherwise close the drawer.
+  await toggle.focus();
+  await page.keyboard.press('Escape');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toBeFocused();
+  await expect(catalog).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+    .toBe(true);
+});
+
 test('로그인 취소와 sessionStorage 실패 때 체험 상태를 버리거나 OAuth로 이동하지 않는다', async ({
   page,
 }) => {

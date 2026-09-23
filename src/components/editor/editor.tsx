@@ -1847,7 +1847,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 />
               </label>
               <MaterialFacets
-                className="mx-3.5 mb-3 max-h-44 overflow-y-auto"
+                compact
+                className="mx-3.5 mb-3"
                 options={catalogFacets}
                 value={facets}
                 onChange={setFacets}

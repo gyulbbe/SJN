@@ -21,11 +21,11 @@ const tile = (patch: Partial<Facetable> = {}): Facetable => ({
 
 describe('material facets', () => {
   it('uses the face size for tiles and every positive dimension for products', () => {
-    expect(facetValues(tile({ widthMm: 1200 }), 'size')).toEqual(['1,200 × 600']);
+    expect(facetValues(tile({ widthMm: 1200 }), 'size')).toEqual(['1200X600']);
     expect(
       facetValues({ ...tile(), category: 'basin', widthMm: 600, heightMm: 450, depthMm: 400 }, 'size'),
-    ).toEqual(['600 × 450 × 400']);
-    expect(facetValues({ ...tile(), category: 'basin', depthMm: 0 }, 'size')).toEqual(['600 × 600']);
+    ).toEqual(['600X450X400']);
+    expect(facetValues({ ...tile(), category: 'basin', depthMm: 0 }, 'size')).toEqual(['600X600']);
     expect(facetValues(tile({ widthMm: 0, heightMm: 0 }), 'size')).toEqual([]);
   });
 
@@ -34,14 +34,14 @@ describe('material facets', () => {
     expect(facetValues(tile({ finish: '' }), 'finish')).toEqual([]);
   });
 
-  it('collects sorted, unique options', () => {
+  it('collects unique options with sizes largest first, like a size table', () => {
     const options = facetOptions([
       tile({ widthMm: 1200, color: '화이트' }),
       tile({ widthMm: 300, color: '그레이 · 화이트', finish: '유광' }),
       tile({ widthMm: 600 }),
       tile({ widthMm: 300, heightMm: 300 }),
     ]);
-    expect(options.size).toEqual(['300 × 300', '300 × 600', '600 × 600', '1,200 × 600']);
+    expect(options.size).toEqual(['1200X600', '600X600', '300X600', '300X300']);
     expect(options.color).toEqual(['그레이', '화이트']);
     expect(options.finish).toEqual(['무광', '유광']);
   });
@@ -57,8 +57,8 @@ describe('material facets', () => {
 
   it('ignores selections that the current scope does not offer', () => {
     const options = facetOptions([tile()]);
-    const effective = effectiveFacets({ size: ['300 × 300'], color: ['그레이'], finish: [] }, options);
+    const effective = effectiveFacets({ size: ['300X300'], color: ['그레이'], finish: [] }, options);
     expect(effective).toEqual({ size: [], color: ['그레이'], finish: [] });
-    expect(hasFacets(effectiveFacets({ ...emptyFacets(), size: ['300 × 300'] }, options))).toBe(false);
+    expect(hasFacets(effectiveFacets({ ...emptyFacets(), size: ['300X300'] }, options))).toBe(false);
   });
 });

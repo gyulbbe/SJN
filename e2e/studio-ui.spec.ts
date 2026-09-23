@@ -267,15 +267,39 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
     await expect(page.getByText('조건에 맞는 자재가 없어요.', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '조건 초기화', exact: true }).click();
     await expect(page.getByLabel('자재 검색', { exact: true })).toHaveValue('');
-    const beige = page.getByRole('group', { name: '색상' }).getByRole('button', { name: '베이지', exact: true });
-    await beige.click();
-    await expect(beige).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.getByRole('status').filter({ hasText: '개의 자재' })).toContainText('9개의 자재');
-    await page.getByRole('group', { name: '표면' }).getByRole('button', { name: '유광', exact: true }).click();
-    await expect(page.getByRole('status').filter({ hasText: '개의 자재' })).toContainText('4개의 자재');
+    const count = page.getByRole('status').filter({ hasText: '개의 자재' });
+    const colorToggle = page.getByRole('button', { name: /^색상/ });
+    await colorToggle.click();
+    await expect(colorToggle).toHaveAttribute('aria-expanded', 'true');
+    const beige = page.getByRole('group', { name: '색상' }).getByRole('checkbox', { name: '베이지', exact: true });
+    await beige.check();
+    await expect(count).toContainText('9개의 자재');
+    await expect(colorToggle).toHaveAccessibleName('색상 1개 선택');
+    await capture(page, 'catalog-facets-color');
+    await beige.focus();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('group', { name: '색상' })).toBeHidden();
+    await expect(colorToggle).toBeFocused();
+    await expect(colorToggle).toHaveAttribute('aria-expanded', 'false');
+    const finishToggle = page.getByRole('button', { name: /^표면/ });
+    await finishToggle.click();
+    await page.getByRole('group', { name: '표면' }).getByRole('checkbox', { name: '유광', exact: true }).check();
+    await expect(count).toContainText('4개의 자재');
+    await expect(finishToggle).toHaveAccessibleName('표면 1개 선택');
     await page.getByRole('button', { name: '조건 초기화', exact: true }).click();
-    await expect(beige).toHaveAttribute('aria-pressed', 'false');
-    await expect(page.getByRole('status').filter({ hasText: '개의 자재' })).toContainText('28개의 자재');
+    await expect(count).toContainText('28개의 자재');
+    await expect(colorToggle).toHaveAccessibleName('색상');
+    await page.getByRole('button', { name: /^사이즈/ }).click();
+    const sizes = page.getByRole('group', { name: '사이즈' }).getByRole('checkbox');
+    // Largest first: the 600X600 tile face comes before the 600X450X400 basin.
+    await expect(sizes).toHaveCount(2);
+    await expect(sizes.first()).toHaveAccessibleName('600X600');
+    await sizes.first().check();
+    await expect(count).toContainText('14개의 자재');
+    await capture(page, 'catalog-facets-open');
+    await page.getByRole('button', { name: '조건 초기화', exact: true }).click();
+    await expect(sizes.first()).not.toBeChecked();
+    await expect(count).toContainText('28개의 자재');
     await page.getByLabel('자재 검색', { exact: true }).fill('쇼룸 자재 3');
     const card = page
       .getByRole('button')

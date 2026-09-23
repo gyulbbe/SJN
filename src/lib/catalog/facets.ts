@@ -15,12 +15,12 @@ export type Facetable = {
 
 export const emptyFacets = (): FacetSelection => ({ size: [], color: [], finish: [] });
 
-/** Tiles are sold by face size; products keep every positive dimension. */
+/** Tiles are sold by face size (`600X1200`); products keep every positive dimension. */
 function sizeValue(item: Facetable) {
   const values = (
     item.category === 'tile' ? [item.widthMm, item.heightMm] : [item.widthMm, item.heightMm, item.depthMm]
   ).filter((value) => value > 0);
-  return values.length ? values.map((value) => value.toLocaleString('ko-KR')).join(' × ') : '';
+  return values.join('X');
 }
 
 export function facetValues(item: Facetable, key: FacetKey): string[] {
@@ -39,11 +39,12 @@ export function facetValues(item: Facetable, key: FacetKey): string[] {
   ];
 }
 
-const sizeNumbers = (size: string) => size.split('×').map((part) => Number(part.replace(/[^\d.]/g, '')));
+const sizeNumbers = (size: string) => size.split('X').map(Number);
+/** Largest first, like a showroom size table: width, then height, then depth. */
 function compareSize(a: string, b: string) {
   const [left, right] = [sizeNumbers(a), sizeNumbers(b)];
   for (let i = 0; i < Math.max(left.length, right.length); i++) {
-    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    const diff = (right[i] ?? 0) - (left[i] ?? 0);
     if (diff) return diff;
   }
   return 0;
