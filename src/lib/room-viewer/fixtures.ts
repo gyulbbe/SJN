@@ -18,6 +18,7 @@ import {
   type Texture,
 } from 'three';
 import { roomFacePoint } from '../room-geometry';
+import { TONE_MAPPING_GLSL } from '../render/realistic-lighting';
 import type { RoomPlacement, ProductBounds } from '../room-types';
 import type { AssetRecord, ColorAdjust, FixtureInstance, MaterialVersion, Scene } from '../types';
 import { decodeProductMesh } from '../product3d/codec';
@@ -237,9 +238,12 @@ function checkBounds(bounds: ProductBounds) {
 /** Same linear adjustment as the editor, without screen-space occlusion or a second output conversion. */
 function applyColor(material: Material, color: ColorAdjust) {
   const adjustment = new Vector4(color.exposure, color.contrast, color.saturation, color.warmth);
+  // Photo planes and original-colour meshes are unlit on purpose; only lit models are tone mapped.
+  const lit = !(material instanceof MeshBasicMaterial);
   material.onBeforeCompile = (shader) => {
     shader.uniforms.sjnViewerFixtureColor = { value: adjustment };
-    shader.fragmentShader = 'uniform vec4 sjnViewerFixtureColor;\n' + shader.fragmentShader;
+    shader.fragmentShader =
+      'uniform vec4 sjnViewerFixtureColor;\n' + (lit ? TONE_MAPPING_GLSL : '') + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <opaque_fragment>',
       `
@@ -247,10 +251,11 @@ outgoingLight *= exp2(sjnViewerFixtureColor.x);
 outgoingLight = (outgoingLight - .18) * sjnViewerFixtureColor.y + .18;
 outgoingLight = mix(vec3(dot(outgoingLight,vec3(.2126,.7152,.0722))),outgoingLight,sjnViewerFixtureColor.z);
 outgoingLight = max(vec3(0.), outgoingLight * vec3(1.+sjnViewerFixtureColor.w*.18,1.,1.-sjnViewerFixtureColor.w*.18));
+${lit ? 'outgoingLight = sjnToneMap(outgoingLight);' : ''}
 #include <opaque_fragment>`,
     );
   };
-  material.customProgramCacheKey = () => 'room-viewer-fixture-linear-1';
+  material.customProgramCacheKey = () => `room-viewer-fixture-linear-2-${lit ? 'lit' : 'unlit'}`;
 }
 function prepareModel(group: Group, fixture: FixtureInstance) {
   const materials = new Set<Material>();

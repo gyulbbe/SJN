@@ -1,7 +1,5 @@
 import {
-  AmbientLight,
   Color,
-  DirectionalLight,
   Group,
   HalfFloatType,
   LinearFilter,
@@ -24,6 +22,7 @@ import {
   TEMPLATE_RENDERER_REVISION,
 } from '../reconstruction/templates';
 import { reconstructionModelTransform } from '../reconstruction/projection';
+import { createModelLights, TONE_MAPPING_GLSL } from './realistic-lighting';
 import type { ReconstructionKind } from '../reconstruction/types';
 
 export type StandardFixturePass = { fixture: FixtureInstance; occlusion: Texture; standardKey: string };
@@ -50,12 +49,7 @@ export class StandardModelRenderer {
       ...(renderer.extensions.has('EXT_color_buffer_float') ? { type: HalfFloatType } : {}),
     });
     this.target.texture.colorSpace = LinearSRGBColorSpace;
-    this.scene.add(new AmbientLight('#ffffff', 1.6));
-    const key = new DirectionalLight('#ffffff', 1.65);
-    key.position.set(-1500, 4000, 6000);
-    const fill = new DirectionalLight('#e8f0f5', 0.28);
-    fill.position.set(3500, 2200, 2000);
-    this.scene.add(key, fill);
+    this.scene.add(...createModelLights());
   }
   private entry(pass: StandardFixturePass) {
     const reconstruction = pass.fixture.reconstruction!;
@@ -125,7 +119,9 @@ vec3 sjnAdjust(vec3 c) {
   c = mix(vec3(dot(c, vec3(.2126,.7152,.0722))), c, sjnAdjustment.z);
   return max(vec3(0.), c * vec3(1.+sjnAdjustment.w*.18, 1., 1.-sjnAdjustment.w*.18));
 }
-` + shader.fragmentShader;
+` +
+          TONE_MAPPING_GLSL +
+          shader.fragmentShader;
         shader.fragmentShader = shader.fragmentShader.replace(
           '#include <opaque_fragment>',
           `
@@ -140,7 +136,7 @@ float sjnA = 2. * mod(sjnP0.x + sjnP0.y, 2.) + sjnP0.y;
 float sjnB = 2. * mod(sjnP1.x + sjnP1.y, 2.) + sjnP1.y;
 if (sjnVisible <= (4. * sjnA + sjnB + .5) / 16.) discard;
 #endif
-outgoingLight = sjnAdjust(outgoingLight);
+outgoingLight = sjnToneMap(sjnAdjust(outgoingLight));
 #include <opaque_fragment>
 #ifndef OPAQUE
 gl_FragColor.a *= sjnVisible;
@@ -148,7 +144,7 @@ gl_FragColor.a *= sjnVisible;
 `,
         );
       };
-      material.customProgramCacheKey = () => 'sjn-standard-v2-colour-mask-2';
+      material.customProgramCacheKey = () => 'sjn-standard-v3-colour-mask-2-tone';
     }
     this.entries.set(pass.standardKey, entry);
     return entry;

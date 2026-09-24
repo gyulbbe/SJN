@@ -11,6 +11,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { cornerOcclusion } from './render/realistic-lighting';
 import { createRoomCamera, roomFacePoint, validateRoomDimensions } from './room-geometry';
 import type { RoomDimensions, RoomFace } from './room-types';
 
@@ -29,7 +30,9 @@ function makeFace(room: RoomDimensions, face: BackgroundFace): Mesh<BufferGeomet
   const positions: number[] = [],
     colors: number[] = [],
     indices: number[] = [];
-  const divisions = 20;
+  // Fine enough for the corner falloff (a few hundred millimetres) to stay smooth.
+  const divisions = 48;
+  const axis = face === 'floor' || face === 'ceiling' ? 'y' : face === 'back' ? 'z' : 'x';
   const base = new Color(COLORS[face]);
   for (let row = 0; row <= divisions; row++) {
     for (let column = 0; column <= divisions; column++) {
@@ -48,7 +51,9 @@ function makeFace(room: RoomDimensions, face: BackgroundFace): Mesh<BufferGeomet
           : face === 'ceiling'
             ? 0.97 + 0.03 * v
             : 1 - 0.07 * v * v - 0.025 * edge;
-      colors.push(base.r * light, base.g * light, base.b * light);
+      // Soft contact shade where planes meet, carried into tiles through the editor's shading.
+      const occlusion = cornerOcclusion(point, room, axis, 0.65);
+      colors.push(base.r * light * occlusion, base.g * light * occlusion, base.b * light * occlusion);
       if (row < divisions && column < divisions) {
         const a = row * (divisions + 1) + column,
           b = a + 1,

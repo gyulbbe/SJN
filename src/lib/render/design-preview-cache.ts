@@ -1,7 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb';
 
 /** Disposable browser-only images. Never stored in the project asset repository or uploaded. */
-export const DESIGN_RENDER_REVISION = 1;
+export const DESIGN_RENDER_REVISION = 2;
 export const DESIGN_PREVIEW_EVENT = 'gongganmiri-design-preview';
 export type DesignPreviewIdentity = {
   projectId: string;

@@ -17,6 +17,8 @@ import {
   type Texture,
 } from 'three';
 import { roomFacePoint } from '../room-geometry';
+import { finishAppearance, MATTE_FINISH } from '../render/finish';
+import { CORNER_OCCLUSION_GLSL, TONE_MAPPING_GLSL } from '../render/realistic-lighting';
 import { buildWallFeaturePieces, type WallFeaturePiece } from './wall-feature-geometry';
 import type { RoomDefinition, RoomFace } from '../room-types';
 import {
@@ -232,6 +234,9 @@ varying vec2 sjnUv;
 uniform sampler2D sjnAtlas;uniform vec2 sjnPlane;uniform vec2 sjnTile;uniform vec2 sjnOffset;
 uniform float sjnAngle;uniform float sjnGrout;uniform vec3 sjnGroutColor;uniform float sjnBrick;
 uniform float sjnSeed;uniform float sjnCount;uniform float sjnColumns;uniform float sjnPixels;
+float sjnGroutAmount=0.;
+// Surface slope along the face's u/v millimetre axes: a small rounded tile edge beside the grout.
+vec2 sjnSlope=vec2(0.);
 vec3 sjnDecode(vec3 c){return mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),step(vec3(.04045),c));}
 vec3 sjnTileColor(){
  vec2 mm=sjnUv*sjnPlane-sjnOffset;
@@ -246,11 +251,35 @@ vec3 sjnTileColor(){
  vec2 atlasUv=(atlasCell+clamp(inside/sjnTile,vec2(inset),vec2(1.-inset)))/sjnColumns;
  atlasUv.y=1.-atlasUv.y;
  vec3 color=sjnDecode(texture2D(sjnAtlas,atlasUv).rgb);
- vec2 d=abs(mod(inside-(sjnTile+sjnGrout*.5)+period*.5,period)-period*.5);
+ vec2 seam=mod(inside-(sjnTile+sjnGrout*.5)+period*.5,period)-period*.5;
+ vec2 d=abs(seam);
  vec2 coverage=clamp((sjnGrout*.5-d+aa*.5)/aa,0.,1.)-clamp((-sjnGrout*.5-d+aa*.5)/aa,0.,1.);
  coverage=mix(coverage,vec2(sjnGrout)/period,step(period,aa));
  float grout=sjnGrout<=0.?0.:1.-(1.-coverage.x)*(1.-coverage.y);
- return mix(color,sjnGroutColor,grout);
+ sjnGroutAmount=grout;
+ if(sjnGrout>0.){
+  // Rise over a bevel of a few millimetres from the recessed joint (smoothstep derivative),
+  // faded out once the bevel is smaller than a pixel so distant tiles do not shimmer.
+  float bevel=clamp(min(sjnTile.x,sjnTile.y)*.012,.6,2.5);
+  vec2 t=clamp((d-sjnGrout*.5)/bevel,0.,1.);
+  vec2 fade=clamp(1.-(aa-bevel*.5)/(bevel*1.5),0.,1.);
+  vec2 slope=2.1*t*(1.-t)*sign(seam)*fade;
+  sjnSlope=vec2(c*slope.x-s*slope.y,s*slope.x+c*slope.y);
+ }
+ // The recessed joint receives less bounce light than the tile face.
+ return mix(color,sjnGroutColor*.88,grout);
+}
+`;
+// Height-gradient normal perturbation with a screen-derivative tangent frame (as three's
+// perturbNormal2Arb), so it needs no tangent attribute and works on every generated face.
+const reliefNormal = `
+if(dot(sjnSlope,sjnSlope)>0.){
+ vec3 q0=dFdx(-vViewPosition),q1=dFdy(-vViewPosition);
+ vec2 st0=dFdx(sjnUv*sjnPlane),st1=dFdy(sjnUv*sjnPlane);
+ vec3 q1perp=cross(q1,normal),q0perp=cross(normal,q0);
+ vec3 T=q1perp*st0.x+q0perp*st1.x,B=q1perp*st0.y+q0perp*st1.y;
+ float det=max(dot(T,T),dot(B,B));
+ if(det>0.)normal=normalize(normal-(sjnSlope.x*T+sjnSlope.y*B)*inversesqrt(det));
 }
 `;
 const adjustment = (value: ColorAdjust) => {
@@ -259,26 +288,78 @@ const adjustment = (value: ColorAdjust) => {
     : DEFAULT_COLOR;
   return new Vector4(c.exposure, c.contrast, c.saturation, c.warmth);
 };
+const MAX_CONTACTS = 8;
+type ContactUniforms = {
+  sjnContacts: { value: Vector4[] };
+  sjnContactHeights: { value: number[] };
+  sjnContactCount: { value: number };
+};
+// Floor bounce light is reduced around installed objects' footprints (x/z millimetres), so a bath
+// or toilet sits on the floor instead of floating. Direct light still comes from the shadow map.
+const contactSource = `
+uniform vec4 sjnContacts[${MAX_CONTACTS}];uniform float sjnContactHeights[${MAX_CONTACTS}];uniform int sjnContactCount;
+float sjnContactOcclusion(){
+ if(sjnFaceAxis.y<.5)return 1.;
+ float o=1.;
+ for(int i=0;i<${MAX_CONTACTS};i++){
+  if(i>=sjnContactCount)break;
+  vec4 b=sjnContacts[i];
+  vec2 d=max(max(b.xy-sjnWorld.xz,sjnWorld.xz-b.zw),0.);
+  o*=1.-.5*clamp(sjnContactHeights[i]/400.,.25,1.)*exp(-length(d)/150.);
+ }
+ return o;
+}
+`;
 function surfaceMaterial(
   room: RoomDefinition,
   patch: ViewerSurfacePatch,
+  contacts: ContactUniforms,
   product?: MaterialVersion,
   atlas?: Atlas,
 ): MeshStandardMaterial {
   const surface = patch.surface;
+  const appearance = product && atlas ? finishAppearance(product.finish) : MATTE_FINISH;
   const material = new MeshStandardMaterial({
     color: product && atlas ? '#ffffff' : VIEWER_FACE_COLORS[patch.face],
-    roughness: 0.83,
-    metalness: 0,
+    roughness: appearance.roughness,
+    metalness: appearance.metalness,
     side: DoubleSide,
   });
   material.onBeforeCompile = (shader) => {
     shader.uniforms.sjnAdjustment = { value: adjustment(surface?.color ?? DEFAULT_COLOR) };
-    shader.fragmentShader = adjustSource + shader.fragmentShader;
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <opaque_fragment>',
-      'outgoingLight=sjnAdjust(outgoingLight);\n#include <opaque_fragment>',
+    shader.uniforms.sjnRoom = { value: new Vector3(room.widthMm, room.heightMm, room.depthMm) };
+    shader.uniforms.sjnFaceAxis = {
+      value: new Vector3(
+        patch.face === 'left' || patch.face === 'right' ? 1 : 0,
+        patch.face === 'floor' ? 1 : 0,
+        patch.face === 'back' ? 1 : 0,
+      ),
+    };
+    // Shared objects: setContacts() updates every floor material without recompiling.
+    Object.assign(shader.uniforms, contacts);
+    shader.vertexShader = 'varying vec3 sjnWorld;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <project_vertex>',
+      '#include <project_vertex>\nsjnWorld=(modelMatrix*vec4(transformed,1.)).xyz;',
     );
+    shader.fragmentShader =
+      adjustSource + TONE_MAPPING_GLSL + CORNER_OCCLUSION_GLSL + contactSource + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <opaque_fragment>',
+        'outgoingLight=sjnToneMap(sjnAdjust(outgoingLight));\n#include <opaque_fragment>',
+      )
+      // Corners and the wall/floor joint receive less bounce light; direct light keeps its shadow map.
+      .replace(
+        '#include <aomap_fragment>',
+        '#include <aomap_fragment>\n{float sjnAo=sjnCornerOcclusion()*sjnContactOcclusion();reflectedLight.indirectDiffuse*=sjnAo;reflectedLight.indirectSpecular*=mix(1.,sjnAo,.5);}',
+      )
+      // Keep glazed tiles readable: reflections of the light and room are softened so a dark
+      // glossy tile is not washed out into a grey mirror of its surroundings.
+      .replace(
+        '#include <lights_fragment_end>',
+        '#include <lights_fragment_end>\nreflectedLight.directSpecular*=.6;reflectedLight.indirectSpecular*=.6;',
+      );
     if (!product || !atlas || !surface) return;
     const tile = surface.tile;
     Object.assign(shader.uniforms, {
@@ -306,12 +387,20 @@ function surfaceMaterial(
       '#include <uv_vertex>\nsjnUv=uv;',
     );
     shader.fragmentShader = tileSource + shader.fragmentShader;
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <map_fragment>',
-      'diffuseColor.rgb*=sjnTileColor();',
-    );
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <map_fragment>', 'diffuseColor.rgb*=sjnTileColor();')
+      // Cement grout stays rough and non-metallic whatever the tile's glaze.
+      .replace(
+        '#include <roughnessmap_fragment>',
+        '#include <roughnessmap_fragment>\nroughnessFactor=mix(roughnessFactor,.9,sjnGroutAmount);',
+      )
+      .replace(
+        '#include <metalnessmap_fragment>',
+        '#include <metalnessmap_fragment>\nmetalnessFactor*=1.-sjnGroutAmount;',
+      )
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + reliefNormal);
   };
-  material.customProgramCacheKey = () => (atlas ? 'sjn-room-world-tile-v1' : 'sjn-room-world-neutral-v1');
+  material.customProgramCacheKey = () => (atlas ? 'sjn-room-world-tile-v2' : 'sjn-room-world-neutral-v2');
   return material;
 }
 
@@ -333,6 +422,11 @@ export async function buildViewerSurfaces(
   }[] = [];
   const ownedGeometry = new Set<BufferGeometry>();
   const ownedMaterials = new Set<MeshStandardMaterial>();
+  const contacts: ContactUniforms = {
+    sjnContacts: { value: Array.from({ length: MAX_CONTACTS }, () => new Vector4()) },
+    sjnContactHeights: { value: new Array<number>(MAX_CONTACTS).fill(0) },
+    sjnContactCount: { value: 0 },
+  };
   const voidBounds = new Map<string, Box3>();
   for (const piece of features?.pieces ?? []) {
     if (!piece.featureId) continue;
@@ -373,7 +467,7 @@ export async function buildViewerSurfaces(
           product = undefined;
         }
       }
-      const material = surfaceMaterial(room, patch, product, atlas);
+      const material = surfaceMaterial(room, patch, contacts, product, atlas);
       ownedMaterials.add(material);
       const add = (geometry: BufferGeometry, piece?: WallFeaturePiece) => {
         const mesh = new Mesh(geometry, material);
@@ -415,6 +509,17 @@ export async function buildViewerSurfaces(
     group,
     notices,
     structureBounds: features?.structureBounds.clone() ?? new Box3(),
+    /** World-space boxes of objects standing on the floor; the largest footprints are kept. */
+    setContacts(boxes: readonly Box3[]) {
+      const kept = [...boxes]
+        .sort((a, b) => (b.max.x - b.min.x) * (b.max.z - b.min.z) - (a.max.x - a.min.x) * (a.max.z - a.min.z))
+        .slice(0, MAX_CONTACTS);
+      kept.forEach((box, i) => {
+        contacts.sjnContacts.value[i].set(box.min.x, box.min.z, box.max.x, box.max.z);
+        contacts.sjnContactHeights.value[i] = box.max.y - box.min.y;
+      });
+      contacts.sjnContactCount.value = kept.length;
+    },
     updateView(camera: Camera) {
       const position = camera.getWorldPosition(new Vector3());
       for (const entry of meshes) {
