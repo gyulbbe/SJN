@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { foregroundBounds, rgbNchw, transposeTokens } from '../src/lib/product3d/pixels';
+import { defringeAlpha, foregroundBounds, rgbNchw, transposeTokens } from '../src/lib/product3d/pixels';
 
 describe('multiview transparent source preparation', () => {
   it('finds asymmetric foreground without carrying transparent padding into the model crop', () => {
@@ -26,5 +26,37 @@ describe('multiview transparent source preparation', () => {
     output[0] = 99;
     expect(input[0]).toBe(1);
     expect(() => transposeTokens(input, 3, 3)).toThrow('크기');
+  });
+});
+
+describe('cut-out edge cleanup before the grey background', () => {
+  // A 7×7 red square cut out with a one-pixel semi-transparent grey fringe around it.
+  const size = 9;
+  const rgba = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      const inside = x >= 1 && x <= 7 && y >= 1 && y <= 7;
+      const edge = inside && (x === 1 || x === 7 || y === 1 || y === 7);
+      if (!inside) continue;
+      rgba.set(edge ? [128, 128, 128, 120] : [220, 30, 30, 255], i);
+    }
+  const at = (data: Uint8ClampedArray, x: number, y: number) => [
+    ...data.subarray((y * size + x) * 4, (y * size + x) * 4 + 4),
+  ];
+
+  it('gives fringe pixels the product colour instead of the grey they were blended with', () => {
+    const cleaned = defringeAlpha(rgba, size, size, 0);
+    expect(at(cleaned, 1, 4)).toEqual([220, 30, 30, 120]);
+    expect(at(cleaned, 4, 4)).toEqual([220, 30, 30, 255]);
+    expect(at(cleaned, 0, 0)[3]).toBe(0);
+  });
+
+  it('shrinks the alpha by the radius and leaves the source untouched', () => {
+    const cleaned = defringeAlpha(rgba, size, size, 1);
+    expect(at(cleaned, 1, 4)[3]).toBe(0);
+    expect(at(cleaned, 2, 4)[3]).toBe(120);
+    expect(at(cleaned, 4, 4)[3]).toBe(255);
+    expect(at(rgba, 1, 4)).toEqual([128, 128, 128, 120]);
   });
 });

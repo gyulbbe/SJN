@@ -380,6 +380,28 @@ describe('room viewer immutable physical fixtures', () => {
     expect(g.boundingBox!.min.x).toBeCloseTo(-200);
     g.dispose();
   });
+  it('shows a view saved with lighting correction as lit base colours, and older views unchanged', async () => {
+    const shadedCube = cube();
+    shadedCube.colors = new Float32Array(24).map((_, i) => 0.35 + (Math.floor(i / 3) % 4) * 0.18);
+    const unique = (g: ReturnType<typeof createSavedProductGeometry>) =>
+      new Set([...(g.getAttribute('color').array as Float32Array)].map((c) => c.toFixed(4))).size;
+    const baked = createSavedProductGeometry(shadedCube, reference(), fixture());
+    const lit = createSavedProductGeometry(shadedCube, { ...reference(), shading: 'lit' }, fixture());
+    expect(unique(baked)).toBeGreaterThan(1);
+    expect(unique(lit)).toBe(1);
+    baked.dispose();
+    lit.dispose();
+    const f = fixture();
+    const m = material();
+    m.views[0].product3d = { ...reference(), shading: 'lit' };
+    const mesh = await makeProductMeshAsset(shadedCube, 'mesh', 'input');
+    const result = await buildViewerFixtures(scene([f]), { m }, async () => mesh);
+    const kinds = new Set<string>();
+    result.group.traverse((node) => {
+      if (node instanceof Mesh) kinds.add((node.material as { type: string }).type);
+    });
+    expect(kinds).toEqual(new Set(['MeshStandardMaterial']));
+  });
   it('places saved wall meshes rear against their installation surface', async () => {
     const f = fixture();
     f.roomPlacement!.face = 'left';

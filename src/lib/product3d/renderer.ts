@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import type { ProductMesh, ProductPose } from './state-types';
+import type { ProductMesh, ProductPose, ProductShading } from './state-types';
 import { validatePose } from './pose';
+import { estimateAlbedo } from './albedo';
+import { shadingNormals } from './mesh-cleanup';
 
 export interface ProductCapture {
   blob: Blob;
@@ -44,11 +46,28 @@ function pngBlob(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<Blob> 
   });
 }
 
-/** Shared live/export scene. No lighting changes the model's already baked RGB appearance. */
+/** sRGB 0–1 colours to the linear buffer the renderer draws. */
+function linearColors(source: Float32Array) {
+  const colors = new Float32Array(source.length);
+  const color = new THREE.Color();
+  for (let i = 0; i < source.length; i += 3) {
+    color.setRGB(source[i], source[i + 1], source[i + 2], THREE.SRGBColorSpace);
+    colors[i] = color.r;
+    colors[i + 1] = color.g;
+    colors[i + 2] = color.b;
+  }
+  return colors;
+}
+
+/**
+ * Shared live/export scene. 'baked' draws the model's RGB unlit, exactly as saved before.
+ * 'lit' draws per-material base colours under a light that follows the camera, so every angle
+ * is shaded consistently instead of carrying the photo's shadows around.
+ */
 export class ProductRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly camera: THREE.OrthographicCamera;
-  readonly object: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  readonly object: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial | THREE.MeshStandardMaterial>;
   readonly scene = new THREE.Scene();
   private readonly geometry = new THREE.BufferGeometry();
   private readonly material = new THREE.MeshBasicMaterial({
@@ -56,6 +75,20 @@ export class ProductRenderer {
     side: THREE.DoubleSide,
     toneMapped: false,
   });
+  private readonly litMaterial = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    roughness: 0.55,
+    metalness: 0,
+  });
+  // A white glaze facing the viewer comes out just under full white (about the brightness of a
+  // studio product photo), sides turned away from the key light about half as bright.
+  private readonly key = new THREE.DirectionalLight(0xffffff, 1.8);
+  private readonly sky = new THREE.HemisphereLight(0xffffff, 0xcfcfca, 1.9);
+  private readonly source: ProductMesh;
+  private readonly bakedColors: Float32Array;
+  private litColors?: Float32Array;
+  private shading: ProductShading = 'baked';
   private readonly raycaster = new THREE.Raycaster();
   private readonly boxCorners: THREE.Vector3[] = [];
   private readonly abort = new AbortController();
@@ -85,21 +118,12 @@ export class ProductRenderer {
       if (!Number.isFinite(n)) throw new Error('제품 형상에 잘못된 좌표가 있습니다.');
     for (const n of mesh.indices)
       if (n >= mesh.positions.length / 3) throw new Error('제품 형상에 잘못된 면 정보가 있습니다.');
-    const colors = new Float32Array(mesh.colors.length);
-    const color = new THREE.Color();
-    for (let i = 0; i < mesh.colors.length; i += 3) {
-      const r = mesh.colors[i],
-        g = mesh.colors[i + 1],
-        b = mesh.colors[i + 2];
-      if (![r, g, b].every((n) => Number.isFinite(n) && n >= 0 && n <= 1))
-        throw new Error('제품 형상에 잘못된 색상이 있습니다.');
-      color.setRGB(r, g, b, THREE.SRGBColorSpace);
-      colors[i] = color.r;
-      colors[i + 1] = color.g;
-      colors[i + 2] = color.b;
-    }
+    for (const n of mesh.colors)
+      if (!Number.isFinite(n) || n < 0 || n > 1) throw new Error('제품 형상에 잘못된 색상이 있습니다.');
+    this.source = mesh;
+    this.bakedColors = linearColors(mesh.colors);
     this.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.positions), 3));
-    this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    this.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.bakedColors), 3));
     this.geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
     this.geometry.computeBoundingBox();
     const center = this.geometry.boundingBox!.getCenter(new THREE.Vector3());
@@ -110,14 +134,18 @@ export class ProductRenderer {
     if (!Number.isFinite(this.radius) || this.radius < 1e-5) {
       this.geometry.dispose();
       this.material.dispose();
+      this.litMaterial.dispose();
       throw new Error('제품 형상의 크기가 너무 작습니다.');
     }
     const box = this.geometry.boundingBox!;
     for (const x of [box.min.x, box.max.x])
       for (const y of [box.min.y, box.max.y])
         for (const z of [box.min.z, box.max.z]) this.boxCorners.push(new THREE.Vector3(x, y, z));
-    this.object = new THREE.Mesh(this.geometry, this.material);
-    this.scene.add(this.object);
+    this.object = new THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial | THREE.MeshStandardMaterial>(
+      this.geometry,
+      this.material,
+    );
+    this.scene.add(this.object, this.sky, this.key, this.key.target);
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, this.radius * 0.01, this.radius * 12);
     try {
       this.renderer = new THREE.WebGLRenderer({
@@ -132,10 +160,46 @@ export class ProductRenderer {
     } catch {
       this.geometry.dispose();
       this.material.dispose();
+      this.litMaterial.dispose();
       throw new Error(
         '이 브라우저에서 WebGL 입체 미리보기를 시작할 수 없습니다. 하드웨어 가속 설정을 확인해 주세요.',
       );
     }
+  }
+
+  /** Switch between the saved RGB and lit base colours; base colours are computed once. */
+  setShading(mode: ProductShading) {
+    if (mode === this.shading) return;
+    const attribute = this.geometry.getAttribute('color') as THREE.BufferAttribute;
+    if (mode === 'lit') {
+      if (!this.litColors) {
+        this.litColors = linearColors(
+          estimateAlbedo(this.source.positions, this.source.indices, this.source.colors),
+        );
+        this.geometry.setAttribute(
+          'normal',
+          new THREE.BufferAttribute(shadingNormals(this.source.positions, this.source.indices), 3),
+        );
+      }
+      (attribute.array as Float32Array).set(this.litColors);
+      this.object.material = this.litMaterial;
+    } else {
+      (attribute.array as Float32Array).set(this.bakedColors);
+      this.object.material = this.material;
+    }
+    attribute.needsUpdate = true;
+    this.shading = mode;
+  }
+
+  /** Key light from the viewer's upper left, so the shading always matches the current view. */
+  private aim(camera: THREE.Camera) {
+    this.key.position
+      .set(-0.45, 0.75, 1)
+      .applyQuaternion(camera.quaternion)
+      .multiplyScalar(this.radius * 4);
+    this.key.target.position.set(0, 0, 0);
+    this.key.updateMatrixWorld();
+    this.key.target.updateMatrixWorld();
   }
 
   setPose(input: ProductPose) {
@@ -177,6 +241,7 @@ export class ProductRenderer {
     if (this.disposed) return;
     if (this.renderer.getContext().isContextLost())
       throw new Error('GPU 연결이 끊겼습니다. 창을 닫고 다시 열어 주세요.');
+    this.aim(this.camera);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -252,6 +317,7 @@ export class ProductRenderer {
       this.renderer.setSize(1024, 1024, false);
       let png: Promise<Blob>;
       try {
+        this.aim(camera);
         this.renderer.render(this.scene, camera);
         if (this.renderer.getContext().isContextLost()) throw new Error('PNG 생성 중 GPU 연결이 끊겼습니다.');
         // toBlob snapshots the bitmap when called, so restore the live viewport immediately.
@@ -280,6 +346,7 @@ export class ProductRenderer {
     this.abort.abort();
     this.geometry.dispose();
     this.material.dispose();
+    this.litMaterial.dispose();
     this.scene.clear();
     this.renderer.dispose();
     this.renderer.forceContextLoss();

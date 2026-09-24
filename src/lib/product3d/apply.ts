@@ -73,6 +73,8 @@ export async function prepareProductReplacement(
       pose: structuredClone(result.pose),
       modelId: result.modelId,
       modelRevision: result.modelRevision,
+      // Only record the new mode; older saves without the field keep opening as the model's RGB.
+      ...(result.shading === 'lit' ? { shading: 'lit' as const } : {}),
     },
   };
 }

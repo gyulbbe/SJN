@@ -2,8 +2,9 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
-import type { ProductMesh, ProductPose } from '@/lib/product3d/state-types';
+import type { ProductMesh, ProductPose, ProductShading } from '@/lib/product3d/state-types';
 import { ProductRenderer, type ProductCapture } from '@/lib/product3d/renderer';
+import { estimateUprightQuaternion } from '@/lib/product3d/upright';
 import {
   createDefaultPose,
   MAX_PRODUCT_ZOOM,
@@ -21,10 +22,13 @@ export interface ProductViewportHandle {
 export interface ProductViewportProps {
   mesh: ProductMesh;
   initialPose: ProductPose;
+  /** 'lit' shows base colours under viewer lighting; 'baked' the model's own RGB. */
+  shading: ProductShading;
+  onShadingChange: (shading: ProductShading) => void;
   onPoseChange: (pose: ProductPose) => void;
   onError: (message: string) => void;
 }
-type Action = 'fit' | 'view' | 'tilt' | 'undo' | 'redo' | 'in' | 'out';
+type Action = 'fit' | 'view' | 'tilt' | 'upright' | 'undo' | 'redo' | 'in' | 'out';
 interface Runtime {
   renderer: ProductRenderer;
   controls: TrackballControls;
@@ -38,7 +42,7 @@ interface Runtime {
 }
 
 export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewportProps>(
-  function ProductViewport({ mesh, initialPose, onPoseChange, onError }, ref) {
+  function ProductViewport({ mesh, initialPose, shading, onShadingChange, onPoseChange, onError }, ref) {
     const canvasMountRef = useRef<HTMLDivElement>(null);
     const areaRef = useRef<HTMLDivElement>(null);
     const selectionRef = useRef<HTMLDivElement>(null);
@@ -47,6 +51,7 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     const runtime = useRef<Runtime | null>(null);
     const callbacks = useRef({ onPoseChange, onError });
     const initial = useRef(initialPose);
+    const shadingRef = useRef(shading);
     const [background, setBackground] = useState<'checker' | 'white' | 'black'>('checker');
     const [pose, setPose] = useState(initialPose);
     const [history, setHistory] = useState({ undo: false, redo: false });
@@ -58,6 +63,11 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     useEffect(() => {
       initial.current = initialPose;
     }, [initialPose]);
+    useEffect(() => {
+      shadingRef.current = shading;
+      runtime.current?.renderer.setShading(shading);
+      runtime.current?.draw();
+    }, [shading, ready]);
 
     useImperativeHandle(
       ref,
@@ -92,6 +102,7 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
       let initialized: ProductRenderer | undefined;
       try {
         initialized = new ProductRenderer(canvas, mesh);
+        initialized.setShading(shadingRef.current);
         initialized.setPose(initial.current);
       } catch (error) {
         initialized?.dispose();
@@ -114,6 +125,8 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
       };
       let controls = createControls();
       const undo = new ProductPoseHistory(initial.current);
+      // Computed on first use; the saved mesh never changes while this viewer is open.
+      let upright: ProductPose['objectQuaternion'] | undefined;
       let stopped = false,
         capturing = false,
         frame = 0,
@@ -337,6 +350,8 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
             if (action === 'fit') next.zoom = 1;
             if (action === 'view') next.cameraQuaternion = createDefaultPose().cameraQuaternion;
             if (action === 'tilt') next.objectQuaternion = [0, 0, 0, 1];
+            if (action === 'upright')
+              next.objectQuaternion = upright ??= estimateUprightQuaternion(mesh.positions);
             if (action === 'in') next.zoom = Math.min(MAX_PRODUCT_ZOOM, current.zoom * 1.25);
             if (action === 'out') next.zoom = Math.max(MIN_PRODUCT_ZOOM, current.zoom / 1.25);
             engine.setPose(next);
@@ -438,6 +453,28 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     return (
       <section className={styles.root} aria-label="360도 제품 각도 편집">
         <div className={styles.toolbar}>
+          <div className={styles.group} aria-label="제품 색 표현">
+            {(
+              [
+                ['lit', '조명 보정'],
+                ['baked', '원본 색'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={shading === value}
+                title={
+                  value === 'lit'
+                    ? '사진의 그림자를 걷어 낸 제품 색에 현재 시점의 조명을 입혀요'
+                    : 'AI가 만든 색을 그대로 보여 줘요(사진의 명암 포함)'
+                }
+                onClick={() => onShadingChange(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className={styles.group} aria-label="미리보기 배경">
             {(['checker', 'white', 'black'] as const).map((value) => (
               <button
@@ -514,6 +551,9 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
             </button>
             <button type="button" onClick={() => action('tilt')} disabled={!ready}>
               기울기 초기화
+            </button>
+            <button type="button" onClick={() => action('upright')} disabled={!ready}>
+              자동 수평 맞춤
             </button>
           </div>
           <div className={styles.group}>

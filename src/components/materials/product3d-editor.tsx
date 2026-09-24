@@ -5,7 +5,7 @@ import type { MaterialVersion } from '@/lib/types';
 import { MAX_PRODUCT_VIEWS, MAX_PRODUCT_VIEW_NAME } from '@/lib/product3d/apply';
 import { AssetImage } from './asset-image';
 import { AngleNameInput } from './angle-name-input';
-import type { Product3dReference, ProductPose } from '@/lib/product3d/state-types';
+import type { Product3dReference, ProductPose, ProductShading } from '@/lib/product3d/state-types';
 import type {
   Product3dApplication,
   Product3dProgress,
@@ -15,10 +15,13 @@ import type {
 import type { Product3dClient } from '@/lib/product3d/client';
 import { decodeProductMesh } from '@/lib/product3d/codec';
 import { resolveProductInput } from '@/lib/product3d/source';
-import { createDefaultPose } from '@/lib/product3d/pose';
+import { createDefaultPose, sourceViewAngle } from '@/lib/product3d/pose';
+import { estimateUprightQuaternion } from '@/lib/product3d/upright';
 import { Product3dViewport, type ProductViewportHandle } from './product3d-viewport';
 import styles from './product3d-editor.module.css';
 const seconds = (value: number) => `${(value / 1000).toFixed(2)}초`;
+/** Beyond this, most of what the viewer shows was not in the photo. */
+const GUESSED_VIEW_DEGREES = 40;
 function nextAngleName(names: string[]) {
   const taken = new Set(names);
   let index = 1;
@@ -85,6 +88,9 @@ export function Product3dEditor({
   const [renaming, setRenaming] = useState(false),
     [renameName, setRenameName] = useState('');
   const [notice, setNotice] = useState('');
+  // New reconstructions start lit; saved views reopen the way they were saved (older ones unlit).
+  const [shading, setShading] = useState<ProductShading>('lit'),
+    [viewAngle, setViewAngle] = useState(0);
   const selectedView = views[selectedViewIndex];
   const locked = loading || busy || applying || capturing;
   const latestPose = useRef<ProductPose>(createDefaultPose());
@@ -113,6 +119,7 @@ export function Product3dEditor({
     setInput(undefined);
     setResult(undefined);
     setStored(false);
+    setShading(product3d && !blob ? (product3d.shading ?? 'baked') : 'lit');
     void (async () => {
       const repositories = getRepositories();
       let source: ProductInput;
@@ -141,6 +148,7 @@ export function Product3dEditor({
           if (!active) return;
           latestPose.current = structuredClone(product3d.pose);
           setInitialPose(structuredClone(product3d.pose));
+          setViewAngle(sourceViewAngle(product3d.pose));
           setMeshAssetId(asset.id);
           setStored(true);
           setResult({
@@ -200,8 +208,15 @@ export function Product3dEditor({
       });
       if (!alive.current || run !== generation.current) return;
       setMeshAssetId(undefined);
-      latestPose.current = createDefaultPose();
-      setInitialPose(createDefaultPose());
+      // A single photo cannot tell the camera height, so stand the new model upright first.
+      const pose = {
+        ...createDefaultPose(),
+        objectQuaternion: estimateUprightQuaternion(next.mesh.positions),
+      };
+      latestPose.current = pose;
+      setInitialPose(pose);
+      setViewAngle(sourceViewAngle(pose));
+      setShading('lit');
       setStored(false);
       setViewerKey((k) => k + 1);
       setResult(next);
@@ -264,6 +279,7 @@ export function Product3dEditor({
           input,
           modelId: result.timings.modelId,
           modelRevision: result.timings.modelRevision,
+          shading,
         },
         mode,
         name,
@@ -435,8 +451,11 @@ export function Product3dEditor({
                 ref={viewport}
                 mesh={result.mesh}
                 initialPose={initialPose}
+                shading={shading}
+                onShadingChange={setShading}
                 onPoseChange={(pose) => {
                   latestPose.current = pose;
+                  setViewAngle(sourceViewAngle(pose));
                 }}
                 onError={setViewerError}
               />
@@ -623,6 +642,16 @@ export function Product3dEditor({
             추가는 새 사진을 만들고, 수정은 선택한 “{selectedView?.direction ?? '각도'}” 사진을 바꿔요. 자재
             저장 시 함께 반영돼요.
           </p>
+          {result && viewAngle > GUESSED_VIEW_DEGREES && (
+            <p
+              data-testid="product3d-angle-warning"
+              aria-live="polite"
+              className="text-[13px] text-amber-800"
+            >
+              사진에 없던 면이라 모양이 부정확할 수 있어요. 지금 시점은 사진 방향에서 약{' '}
+              {Math.round(viewAngle)}° 돌아가 있어요.
+            </p>
+          )}
           {views.length >= MAX_PRODUCT_VIEWS && (
             <p className={styles.nameError}>
               각도 사진은 자재당 최대 {MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요. 새 각도를 추가하려면 기존

@@ -51,6 +51,17 @@ export function createDefaultPose(): ProductPose {
   };
 }
 
+/**
+ * Degrees between the current view and the photographed side (+x of the product). Past about
+ * 40° the viewer mostly shows surfaces TripoSR had to guess.
+ */
+export function sourceViewAngle(pose: ProductPose): number {
+  const valid = validatePose(pose);
+  const toCamera = new Vector3(0, 0, 1).applyQuaternion(new Quaternion(...valid.cameraQuaternion));
+  const photographed = new Vector3(1, 0, 0).applyQuaternion(new Quaternion(...valid.objectQuaternion));
+  return (toCamera.angleTo(photographed) * 180) / Math.PI;
+}
+
 export function samePose(a: ProductPose, b: ProductPose): boolean {
   return (
     Math.abs(a.zoom - b.zoom) < 1e-7 &&

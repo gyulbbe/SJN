@@ -309,3 +309,40 @@ export async function sampleSurfaceColors(
   }
   return colors;
 }
+
+/**
+ * Trilinear resample of a cubic density grid over the same bounds. Used when a fine grid would
+ * produce a mesh over the storage limit: the coarser grid still follows the decoded field.
+ */
+export function resampleDensity(density: Float32Array, from: number, to: number): Float32Array {
+  if (density.length !== from ** 3 || !Number.isInteger(to) || to < 2 || to > from)
+    throw new Error('형상 격자를 다시 나눌 수 없어요.');
+  const out = new Float32Array(to ** 3);
+  const scale = (from - 1) / (to - 1);
+  const at = (x: number, y: number, z: number) => density[(x * from + y) * from + z];
+  for (let x = 0; x < to; x++) {
+    const fx = x * scale,
+      x0 = Math.floor(fx),
+      x1 = Math.min(from - 1, x0 + 1),
+      tx = fx - x0;
+    for (let y = 0; y < to; y++) {
+      const fy = y * scale,
+        y0 = Math.floor(fy),
+        y1 = Math.min(from - 1, y0 + 1),
+        ty = fy - y0;
+      for (let z = 0; z < to; z++) {
+        const fz = z * scale,
+          z0 = Math.floor(fz),
+          z1 = Math.min(from - 1, z0 + 1),
+          tz = fz - z0;
+        const c00 = at(x0, y0, z0) * (1 - tz) + at(x0, y0, z1) * tz,
+          c01 = at(x0, y1, z0) * (1 - tz) + at(x0, y1, z1) * tz,
+          c10 = at(x1, y0, z0) * (1 - tz) + at(x1, y0, z1) * tz,
+          c11 = at(x1, y1, z0) * (1 - tz) + at(x1, y1, z1) * tz;
+        out[(x * to + y) * to + z] =
+          (c00 * (1 - ty) + c01 * ty) * (1 - tx) + (c10 * (1 - ty) + c11 * ty) * tx;
+      }
+    }
+  }
+  return out;
+}

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { extractMesh, refineMeshSurface, sampleSurfaceColors } from '../src/lib/product3d/geometry';
+import {
+  extractMesh,
+  refineMeshSurface,
+  sampleSurfaceColors,
+  resampleDensity,
+} from '../src/lib/product3d/geometry';
 
 function grid(size: number, field: (x: number, y: number, z: number) => number) {
   const values = new Float32Array(size ** 3);
@@ -265,5 +270,23 @@ describe('decoder surface refinement', () => {
       sampleSurfaceColors(positions, async () => new Float32Array([1, NaN, 0]), { chunkSize: 1 }),
     ).rejects.toThrow('유효하지 않은 색상');
     expect(positions).toEqual(new Float32Array(3));
+  });
+});
+
+describe('density grid resampling for oversized meshes', () => {
+  it('keeps a linear field exact and the corners in place', () => {
+    const from = 9,
+      to = 5;
+    const density = new Float32Array(from ** 3);
+    for (let x = 0; x < from; x++)
+      for (let y = 0; y < from; y++)
+        for (let z = 0; z < from; z++) density[(x * from + y) * from + z] = x + 2 * y + 3 * z;
+    const out = resampleDensity(density, from, to);
+    const scale = (from - 1) / (to - 1);
+    for (let x = 0; x < to; x++)
+      for (let y = 0; y < to; y++)
+        for (let z = 0; z < to; z++)
+          expect(out[(x * to + y) * to + z]).toBeCloseTo((x + 2 * y + 3 * z) * scale, 5);
+    expect(() => resampleDensity(density, from, from + 1)).toThrow();
   });
 });

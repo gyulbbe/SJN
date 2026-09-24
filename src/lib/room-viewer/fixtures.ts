@@ -8,6 +8,7 @@ import {
   Group,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
   PlaneGeometry,
   Quaternion,
   SRGBColorSpace,
@@ -21,6 +22,8 @@ import type { RoomPlacement, ProductBounds } from '../room-types';
 import type { AssetRecord, ColorAdjust, FixtureInstance, MaterialVersion, Scene } from '../types';
 import { decodeProductMesh } from '../product3d/codec';
 import { validatePose } from '../product3d/pose';
+import { estimateAlbedo } from '../product3d/albedo';
+import { shadingNormals } from '../product3d/mesh-cleanup';
 import type { Product3dReference, ProductMesh } from '../product3d/state-types';
 import { createTemplateModel, disposeTemplateModel } from '../reconstruction/templates';
 import { orientationAngle, reconstructionModelTransform } from '../reconstruction/projection';
@@ -303,16 +306,27 @@ export function createSavedProductGeometry(
     p.face === 'floor' ? -(box.min.z + box.max.z) / 2 : -box.min.z,
   );
   geometry.scale(scale, scale, scale);
-  const colors = new Float32Array(mesh.colors.length),
+  // A view saved with lighting correction shows base colours lit by the room, like the editor.
+  const source =
+    reference.shading === 'lit' ? estimateAlbedo(mesh.positions, mesh.indices, mesh.colors) : mesh.colors;
+  const colors = new Float32Array(source.length),
     color = new Color();
   for (let i = 0; i < colors.length; i += 3) {
-    color.setRGB(mesh.colors[i], mesh.colors[i + 1], mesh.colors[i + 2], SRGBColorSpace);
+    color.setRGB(source[i], source[i + 1], source[i + 2], SRGBColorSpace);
     colors[i] = color.r;
     colors[i + 1] = color.g;
     colors[i + 2] = color.b;
   }
   geometry.setAttribute('color', new BufferAttribute(colors, 3));
-  geometry.computeVertexNormals();
+  if (reference.shading === 'lit')
+    geometry.setAttribute(
+      'normal',
+      new BufferAttribute(
+        shadingNormals(geometry.getAttribute('position').array as Float32Array, mesh.indices),
+        3,
+      ),
+    );
+  else geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   return geometry;
 }
@@ -426,7 +440,14 @@ export async function buildViewerFixtures(
           content.add(
             new Mesh(
               geometry,
-              new MeshBasicMaterial({ vertexColors: true, side: DoubleSide, toneMapped: false }),
+              selected.product3d.shading === 'lit'
+                ? new MeshStandardMaterial({
+                    vertexColors: true,
+                    side: DoubleSide,
+                    roughness: 0.5,
+                    metalness: 0,
+                  })
+                : new MeshBasicMaterial({ vertexColors: true, side: DoubleSide, toneMapped: false }),
             ),
           );
           product.userData.representation = 'saved-product-mesh';

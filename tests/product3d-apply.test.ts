@@ -57,6 +57,7 @@ function application(): Product3dApplication {
     pose: { objectQuaternion: [0, 0, 0, 1], cameraQuaternion: [0, 0, 0, 1], zoom: 2 },
     modelId: 'test-model',
     modelRevision: 'pinned-revision',
+    shading: 'baked',
   };
 }
 function repository(afterPut?: (asset: AssetRecord) => void) {
@@ -106,6 +107,14 @@ function form(): MaterialInput {
 }
 beforeEach(() => vi.clearAllMocks());
 describe('360 product photo application', () => {
+  it('records the lighting mode only for lit captures so older and unlit saves look identical', async () => {
+    const { assets } = repository();
+    const unlit = await prepareProductReplacement(application(), assets, 'floor');
+    expect(unlit.product3d).not.toHaveProperty('shading');
+    const lit = await prepareProductReplacement({ ...application(), shading: 'lit' }, assets, 'floor');
+    expect(lit.product3d.shading).toBe('lit');
+  });
+
   it('retries a failed PNG write using the successfully staged input and mesh without duplicate writes', async () => {
     const result = application();
     const { assets, records, put } = repository();

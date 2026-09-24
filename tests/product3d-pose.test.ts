@@ -6,6 +6,7 @@ import {
   rotateInScreen,
   samePose,
   screenDragAngle,
+  sourceViewAngle,
   validatePose,
 } from '../src/lib/product3d/pose';
 
@@ -96,5 +97,27 @@ describe('360도 제품 자세', () => {
     expect(samePose(history.pose, rotateInScreen(initial, 0.1))).toBe(true);
     history.record(initial);
     expect(history.canRedo).toBe(false);
+  });
+});
+
+describe('사진 시점과의 각도', () => {
+  it('기본 시점은 사진 방향에서 약 10°이고, 카메라나 제품을 돌리면 그만큼 벌어진다', () => {
+    const pose = createDefaultPose();
+    expect(sourceViewAngle(pose)).toBeCloseTo(10, 5);
+    const side = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2);
+    const cameraTurned = validatePose({
+      ...pose,
+      cameraQuaternion: side
+        .clone()
+        .multiply(new Quaternion(...pose.cameraQuaternion))
+        .toArray(),
+    });
+    expect(sourceViewAngle(cameraTurned)).toBeCloseTo(90, 0);
+    const productTurned = validatePose({ ...pose, objectQuaternion: side.toArray() });
+    expect(sourceViewAngle(productTurned)).toBeCloseTo(90, 0);
+    // Turning both together keeps the photographed side in view.
+    expect(
+      sourceViewAngle({ ...cameraTurned, objectQuaternion: productTurned.objectQuaternion }),
+    ).toBeCloseTo(10, 4);
   });
 });

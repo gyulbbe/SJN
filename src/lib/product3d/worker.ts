@@ -7,8 +7,10 @@ import {
   PRODUCT3D_RUNTIME_URL,
   type Product3dModelPart,
 } from './model';
-import { foregroundBounds, rgbNchw, transposeTokens } from './pixels';
-import { extractMesh, refineMeshSurface, sampleSurfaceColors } from './geometry';
+import { defringeAlpha, foregroundBounds, rgbNchw, transposeTokens } from './pixels';
+import { extractMesh, refineMeshSurface, resampleDensity, sampleSurfaceColors } from './geometry';
+import { removeSmallPieces, taubinSmooth } from './mesh-cleanup';
+import { MAX_PRODUCT_MESH_BYTES } from './codec';
 import type { Product3dProgress, Product3dReply, Product3dRequest, Product3dTimings } from './types';
 
 const scope = globalThis as unknown as {
@@ -19,8 +21,13 @@ let running = false;
 let fallbackAllowed = false;
 let attemptTimings: Product3dTimings | undefined;
 let attemptStarted = 0;
-const GRID = 160;
+// TripoSR's released default is 256. The CPU fallback keeps the lighter 160 grid.
+const GPU_GRID = 256;
+const CPU_GRID = 160;
 const BOUND = 0.87;
+/** Stored mesh size: positions + colours (12 bytes each per vertex) and 4-byte indices. */
+const meshBytes = (mesh: { positions: Float32Array; indices: Uint32Array }) =>
+  mesh.positions.length * 8 + mesh.indices.length * 4;
 const CHUNK = 8192;
 
 async function prepare(blob: Blob) {
@@ -43,14 +50,15 @@ async function prepare(blob: Blob) {
     );
     const input = new OffscreenCanvas(512, 512);
     const out = input.getContext('2d', { willReadFrequently: true })!;
-    out.fillStyle = '#808080';
-    out.fillRect(0, 0, 512, 512);
     const extent = Math.max(bounds.width, bounds.height) / 0.85;
     const width = (bounds.width / extent) * 512;
     const height = (bounds.height / extent) * 512;
-    out.imageSmoothingEnabled = true;
-    out.imageSmoothingQuality = 'high';
-    out.drawImage(
+    // Clean the cut-out edge on its own layer first so no grey halo is baked into the colours.
+    const product = new OffscreenCanvas(512, 512);
+    const item = product.getContext('2d', { willReadFrequently: true })!;
+    item.imageSmoothingEnabled = true;
+    item.imageSmoothingQuality = 'high';
+    item.drawImage(
       bitmap,
       bounds.x / factor,
       bounds.y / factor,
@@ -61,6 +69,12 @@ async function prepare(blob: Blob) {
       width,
       height,
     );
+    const pixels = item.getImageData(0, 0, 512, 512);
+    pixels.data.set(defringeAlpha(pixels.data, 512, 512, 1));
+    item.putImageData(pixels, 0, 0);
+    out.fillStyle = '#808080';
+    out.fillRect(0, 0, 512, 512);
+    out.drawImage(product, 0, 0);
     return rgbNchw(out.getImageData(0, 0, 512, 512).data, 512, 512);
   } finally {
     bitmap.close();
@@ -212,15 +226,16 @@ async function generate(blob: Blob, progress: (value: Product3dProgress) => void
         Object.values(outputs ?? {}).forEach((t) => t.dispose());
       }
     };
-    const density = new Float32Array(GRID ** 3);
+    const grid = forceCpu ? CPU_GRID : GPU_GRID;
+    const density = new Float32Array(grid ** 3);
     for (let offset = 0; offset < density.length; offset += CHUNK) {
       const points = new Float32Array(CHUNK * 3);
       const count = Math.min(CHUNK, density.length - offset);
       for (let i = 0; i < count; i++) {
         const id = offset + i;
-        points[i * 3] = (Math.floor(id / (GRID * GRID)) / (GRID - 1)) * 2 * BOUND - BOUND;
-        points[i * 3 + 1] = ((Math.floor(id / GRID) % GRID) / (GRID - 1)) * 2 * BOUND - BOUND;
-        points[i * 3 + 2] = ((id % GRID) / (GRID - 1)) * 2 * BOUND - BOUND;
+        points[i * 3] = (Math.floor(id / (grid * grid)) / (grid - 1)) * 2 * BOUND - BOUND;
+        points[i * 3 + 1] = ((Math.floor(id / grid) % grid) / (grid - 1)) * 2 * BOUND - BOUND;
+        points[i * 3 + 2] = ((id % grid) / (grid - 1)) * 2 * BOUND - BOUND;
       }
       const values = await query(points, 'density');
       for (let i = 0; i < count; i++) {
@@ -239,15 +254,23 @@ async function generate(blob: Blob, progress: (value: Product3dProgress) => void
       });
     }
     // The ONNX decoder already exports exp(raw - 1), not raw density.
-    const mesh = extractMesh(density, undefined, GRID, BOUND, 25);
+    // Keep only the product itself; small floating pieces are reconstruction noise.
+    let resolution = grid;
+    let field: Float32Array = density;
+    let mesh = removeSmallPieces(extractMesh(field, undefined, resolution, BOUND, 25));
+    while (meshBytes(mesh) > MAX_PRODUCT_MESH_BYTES * 0.9 && resolution > CPU_GRID) {
+      resolution -= 32;
+      field = resampleDensity(density, grid, resolution);
+      mesh = removeSmallPieces(extractMesh(field, undefined, resolution, BOUND, 25));
+    }
     if (mesh.positions.length < 9)
       throw new Error(
         '사진에서 제품의 입체 형태를 복원하지 못했어요. 제품 전체가 선명하게 보이는 사진을 사용해 주세요.',
       );
-    const positions = await refineMeshSurface(
+    const refined = await refineMeshSurface(
       mesh,
-      density,
-      GRID,
+      field,
+      resolution,
       BOUND,
       25,
       (points) => query(points, 'density'),
@@ -263,6 +286,8 @@ async function generate(blob: Blob, progress: (value: Product3dProgress) => void
           }),
       },
     );
+    // Taubin smoothing flattens lumps without shrinking; colours are sampled on the final surface.
+    const positions = taubinSmooth(refined, mesh.indices, { iterations: 4 });
     const colors = await sampleSurfaceColors(positions, (points) => query(points, 'color'), {
       chunkSize: CHUNK,
       onProgress: (completed, total) =>

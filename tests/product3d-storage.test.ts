@@ -80,6 +80,16 @@ describe('persisted product3d material data', () => {
     expect(assetMetadataSchema.safeParse(mesh).success).toBe(true);
     expect(assetMetadataSchema.safeParse({ ...mesh, sourceAssetId: undefined }).success).toBe(false);
   });
+  it('accepts the optional lighting mode and rejects unknown ones', async () => {
+    const { png, reference } = await setup();
+    for (const shading of ['lit', 'baked'] as const)
+      expect(
+        materialInputSchema.parse(material(png.id, { ...reference, shading })).views[0].product3d?.shading,
+      ).toBe(shading);
+    expect(
+      materialInputSchema.safeParse(material(png.id, { ...reference, shading: 'glossy' } as never)).success,
+    ).toBe(false);
+  });
   it('collects PNG, mesh and exact input references only once', async () => {
     const { png, input, mesh, reference } = await setup();
     expect(new Set(materialReferences(material(png.id, reference)))).toEqual(

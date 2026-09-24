@@ -1,4 +1,4 @@
-import type { ProductMesh, ProductPose } from './state-types';
+import type { ProductMesh, ProductPose, ProductShading } from './state-types';
 export interface Product3dProgress {
   stage:
     | 'checking'
@@ -47,5 +47,6 @@ export interface Product3dApplication {
   pose: ProductPose;
   modelId: string;
   modelRevision: string;
+  shading: ProductShading;
   capture: { blob: Blob; width: number; height: number; anchor: { x: number; y: number } };
 }
