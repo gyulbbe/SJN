@@ -11,10 +11,15 @@ test.afterEach(async () => {
 });
 import { expect, test, type Page, type Locator } from '@playwright/test';
 // Product drag performance needs the real Chrome GPU, not the general suite's software renderer.
-test.use({ channel: 'chrome', launchOptions: { args: [] } });
+// Replacing launchOptions drops the config's downloadsPath; Windows Chrome then saves empty files.
+test.use({
+  channel: 'chrome',
+  launchOptions: { args: [], downloadsPath: path.join(tmpdir(), 'sjn-product3d-downloads') },
+});
 test.setTimeout(180000);
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { getActiveDesign } from '../src/lib/designs';
@@ -376,6 +381,69 @@ test('실제 메시 재생: 자유 회전·상하 뒤집기·기울기 손잡이
   );
 });
 
+test('실제 메시 재생: 조명 보정·자동 수평·사진 밖 각도 안내·저장 모드 복원', async ({ page }) => {
+  const { form: create, name } = await openForm(page);
+  let dialog = await openViewer(create);
+  await reconstruct(page, dialog);
+  const lit = dialog.getByRole('button', { name: '조명 보정', exact: true });
+  const baked = dialog.getByRole('button', { name: '원본 색', exact: true });
+  // New reconstructions start lit; the saved RGB stays one click away.
+  await expect(lit).toHaveAttribute('aria-pressed', 'true');
+  await png(dialog, path.join(output, 'shading-lit.png'));
+  await baked.click();
+  await expect(baked).toHaveAttribute('aria-pressed', 'true');
+  await png(dialog, path.join(output, 'shading-baked.png'));
+  expect(
+    readFileSync(path.join(output, 'shading-lit.png')).equals(
+      readFileSync(path.join(output, 'shading-baked.png')),
+    ),
+  ).toBe(false);
+  await lit.click();
+  // This fixture has no confident flat face, so auto-upright returns it to the reconstruction as-is.
+  const initial = await pose(dialog);
+  await selectProduct(dialog);
+  await drag(page, dialog.getByTestId('product3d-handle-top'), 45, 0);
+  const tilted = await pose(dialog);
+  await dialog.getByRole('button', { name: '자동 수평 맞춤', exact: true }).click();
+  (await pose(dialog)).objectQuaternion.forEach((n, i) =>
+    expect(n).toBeCloseTo(initial.objectQuaternion[i], 10),
+  );
+  await dialog.getByRole('button', { name: '실행 취소', exact: true }).click();
+  (await pose(dialog)).objectQuaternion.forEach((n, i) =>
+    expect(n).toBeCloseTo(tilted.objectQuaternion[i], 10),
+  );
+  await dialog.getByRole('button', { name: '기울기 초기화', exact: true }).click();
+  // Turning far from the photographed side warns without blocking the save.
+  const warning = dialog.getByTestId('product3d-angle-warning');
+  await expect(warning).toHaveCount(0);
+  for (let i = 0; i < 4 && !(await warning.count()); i++)
+    await drag(page, dialog.getByTestId('product3d-canvas'), 160, 0);
+  await expect(warning).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '선택한 각도 수정', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: '시점 초기화', exact: true }).click();
+  await expect(warning).toHaveCount(0);
+  await updateSelectedAndClose(dialog);
+  await saveForm(create);
+  const [version] = await versions(page, name);
+  expect(version.views[0].product3d?.shading).toBe('lit');
+  // Reopening restores the saved mode without inference.
+  await page.reload();
+  await page
+    .locator('article')
+    .filter({ hasText: name })
+    .getByRole('button', { name: '정보 수정', exact: true })
+    .click();
+  const form = page.getByRole('dialog', { name: '자재 수정', exact: true });
+  dialog = await openViewer(form, '정면', true);
+  await expect(dialog.getByTestId('product3d-canvas')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '조명 보정', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
+  await dialog.screenshot({ path: path.join(output, 'shading-reopened-ui.png') });
+});
+
 test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자세 재진입 무추론', async ({ page }) => {
   const { form: create, name } = await openForm(page, 2);
   await saveForm(create);
@@ -552,9 +620,11 @@ test('실제 메시 재생: 모바일 조작·반복 열기·드래그 프레임
   await expect(dialog.getByRole('button', { name: '선택한 각도 수정', exact: true })).toBeVisible();
   await canvas.scrollIntoViewIfNeeded();
   const touchBox = (await canvas.boundingBox())!;
+  // The sticky save bar covers the bottom of the tall mobile canvas, so touch its visible part.
+  const barTop = await dialog.locator('footer').evaluate((footer) => footer.getBoundingClientRect().top);
   const cdp = await page.context().newCDPSession(page);
   const tx = touchBox.x + touchBox.width * 0.35,
-    ty = touchBox.y + touchBox.height * 0.45;
+    ty = Math.min(touchBox.y + touchBox.height * 0.45, (touchBox.y + barTop) / 2);
   const beforeTouch = await pose(dialog);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tx, y: ty, id: 1 }] });
   for (let i = 1; i <= 10; i++)
@@ -721,6 +791,13 @@ test('실제 AI opt-in: 프로덕션 Worker 추론→360 뷰어→PNG·각도 �
   );
   const events: unknown[] = [];
   await page.exposeFunction('recordProduct3d', (event: unknown) => events.push(event));
+  // Keep the new-pipeline mesh for tests/product3d-quality-browser.ts before/after comparisons.
+  const exported = path.resolve('test-results/product3d-quality/new-mesh');
+  await page.exposeFunction('exportProduct3dMesh', (fields: Record<string, string>) => {
+    mkdirSync(exported, { recursive: true });
+    for (const [field, base64] of Object.entries(fields))
+      writeFileSync(path.join(exported, `mesh-${field}.bin`), Buffer.from(base64, 'base64'));
+  });
   await page.addInitScript(() => {
     const Original = Worker;
     const observer = window as unknown as Window & { recordProduct3d(event: unknown): Promise<void> };
@@ -731,14 +808,30 @@ test('실제 AI opt-in: 프로덕션 Worker 추론→360 뷰어→PNG·각도 �
         observer.recordProduct3d({ type: 'worker-start' });
         this.addEventListener('message', (e: MessageEvent) => {
           if (e.data.type === 'progress') observer.recordProduct3d(e.data);
-          else if (e.data.type === 'mesh')
+          else if (e.data.type === 'mesh') {
             observer.recordProduct3d({
               type: 'mesh',
               vertices: e.data.mesh.positions.length / 3,
               triangles: e.data.mesh.indices.length / 3,
               timings: e.data.timings,
             });
-          else observer.recordProduct3d(e.data);
+            const base64 = (array: ArrayBufferView) => {
+              const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+              let text = '';
+              for (let i = 0; i < bytes.length; i += 0x8000)
+                text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+              return btoa(text);
+            };
+            void (
+              window as unknown as Window & {
+                exportProduct3dMesh(fields: Record<string, string>): Promise<void>;
+              }
+            ).exportProduct3dMesh({
+              positions: base64(e.data.mesh.positions),
+              indices: base64(e.data.mesh.indices),
+              colors: base64(e.data.mesh.colors),
+            });
+          } else observer.recordProduct3d(e.data);
         });
       }
     }
