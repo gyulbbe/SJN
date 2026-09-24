@@ -29,6 +29,8 @@ import ReconstructionDialog from '@/components/reconstruction/reconstruction-dia
 import SummaryDesignThumbnail from '@/components/designs/summary-design-thumbnail';
 import { AssetImage } from '@/components/materials/asset-image';
 import { useAccess } from './app-provider';
+import { useFileDrop } from './use-file-drop';
+import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
 export default function ProjectHome() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]),
     [projectsLoading, setProjectsLoading] = useState(true),
@@ -190,6 +192,22 @@ export default function ProjectHome() {
       setError(String(e));
     }
   }
+  // Both home drop areas take one photo: the card starts a comparison, the direct-edit row inside it
+  // starts editing on the photo. Several photos are refused rather than silently using one.
+  const onePhoto = (files: File[], start: (file: File) => void) => {
+    const pick = pickImageFiles(files, { multiple: false });
+    if (pick.error) setError(pick.error);
+    else if (pick.files[0]) {
+      setError('');
+      start(pick.files[0]);
+    }
+  };
+  const locked = !ready || !writable || busy;
+  const startDrop = useFileDrop({ disabled: locked, onFiles: (files) => onePhoto(files, startFromPhoto) });
+  const directDrop = useFileDrop({
+    disabled: locked,
+    onFiles: (files) => onePhoto(files, (file) => void create(file)),
+  });
   const matchingProjects = projects.filter((project) =>
     project.name.normalize('NFKC').toLowerCase().includes(search.normalize('NFKC').trim().toLowerCase()),
   );
@@ -226,11 +244,12 @@ export default function ProjectHome() {
             ref={input}
             data-testid="project-upload"
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept={IMAGE_UPLOAD_ACCEPT}
             hidden
             onChange={(e) => {
-              if (e.target.files?.[0]) void create(e.target.files[0]);
+              const files = Array.from(e.target.files ?? []);
               e.target.value = '';
+              onePhoto(files, (file) => void create(file));
             }}
           />
           {error && (
@@ -239,12 +258,9 @@ export default function ProjectHome() {
             </div>
           )}
           <section
-            className="start-card"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (e.dataTransfer.files[0]) startFromPhoto(e.dataTransfer.files[0]);
-            }}
+            className={`start-card${startDrop.dragging ? ' file-drop-active' : ''}`}
+            data-drop-label="여기에 사진 한 장을 놓으면 비교 공간 만들기를 시작해요"
+            {...startDrop.dropProps}
           >
             <div className="start-preview">
               <Image
@@ -291,13 +307,22 @@ export default function ProjectHome() {
                 </Link>
               </div>
               <small className="start-hint">
-                사진을 올리거나 끌어 놓으면 Before를 재구성하고 빈 After에서 시작해요. JPG · PNG · WebP / 최대
-                25MB
+                사진 한 장을 올리거나 이 카드에 끌어 놓으면 Before를 재구성하고 빈 After에서 시작해요. JPG ·
+                PNG · WebP / 최대 25MB
               </small>
-              <details style={{ marginTop: 14 }}>
+              <details
+                style={{ marginTop: 14 }}
+                className={directDrop.dragging ? 'file-drop-active' : undefined}
+                data-drop-label="여기에 놓으면 사진 위에서 바로 편집해요"
+                data-testid="direct-edit-drop"
+                {...directDrop.dropProps}
+              >
                 <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>
                   기존 사진 위에 직접 편집하기
                 </summary>
+                <small className="muted" style={{ display: 'block', margin: '6px 0' }}>
+                  이 줄에 사진 한 장을 끌어 놓아도 바로 편집을 시작해요.
+                </small>
                 <button
                   className="text-button"
                   disabled={!ready || !writable || busy}

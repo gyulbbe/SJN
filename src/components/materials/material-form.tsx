@@ -30,6 +30,8 @@ import { BackgroundRemovalTest } from './background-removal-test';
 import { Product3dEditor } from './product3d-editor';
 import { AngleNameInput } from './angle-name-input';
 import { useAccess } from '@/components/app-provider';
+import { useFileDrop } from '@/components/use-file-drop';
+import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
 import { useSharedCatalogAdmin } from './shared-access';
 import styles from './materials.module.css';
 import CatalogSelect from './catalog-select';
@@ -170,6 +172,7 @@ export function MaterialForm({
     form.category === 'tile' ? ['m2', 'box', 'piece'].includes(pricing.unit) : pricing.unit === 'piece';
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState('');
   const [error, setError] = useState('');
   const [catalogData, setCatalogData] = useState<CatalogData>();
   const [pendingQueries, setPendingQueries] = useState<Record<string, boolean>>({});
@@ -289,14 +292,24 @@ export function MaterialForm({
       views: current.views.map((view, i) => (i === index ? { ...view, ...value } : view)),
     }));
 
-  const upload = async (event: ChangeEvent<HTMLInputElement>, target: 'texture' | 'view') => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = '';
-    if (!files.length || !writable) return;
+  // Textures and product photos take several images at once, picked or dropped. The limit is what a
+  // material version can store (100 each).
+  const uploadFiles = async (incoming: File[], target: 'texture' | 'view') => {
+    if (!incoming.length || !writable || uploading || busy) return;
+    const pick = pickImageFiles(incoming, {
+      multiple: true,
+      max: MAX_PRODUCT_VIEWS,
+      current: target === 'texture' ? form.textureAssetIds.length : form.views.length,
+    });
+    setUploadNotice(pick.notice ?? '');
+    if (pick.error) {
+      setError(pick.error);
+      return;
+    }
     setUploading(true);
     setError('');
     try {
-      for (const file of files) {
+      for (const file of pick.files) {
         const { preview } = await importImage(
           file,
           target === 'texture' ? 'texture' : 'product',
@@ -324,6 +337,17 @@ export function MaterialForm({
       setUploading(false);
     }
   };
+  const upload = (event: ChangeEvent<HTMLInputElement>, target: 'texture' | 'view') => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    void uploadFiles(files, target);
+  };
+  const locked = uploading || busy || !writable;
+  const textureDrop = useFileDrop({
+    disabled: locked,
+    onFiles: (files) => void uploadFiles(files, 'texture'),
+  });
+  const viewDrop = useFileDrop({ disabled: locked, onFiles: (files) => void uploadFiles(files, 'view') });
 
   const applyBackgroundResult = async (result: BackgroundRemovalResult) => {
     if (!writable || (form.scope === 'shared' && !isAdmin))
@@ -553,7 +577,7 @@ export function MaterialForm({
       {label}
       <input
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept={IMAGE_UPLOAD_ACCEPT}
         multiple
         onChange={(event) => upload(event, target)}
         disabled={uploading || busy}
@@ -763,11 +787,19 @@ export function MaterialForm({
                     </div>
                   </label>
                 </div>
-                <div className={styles.toolbar}>
+                <div
+                  className={`${styles.toolbar}${textureDrop.dragging ? ' file-drop-active' : ''}`}
+                  data-drop-label="여기에 놓으면 여러 장을 한꺼번에 올려요"
+                  data-testid="texture-drop"
+                  {...textureDrop.dropProps}
+                >
                   {uploadInput('texture', '+ 타일 텍스처 올리기')}
-                  <span className="muted">무늬가 다른 여러 장을 등록하면 반복할 때 섞어서 사용해요.</span>
+                  <span className="muted">
+                    무늬가 다른 여러 장을 등록하면 반복할 때 섞어서 사용해요. 여러 장을 한꺼번에 선택하거나 이
+                    줄에 끌어 놓을 수 있어요(최대 {MAX_PRODUCT_VIEWS}장).
+                  </span>
                 </div>
-                <div className={styles.textureGrid}>
+                <div className={styles.textureGrid} {...textureDrop.dropProps}>
                   {form.textureAssetIds.map((id, index) => (
                     <div key={`${id}-${index}`} className={styles.textureCard}>
                       <AssetImage assetId={id} alt={`타일 텍스처 ${index + 1}`} />
@@ -833,11 +865,19 @@ export function MaterialForm({
                     360° 편집기에서 여러 각도 사진을 저장해 공간에서 골라 쓸 수 있어요.
                   </div>
                 </div>
-                <div className={styles.toolbar}>
+                <div
+                  className={`${styles.toolbar}${viewDrop.dragging ? ' file-drop-active' : ''}`}
+                  data-drop-label="여기에 놓으면 여러 장을 한꺼번에 올려요"
+                  data-testid="view-drop"
+                  {...viewDrop.dropProps}
+                >
                   {uploadInput('view', '+ 제품 이미지 올리기')}
-                  <span className="muted">정면·측면·사선 사진을 각각 등록할 수 있어요.</span>
+                  <span className="muted">
+                    정면·측면·사선 사진을 각각 등록할 수 있어요. 여러 장을 한꺼번에 선택하거나 이 줄에 끌어
+                    놓을 수 있어요(최대 {MAX_PRODUCT_VIEWS}장).
+                  </span>
                 </div>
-                <div className={styles.viewGrid}>
+                <div className={styles.viewGrid} {...viewDrop.dropProps}>
                   {form.views.map((view, index) => (
                     <div key={`${view.assetId}-${index}`} className={styles.viewCard}>
                       <AnchorPicker
@@ -1053,6 +1093,11 @@ export function MaterialForm({
         {uploading && (
           <p role="status" className={styles.note}>
             이미지를 검사하고 원본과 편집용 이미지를 저장하고 있어요…
+          </p>
+        )}
+        {!uploading && uploadNotice && (
+          <p role="status" className={styles.note}>
+            {uploadNotice}
           </p>
         )}
         {error && (

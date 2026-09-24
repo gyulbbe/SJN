@@ -8,6 +8,8 @@ import {
   type BrowserAnalysisTestResult,
 } from '@/lib/reconstruction/browser-analysis-test';
 import type { MogeBrowserResult, MogeExecutionMode } from '@/lib/reconstruction/moge-browser/client';
+import { useFileDrop } from '@/components/use-file-drop';
+import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
 
 function useBlobUrl(blob?: Blob) {
   const [url, setUrl] = useState('');
@@ -162,6 +164,34 @@ export default function BrowserAnalysisLab() {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  // One test photo; clicking and dropping share the checks. Several at once are refused.
+  async function selectFiles(files: File[]) {
+    if (!files.length) return;
+    const ticket = ++selection.current;
+    setIdleMessage('');
+    const pick = pickImageFiles(files, { multiple: false });
+    const selected = pick.files[0];
+    if (!selected) {
+      setError(pick.error ?? '');
+      setReading(false);
+      return;
+    }
+    setReading(true);
+    try {
+      const bytes = await selected.arrayBuffer();
+      if (alive.current && ticket === selection.current) {
+        setFile(new File([bytes], selected.name, { type: selected.type }));
+        setResult(undefined);
+        setError('');
+      }
+    } catch {
+      if (alive.current && ticket === selection.current)
+        setError('파일을 읽지 못했어요. 사진을 다시 선택해 주세요.');
+    } finally {
+      if (alive.current && ticket === selection.current) setReading(false);
+    }
+  }
+  const drop = useFileDrop({ disabled: !!stage, onFiles: (files) => void selectFiles(files) });
   return (
     <main className="container" style={{ maxWidth: 1250, margin: '0 auto', padding: 24 }}>
       <a href="/reconstruction-lab">← 사진 재구성 Lab</a>
@@ -179,37 +209,20 @@ export default function BrowserAnalysisLab() {
         style={{ display: 'flex', flexWrap: 'wrap', gap: 16, padding: 16, margin: '20px 0' }}
       >
         <legend>실제 모델 테스트</legend>
-        <label>
-          사진{' '}
+        <label
+          className={drop.dragging ? 'file-drop-active' : undefined}
+          data-drop-label="여기에 사진 한 장 놓기"
+          {...drop.dropProps}
+        >
+          사진(한 장, 끌어 놓기 가능){' '}
           <input
             aria-label="테스트할 사진"
             type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={async (event) => {
-              const selected = event.currentTarget.files?.[0];
+            accept={IMAGE_UPLOAD_ACCEPT}
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? []);
               event.currentTarget.value = '';
-              if (!selected) return;
-              const ticket = ++selection.current;
-              setIdleMessage('');
-              if (selected.size > 25 * 1024 * 1024) {
-                setError('사진은 25MB 이하로 선택해 주세요.');
-                setReading(false);
-                return;
-              }
-              setReading(true);
-              try {
-                const bytes = await selected.arrayBuffer();
-                if (alive.current && ticket === selection.current) {
-                  setFile(new File([bytes], selected.name, { type: selected.type }));
-                  setResult(undefined);
-                  setError('');
-                }
-              } catch {
-                if (alive.current && ticket === selection.current)
-                  setError('파일을 읽지 못했어요. 사진을 다시 선택해 주세요.');
-              } finally {
-                if (alive.current && ticket === selection.current) setReading(false);
-              }
+              void selectFiles(files);
             }}
           />
         </label>

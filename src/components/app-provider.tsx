@@ -65,6 +65,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const transitionBusy = useRef(false);
   const mode = status?.mode ?? 'd1';
   const protectAccountTransition = accountChanged && !['/materials', '/try', '/login'].includes(pathname);
+  // A file dropped outside an upload area would make the browser open it and leave the page.
+  useEffect(() => {
+    const guard = (event: DragEvent) => {
+      if (event.defaultPrevented || !event.dataTransfer?.types.includes('Files')) return;
+      event.preventDefault();
+      if (event.type === 'dragover') event.dataTransfer.dropEffect = 'none';
+    };
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    return () => {
+      window.removeEventListener('dragover', guard);
+      window.removeEventListener('drop', guard);
+    };
+  }, []);
   const suspendChangedAccount = useCallback(async () => {
     if (changingAccount.current) return;
     changingAccount.current = true;

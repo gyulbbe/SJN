@@ -7,6 +7,8 @@ import { DEFAULT_ROOM } from '@/lib/room-geometry';
 import { getRepositories } from '@/lib/repositories';
 import { createReconstructionProject } from '@/lib/reconstruction';
 import { useAccess } from '@/components/app-provider';
+import { useFileDrop } from '@/components/use-file-drop';
+import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
 import AnalysisProfilePicker, { type AnalysisProfileSelection } from './analysis-profile-picker';
 import DiagnosticLogDownload from './diagnostic-log-download';
 import styles from './reconstruction.module.css';
@@ -36,6 +38,16 @@ export default function ReconstructionDialog({
     [error, setError] = useState('');
   const controller = useRef<AbortController | null>(null);
   const dialog = useRef<HTMLFormElement>(null);
+  // One reference photo: a new pick or drop replaces it, several at once are refused.
+  const selectFiles = (files: File[]) => {
+    const pick = pickImageFiles(files, { multiple: false });
+    if (pick.error) setError(pick.error);
+    else if (pick.files[0]) {
+      setFile(pick.files[0]);
+      setError('');
+    }
+  };
+  const drop = useFileDrop({ disabled: !!stage, onFiles: selectFiles });
   const mounted = useRef(true);
   const closeRef = useRef(onClose);
   useEffect(() => {
@@ -163,32 +175,30 @@ export default function ReconstructionDialog({
             새 타일과 제품으로 바로 꾸밀 수 있어요. Before는 나중에 확인하거나 수정할 수 있어요.
           </p>
           <AnalysisProfilePicker disabled={!!stage || !writable} onChange={setAnalysis} />
-          <label className={styles.upload}>
+          <label
+            className={`${styles.upload}${drop.dragging ? ' file-drop-active' : ''}`}
+            data-drop-label="여기에 사진 한 장 놓기"
+            {...drop.dropProps}
+          >
             {preview ? (
               <Image unoptimized src={preview} width={750} height={500} alt="재구성할 기존 공간 참고 사진" />
             ) : (
               <>
                 <ImagePlus size={30} />
-                <strong>기존 공간 사진을 선택하세요</strong>
+                <strong>기존 공간 사진을 선택하거나 끌어 놓으세요</strong>
               </>
             )}
-            <span>{file?.name || 'JPG · PNG · WebP / 최대 25MB'}</span>
+            <span>{file?.name || 'JPG · PNG · WebP / 최대 25MB · 한 장'}</span>
             <input
               data-testid="reconstruction-upload"
               aria-label="기존 공간 사진"
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept={IMAGE_UPLOAD_ACCEPT}
               disabled={!!stage}
               onChange={(e) => {
-                const next = e.target.files?.[0];
+                const files = Array.from(e.target.files ?? []);
                 e.target.value = '';
-                if (!next) return;
-                if (next.size > 25 * 1024 * 1024) {
-                  setError('사진은 25MB 이하로 선택해 주세요.');
-                  return;
-                }
-                setFile(next);
-                setError('');
+                selectFiles(files);
               }}
             />
           </label>

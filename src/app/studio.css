@@ -724,3 +724,26 @@ h2 {
     flex: 1;
   }
 }
+
+/* A file being dragged over an upload area: dashed outline plus the area's own label on top. */
+.file-drop-active {
+  position: relative;
+  outline: 2px dashed #2a8466;
+  outline-offset: 3px;
+}
+.file-drop-active::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 8px 12px;
+  border-radius: inherit;
+  background: rgb(231 244 236 / 0.92);
+  color: #1e5b46;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  pointer-events: none;
+}
