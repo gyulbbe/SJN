@@ -104,7 +104,7 @@ Gemma·FLUX는 사진을 Cloudflare로 보내며 동일 `AI` 바인딩과 `sjn-g
 | 화면·HTTP 경로 | [src/app](../../../../src/app/): 페이지와 서버 API |
 | UI·편집 상태 | [components](../../../../src/components/), [editor-store](../../../../src/lib/editor-store.ts): 사용자 조작과 Zustand 상태 |
 | 저장 문서 계약 | [types](../../../../src/lib/types.ts), [comparison](../../../../src/lib/comparison.ts): 직렬화 가능한 프로젝트·시안·장면, 이전 문서 정규화 |
-| 렌더링 | [render](../../../../src/lib/render/), [room-viewer](../../../../src/lib/room-viewer/): 편집 미리보기·공간 모형·이미지 출력 |
+| 렌더링 | [render](../../../../src/lib/render/), [room-viewer](../../../../src/lib/room-viewer/): 편집 미리보기·공간 모형·이미지 출력. 공간 둘러보기와 벽 구조가 있는 프로젝트의 편집·내보내기·시안 카드는 3D 렌더러, 그 밖의 기본 방·사진 프로젝트는 2D 합성을 쓴다. 조명·재질 규칙은 [사실감 조명](../../../../src/lib/render/realistic-lighting.ts)·[마감](../../../../src/lib/render/finish.ts)·[렌더러 계약](../../../../docs/room-viewer-renderer-contract-20260914.md) 참고 |
 | 사진 재구성 | [reconstruction](../../../../src/lib/reconstruction/): 관측·추정·보정·모형 변환과 분석 공급자 |
 | 저장소 | [repositories](../../../../src/lib/repositories/), [storage](../../../../src/lib/storage/), [d1](../../../../src/lib/d1/): 로컬/클라우드 분리, 저장·충돌·복구 |
 | 인증·분류·관리 | [auth](../../../../src/lib/auth/), [catalog](../../../../src/lib/catalog/), [admin](../../../../src/lib/admin/): 활성 회원 인증, 회원·역할·상태, 공용 자재/기준 데이터, 관리자 프로젝트·감사 |

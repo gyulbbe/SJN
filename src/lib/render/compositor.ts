@@ -33,6 +33,7 @@ import type {
   Surface,
 } from '../types';
 import { fitOutput, homography, validateQuad } from './math';
+import { finishAppearance } from './finish';
 import { maskCanvas } from './mask';
 import { StandardModelRenderer, type StandardFixturePass } from './standard-model-render';
 
@@ -103,7 +104,7 @@ uniform sampler2D previousImage;uniform sampler2D atlas;uniform sampler2D areaMa
 uniform mat3 inversePlane;uniform vec2 planeSize;uniform vec2 tileSize;uniform vec2 offset;
 uniform float angle;uniform float groutWidth;uniform vec3 groutColor;uniform float brick;
 uniform float seed;uniform float variantCount;uniform float atlasColumns;uniform float atlasPixels;
-uniform float shading;uniform float meanLuminance;uniform vec4 adjustment;
+uniform float shading;uniform float meanLuminance;uniform vec4 adjustment;uniform float gloss;uniform float relief;
 ${colorFunctions}
 void main(){
   vec4 background=texture2D(previousImage,vUv);
@@ -132,16 +133,33 @@ void main(){
   vec3 tileColor=decodeSRGB(texture2D(atlas,atlasUv).rgb);
   // Integrate the physical seam over the pixel footprint on BOTH sides of the repeat.
   // This preserves subpixel grout coverage without periodically losing the leading edge.
-  vec2 seamDistance=abs(mod(inside-(tileSize+groutWidth*.5)+period*.5,period)-period*.5);
+  vec2 seamOffset=mod(inside-(tileSize+groutWidth*.5)+period*.5,period)-period*.5;
+  vec2 seamDistance=abs(seamOffset);
   vec2 seamCoverage=clamp((groutWidth*.5-seamDistance+aa*.5)/aa,0.,1.)-clamp((-groutWidth*.5-seamDistance+aa*.5)/aa,0.,1.);
   seamCoverage=mix(seamCoverage,vec2(groutWidth)/period,step(period,aa));
   float grout=groutWidth<=0.?0.:1.-(1.-seamCoverage.x)*(1.-seamCoverage.y);
-  vec3 result=mix(tileColor,groutColor,grout);
+  // Recessed joints and rounded tile edges lit from above (-y on the surface plane): upper edges
+  // catch light, lower edges fall into shade. Without grout nothing changes, and the relief fades
+  // out once the bevel is smaller than a pixel so distant tiles do not shimmer.
+  float edgeLight=1.;
+  if(groutWidth>0.){
+    float bevel=clamp(min(tileSize.x,tileSize.y)*.012,.6,2.5);
+    vec2 t=clamp((seamDistance-groutWidth*.5)/bevel,0.,1.);
+    vec2 fade=clamp(1.-(aa-bevel*.5)/(bevel*1.5),0.,1.);
+    vec2 slope=2.1*t*(1.-t)*sign(seamOffset)*fade;
+    slope=vec2(c*slope.x-s*slope.y,s*slope.x+c*slope.y);
+    vec3 light=vec3(0.,-.447,.894);
+    edgeLight=mix(1.,dot(normalize(vec3(-slope,1.)),light)/light.z,relief);
+  }
+  vec3 result=mix(tileColor,groutColor*.88,grout)*edgeLight;
   float luminance=texture2D(shadingImage,vUv).r;
   float light=clamp(luminance/max(meanLuminance,.015),.18,1.6);
   // Exposure-like interpolation preserves the relative darkness of contact shadows. At zero
   // strength it is exactly neutral; input color is never blended over the replacement tile.
   result*=pow(light,shading);
+  // A glazed tile catches the brighter parts of the photo light as a soft sheen. Zero for matte
+  // finishes or zero shading strength, which leaves those pixels exactly as before.
+  result+=vec3(gloss*shading*.25*max(0.,light-1.));
   result=adjustColor(result,adjustment);
   gl_FragColor=vec4(mix(background.rgb,result,amount),1.);
 }
@@ -896,6 +914,9 @@ export class PhotoCompositor {
         shading: Math.max(0, Math.min(1, surface.tile.shading)),
         meanLuminance: referenceLuminance,
         adjustment: colorVector(surface.color),
+        gloss: finishAppearance(material.finish).gloss,
+        // Floors are seen at a grazing angle under a ceiling light; their edges read more softly.
+        relief: surface.kind === 'floor' ? 0.5 : 0.8,
       };
       Object.entries(values).forEach(([key, value]) => uniform(shader, key, value));
       index = 1 - index;

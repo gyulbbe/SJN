@@ -1,8 +1,6 @@
 import {
-  AmbientLight,
   Box3,
   Color,
-  DirectionalLight,
   HalfFloatType,
   LinearFilter,
   LinearSRGBColorSpace,
@@ -35,6 +33,11 @@ import {
 import { validateRoomDimensions } from '../room-geometry';
 import type { RoomFace } from '../room-types';
 import { fitOutput } from '../render/math';
+import {
+  createInteriorEnvironment,
+  createRoomLightRig,
+  type InteriorEnvironment,
+} from '../render/realistic-lighting';
 import { buildViewerFixtures, ProductAssetCache } from './fixtures';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
@@ -125,6 +128,7 @@ export class RoomViewerRenderer {
   private readonly tiles: ViewerTileCache;
   private readonly products: ProductAssetCache;
   private readonly lighting = new ViewerLightingLut();
+  private readonly environment?: InteriorEnvironment;
   private readonly scenes = new Map<string, Promise<Prepared>>();
   private reader: Reader = async () => undefined;
   private snapshot?: RenderSnapshot;
@@ -201,6 +205,8 @@ export class RoomViewerRenderer {
       },
     });
     this.post.add(new Mesh(this.postGeometry, this.postMaterial));
+    // Shared by every prepared scene of this context; Before and After see identical light.
+    this.environment = createInteriorEnvironment(this.renderer);
     this.tiles = new ViewerTileCache((id) => this.reader(id), this.maxOutputEdge);
     this.products = new ProductAssetCache((id) => this.reader(id));
   }
@@ -229,22 +235,22 @@ export class RoomViewerRenderer {
       room = scene.room!;
     const world = new ThreeScene();
     world.background = new Color('#e8e8e4');
-    const ambient = new AmbientLight('#ffffff', 1.6);
-    const key = new DirectionalLight('#ffffff', 1.65);
-    key.position.set(-1500, 4000, 6000);
-    key.target.position.set(0, room.heightMm * 0.4, room.depthMm * 0.5);
-    key.castShadow = true;
-    key.shadow.mapSize.set(1024, 1024);
-    const radius = Math.max(room.widthMm, room.heightMm, room.depthMm) * 1.2;
-    key.shadow.camera.left = key.shadow.camera.bottom = -radius;
-    key.shadow.camera.right = key.shadow.camera.top = radius;
-    key.shadow.camera.near = 1;
-    key.shadow.camera.far = radius * 5 + 10000;
-    key.shadow.bias = -0.00008;
-    key.shadow.normalBias = 1.5;
-    const fill = new DirectionalLight('#e8f0f5', 0.28);
-    fill.position.set(3500, 2200, 2000);
-    world.add(surfaces.group, fixtures.group, ambient, key, key.target, fill);
+    world.environment = this.environment?.texture ?? null;
+    world.environmentIntensity = this.environment?.intensity ?? 1;
+    const lights = createRoomLightRig(room, { environment: !!this.environment });
+    world.add(surfaces.group, fixtures.group, ...lights);
+    // Objects standing on the floor get a soft contact shade (Before and After alike).
+    const contacts: Box3[] = [];
+    for (const object of fixtures.group.children) {
+      const box = new Box3().setFromObject(object);
+      if (
+        !box.isEmpty() &&
+        [...box.min.toArray(), ...box.max.toArray()].every(Number.isFinite) &&
+        box.min.y < 40
+      )
+        contacts.push(box);
+    }
+    surfaces.setContacts(contacts);
     this.lighting.bindTree(world);
     world.updateMatrixWorld(true);
     const roomBounds = new Box3(
@@ -304,7 +310,7 @@ export class RoomViewerRenderer {
       dispose() {
         surfaces.dispose();
         fixtures.dispose();
-        key.shadow.dispose();
+        for (const light of lights) (light as { shadow?: { dispose(): void } }).shadow?.dispose();
         world.clear();
       },
     };
@@ -649,6 +655,7 @@ export class RoomViewerRenderer {
     this.tiles.dispose();
     this.products.dispose();
     this.lighting.dispose();
+    this.environment?.dispose();
     this.beforeTarget.dispose();
     this.afterTarget.dispose();
     this.postMaterial.dispose();
