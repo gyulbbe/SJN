@@ -13,6 +13,9 @@ export default function AdminLinks({ className }: { className?: string }) {
       <Link className={className} href="/admin/projects">
         전체 프로젝트
       </Link>
+      <Link className={className} href="/admin/ai-usage">
+        AI 사용량
+      </Link>
     </>
   );
 }

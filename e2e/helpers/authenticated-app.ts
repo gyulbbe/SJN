@@ -1,5 +1,7 @@
 import { handleAdminUsers } from '../../src/lib/admin/users';
 import { adminProjects, adminProjectAssets, adminProjectMaterials } from '../../src/lib/admin/projects';
+import { readAiUsage } from '../../src/lib/admin/ai-usage';
+import { serverError } from '../../src/lib/storage/server';
 import type { Page, Route } from '@playwright/test';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { applyD1Migrations, allD1Migrations } from '../../tests/helpers/d1-migrations';
@@ -88,6 +90,14 @@ export async function authenticatedApp(
       return fulfill(route, await adminProjectAssets({ env, actor }, request));
     if (path === '/api/admin/project-materials')
       return fulfill(route, await adminProjectMaterials({ env, actor }, request));
+    // Isolated tests have no Cloudflare analytics settings, so this is the unconfigured admin path.
+    if (path === '/api/admin/ai-usage')
+      return fulfill(
+        route,
+        actor.isAdmin
+          ? await readAiUsage({}).then((usage) => Response.json(usage), serverError)
+          : Response.json({ error: '관리자만 사용할 수 있어요.' }, { status: 403 }),
+      );
     if (path === '/api/catalog/materials') return fulfill(route, await publicMaterials(env));
     if (path === '/api/catalog/images') return fulfill(route, await publicImage(env, request));
     if (path.startsWith('/api/d1/'))

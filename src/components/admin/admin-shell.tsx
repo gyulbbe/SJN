@@ -11,6 +11,7 @@ export default function AdminShell({ title, children }: { title: string; childre
         <Link href="/admin/catalog">분류 관리</Link>
         <Link href="/admin/users">회원 관리</Link>
         <Link href="/admin/projects">전체 프로젝트</Link>
+        <Link href="/admin/ai-usage">AI 사용량</Link>
       </nav>
       <h1>{title}</h1>
       {children}

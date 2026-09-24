@@ -19,6 +19,7 @@
 | `/admin/catalog` | 관리자 하위 카테고리·색상·브랜드·재질·마감 관리 |
 | `/admin/users` | 회원 이름·이메일·ID 검색, 역할·상태 필터, 관리자 승격/강등·계정 정지/해제 |
 | `/admin/projects` | 회원 프로젝트 검색·조회·전용 편집; 소유권 유지·감사·revision 충돌 확인 |
+| `/admin/ai-usage` | Cloudflare Workers AI 계정 전체의 오늘 뉴런 사용·남은 무료량·모델별 사용·최근 7일 |
 | `/reconstruction-performance` | Gemma·브라우저 MoGe·전체 재구성의 성능 확인 화면 |
 
 화면 진입점은 [App Router](../../../../src/app/), 접근 규칙은 [DB 문서](database.md)와 [인증·공개 범위 상세](../../../../docs/database-design.md)를 참고한다. 옛 `/reconstruction-lab` 주소는 현재 성능 확인 화면으로 이동한다.
@@ -59,6 +60,8 @@
 관리자 타인 프로젝트 편집은 본인 프로젝트 편집과 범위를 분리한다. 관계없는 개인 자산·자재, 타인 프로젝트 삭제·복제·소유권 이전은 제공하지 않는다. 저장은 동일 revision 기반 충돌 검사를 쓰며 강등·정지 후 기존 창/캐시로 계속 접근할 수 없다. 세션이 만료되면 편집기를 숨기고 로그인 안내를 표시하며 본인 계정의 미저장 IndexedDB 복구본은 보존한다.
 
 관리자가 다른 회원의 프로젝트를 편집할 때 초안·미리보기와 사진 재분석 관측은 현재 탭의 메모리에서만 유지한다. 계정 복구본·시안 미리보기와 Gemma·DeepLab·MoGe의 사진 파생 IndexedDB 캐시는 읽거나 쓰지 않고 서버 진단 아카이브도 만들지 않으며, 재분석은 실행별 `transient` 정책을 전달한다. 공통 모델 파일 캐시와 본인 프로젝트의 일반 저장·복구 정책은 유지한다. 저장 실패한 관리자 초안은 탭을 닫으면 복구할 수 없다는 안내를 표시한다.
+
+관리자 AI 사용량 화면(`/admin/ai-usage`)은 Cloudflare GraphQL Analytics(`aiInferenceAdaptiveGroups`)에서 계정 전체의 오늘(UTC) 뉴런·호출 수, 모델별 사용, 최근 7일을 읽어 무료 할당 10,000 뉴런 대비 남은 양과 초기화(한국 09:00)까지 시간을 보여 준다. 표본 집계라 몇 분 늦을 수 있고 같은 계정의 다른 Worker 사용량도 포함한다. 토큰은 서버에만 있고 AI를 호출하지 않는다. 상세: [AI 사용량](../../../../docs/cloudflare-ai-usage.md).
 
 근거: [관리자 서버](../../../../src/lib/admin/), [DB 계약](database.md). 기본 실행은 [개발 환경](development-environment.md)의 vinext 3000·로컬 D1/R2·Google 로그인을 따른다.
 

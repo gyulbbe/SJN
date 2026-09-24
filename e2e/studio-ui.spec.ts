@@ -199,7 +199,7 @@ for (const admin of [false, true])
       await page.goto('/');
       const nav = await mobileMenu(page);
       await expect(nav.getByRole('button', { name: '로그아웃', exact: true })).toBeVisible();
-      for (const name of ['회원 관리', '전체 프로젝트']) {
+      for (const name of ['회원 관리', '전체 프로젝트', 'AI 사용량']) {
         if (admin) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
         else await expect(nav.getByRole('link', { name, exact: true })).toHaveCount(0);
       }
@@ -271,7 +271,9 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
     const colorToggle = page.getByRole('button', { name: /^색상/ });
     await colorToggle.click();
     await expect(colorToggle).toHaveAttribute('aria-expanded', 'true');
-    const beige = page.getByRole('group', { name: '색상' }).getByRole('checkbox', { name: '베이지', exact: true });
+    const beige = page
+      .getByRole('group', { name: '색상' })
+      .getByRole('checkbox', { name: '베이지', exact: true });
     await beige.check();
     await expect(count).toContainText('9개의 자재');
     await expect(colorToggle).toHaveAccessibleName('색상 1개 선택');
@@ -283,7 +285,10 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
     await expect(colorToggle).toHaveAttribute('aria-expanded', 'false');
     const finishToggle = page.getByRole('button', { name: /^표면/ });
     await finishToggle.click();
-    await page.getByRole('group', { name: '표면' }).getByRole('checkbox', { name: '유광', exact: true }).check();
+    await page
+      .getByRole('group', { name: '표면' })
+      .getByRole('checkbox', { name: '유광', exact: true })
+      .check();
     await expect(count).toContainText('4개의 자재');
     await expect(finishToggle).toHaveAccessibleName('표면 1개 선택');
     await page.getByRole('button', { name: '조건 초기화', exact: true }).click();

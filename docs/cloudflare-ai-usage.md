@@ -11,6 +11,26 @@
 
 공식 근거: [Workers AI 가격표](https://developers.cloudflare.com/workers-ai/platform/pricing/), [오류 코드](https://developers.cloudflare.com/workers-ai/platform/errors/).
 
+## 관리자 화면에서 확인
+
+관리자 메뉴 **AI 사용량**(`/admin/ai-usage`)은 아래 값을 보여 준다.
+- 오늘(UTC) 계정 전체의 뉴런·호출 수, 무료 10,000 뉴런 대비 남은 양과 사용 비율, 한국 시간 09:00 초기화까지 남은 시간
+- 모델별 사용(Gemma, FLUX 4B 등)과 최근 7일의 날짜별 뉴런
+- 무료량을 넘으면 Workers Paid 기준 추정 과금(1,000 뉴런당 $0.011)을 표시하고, Workers Free라면 요청이 실패한다고 안내한다
+
+동작 방식:
+- 서버가 Cloudflare GraphQL Analytics(`aiInferenceAdaptiveGroups`, `sum.totalNeurons`, `dimensions.modelId`·`datetimeHour`)를 읽기만 하고, AI를 호출하거나 요금제를 바꾸지 않는다.
+- 새로고침할 때마다 GraphQL 요청이 2번 나간다. Cloudflare 제한은 5분에 300회다.
+- 표본 집계라 실제 청구와 조금 다를 수 있고 몇 분 늦게 반영된다. 같은 계정의 다른 Worker 사용량도 포함한다.
+
+### 설정
+
+1. Cloudflare 대시보드 → My Profile → API Tokens → Create Custom Token으로 토큰을 만든다. 권한은 **Account · Account Analytics · Read** 하나, 계정 범위는 이 계정만 둔다. 토큰 값은 채팅·소스·브라우저에 넣지 않는다.
+2. 운영에 등록: `npx wrangler secret put CLOUDFLARE_ANALYTICS_TOKEN`, `npx wrangler secret put CLOUDFLARE_ACCOUNT_ID`. 계정 ID는 대시보드 주소에 보이는 32자리 값이다. 로컬 Workers 개발에서는 `.dev.vars`에 같은 이름으로 넣는다.
+3. 값이 없거나 형식이 틀리면 화면에 설정 안내가 나온다. 토큰 권한이 부족하면 권한 안내, 조회 한도를 넘으면 5분 뒤 다시 확인하라는 안내가 나온다.
+
+2026-09-25 구현 시점에는 실제 토큰이 없어 모의 응답으로만 검증했다. `totalNeurons` 필드 이름과 7일 범위 허용 여부는 토큰 등록 뒤 첫 실제 조회에서 확인해야 한다(미확인). 7일 범위를 받지 못하면 오늘 값만 표시한다.
+
 ## 이번에 측정한 규모
 
 2026-09-16 17:33 KST 기준 계정 Analytics 집계는 **442회, 8,047.727 Neurons(80.48%)**였다. 이는 당시의 기록이며 현재 남은 양을 보장하지 않는다. 초기 thinking/별도 관측 실험도 포함하므로 실제 사용자 사진 처리 횟수와 다르다.

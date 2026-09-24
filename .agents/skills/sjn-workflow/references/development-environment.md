@@ -32,7 +32,7 @@ vinext 개발 서버는 클라이언트 모듈을 동적 import로 받아 Next �
 | [.env.example](../../../../.env.example) | Node/Next 변수 참고. `.env.local`은 Workers secret을 대신하지 않음 |
 | `dist/server/wrangler.json` | 생성물; 직접 편집하지 않고 원본 설정을 고쳐 재빌드 |
 
-D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아니다. `ASSETS`는 정적 파일이고 R2 사용자 자료와 다르다. `AI`는 Gemma/FLUX 공통 Workers AI 바인딩이다. `BETTER_AUTH_SECRET`(필수), `GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`(선택, 둘 다 넣거나 둘 다 비움)은 서버 전용이다. 준비 응답 `/api/storage/status`는 ready일 때 값 없이 `googleSignIn` 여부만 알려 주고 화면은 이에 따라 Google 버튼을 숨긴다. `NEXT_PUBLIC_*`·Wrangler vars·커밋에 비밀값을 넣지 않는다.
+D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아니다. `ASSETS`는 정적 파일이고 R2 사용자 자료와 다르다. `AI`는 Gemma/FLUX 공통 Workers AI 바인딩이다. `BETTER_AUTH_SECRET`(필수), `GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`(선택, 둘 다 넣거나 둘 다 비움)은 서버 전용이다. 준비 응답 `/api/storage/status`는 ready일 때 값 없이 `googleSignIn` 여부만 알려 주고 화면은 이에 따라 Google 버튼을 숨긴다. `NEXT_PUBLIC_*`·Wrangler vars·커밋에 비밀값을 넣지 않는다. 관리자 AI 사용량 화면(`/api/admin/ai-usage`)은 선택 설정 `CLOUDFLARE_ACCOUNT_ID`(32자리 계정 ID)와 `CLOUDFLARE_ANALYTICS_TOKEN`(해당 계정 "Account Analytics: 읽기" 권한만 준 API 토큰)을 서버에서만 읽는다. 운영은 `wrangler secret put`, 로컬은 `.dev.vars`로 등록하며 없으면 그 화면만 설정 안내를 보인다. 2026-09-25 기준 운영 등록 여부는 미확인이다.
 
 ## 첫 로컬 실행
 

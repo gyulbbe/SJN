@@ -2,6 +2,16 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-09-25 — 관리자 AI 사용량(남은 뉴런) 화면
+
+- 관리자 메뉴에 **AI 사용량**(`/admin/ai-usage`)을 추가했다. 서버(`/api/admin/ai-usage`, 관리자 전용·no-store)가 Cloudflare GraphQL Analytics로 계정 전체의 오늘 뉴런·호출 수, 모델별 사용, 최근 7일을 읽는다. 화면은 무료 10,000 뉴런 대비 남은 양과 한국 09:00 초기화까지 시간을 보여 준다.
+- 설정: `CLOUDFLARE_ACCOUNT_ID`와 `CLOUDFLARE_ANALYTICS_TOKEN`("Account Analytics: 읽기" 권한만 부여)을 서버에 등록한다. 토큰은 브라우저로 보내지 않는다. 상세는 [AI 사용량](cloudflare-ai-usage.md)에 있다.
+- 검증:
+  - `tests/admin-ai-usage.test.ts` 9개 통과: 남은 양·초과 계산, 모델별·7일 집계, 설정 없음, 403·429·GraphQL 오류·계정 없음, 7일 실패 시 오늘 값 유지, 응답에 토큰 미포함.
+  - `e2e/admin-ai-usage.spec.ts` 3개 통과: 관리자 화면(데스크톱·390px 넘침 없음·새로고침), 설정 안내, 일반 회원 화면·API 403.
+  - typecheck·lint 통과.
+- 실제 Cloudflare 조회는 토큰이 없어 하지 않았다. 필드 이름과 7일 범위는 미확인이다.
+
 ## 2026-09-25 — 렌더러 조명·재질 사실감 개선
 
 - 3D 렌더러의 바깥 햇빛·강한 환경광을 방 좌표에 고정한 천장 조명과 절차적 환경맵으로 바꾸고 Neutral 톤 매핑을 넣었다.

@@ -9,4 +9,8 @@ BETTER_AUTH_SECRET=
 # Register this exact redirect URI in Google: http://127.0.0.1:3000/api/auth/callback/google
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+# Optional: admin "AI 사용량" page. Account ID (32 hex) and an API token with only
+# "Account Analytics: Read" on that account. Server-only; never NEXT_PUBLIC_.
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_ANALYTICS_TOKEN=
 # Production values are configured as Worker secrets, not from this file.
