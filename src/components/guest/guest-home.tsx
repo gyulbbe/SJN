@@ -1,13 +1,21 @@
 'use client';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { ArrowRight, FolderOpen, LockKeyhole, Plus } from 'lucide-react';
 import { BASE_ROOM_IMAGE } from '@/lib/base-room';
 import LoginPrompt from './login-prompt';
 import WorkspaceNav from '@/components/workspace-nav';
 
+const subscribeNever = () => () => {};
+
 export default function GuestHome({ onNewProject }: { onNewProject: () => void }) {
+  // The server renders this page for everyone; until React attaches, a click would do nothing.
+  const hydrated = useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
   const [feature, setFeature] = useState('');
   const [draftExists, setDraftExists] = useState(false);
   const [error, setError] = useState('');
@@ -61,10 +69,10 @@ export default function GuestHome({ onNewProject }: { onNewProject: () => void }
             <p>로그인 없이 빈 공간을 만들고, 마음에 드는 자재를 배치해 보세요.</p>
           </div>
           <div className="page-heading-actions">
-            <button className="btn" onClick={() => setFeature('프로젝트 저장')}>
+            <button className="btn" disabled={!hydrated} onClick={() => setFeature('프로젝트 저장')}>
               로그인 / 회원가입
             </button>
-            <button className="btn primary" onClick={onNewProject}>
+            <button className="btn primary" disabled={!hydrated} onClick={onNewProject}>
               <Plus size={18} />새 프로젝트
             </button>
           </div>
@@ -95,11 +103,15 @@ export default function GuestHome({ onNewProject }: { onNewProject: () => void }
               마음에 들면 로그인해서 내 프로젝트로 저장하세요.
             </p>
             <div className="start-actions">
-              <button className="btn primary" onClick={onNewProject}>
+              <button className="btn primary" disabled={!hydrated} onClick={onNewProject}>
                 기본 공간으로 시작
                 <ArrowRight size={17} />
               </button>
-              <button className="btn" onClick={() => setFeature('사진으로 Before/After 만들기')}>
+              <button
+                className="btn"
+                disabled={!hydrated}
+                onClick={() => setFeature('사진으로 Before/After 만들기')}
+              >
                 <LockKeyhole size={17} />
                 사진으로 시작
               </button>
@@ -139,7 +151,7 @@ export default function GuestHome({ onNewProject }: { onNewProject: () => void }
           <FolderOpen size={29} />
           <h3>내 프로젝트로 보관하세요</h3>
           <p>로그인하면 작업을 저장하고 사진 비교와 내보내기도 이용할 수 있어요.</p>
-          <button className="btn" onClick={() => setFeature('내 프로젝트')}>
+          <button className="btn" disabled={!hydrated} onClick={() => setFeature('내 프로젝트')}>
             로그인 / 회원가입
           </button>
         </section>
