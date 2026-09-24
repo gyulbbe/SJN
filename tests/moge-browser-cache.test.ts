@@ -57,6 +57,11 @@ describe('MoGe persistent cache with tiny test artifact (no actual model)', () =
     expect(first.bytes).toEqual(fixture);
     expect(second.bytes).toEqual(fixture);
     expect(fetch).toHaveBeenCalledTimes(1);
+    // The production origin is on workers.dev, whose Referer Hugging Face rejects without CORS.
+    expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({
+      referrerPolicy: 'no-referrer',
+      credentials: 'omit',
+    });
     expect(put).toHaveBeenCalledTimes(1);
     expect(createHash('sha256').update(second.bytes).digest('hex')).toHaveLength(64);
   });

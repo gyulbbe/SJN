@@ -32,7 +32,7 @@ npm run start:vinext
 - `Ruicheng/moge-2-vits-normal-onnx`, FP32, 140852051 bytes.
 - revision: `e50ffda41565591092adea54c6ac83d6212e1e23`.
 - SHA-256: `24eacb5dc7a2c54c7bc98f7de085ffbed79ad006ea5b664c2c2cdc02ff3a52f0`.
-- 기본값은 위 고정 revision의 Hugging Face model.onnx URL이다. 실제 CORS 다운로드·SHA 검증 완료.
+- 기본값은 위 고정 revision의 Hugging Face model.onnx URL이다. 실제 CORS 다운로드·SHA 검증 완료. Hugging Face는 Referer가 `*.workers.dev`인 요청에 CORS 헤더 없는 404를 돌려주므로(운영 `sjn.gyulbbe.workers.dev`에서 "Failed to fetch"), 모델 요청은 `referrerPolicy: 'no-referrer'`로 보낸다. 배경 제거·360° 입체화 모델 다운로드도 같은 설정이다.
 - 선택 설정 `NEXT_PUBLIC_MOGE_MODEL_URL`은 빌드 시 모델 제공 URL만 바꾼다. 동일 SHA만 허용하므로 다른 모델로 교체하는 설정은 아니다. R2를 쓰면 모델 전용 공개 경로를 사용하고 사용자 사진 버킷 전체를 공개하지 않는다.
 - ONNX Runtime Web 1.29.0. WASM은 같은 버전 jsDelivr 경로를 사용한다. 141MB 모델은 public이나 Workers Static Assets에 포함하지 않는다.
 

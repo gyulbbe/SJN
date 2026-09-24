@@ -71,7 +71,15 @@ export async function loadMogeModel(
     cacheSource: 'network',
   });
   try {
-    const response = await fetch(url, { signal, mode: 'cors', credentials: 'omit', cache: 'no-store' });
+    const response = await fetch(url, {
+      signal,
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      // Hugging Face answers a *.workers.dev Referer with a 404 that has no CORS header, which the
+      // browser reports as "Failed to fetch". The other model downloads already send none.
+      referrerPolicy: 'no-referrer',
+    });
     if (!response.ok || response.type === 'opaque')
       throw new MogeDownloadError(`MoGe 모델 다운로드에 실패했어요 (HTTP ${response.status}).`);
     const declared = response.headers.get('content-length');
