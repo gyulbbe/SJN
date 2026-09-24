@@ -81,9 +81,9 @@
 
 ### 내보내기
 
-일반 PNG/JPG 내보내기는 현재 시안이나 Before/After 비교를 렌더링하며 편집 도구를 이미지에 포함하지 않는다. FLUX 비교는 현재 After의 동일 PNG를 기준으로 4B·9B를 사용자가 각각 실행하고 결과를 미리 본 뒤 PNG로 다운로드한다. 결과는 내보내기 창에서 관리하며 프로젝트 장면을 자동 교체하지 않는다. 사진처럼 보여도 실제 현장 촬영본은 아니다.
+일반 PNG/JPG 내보내기는 현재 시안이나 Before/After 비교를 렌더링하며 편집 도구를 이미지에 포함하지 않는다. FLUX 변환은 현재 After PNG를 기준으로 사용자가 klein 4B를 실행하고 결과를 미리 본 뒤 PNG로 다운로드한다. 다시 만들기는 같은 기준 PNG에 새 seed를 쓴다. 결과는 내보내기 창에서 관리하며 프로젝트 장면을 자동 교체하지 않는다. 사진처럼 보여도 실제 현장 촬영본은 아니다.
 
-근거: [AI 내보내기 UI](../../../../src/components/editor/ai-export.tsx), [FLUX 계약](../../../../src/lib/ai-export/contract.ts), [서버 경로](../../../../src/app/api/export/photoreal/route.ts). 상세: [FLUX 비교](../../../../docs/flux-export.md).
+근거: [AI 내보내기 UI](../../../../src/components/editor/ai-export.tsx), [FLUX 계약](../../../../src/lib/ai-export/contract.ts), [서버 경로](../../../../src/app/api/export/photoreal/route.ts). 상세: [FLUX 변환](../../../../docs/flux-export.md).
 
 ## 현재 AI 구성
 
@@ -94,9 +94,9 @@
 | 벽·바닥 영역 분류 | DeepLabV3 MobileNetV2 ADE20K, 브라우저 TensorFlow.js WASM | [분할 추론](../../../../src/lib/segmentation/worker.ts) |
 | 제품 배경 제거 | `studioludens/birefnet-lite-512`, 브라우저 ONNX Runtime Web | [모델 설정](../../../../src/lib/background-removal/model.ts) |
 | 제품 입체화 | `dcharlot65-aurasense/triposr-onnx-web`, 브라우저 ONNX Runtime Web | [모델 설정](../../../../src/lib/product3d/model.ts) |
-| 내보내기 사진화 비교 | `@cf/black-forest-labs/flux-2-klein-4b` 및 `flux-2-klein-9b`, Cloudflare Workers AI | [FLUX 계약](../../../../src/lib/ai-export/contract.ts) |
+| 내보내기 사진화 | `@cf/black-forest-labs/flux-2-klein-4b`, Cloudflare Workers AI | [FLUX 계약](../../../../src/lib/ai-export/contract.ts) |
 
-Gemma·FLUX는 사진을 Cloudflare로 보내며 동일 `AI` 바인딩과 `sjn-gateway`를 사용한다. 브라우저 모델은 사용자의 기기에서 실행하지만 모델·런타임 다운로드는 발생할 수 있다. 기기별 지원·속도·메모리 한계가 있고, 코드에 연결되어 있다는 사실만으로 무료 사용·추론 성공을 보장하지 않는다.
+Gemma·FLUX는 사진을 Cloudflare로 보내며 동일 `AI` 바인딩을 사용한다. `sjn-gateway`는 Gemma만 거친다. FLUX는 multipart 스트림 요청이라 게이트웨이 없이 바인딩을 직접 호출한다. 브라우저 모델은 사용자의 기기에서 실행하지만 모델·런타임 다운로드는 발생할 수 있다. 기기별 지원·속도·메모리 한계가 있고, 코드에 연결되어 있다는 사실만으로 무료 사용·추론 성공을 보장하지 않는다.
 
 새 분석의 Qwen/Ollama·Python/CUDA MoGe 서버 경로는 종료했다. 과거 결과를 읽는 호환 코드나 수치 대조용 Python 도구를 현재 서비스 실행 경로로 설명하지 않는다. 현재 연결·실행 절차는 [Gemma + 브라우저 MoGe 가이드](../../../../docs/reconstruction-cloud-browser-setup.md)에 둔다.
 

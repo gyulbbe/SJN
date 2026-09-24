@@ -1,4 +1,4 @@
-import { fluxDimensions, type FluxVariant } from './contract';
+import { fluxDimensions } from './contract';
 export async function prepareFluxImage(blob: Blob): Promise<Blob> {
   const bitmap = await createImageBitmap(blob);
   try {
@@ -7,7 +7,7 @@ export async function prepareFluxImage(blob: Blob): Promise<Blob> {
     canvas.width = size.width;
     canvas.height = size.height;
     const context = canvas.getContext('2d');
-    if (!context) throw new Error('AI 비교용 이미지를 만들지 못했어요.');
+    if (!context) throw new Error('AI 변환용 이미지를 만들지 못했어요.');
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, size.width, size.height);
     const scale = Math.min(size.width / bitmap.width, size.height / bitmap.height);
@@ -26,14 +26,12 @@ export async function prepareFluxImage(blob: Blob): Promise<Blob> {
 }
 export async function requestFluxImage(
   image: Blob,
-  model: FluxVariant,
   seed: number,
   signal: AbortSignal,
   userId?: string | null,
 ) {
   const form = new FormData();
   form.set('image', image, 'after.png');
-  form.set('model', model);
   form.set('seed', String(seed));
   const response = await fetch('/api/export/photoreal', {
     method: 'POST',

@@ -65,7 +65,7 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 
 ## AI와 빌드·운영 경계
 
-Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는 `/api/export/photoreal`의 4B/9B다. 같은 `AI` 바인딩과 `sjn-gateway`를 사용하며 활성 로그인이 필요하다. 기본 개발 설정과 Next Node에는 AI 바인딩이 없다. 기본 개발 서버 시작만으로 원격 프록시를 연결하지 않도록 `wrangler.dev.jsonc`에서 AI를 제외했다. 실제 Workers AI 검증은 별도 승인된 원격 AI 바인딩 설정에서 실행한다. **로컬 D1/R2라는 사실은 AI가 로컬이라는 뜻이 아니다.** 명시적 AI 실행은 Cloudflare 사진 전송·사용량을 발생시킨다. 로그인·DB 준비·문서 갱신만으로 AI를 실행하지 않는다.
+Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는 `/api/export/photoreal`의 `@cf/black-forest-labs/flux-2-klein-4b`다. 같은 `AI` 바인딩을 사용하고 `sjn-gateway`는 Gemma만 거치며(FLUX는 multipart 스트림이라 게이트웨이 미사용), 활성 로그인이 필요하다. 기본 개발 설정과 Next Node에는 AI 바인딩이 없다. 기본 개발 서버 시작만으로 원격 프록시를 연결하지 않도록 `wrangler.dev.jsonc`에서 AI를 제외했다. 실제 Workers AI 검증은 별도 승인된 원격 AI 바인딩 설정에서 실행한다. **로컬 D1/R2라는 사실은 AI가 로컬이라는 뜻이 아니다.** 명시적 AI 실행은 Cloudflare 사진 전송·사용량을 발생시킨다. 로그인·DB 준비·문서 갱신만으로 AI를 실행하지 않는다.
 
 체험 중에는 사진 업로드·AI 실행·진단 아카이브를 시작하지 않는다. MoGe·DeepLab·배경 제거·제품 입체화는 로그인한 기능의 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
 

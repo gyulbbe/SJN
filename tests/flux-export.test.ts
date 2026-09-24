@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import sharp from 'sharp';
 import { runFluxExport } from '../src/lib/ai-export/server';
-import { FLUX_MODELS, FLUX_PROMPT, fluxDimensions } from '../src/lib/ai-export/contract';
+import { FLUX_MODEL, FLUX_PROMPT, fluxDimensions } from '../src/lib/ai-export/contract';
 import { requestFluxImage } from '../src/lib/ai-export/client';
 
 vi.mock('../src/lib/auth/d1', () => ({ getD1Actor: vi.fn() }));
@@ -14,14 +14,8 @@ const png = async (width = 496, height = 336) =>
       .png()
       .toBuffer(),
   );
-function request(
-  image: Uint8Array,
-  model = '4b',
-  origin = 'https://sjn.example',
-  extra?: (form: FormData) => void,
-) {
+function request(image: Uint8Array, origin = 'https://sjn.example', extra?: (form: FormData) => void) {
   const form = new FormData();
-  form.set('model', model);
   form.set('seed', '12345');
   form.set('image', new Blob([new Uint8Array(image)], { type: 'image/png' }), 'after.png');
   extra?.(form);
@@ -37,50 +31,47 @@ function environment(
   return { platform: 'cloudflare' as const, APP_ENV: 'development', STORAGE_MODE: 'd1', AI: { run } };
 }
 describe('FLUX image export', () => {
-  it.each(['4b', '9b'] as const)(
-    'sends the reference image and fixed prompt to %s exactly once, without the AI Gateway',
-    async (variant) => {
-      const image = await png();
-      const env = environment();
-      const result = await runFluxExport(request(image, variant), env);
-      expect(result.status).toBe(200);
-      expect(result.headers.get('content-type')).toBe('image/png');
-      expect(result.headers.get('cache-control')).toContain('no-store');
-      expect(result.headers.get('x-sjn-image-model')).toBe(FLUX_MODELS[variant]);
-      expect(env.AI.run).toHaveBeenCalledTimes(1);
-      const [model, payload, options] = (
-        env.AI.run.mock.calls as unknown as [
-          string,
-          { multipart: { body: ReadableStream; contentType: string } },
-          unknown,
-        ][]
-      )[0];
-      expect(model).toBe(FLUX_MODELS[variant]);
-      expect(options).toMatchObject({ returnRawResponse: true });
-      // The gateway rejects multipart stream bodies, so FLUX must not be routed through it.
-      expect(options).not.toHaveProperty('gateway');
-      const form = await new Response(payload.multipart.body, {
-        headers: { 'Content-Type': payload.multipart.contentType },
-      }).formData();
-      expect(form.get('prompt')).toBe(FLUX_PROMPT);
-      expect(form.get('width')).toBe('992');
-      expect(form.get('height')).toBe('672');
-      expect(form.get('seed')).toBe('12345');
-      expect(new Uint8Array(await (form.get('input_image_0') as Blob).arrayBuffer())).toEqual(image);
-      expect(await sharp(Buffer.from(await result.arrayBuffer())).metadata()).toMatchObject({
-        width: 992,
-        height: 672,
-      });
-    },
-  );
-  it.each([
-    ['wrong model', 'other', (f: FormData) => f],
-    ['duplicate model', '4b', (f: FormData) => f.append('model', '9b')],
-    ['caller prompt', '4b', (f: FormData) => f.set('prompt', 'replace prompt')],
-    ['invalid seed', '4b', (f: FormData) => f.set('seed', '-1')],
-  ] as const)('rejects %s before inference', async (_label, model, edit) => {
+  it('sends the reference image and fixed prompt to klein 4B exactly once, without the AI Gateway', async () => {
+    const image = await png();
     const env = environment();
-    await expect(runFluxExport(request(await png(), model, undefined, edit), env)).rejects.toMatchObject({
+    const result = await runFluxExport(request(image), env);
+    expect(result.status).toBe(200);
+    expect(result.headers.get('content-type')).toBe('image/png');
+    expect(result.headers.get('cache-control')).toContain('no-store');
+    expect(result.headers.get('x-sjn-image-model')).toBe(FLUX_MODEL);
+    expect(env.AI.run).toHaveBeenCalledTimes(1);
+    const [model, payload, options] = (
+      env.AI.run.mock.calls as unknown as [
+        string,
+        { multipart: { body: ReadableStream; contentType: string } },
+        unknown,
+      ][]
+    )[0];
+    expect(model).toBe(FLUX_MODEL);
+    expect(options).toMatchObject({ returnRawResponse: true });
+    // The gateway rejects multipart stream bodies, so FLUX must not be routed through it.
+    expect(options).not.toHaveProperty('gateway');
+    const form = await new Response(payload.multipart.body, {
+      headers: { 'Content-Type': payload.multipart.contentType },
+    }).formData();
+    expect(form.get('prompt')).toBe(FLUX_PROMPT);
+    expect(form.get('width')).toBe('992');
+    expect(form.get('height')).toBe('672');
+    expect(form.get('seed')).toBe('12345');
+    expect(new Uint8Array(await (form.get('input_image_0') as Blob).arrayBuffer())).toEqual(image);
+    expect(await sharp(Buffer.from(await result.arrayBuffer())).metadata()).toMatchObject({
+      width: 992,
+      height: 672,
+    });
+  });
+  it.each([
+    ['a model choice', (f: FormData) => f.set('model', '4b')],
+    ['caller prompt', (f: FormData) => f.set('prompt', 'replace prompt')],
+    ['invalid seed', (f: FormData) => f.set('seed', '-1')],
+    ['duplicate seed', (f: FormData) => f.append('seed', '1')],
+  ] as const)('rejects %s before inference', async (_label, edit) => {
+    const env = environment();
+    await expect(runFluxExport(request(await png(), undefined, edit), env)).rejects.toMatchObject({
       status: 400,
     });
     expect(env.AI.run).not.toHaveBeenCalled();
@@ -96,9 +87,9 @@ describe('FLUX image export', () => {
   });
   it('rejects cross-origin requests before inference', async () => {
     const env = environment();
-    await expect(
-      runFluxExport(request(await png(), '4b', 'https://evil.example'), env),
-    ).rejects.toMatchObject({ status: 403 });
+    await expect(runFluxExport(request(await png(), 'https://evil.example'), env)).rejects.toMatchObject({
+      status: 403,
+    });
     expect(env.AI.run).not.toHaveBeenCalled();
   });
   it('rejects missing origin, malformed images and oversized bodies', async () => {
@@ -141,7 +132,7 @@ describe('FLUX image export', () => {
     await expect(runFluxExport(request(await png()), env)).rejects.toMatchObject({
       status: 502,
       diagnostics: {
-        model: FLUX_MODELS['4b'],
+        model: FLUX_MODEL,
         phase: 'provider-request',
         providerException: {
           name: 'AiInternalError',
@@ -160,13 +151,13 @@ describe('FLUX image export', () => {
     const env = environment(vi.fn(async () => Response.json({ image: btoa('not an image') })));
     await expect(runFluxExport(request(await png()), env)).rejects.toMatchObject({ status: 502 });
   });
-  it('client does not retry 429 or switch models', async () => {
+  it('client does not retry 429', async () => {
     const fetcher = vi.fn(async () => Response.json({ error: '오늘 한도 소진' }, { status: 429 }));
     vi.stubGlobal('fetch', fetcher);
     try {
-      await expect(
-        requestFluxImage(new Blob(), '9b', 123, new AbortController().signal, 'user-a'),
-      ).rejects.toThrow('오늘 한도 소진');
+      await expect(requestFluxImage(new Blob(), 123, new AbortController().signal, 'user-a')).rejects.toThrow(
+        '오늘 한도 소진',
+      );
       expect(fetcher).toHaveBeenCalledTimes(1);
     } finally {
       vi.unstubAllGlobals();

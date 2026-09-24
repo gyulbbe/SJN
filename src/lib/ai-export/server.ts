@@ -6,13 +6,7 @@ import {
   classifyCloudGemmaFailure,
   cloudProviderException,
 } from '@/lib/reconstruction/cloud-gemma-errors';
-import {
-  FLUX_MODELS,
-  FLUX_INPUT_EDGE,
-  FLUX_MAX_IMAGE_BYTES,
-  FLUX_PROMPT,
-  type FluxVariant,
-} from './contract';
+import { FLUX_MODEL, FLUX_INPUT_EDGE, FLUX_MAX_IMAGE_BYTES, FLUX_PROMPT } from './contract';
 
 type Environment = ReturnType<typeof getRuntimeEnvironment>;
 type FluxBinding = {
@@ -78,19 +72,16 @@ export async function runFluxExport(request: Request, environment: Environment =
   } catch {
     return fail('이미지 요청 형식이 올바르지 않아요.');
   }
-  const fields = ['model', 'image', 'seed'];
+  const fields = ['image', 'seed'];
   if (
     [...form.keys()].some((key) => !fields.includes(key)) ||
     fields.some((key) => form.getAll(key).length !== 1)
   )
     fail('이미지 요청 필드를 확인해 주세요.');
-  const variant = form.get('model');
-  if (variant !== '4b' && variant !== '9b') fail('지원하지 않는 이미지 모델이에요.');
   const seedText = form.get('seed');
-  if (typeof seedText !== 'string' || !/^\d{1,10}$/.test(seedText))
-    fail('이미지 비교 seed가 올바르지 않아요.');
+  if (typeof seedText !== 'string' || !/^\d{1,10}$/.test(seedText)) fail('이미지 seed가 올바르지 않아요.');
   const seed = Number(seedText);
-  if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) fail('이미지 비교 seed가 올바르지 않아요.');
+  if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) fail('이미지 seed가 올바르지 않아요.');
   const image = form.get('image');
   if (!(image instanceof Blob) || image.size === 0 || image.size > FLUX_MAX_IMAGE_BYTES)
     fail('입력 이미지는 2MB 이하여야 해요.');
@@ -104,7 +95,7 @@ export async function runFluxExport(request: Request, environment: Environment =
     header.mime !== 'image/png' ||
     [header.width, header.height].some((n) => n < 128 || n > FLUX_INPUT_EDGE || n % 16 !== 0)
   )
-    fail('AI 비교용 PNG의 크기가 올바르지 않아요.');
+    fail('AI 변환용 PNG의 크기가 올바르지 않아요.');
   const input = new FormData();
   input.set('input_image_0', image, 'after.png');
   input.set('prompt', FLUX_PROMPT);
@@ -118,7 +109,7 @@ export async function runFluxExport(request: Request, environment: Environment =
   const timer = setTimeout(() => controller.abort(), 180_000);
   // Kept with the failure (as for Gemma) so a provider error is not reduced to a generic message.
   const diagnostics: Record<string, unknown> = {
-    model: FLUX_MODELS[variant as FluxVariant],
+    model: FLUX_MODEL,
     phase: 'provider-request',
   };
   try {
@@ -127,7 +118,7 @@ export async function runFluxExport(request: Request, environment: Environment =
     // stream and the gateway rejects stream bodies ("AI Gateway does not support ReadableStreams
     // yet"), which surfaced as a generic failure in production. The binding does not retry.
     const response = await ai.run(
-      FLUX_MODELS[variant as FluxVariant],
+      FLUX_MODEL,
       {
         multipart: { body: serialized.body!, contentType: serialized.headers.get('content-type')! },
       },
@@ -180,7 +171,7 @@ export async function runFluxExport(request: Request, environment: Environment =
         'Content-Type': outputHeader.mime,
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff',
-        'X-SJN-Image-Model': FLUX_MODELS[variant as FluxVariant],
+        'X-SJN-Image-Model': FLUX_MODEL,
       },
     });
   } catch (error) {
