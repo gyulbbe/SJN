@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import sharp from 'sharp';
 import { runFluxExport } from '../src/lib/ai-export/server';
-import { FLUX_GATEWAY, FLUX_MODELS, FLUX_PROMPT, fluxDimensions } from '../src/lib/ai-export/contract';
+import { FLUX_MODELS, FLUX_PROMPT, fluxDimensions } from '../src/lib/ai-export/contract';
 import { requestFluxImage } from '../src/lib/ai-export/client';
 
 vi.mock('../src/lib/auth/d1', () => ({ getD1Actor: vi.fn() }));
@@ -38,7 +38,7 @@ function environment(
 }
 describe('FLUX image export', () => {
   it.each(['4b', '9b'] as const)(
-    'sends the reference image and fixed prompt to %s through the existing gateway exactly once',
+    'sends the reference image and fixed prompt to %s exactly once, without the AI Gateway',
     async (variant) => {
       const image = await png();
       const env = environment();
@@ -56,10 +56,9 @@ describe('FLUX image export', () => {
         ][]
       )[0];
       expect(model).toBe(FLUX_MODELS[variant]);
-      expect(options).toMatchObject({
-        gateway: { id: FLUX_GATEWAY, retries: { maxAttempts: 1 }, skipCache: true },
-        returnRawResponse: true,
-      });
+      expect(options).toMatchObject({ returnRawResponse: true });
+      // The gateway rejects multipart stream bodies, so FLUX must not be routed through it.
+      expect(options).not.toHaveProperty('gateway');
       const form = await new Response(payload.multipart.body, {
         headers: { 'Content-Type': payload.multipart.contentType },
       }).formData();
@@ -119,7 +118,7 @@ describe('FLUX image export', () => {
   });
   it('does not fall back to anonymous access for production auto storage', async () => {
     const env = { ...environment(), APP_ENV: 'production', STORAGE_MODE: 'auto' };
-    vi.mocked(getD1Actor).mockRejectedValueOnce({status:401});
+    vi.mocked(getD1Actor).mockRejectedValueOnce({ status: 401 });
     await expect(runFluxExport(request(await png()), env)).rejects.toMatchObject({ status: 401 });
     expect(env.AI.run).not.toHaveBeenCalled();
   });
@@ -130,6 +129,32 @@ describe('FLUX image export', () => {
       status: 429,
     });
     expect(env.AI.run).toHaveBeenCalledTimes(1);
+  });
+  it('keeps the provider exception with a failure instead of only the generic message', async () => {
+    const env = environment(
+      vi.fn(async () => {
+        throw Object.assign(new Error('AI Gateway does not support ReadableStreams yet.'), {
+          name: 'AiInternalError',
+        });
+      }),
+    );
+    await expect(runFluxExport(request(await png()), env)).rejects.toMatchObject({
+      status: 502,
+      diagnostics: {
+        model: FLUX_MODELS['4b'],
+        phase: 'provider-request',
+        providerException: {
+          name: 'AiInternalError',
+          message: 'AI Gateway does not support ReadableStreams yet.',
+        },
+      },
+    });
+    const failed = environment(
+      vi.fn(async () => Response.json({ errors: [{ code: 9999 }] }, { status: 500 })),
+    );
+    await expect(runFluxExport(request(await png()), failed)).rejects.toMatchObject({
+      diagnostics: { phase: 'provider-response', upstreamStatus: 500 },
+    });
   });
   it('rejects a non-image success response', async () => {
     const env = environment(vi.fn(async () => Response.json({ image: btoa('not an image') })));

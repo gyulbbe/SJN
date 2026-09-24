@@ -1,10 +1,13 @@
 import { getRuntimeEnvironment } from '@/lib/platform/runtime';
 import { readImageHeader } from '@/lib/images';
 import { assertCloudGemmaRequest } from '@/lib/reconstruction/cloud-gemma-server';
-import { CloudGemmaError, classifyCloudGemmaFailure } from '@/lib/reconstruction/cloud-gemma-errors';
+import {
+  CloudGemmaError,
+  classifyCloudGemmaFailure,
+  cloudProviderException,
+} from '@/lib/reconstruction/cloud-gemma-errors';
 import {
   FLUX_MODELS,
-  FLUX_GATEWAY,
   FLUX_INPUT_EDGE,
   FLUX_MAX_IMAGE_BYTES,
   FLUX_PROMPT,
@@ -16,11 +19,7 @@ type FluxBinding = {
   run: (
     model: string,
     input: { multipart: { body: ReadableStream; contentType: string } },
-    options: {
-      gateway: { id: string; retries: { maxAttempts: number }; skipCache: boolean };
-      returnRawResponse: true;
-      signal: AbortSignal;
-    },
+    options: { returnRawResponse: true; signal: AbortSignal },
   ) => Promise<Response>;
 };
 function fail(message: string, status = 400): never {
@@ -117,31 +116,52 @@ export async function runFluxExport(request: Request, environment: Environment =
   const cancel = () => controller.abort();
   request.signal.addEventListener('abort', cancel, { once: true });
   const timer = setTimeout(() => controller.abort(), 180_000);
+  // Kept with the failure (as for Gemma) so a provider error is not reduced to a generic message.
+  const diagnostics: Record<string, unknown> = {
+    model: FLUX_MODELS[variant as FluxVariant],
+    phase: 'provider-request',
+  };
   try {
     request.signal.throwIfAborted();
-    // One explicit click -> one model call. Override gateway automatic retries.
+    // One explicit click -> one model call. No AI Gateway here: FLUX takes its image as a multipart
+    // stream and the gateway rejects stream bodies ("AI Gateway does not support ReadableStreams
+    // yet"), which surfaced as a generic failure in production. The binding does not retry.
     const response = await ai.run(
       FLUX_MODELS[variant as FluxVariant],
       {
         multipart: { body: serialized.body!, contentType: serialized.headers.get('content-type')! },
       },
       {
-        gateway: { id: FLUX_GATEWAY, retries: { maxAttempts: 1 }, skipCache: true },
         returnRawResponse: true,
         signal: controller.signal,
       },
     );
+    diagnostics.phase = 'provider-response';
+    diagnostics.upstreamStatus = response.status;
+    diagnostics.providerRequestId =
+      response.headers.get('cf-aig-log-id') ?? response.headers.get('cf-ray') ?? undefined;
     const raw = await bounded(response, 12 * 1024 * 1024, controller.signal, 502);
     const text = new TextDecoder().decode(raw);
-    if (!response.ok)
+    if (!response.ok) {
+      diagnostics.providerResponse = cloudProviderException({
+        name: 'ProviderResponse',
+        message: text,
+      }).message;
       throw classifyCloudGemmaFailure(response.status, text, response.headers.get('Retry-After'));
+    }
     let body;
     try {
       body = JSON.parse(text);
     } catch {
       return fail('AI 이미지 응답을 읽지 못했어요.', 502);
     }
-    if (body?.success === false) throw classifyCloudGemmaFailure(502, body);
+    if (body?.success === false) {
+      diagnostics.providerResponse = cloudProviderException({
+        name: 'ProviderResponse',
+        message: text,
+      }).message;
+      throw classifyCloudGemmaFailure(502, body);
+    }
     const encoded = (body?.result ?? body)?.image;
     if (typeof encoded !== 'string' || !encoded.length || encoded.length > 11 * 1024 * 1024)
       fail('AI가 이미지 결과를 반환하지 않았어요.', 502);
@@ -165,14 +185,25 @@ export async function runFluxExport(request: Request, environment: Environment =
     });
   } catch (error) {
     if (request.signal.aborted) throw new CloudGemmaError('이미지 변환 요청이 종료됐어요.', 'cancelled', 499);
-    if (controller.signal.aborted)
-      throw new CloudGemmaError(
-        '이미지 변환 응답 시간이 초과됐어요. 자동 재시도하지 않았어요.',
-        'timeout',
-        504,
-      );
-    if (error instanceof CloudGemmaError) throw error;
-    throw classifyCloudGemmaFailure(502, error instanceof Error ? error.message : '');
+    const failure = controller.signal.aborted
+      ? new CloudGemmaError('이미지 변환 응답 시간이 초과됐어요. 자동 재시도하지 않았어요.', 'timeout', 504)
+      : error instanceof CloudGemmaError
+        ? error
+        : classifyCloudGemmaFailure(
+            error && typeof error === 'object' && 'status' in error ? Number(error.status) : 502,
+            error instanceof Error ? error.message : '',
+          );
+    throw new CloudGemmaError(
+      failure.message,
+      failure.code,
+      failure.status,
+      failure.retryable,
+      failure.retryAfterMs,
+      {
+        ...diagnostics,
+        ...(error instanceof CloudGemmaError ? {} : { providerException: cloudProviderException(error) }),
+      },
+    );
   } finally {
     clearTimeout(timer);
     request.signal.removeEventListener('abort', cancel);

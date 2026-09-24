@@ -8,6 +8,12 @@
 - 올릴 수 없는 곳에 떨어뜨린 파일은 앱 전체에서 막아 브라우저가 파일을 열며 페이지를 떠나지 않는다.
 - 검증: `tests/file-drop.test.ts` 4개, `e2e/file-drop.spec.ts` 6개(실제 `DataTransfer` 드롭·끄는 중 강조·여러 장 거절·혼합 파일 안내·빈 곳 드롭 차단) 통과.
 
+## 2026-09-24 — 운영에서 AI 현장 사진 변환(FLUX) 실패 수정
+
+- 증상: 결과 이미지 저장 → AI로 현장 사진처럼에서 변환이 "Cloudflare AI 요청을 완료하지 못했어요"로 실패했다.
+- 원인: FLUX 호출이 AI Gateway를 거쳤는데, 게이트웨이는 multipart 스트림 본문을 받지 않는다(`AI Gateway does not support ReadableStreams yet.`). 실제 FLUX 호출은 이전에 검증된 적이 없었다(E2E는 모의 응답).
+- 수정: FLUX만 게이트웨이 없이 `AI` 바인딩으로 직접 호출한다. 실패 원인이 요약 문구에 묻히지 않도록 응답 `diagnostics`에 제공자 오류를 남긴다. 사용자 승인 후 실제 호출 2회로 확인했다(게이트웨이 포함 → 스트림 오류, 게이트웨이 없음 → 200·992×672 JPEG). `tests/flux-export.test.ts`가 게이트웨이 미사용과 진단 보존을 확인한다.
+
 ## 2026-09-24 — 운영에서 AI 정밀 분석(MoGe) 모델 다운로드 실패 수정
 
 - 증상: 운영(`sjn.gyulbbe.workers.dev`)에서 MoGe 모델 다운로드가 0.3초 만에 "Failed to fetch"로 끝났다. 콘솔에는 CORS 헤더 없음 오류가 찍혔다.

@@ -3,7 +3,6 @@ export const FLUX_MODELS = {
   '9b': '@cf/black-forest-labs/flux-2-klein-9b',
 } as const;
 export type FluxVariant = keyof typeof FLUX_MODELS;
-export const FLUX_GATEWAY = 'sjn-gateway';
 // Cloudflare's klein editing guide requires reference images smaller than 512px.
 export const FLUX_INPUT_EDGE = 496;
 export const FLUX_MAX_IMAGE_BYTES = 2 * 1024 * 1024;

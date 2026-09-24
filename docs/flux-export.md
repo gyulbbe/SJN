@@ -4,11 +4,12 @@
 
 ## 연결
 
-- 기존 Wrangler `AI` 바인딩과 `sjn-gateway`를 재사용한다. 추가 게이트웨이나 토큰 설정은 없다.
+- 기존 Wrangler `AI` 바인딩을 쓰되 AI Gateway(`sjn-gateway`)는 거치지 않는다. FLUX는 참조 이미지를 multipart 스트림으로 받는데, 게이트웨이는 스트림 본문을 받지 않는다(`AI Gateway does not support ReadableStreams yet.`). 게이트웨이를 거치던 이전 코드는 운영에서 모든 변환이 "Cloudflare AI 요청을 완료하지 못했어요"로 실패했다. Gemma 설비 분석은 JSON 요청이라 지금처럼 게이트웨이를 쓴다. 추가 토큰 설정은 없다.
 - POST `/api/export/photoreal`: 서버가 허용된 두 모델만 호출한다.
 - 기존 Gemma의 동일 출처 검사와 D1 로그인 / 명시적 로컬 저장 모드 접근 정책을 재사용한다.
 - 일반 Next 개발 서버에는 Workers AI 바인딩이 없으므로 연결 필요 오류를 표시한다. 실제 사용은 Workers 개발 서버 또는 Cloudflare 배포에서 한다.
-- 각 클릭은 한 모델에 한 번만 요청한다. 자동 재시도, 다른 모델로 자동 전환, 창을 열 때 사전 AI 호출은 없다. Gateway의 재시도도 한 번으로 제한한다.
+- 각 클릭은 한 모델에 한 번만 요청한다. 자동 재시도, 다른 모델로 자동 전환, 창을 열 때 사전 AI 호출은 없다. 바인딩 직접 호출은 스스로 재시도하지 않는다.
+- 실패하면 응답 JSON의 `diagnostics`에 모델·단계(`provider-request`/`provider-response`)·상류 상태·요청 ID와 제공자 오류(자격 증명·이미지 데이터 제거, 길이 제한)를 남긴다. 화면에는 지금처럼 요약 문구만 보인다.
 - 재생성 버튼을 다시 누르면 새로운 AI 요청이 발생한다. 요청당 사용량은 기존 Gemma 등과 같은 계정 한도를 사용한다. 유료 플랜에서는 과금될 수 있으며, 9B의 사용량은 4B보다 크다. 코드 자체가 요금제나 잔여 할당량을 검증하는 것은 아니다.
 
 ## 동일 입력 비교
@@ -24,7 +25,8 @@ Cloudflare klein 편집 가이드의 512px 미만 참조 이미지 조건에 맞
 - `npx vitest run tests/flux-export.test.ts tests/reconstruction-cloud-gemma.test.ts`
 - `npx playwright test e2e/flux-export.spec.ts`
 - E2E의 모델 응답은 모의 이미지다. 서버 접근 거부, 동일 원본·seed, 개별 모델 호출, PNG 다운로드, 한도 오류 후 결과 보존, 창 닫기와 늦은 응답을 검증한다.
-- 실제 원격 모델 호출 및 화질 비교는 이번 자동 검증에 포함하지 않는다.
+- 실제 원격 모델 호출 및 화질 비교는 자동 검증에 포함하지 않는다.
+- 2026-09-24 사용자 승인으로 실제 호출 2회(4B, 496×336 합성 이미지, 로컬 임시 Worker에서 운영 `AI` 바인딩)로 원인을 확인했다. 게이트웨이 포함 요청은 위 스트림 오류로 즉시 실패했고, 게이트웨이 없이 같은 요청은 200과 992×672 JPEG(base64 JSON)를 반환했다. 9B와 화질 비교는 실행하지 않았다.
 
 ## 공식 API 근거
 
