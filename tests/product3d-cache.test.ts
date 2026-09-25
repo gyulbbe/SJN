@@ -27,7 +27,13 @@ afterEach(() => vi.unstubAllGlobals());
 describe('multiview immutable model cache', () => {
   it('reuses the same valid weight file without a network request', async () => {
     cache.match.mockResolvedValue(new Response(new Uint8Array([4, 3, 2, 1])));
-    const result = await loadProduct3dModel('encoder', vi.fn());
+    const progress = vi.fn();
+    const result = await loadProduct3dModel('encoder', progress);
+    // The cache read is bracketed so the loading percentage moves for this part too.
+    expect(progress.mock.calls.map(([p]) => [p.loadedBytes, p.totalBytes, p.part, p.source])).toEqual([
+      [0, 4, 'encoder', 'cache'],
+      [4, 4, 'encoder', 'cache'],
+    ]);
     expect(result.cacheSource).toBe('cache');
     expect(result.downloadMs).toBe(0);
     expect([...result.bytes]).toEqual([4, 3, 2, 1]);

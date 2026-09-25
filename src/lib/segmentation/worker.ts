@@ -22,9 +22,14 @@ let queue = Promise.resolve();
 function stage(id: number, message: string) {
   self.postMessage({ id, type: 'stage', message } satisfies SegmentationReply);
 }
+function modelProgress(id: number, phase: 'runtime' | 'download' | 'ready', fraction?: number) {
+  self.postMessage({ id, type: 'model-progress', phase, fraction } satisfies SegmentationReply);
+}
 
 async function getModel(id: number) {
+  const loading = !runtimeReady || !model;
   if (!runtimeReady) {
+    modelProgress(id, 'runtime');
     stage(id, '브라우저 분석 엔진 준비 중');
     setWasmPaths(`${self.location.origin}/models/tfjs-wasm/`);
     // Single-thread WASM also runs without cross-origin isolation / SharedArrayBuffer.
@@ -34,8 +39,10 @@ async function getModel(id: number) {
     runtimeReady = true;
   }
   if (!model) {
+    modelProgress(id, 'download', 0);
     stage(id, '앱에 포함된 공간 분석 모델 읽는 중');
     model = await loadGraphModel(`${self.location.origin}${MODEL_URL}`, {
+      onProgress: (fraction) => modelProgress(id, 'download', fraction),
       // Defense in depth: even an accidentally altered manifest cannot upload or fetch remotely.
       fetchFunc: async (input, init) => {
         const url = new URL(
@@ -51,6 +58,7 @@ async function getModel(id: number) {
       },
     });
   }
+  if (loading) modelProgress(id, 'ready');
   return model;
 }
 

@@ -19,6 +19,8 @@ import { createDefaultPose, sourceViewAngle } from '@/lib/product3d/pose';
 import { estimateUprightQuaternion } from '@/lib/product3d/upright';
 import { Product3dViewport, type ProductViewportHandle } from './product3d-viewport';
 import styles from './product3d-editor.module.css';
+import { PRODUCT3D_LOAD, product3dLoadEvent } from '@/lib/ai-progress';
+import { ModelLoadingProgress, useModelLoadingProgress } from '@/components/model-loading-progress';
 const seconds = (value: number) => `${(value / 1000).toFixed(2)}초`;
 /** Beyond this, most of what the viewer shows was not in the photo. */
 const GUESSED_VIEW_DEGREES = 40;
@@ -77,6 +79,7 @@ export function Product3dEditor({
     [initialPose, setInitialPose] = useState<ProductPose>(() => createDefaultPose());
   const [meshAssetId, setMeshAssetId] = useState<string>(),
     [progress, setProgress] = useState<Product3dProgress>();
+  const modelLoading = useModelLoadingProgress(PRODUCT3D_LOAD);
   const [busy, setBusy] = useState(false),
     [applying, setApplying] = useState(false),
     [capturing, setCapturing] = useState(false);
@@ -189,6 +192,7 @@ export function Product3dEditor({
     client.current = null;
     setBusy(false);
     setProgress(undefined);
+    modelLoading.reset();
   };
   const generate = async () => {
     if (!input || busy || operation.current) return;
@@ -198,13 +202,16 @@ export function Product3dEditor({
     setError('');
     setViewerError('');
     setProgress(undefined);
+    modelLoading.reset();
     try {
       const { Product3dClient: Client } = await import('@/lib/product3d/client');
       if (!alive.current || run !== generation.current) return;
       const activeClient = new Client();
       client.current = activeClient;
       const next = await activeClient.run(input.blob, (p) => {
-        if (alive.current && run === generation.current) setProgress(p);
+        if (!alive.current || run !== generation.current) return;
+        setProgress(p);
+        modelLoading.push(product3dLoadEvent(p));
       });
       if (!alive.current || run !== generation.current) return;
       setMeshAssetId(undefined);
@@ -416,12 +423,18 @@ export function Product3dEditor({
         )}
         {busy && (
           <div className={styles.status} role="status">
-            <strong>{progress?.message ?? '입체화 실행 모듈을 준비하고 있어요.'}</strong>
-            {progress?.loadedBytes !== undefined && (
-              <progress
-                aria-label="입체화 모델 다운로드"
-                max={progress.totalBytes ?? 1}
-                value={progress.loadedBytes}
+            <strong>
+              {progress?.message ?? '입체화 실행 모듈을 준비하고 있어요.'}
+              {progress?.completed !== undefined && progress.total
+                ? ` (${progress.completed}/${progress.total})`
+                : ''}
+            </strong>
+            {modelLoading.visible && modelLoading.snapshot && (
+              // Three model files load between inference steps; the percentage covers all of them.
+              <ModelLoadingProgress
+                title="360° 입체화 AI 모델 준비"
+                label="입체화 모델 다운로드"
+                snapshot={modelLoading.snapshot}
               />
             )}
             <button type="button" className="btn" onClick={cancel}>

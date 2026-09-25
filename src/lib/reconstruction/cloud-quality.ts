@@ -8,11 +8,14 @@ import { segmentReconstructionCached } from './segmentation-cache';
 import { cloudStageUsage, summarizeCloudUsage, type CloudStageUsage } from './cloud-usage';
 import type { LocalModelMeasurement } from './lab-engine';
 import type { MogeExecutionMode, MogeBrowserResult } from './moge-browser/client';
+import { mogeLoadEvent, type ModelLoadEvent } from '../ai-progress';
 
 /** Same reviewed placement/model pipeline; only observation providers differ. Never contacts a local AI server. */
 export async function runCloudBrowserQuality(input: QualityRunInput, options: {
   mode?: MogeExecutionMode;
   onGeometry?: (result: MogeBrowserResult) => void;
+  /** Structured MoGe loading progress; stage text then drops its "NN%" suffix. */
+  onModelProgress?: (event: ModelLoadEvent) => void;
 } = {}) {
   const provider = 'cloudflare-workers-ai' as const;
   const usage: CloudStageUsage[] = [];
@@ -52,12 +55,28 @@ export async function runCloudBrowserQuality(input: QualityRunInput, options: {
     reflectionRecheck: (photo, context, signal, revision) => track('reflectionRecheck', analyzeReflectionRechecks(photo, context, signal, revision, provider,
       (id, measurement) => record('reflectionRecheck:' + id, measurement)), false),
     segmentation: (photo, onStage, options) => segmentReconstructionCached(photo, onStage, options!.signal!),
-    geometry: (photo, segmentation, understanding, signal) => analyzeGeometryInBrowser(photo, segmentation, understanding, signal, {
-      mode: options.mode, onResult: options.onGeometry,
-      onProgress: progress => input.onStage?.(progress.total && progress.loaded !== undefined
-        ? `${progress.message} ${Math.round(progress.loaded / progress.total * 100)}%`
-        : progress.message),
-    }),
+    geometry: async (photo, segmentation, understanding, signal) => {
+      let lastMessage = '';
+      try {
+        return await analyzeGeometryInBrowser(photo, segmentation, understanding, signal, {
+          mode: options.mode, onResult: options.onGeometry,
+          onProgress: progress => {
+            if (!options.onModelProgress) {
+              input.onStage?.(progress.total && progress.loaded !== undefined
+                ? `${progress.message} ${Math.round(progress.loaded / progress.total * 100)}%`
+                : progress.message);
+              return;
+            }
+            // The percentage has its own display; only changed stage text reaches onStage/diagnostics.
+            options.onModelProgress(mogeLoadEvent(progress));
+            if (progress.message !== lastMessage) input.onStage?.(lastMessage = progress.message);
+          },
+        });
+      } finally {
+        // A reused same-photo result never loads the model; either way loading is over here.
+        options.onModelProgress?.({ phase: 'ready' });
+      }
+    },
   };
   const result = await runQualityPipeline({ ...input, profile: 'cloud-browser-v1', estimatedLayout: true,
     refineAppearance: true, refineShowerDetails: true, refineShowerInstallation: true, refineDividerMaterials: true, refineReflection: true,

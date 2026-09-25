@@ -1,5 +1,6 @@
 import type { BasinComponentCapture } from '../reconstruction/basin-observations';
 import type { ReconstructionCandidate } from '../reconstruction/types';
+import { DEEPLAB_MODEL_BYTES, type ModelLoadEvent } from '../ai-progress';
 export type BasinPassCapture = {
   context: string;
   width: number;
@@ -31,6 +32,8 @@ export interface RoomSegmentation {
 
 export type SegmentationReply =
   | { id: number; type: 'stage'; message: string }
+  /** Model/runtime loading only; absent once this worker has them in memory. */
+  | { id: number; type: 'model-progress'; phase: 'runtime' | 'download' | 'ready'; fraction?: number }
   | { id: number; type: 'result'; result: RoomSegmentation }
   | { id: number; type: 'error'; message: string };
 
@@ -42,9 +45,22 @@ const pending = new Map<
     resolve: (result: RoomSegmentation) => void;
     reject: (reason: Error) => void;
     onStage?: (message: string) => void;
+    onModelProgress?: (event: ModelLoadEvent) => void;
     timer: ReturnType<typeof setTimeout>;
   }
 >();
+
+function modelLoadEvent(message: Extract<SegmentationReply, { type: 'model-progress' }>): ModelLoadEvent {
+  if (message.phase === 'runtime') return { phase: 'runtime', message: '브라우저 분석 엔진 준비 중' };
+  if (message.phase === 'ready') return { phase: 'ready', message: '공간 분석 모델 준비 완료' };
+  const fraction = Math.max(0, Math.min(1, message.fraction ?? 0));
+  return {
+    phase: 'download',
+    message: '앱에 포함된 공간 분석 모델 읽는 중',
+    loaded: Math.round(fraction * DEEPLAB_MODEL_BYTES),
+    total: DEEPLAB_MODEL_BYTES,
+  };
+}
 
 function resetWorker(reason: string) {
   worker?.terminate();
@@ -67,6 +83,7 @@ function segmentDedicated(
     timeoutMs?: number;
     captureBasins?: boolean;
     captureSemanticLabels?: boolean;
+    onModelProgress?: (event: ModelLoadEvent) => void;
   },
 ): Promise<RoomSegmentation> {
   return new Promise((resolve, reject) => {
@@ -103,6 +120,10 @@ function segmentDedicated(
       owned.onmessage = (event: MessageEvent<SegmentationReply>) => {
         const message = event.data;
         if (settled || options.signal.aborted || message.id !== id) return;
+        if (message.type === 'model-progress') {
+          options.onModelProgress?.(modelLoadEvent(message));
+          return;
+        }
         if (message.type === 'stage') {
           try {
             onStage?.(message.message);
@@ -149,6 +170,8 @@ export function segmentRoom(
     timeoutMs?: number;
     captureBasins?: boolean;
     captureSemanticLabels?: boolean;
+    /** Structured runtime/model loading progress (DeepLab is bundled, about 2.4 MB). */
+    onModelProgress?: (event: ModelLoadEvent) => void;
   },
 ): Promise<RoomSegmentation> {
   if (options?.signal?.aborted)
@@ -169,6 +192,10 @@ export function segmentRoom(
       const message = event.data;
       const request = pending.get(message.id);
       if (!request) return;
+      if (message.type === 'model-progress') {
+        request.onModelProgress?.(modelLoadEvent(message));
+        return;
+      }
       if (message.type === 'stage') {
         request.onStage?.(message.message);
         return;
@@ -188,7 +215,7 @@ export function segmentRoom(
       () => resetWorker('사진 분석 시간이 초과되었어요. 작은 사진으로 다시 시도해 주세요.'),
       120_000,
     );
-    pending.set(id, { resolve, reject, onStage, timer });
+    pending.set(id, { resolve, reject, onStage, onModelProgress: options?.onModelProgress, timer });
     worker!.postMessage({
       id,
       blob,

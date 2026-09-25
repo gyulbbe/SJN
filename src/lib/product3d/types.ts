@@ -1,4 +1,5 @@
 import type { ProductMesh, ProductPose, ProductShading } from './state-types';
+import type { Product3dModelPart } from './model';
 export interface Product3dProgress {
   stage:
     | 'checking'
@@ -14,6 +15,12 @@ export interface Product3dProgress {
   totalBytes?: number;
   completed?: number;
   total?: number;
+  /** Which model file a download/initializing event belongs to (loaded one after another). */
+  part?: Product3dModelPart;
+  source?: 'network' | 'cache';
+  /** Set on the GPU → CPU restart notice. */
+  retry?: boolean;
+  cacheNotice?: string;
 }
 export interface Product3dTimings {
   downloadMs: number;

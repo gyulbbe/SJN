@@ -18,14 +18,28 @@ export async function loadProduct3dModel(part: Product3dModelPart, progress: (p:
       cache = await caches.open(PRODUCT3D_MODEL_CACHE);
       const response = await cache.match(url);
       if (response) {
+        // A cache read has no byte stream; bracket it so the loading percentage still moves.
+        const reading = (loadedBytes: number) =>
+          progress({
+            stage: 'download',
+            message: `저장된 ${PRODUCT3D_PART_LABELS[part]} 모델을 불러오는 중`,
+            loadedBytes,
+            totalBytes: expected,
+            part,
+            source: 'cache',
+          });
+        reading(0);
         const blob = response.ok ? await response.blob() : undefined;
-        if (blob?.size === expected)
+        if (blob?.size === expected) {
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          reading(expected);
           return {
-            bytes: new Uint8Array(await blob.arrayBuffer()),
+            bytes,
             downloadMs: 0,
             cacheMs: performance.now() - started,
             cacheSource: 'cache' as const,
           };
+        }
         await cache.delete(url).catch(() => false);
       }
     }
@@ -43,6 +57,8 @@ export async function loadProduct3dModel(part: Product3dModelPart, progress: (p:
     message: `${PRODUCT3D_PART_LABELS[part]} 모델 다운로드 중`,
     loadedBytes: 0,
     totalBytes: expected,
+    part,
+    source: 'network',
   });
   try {
     const response = await fetch(url, {
@@ -61,6 +77,8 @@ export async function loadProduct3dModel(part: Product3dModelPart, progress: (p:
           message: `${PRODUCT3D_PART_LABELS[part]} 모델 다운로드 중`,
           loadedBytes: loaded,
           totalBytes: expected,
+          part,
+          source: 'network',
         });
       }
     });

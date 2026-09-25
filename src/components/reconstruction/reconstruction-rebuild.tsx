@@ -10,6 +10,7 @@ import AnalysisProfilePicker, { type AnalysisProfileSelection } from './analysis
 import DiagnosticLogDownload from './diagnostic-log-download';
 import type { DiagnosticArchiveEntry } from '@/lib/reconstruction/lab-diagnostic-storage';
 import styles from './reconstruction.module.css';
+import { usePhotoAnalysisModelProgress } from '@/components/model-loading-progress';
 
 export default function ReconstructionRebuild({
   onMaterialsChanged,
@@ -27,6 +28,7 @@ export default function ReconstructionRebuild({
   const [open, setOpen] = useState(false),
     [stage, setStage] = useState(''),
     [error, setError] = useState('');
+  const modelProgress = usePhotoAnalysisModelProgress();
   const [initialProfile, setInitialProfile] = useState<ReconstructionAnalysisProfile>('browser-basic');
   const [analysis, setAnalysis] = useState<AnalysisProfileSelection>({
     profile: 'browser-basic',
@@ -95,6 +97,7 @@ export default function ReconstructionRebuild({
     const request = new AbortController();
     controller.current = request;
     setError('');
+    modelProgress.reset();
     setStage('원본 사진 준비 중');
     const current = () =>
       alive.current &&
@@ -129,6 +132,9 @@ export default function ReconstructionRebuild({
           onStage: (message) => {
             if (current()) setStage(message);
           },
+          onModelProgress: (update) => {
+            if (current()) modelProgress.onModelProgress(update);
+          },
         },
       );
       if (!current()) return;
@@ -148,6 +154,7 @@ export default function ReconstructionRebuild({
     } finally {
       if (controller.current === request) controller.current = null;
       if (alive.current && !request.signal.aborted) setStage('');
+      if (alive.current) modelProgress.reset();
     }
   }
   return (
@@ -197,6 +204,7 @@ export default function ReconstructionRebuild({
                   className="btn small"
                   records={adminProjectScope ? diagnosticRecords : undefined}
                 />
+                {stage && modelProgress.view && <div style={{ marginTop: 18 }}>{modelProgress.view}</div>}
                 {stage && (
                   <p data-testid="reconstruction-progress" role="status" style={{ marginTop: 18 }}>
                     {stage}

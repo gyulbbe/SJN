@@ -75,6 +75,7 @@ export class Product3dClient {
             pending.onProgress({
               stage: 'initializing',
               message: 'GPU 처리를 완료하지 못해 같은 모델을 CPU로 실행해요. 수 분 이상 걸릴 수 있어요.',
+              retry: true,
             });
             if (this.pending === pending) this.startWorker(true);
           } else this.fail(typeof message.message === 'string' ? message.message : '입체화에 실패했어요.');

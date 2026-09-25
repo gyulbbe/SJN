@@ -2,6 +2,20 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-09-26 — AI 모델 로딩 진행률(%) 표시
+
+- 무엇: 브라우저가 AI 모델을 준비하는 모든 화면에 전체 %·받은 MB·단계를 보이는 공용 표시를 넣었다(`src/components/model-loading-progress.tsx`, 계산은 `src/lib/ai-progress.ts`).
+  - 화면: 배경 제거, 360° 입체화, 사진으로 시작, 사진 다시 분석, 편집기 사진 자동 분석(토스트 안 compact), `/reconstruction-performance`.
+  - 사진 분석은 "AI 모델 준비 1/2(DeepLab) → 2/2(MoGe)"를 보이고, 모델 준비가 끝나면 기존 단계 문구로 돌아간다.
+- 계산 규칙: 단계 가중치(실측 문서 근거), bytes 단계는 실제 비율, 신호 없는 단계는 경과 시간으로 몫의 90%까지 추정, 뒤로 가지 않음, 완료 전 99% 상한, 재시도는 남은 구간에서 이어 감, 100ms·1%p 갱신 제한.
+- 신호 추가: DeepLab 워커 `model-progress`(`loadGraphModel` onProgress), 배경 제거·입체화 캐시 읽기 0→100% 이벤트, 입체화 `part`, CPU 재시도 `retry`, 캐시 저장 실패 `cacheNotice`. 모델 URL·무결성·캐시 정책·다운로드 방식은 그대로다.
+- 검증
+  - 새 단위 `tests/ai-progress.test.ts` 12개, `tests/segmentation-model-progress.test.ts` 2개, 보강한 `product3d-cache`·`background-removal-fallback-client` 통과.
+  - 전체 vitest 3,228개 통과, 1개 건너뜀. 실패 6개는 알려진 환경 실패(`reconstruction-corpus` 해시, `reconstruction-source-plane-mapping` 기준 파일)다.
+  - 새 e2e `e2e/model-loading-progress.spec.ts` 8개 통과(모의 Worker, 모델 다운로드·추론 없음): % 증가, aria 값, 완료 뒤 사라짐, 취소, 390px 넘침 없음. 캡처는 `test-results/ai-model-loading-progress/`.
+  - 관련 기존 e2e(배경 제거 실패·적용, product3d, reconstruction, auto-apply, cloud-browser): 29개 통과, 13개 건너뜀(실모델 옵트인·입체화 fixture 없음). 실패 1개는 `reconstruction.spec` 391px 직접 구성의 `내보내기` 버튼 찾기다. 09-18 모바일 더보기 메뉴 이동 이후의 기존 문제이고 AI 모델을 쓰지 않는 흐름이다.
+  - typecheck·lint·변경 파일 Prettier 통과. 실제 모델 다운로드·AI 호출은 하지 않았다.
+
 ## 2026-09-26 — 내보내기 경로 추적 시험 결과: 보류
 
 - 무엇: `three-gpu-pathtracer@0.0.24`로 내보내기 전용 경로 추적을 시험했다(0–1단계, 1b단계). 코드는 main에 넣지 않았다. 원격 `claude/pathtracer-spike`(`8005b51`)에 보존했다. 요약은 [보류 결정](pathtracer-decision.md)에 있다.

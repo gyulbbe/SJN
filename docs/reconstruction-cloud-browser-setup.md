@@ -36,7 +36,7 @@ npm run start:vinext
 - 선택 설정 `NEXT_PUBLIC_MOGE_MODEL_URL`은 빌드 시 모델 제공 URL만 바꾼다. 동일 SHA만 허용하므로 다른 모델로 교체하는 설정은 아니다. R2를 쓰면 모델 전용 공개 경로를 사용하고 사용자 사진 버킷 전체를 공개하지 않는다.
 - ONNX Runtime Web 1.29.0. WASM은 같은 버전 jsDelivr 경로를 사용한다. 141MB 모델은 public이나 Workers Static Assets에 포함하지 않는다.
 
-실행 버튼을 처음 누를 때 모델을 다운로드하며 버전별 Cache Storage를 재사용한다. 무결성 오류·용량 부족·취소를 처리한다. GPU 실행 실패 시 검증한 바이트를 새 CPU Worker에 넘겨 중복 다운로드하지 않는다. 기본은 WebGPU 우선이며 테스트에서는 GPU/CPU 강제 선택도 가능하다. crossOriginIsolated와 SharedArrayBuffer 조건이 없으면 WASM 단일 스레드다. 일반 서비스의 헤더를 이번 작업에서 바꾸지 않았다.
+실행 버튼을 처음 누를 때 모델을 다운로드하며 버전별 Cache Storage를 재사용한다. 무결성 오류·용량 부족·취소를 처리한다. GPU 실행 실패 시 검증한 바이트를 새 CPU Worker에 넘겨 중복 다운로드하지 않는다. 기본은 WebGPU 우선이며 테스트에서는 GPU/CPU 강제 선택도 가능하다. crossOriginIsolated와 SharedArrayBuffer 조건이 없으면 WASM 단일 스레드다. 일반 서비스의 헤더를 이번 작업에서 바꾸지 않았다. 모델 준비 동안 사진으로 시작·사진 다시 분석·성능 확인 화면은 "AI 모델 준비 1/2(DeepLab) → 2/2(MoGe)"와 전체 %·MB 막대를 보인다(`onModelProgress`, [표시 컴포넌트](../src/components/model-loading-progress.tsx)). DeepLab은 워커의 `model-progress` 메시지(`loadGraphModel` onProgress), MoGe는 기존 `MogeProgress`를 [ai-progress](../src/lib/ai-progress.ts)로 바꾼다. 구조화 진행이 연결되면 `onStage` 글에는 `NN%`를 붙이지 않아 진단 로그에 퍼센트 줄이 쌓이지 않는다. 같은 사진의 형상 결과를 재사용하면 모델을 불러오지 않으므로 표시가 나타나지 않는다.
 
 Gemma 완료 단계 캐시는 브라우저에 최대64개를 보관하고 24시간 뒤 만료된다. 사진·입력·프롬프트·출력 계약·공급자·접근 범위를 구분한다. D1은 계정 해시, 공개 익명 모드는 사이트 origin 해시, 개발 loopback은 `local-dev` 범위를 사용한다. 익명 origin 범위는 사용자 인증이나 사용자별 할당량이 아니며, 다른 방문자의 브라우저 캐시를 서버에서 공유한다는 뜻도 아니다. 캐시가 만료되거나 제거되면 실제 호출이 다시 필요하므로 재사용을 가정하지 않고 결과의 캐시 표시를 확인한다.
 

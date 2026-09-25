@@ -1,6 +1,7 @@
 import { analysisCacheAllowed } from './analysis-cache-policy';
 import { openDB } from 'idb';
 import { segmentRoom, type RoomSegmentation } from '../segmentation';
+import type { ModelLoadEvent } from '../ai-progress';
 import { LAB_BASELINE_OBSERVATION_REVISION, LAB_BASELINE_MODEL_REVISION } from './lab-engine';
 
 const recent = new Map<string, RoomSegmentation>();
@@ -9,10 +10,11 @@ export async function segmentReconstructionCached(
   photo: Blob,
   onStage: ((message: string) => void) | undefined,
   signal: AbortSignal,
+  onModelProgress?: (event: ModelLoadEvent) => void,
 ) {
   signal.throwIfAborted();
   if (!analysisCacheAllowed(signal)) {
-    const result = await segmentRoom(photo, onStage, { quality: 'reconstruction', signal });
+    const result = await segmentRoom(photo, onStage, { quality: 'reconstruction', signal, onModelProgress });
     signal.throwIfAborted();
     return result;
   }
@@ -56,7 +58,7 @@ export async function segmentReconstructionCached(
     onStage?.('완료된 같은 사진의 벽·바닥 분할을 재사용하고 있어요.');
     return structuredClone(value);
   }
-  const result = await segmentRoom(photo, onStage, { quality: 'reconstruction', signal });
+  const result = await segmentRoom(photo, onStage, { quality: 'reconstruction', signal, onModelProgress });
   signal.throwIfAborted();
   recent.set(key, structuredClone(result));
   while (recent.size > 16) recent.delete(recent.keys().next().value!);

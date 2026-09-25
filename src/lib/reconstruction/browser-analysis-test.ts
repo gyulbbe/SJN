@@ -1,4 +1,5 @@
-import { createReconstructionProject } from './index';
+import { createReconstructionProject, type ReconstructionModelProgress } from './index';
+import { mogeLoadEvent } from '../ai-progress';
 import type { CandidatePipeline } from './candidate-pipeline';
 import type { ReconstructionReview } from './types';
 import { importImage } from '../images';
@@ -20,7 +21,8 @@ const emptyUnderstanding: SceneUnderstanding = { schemaVersion: 1, candidates: [
 
 /** Real clients, same oriented import and project preparation path. No project/catalog writes. */
 export async function runBrowserAnalysisTest(file: File, kind: BrowserAnalysisTestKind, room: RoomDefinition,
-  options: { mode: MogeExecutionMode; signal: AbortSignal; onStage: (message: string) => void }): Promise<BrowserAnalysisTestResult> {
+  options: { mode: MogeExecutionMode; signal: AbortSignal; onStage: (message: string) => void;
+    onModelProgress?: (update: ReconstructionModelProgress) => void }): Promise<BrowserAnalysisTestResult> {
   const started = performance.now(), memory = memoryRepositories();
   let geometry: MogeBrowserResult | undefined;
   try {
@@ -30,7 +32,7 @@ export async function runBrowserAnalysisTest(file: File, kind: BrowserAnalysisTe
       let pipeline: CandidatePipeline | undefined;
       const project = await createReconstructionProject(file, room, {
         repositories: memory.repositories, externalDiagnostics: true, analysisProfile: 'cloud-browser-v1',
-        mogeMode: options.mode, signal: options.signal, onStage: options.onStage,
+        mogeMode: options.mode, signal: options.signal, onStage: options.onStage, onModelProgress: options.onModelProgress,
         onRawReview: review => { baselineReview = structuredClone(review); },
         onQuality: result => { quality = result.evidence; pipeline = structuredClone(result.pipeline); },
         onMogeGeometry: value => { geometry = value; },
@@ -64,12 +66,19 @@ export async function runBrowserAnalysisTest(file: File, kind: BrowserAnalysisTe
       const result = await analyzeExtendedScene(photo.preview.blob, options.signal, 'cloudflare-workers-ai');
       return { original: photo.preview.blob, report: { kind, totalMs: performance.now() - started, ...result, memory: '서버 메모리 측정 불가' } };
     }
-    const segmentation = await segmentReconstructionCached(photo.preview.blob, options.onStage, options.signal);
+    const segmentation = await segmentReconstructionCached(photo.preview.blob, options.onStage, options.signal,
+      options.onModelProgress && (event => options.onModelProgress?.({ model: 'deeplab', index: 1, count: 2, event })));
     const input = await browserGeometryInput(photo.preview.blob, segmentation, emptyUnderstanding);
     const client = new MogeBrowserClient();
     try {
       geometry = await client.run(photo.preview.blob, { mode: options.mode, signal: options.signal, geometry: input,
-        onProgress: progress => options.onStage(progress.total && progress.loaded !== undefined ? `${progress.message} ${Math.round(progress.loaded / progress.total * 100)}%` : progress.message) });
+        onProgress: progress => {
+          if (!options.onModelProgress)
+            return options.onStage(progress.total && progress.loaded !== undefined ? `${progress.message} ${Math.round(progress.loaded / progress.total * 100)}%` : progress.message);
+          options.onModelProgress({ model: 'moge', index: 2, count: 2, event: mogeLoadEvent(progress) });
+          options.onStage(progress.message);
+        } });
+      options.onModelProgress?.({ model: 'moge', index: 2, count: 2, event: { phase: 'ready' } });
       options.signal.throwIfAborted();
       return { original: photo.preview.blob, geometry, report: { kind, totalMs: performance.now() - started,
         geometry: geometryAnalysisFromBrowser(geometry, input), timings: geometry.timings, metadata: geometry.metadata,

@@ -79,7 +79,7 @@ export class BackgroundRemovalClient {
         worker.terminate();
         this.worker = undefined;
         try {
-          pending.onProgress({ stage: 'initializing', message: message.message });
+          pending.onProgress({ stage: 'initializing', message: message.message, retry: true });
           if (this.pending !== pending) return; // The owner may cancel from its progress callback.
           const cpuWorker = this.createWorker();
           cpuWorker.postMessage({

@@ -148,6 +148,8 @@ async function generate(blob: Blob, progress: (value: Product3dProgress) => void
     progress({
       stage: 'initializing',
       message: `${PRODUCT3D_PART_LABELS[part]} 모델을 ${forceCpu ? 'CPU' : 'GPU'}에 준비하고 있어요.`,
+      part,
+      ...(loaded.cacheNotice ? { cacheNotice: loaded.cacheNotice } : {}),
     });
     const started = performance.now();
     try {

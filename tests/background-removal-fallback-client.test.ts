@@ -84,7 +84,8 @@ describe('fresh-worker CPU fallback after a GPU attempt', () => {
       { type: 'run', id: 1, blob, forceCpu: true, fallbackReason: 'GPU failed' },
     ]);
     expect(cpu.requests[0].blob).toBe(blob);
-    expect(progress).toHaveBeenCalledWith({ stage: 'initializing', message: 'GPU failed' });
+    // retry lets the loading percentage continue instead of restarting from zero.
+    expect(progress).toHaveBeenCalledWith({ stage: 'initializing', message: 'GPU failed', retry: true });
     const output = result();
     cpu.reply({ type: 'result', id: 1, result: output });
     expect(await pending).toEqual({

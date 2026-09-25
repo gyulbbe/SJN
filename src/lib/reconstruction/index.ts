@@ -746,12 +746,21 @@ export function estimateCandidateFixture(
     },
   };
 }
+/** Browser model loading in a photo analysis: DeepLab first, then MoGe for the precise profile. */
+export type ReconstructionModelProgress = {
+  model: 'deeplab' | 'moge';
+  index: number;
+  count: number;
+  event: import('../ai-progress').ModelLoadEvent;
+};
 export type ReconstructionProjectOptions = {
   /** Administrator edits must not retain another owner's photo-derived observations locally. */
   cachePolicy?: AnalysisCachePolicy;
   onDiagnostic?: (entry: import('./lab-diagnostic-storage').DiagnosticArchiveEntry) => void;
   repositories?: RepositoryOperations;
   onStage?: (message: string) => void;
+  /** Structured AI model loading for a percentage display; onStage keeps the stage text. */
+  onModelProgress?: (update: ReconstructionModelProgress) => void;
   signal?: AbortSignal;
   manual?: boolean;
   onAnalysis?: (size: { width: number; height: number }) => void;
@@ -875,17 +884,25 @@ async function createReconstructionProjectImpl(
   if (options.reuseAnalysis) {
     review = structuredClone(options.reuseAnalysis);
   } else if (!options.manual) {
+    const modelCount = options.analysisProfile === 'cloud-browser-v1' ? 2 : 1;
+    const onModelProgress = options.onModelProgress
+      ? (event: import('../ai-progress').ModelLoadEvent) => {
+          if (!options.signal?.aborted)
+            options.onModelProgress?.({ model: 'deeplab', index: 1, count: modelCount, event });
+        }
+      : undefined;
     const runSegmentation =
       options.analysisProfile === 'cloud-browser-v1'
         ? async (
             photo: Blob,
             onStage: ((message: string) => void) | undefined,
-            settings: { signal?: AbortSignal },
+            settings: { signal?: AbortSignal; onModelProgress?: typeof onModelProgress },
           ) =>
             (await import('./segmentation-cache')).segmentReconstructionCached(
               photo,
               onStage,
               settings.signal ?? new AbortController().signal,
+              settings.onModelProgress,
             )
         : segmentRoom;
     const segmentation = await runSegmentation(
@@ -893,7 +910,7 @@ async function createReconstructionProjectImpl(
       (message) => {
         if (!options.signal?.aborted) options.onStage?.(message);
       },
-      { quality: 'reconstruction', signal: options.signal },
+      { quality: 'reconstruction', signal: options.signal, onModelProgress },
     );
     checkAbort(options.signal);
     segmentationCapture = segmentation;
@@ -942,6 +959,12 @@ async function createReconstructionProjectImpl(
       (await import('./cloud-quality')).runCloudBrowserQuality(input, {
         mode: options.mogeMode,
         onGeometry: options.onMogeGeometry,
+        onModelProgress: options.onModelProgress
+          ? (event) => {
+              if (!options.signal?.aborted)
+                options.onModelProgress?.({ model: 'moge', index: 2, count: 2, event });
+            }
+          : undefined,
       });
     const result = await runQuality({
       baseline: structuredClone(review),

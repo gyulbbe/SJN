@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } fr
 import type { BackgroundRemovalClient } from '@/lib/background-removal/client';
 import type { BackgroundRemovalProgress, BackgroundRemovalResult } from '@/lib/background-removal/types';
 import { resolveBackgroundRemovalInput } from '@/lib/background-removal/source';
+import { BACKGROUND_REMOVAL_LOAD, backgroundRemovalLoadEvent } from '@/lib/ai-progress';
+import { ModelLoadingProgress, useModelLoadingProgress } from '@/components/model-loading-progress';
 import styles from './background-removal-test.module.css';
 
 type Source = { url: string; width: number; height: number; name: string; label: string };
@@ -43,6 +45,8 @@ export function BackgroundRemovalTest({
     message: '선택한 제품 사진을 준비하고 있어요.',
   });
   const [error, setError] = useState('');
+  const loading = useModelLoadingProgress(BACKGROUND_REMOVAL_LOAD);
+  const { push: pushLoading, reset: resetLoading } = loading;
   const [background, setBackground] = useState<'checker' | 'white' | 'black'>('checker');
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
   const [center, setCenter] = useState<Center>({ x: 0.5, y: 0.5 });
@@ -83,7 +87,12 @@ export function BackgroundRemovalTest({
     setResultUrl('');
     setZoom('fit');
     setCenter({ x: 0.5, y: 0.5 });
-    setProgress({ stage: 'checking', message: '선택한 제품 사진의 원본을 준비하고 있어요.' });
+    resetLoading();
+    const report = (next: BackgroundRemovalProgress) => {
+      setProgress(next);
+      pushLoading(backgroundRemovalLoadEvent(next));
+    };
+    report({ stage: 'checking', message: '선택한 제품 사진의 원본을 준비하고 있어요.' });
     void (async () => {
       const { asset: input, sourceLabel } = await resolveBackgroundRemovalInput(assetId);
       if (!alive) return;
@@ -96,13 +105,13 @@ export function BackgroundRemovalTest({
         name: input.name,
         label: sourceLabel,
       });
-      setProgress({ stage: 'loading-runtime', message: 'AI 실행 모듈을 불러오고 있어요.' });
+      report({ stage: 'loading-runtime', message: 'AI 실행 모듈을 불러오고 있어요.' });
       const { BackgroundRemovalClient: Client } = await import('@/lib/background-removal/client');
       if (!alive) return;
       activeClient = new Client();
       clientRef.current = activeClient;
       const completed = await activeClient.run(input.blob, (next) => {
-        if (alive) setProgress(next);
+        if (alive) report(next);
       });
       if (!alive) return;
       const url = URL.createObjectURL(completed.blob);
@@ -123,7 +132,7 @@ export function BackgroundRemovalTest({
       if (clientRef.current === activeClient) clientRef.current = null;
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [assetId, attempt]);
+  }, [assetId, attempt, pushLoading, resetLoading]);
 
   const fitScale = source ? Math.min(viewport.width / source.width, viewport.height / source.height, 1) : 1;
   const scale = zoom === 'fit' ? fitScale : zoom / 100;
@@ -221,10 +230,6 @@ export function BackgroundRemovalTest({
       setApplying(false);
     }
   };
-  const downloadPercent =
-    progress.stage === 'download' && progress.totalBytes && progress.loadedBytes !== undefined
-      ? Math.min(100, (progress.loadedBytes / progress.totalBytes) * 100)
-      : undefined;
 
   return (
     <dialog
@@ -342,22 +347,19 @@ export function BackgroundRemovalTest({
           ))}
         </div>
         {source && <p className={styles.sourceLabel}>{source.label}</p>}
-        {busy && (
+        {busy && loading.visible && loading.snapshot && (
+          // Keeps the accessible name the download bar always had ("모델 다운로드 진행").
+          <ModelLoadingProgress
+            title="배경 제거 AI 모델 준비 중"
+            label="모델 다운로드 진행"
+            snapshot={loading.snapshot}
+          />
+        )}
+        {busy && !(loading.visible && loading.snapshot) && (
           <div role="status" className={styles.progress} aria-live="polite">
             <span className={styles.spinner} aria-hidden="true" />
             <div>
               <strong>{progress.message}</strong>
-              {progress.stage === 'download' && (
-                <>
-                  <progress max="100" value={downloadPercent} aria-label="모델 다운로드 진행" />
-                  {progress.loadedBytes !== undefined && (
-                    <span>
-                      {(progress.loadedBytes / 1_048_576).toFixed(1)} MB
-                      {progress.totalBytes ? ` / ${(progress.totalBytes / 1_048_576).toFixed(1)} MB` : ''}
-                    </span>
-                  )}
-                </>
-              )}
               <p>
                 저장된 모델을 먼저 사용하고, 필요한 모델이 없을 때 다운로드해요. 사진은 이 브라우저에서만
                 처리해요.

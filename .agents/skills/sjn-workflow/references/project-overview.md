@@ -8,19 +8,19 @@
 
 개발·운영 모두 메인과 공용 자재 목록·상세·검색을 로그인 없이 볼 수 있다. `/try`에서는 빈 공간을 만들고 자재 검색·배치·속성 조절·견적·시안 비교를 이용한다. 사진·AI·정식 저장·출력은 로그인이 필요하다. 일반 회원은 본인 프로젝트를 생성·편집하고 공용 자재를 사용한다. 관리자는 공용 자재·기준 분류·회원 역할/상태를 관리하며, 전용 화면에서 다른 회원의 프로젝트를 검색·조회·편집할 수 있다. 소유권은 유지하고 관리자 행위를 감사 기록에 남긴다. 기존 IndexedDB 자료와 계정별 복구본은 보존하고 게스트 체험과 섞지 않는다.
 
-| 화면 | 역할 |
-| --- | --- |
-| `/` | 공개 메인·로그인/회원가입·체험 시작; 로그인 후 본인 프로젝트 목록과 기본 공간·사진 기반 시작 |
-| `/try` | 같은 탭의 임시 빈 공간과 기본 자재 검색·배치; 로그인 후 본인 프로젝트로 저장 |
-| `/projects/[id]` | Before/After 편집, 시안 관리·비교, 자재 적용, 내보내기 |
-| `/materials` | 로그인 없이 보는 현재 활성 공용 자재 목록·상세·검색 |
-| `/login` | 로그인 / 회원가입: 아이디·비밀번호 로그인과 회원가입, 설정된 경우 Google로 계속하기; 취소·실패·정지·재시도 상태를 필요한 때만 안내하며 로그인된 회원은 내 프로젝트로 이동하고 체험 복귀는 `/try`에서 저장을 이어감 |
-| `/admin/materials` | 관리자 자재 등록·버전 수정·비활성화 |
-| `/admin/catalog` | 관리자 하위 카테고리·색상·브랜드·재질·마감 관리 |
-| `/admin/users` | 회원 이름·이메일·ID 검색, 역할·상태 필터, 관리자 승격/강등·계정 정지/해제 |
-| `/admin/projects` | 회원 프로젝트 검색·조회·전용 편집; 소유권 유지·감사·revision 충돌 확인 |
-| `/admin/ai-usage` | Cloudflare Workers AI 계정 전체의 오늘 뉴런 사용·남은 무료량·모델별 사용·최근 7일 |
-| `/reconstruction-performance` | Gemma·브라우저 MoGe·전체 재구성의 성능 확인 화면 |
+| 화면                          | 역할                                                                                                                                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/`                           | 공개 메인·로그인/회원가입·체험 시작; 로그인 후 본인 프로젝트 목록과 기본 공간·사진 기반 시작                                                                                                                       |
+| `/try`                        | 같은 탭의 임시 빈 공간과 기본 자재 검색·배치; 로그인 후 본인 프로젝트로 저장                                                                                                                                       |
+| `/projects/[id]`              | Before/After 편집, 시안 관리·비교, 자재 적용, 내보내기                                                                                                                                                             |
+| `/materials`                  | 로그인 없이 보는 현재 활성 공용 자재 목록·상세·검색                                                                                                                                                                |
+| `/login`                      | 로그인 / 회원가입: 아이디·비밀번호 로그인과 회원가입, 설정된 경우 Google로 계속하기; 취소·실패·정지·재시도 상태를 필요한 때만 안내하며 로그인된 회원은 내 프로젝트로 이동하고 체험 복귀는 `/try`에서 저장을 이어감 |
+| `/admin/materials`            | 관리자 자재 등록·버전 수정·비활성화                                                                                                                                                                                |
+| `/admin/catalog`              | 관리자 하위 카테고리·색상·브랜드·재질·마감 관리                                                                                                                                                                    |
+| `/admin/users`                | 회원 이름·이메일·ID 검색, 역할·상태 필터, 관리자 승격/강등·계정 정지/해제                                                                                                                                          |
+| `/admin/projects`             | 회원 프로젝트 검색·조회·전용 편집; 소유권 유지·감사·revision 충돌 확인                                                                                                                                             |
+| `/admin/ai-usage`             | Cloudflare Workers AI 계정 전체의 오늘 뉴런 사용·남은 무료량·모델별 사용·최근 7일                                                                                                                                  |
+| `/reconstruction-performance` | Gemma·브라우저 MoGe·전체 재구성의 성능 확인 화면                                                                                                                                                                   |
 
 화면 진입점은 [App Router](../../../../src/app/), 접근 규칙은 [DB 문서](database.md)와 [인증·공개 범위 상세](../../../../docs/database-design.md)를 참고한다. 옛 `/reconstruction-lab` 주소는 현재 성능 확인 화면으로 이동한다.
 
@@ -87,32 +87,31 @@
 
 ## 현재 AI 구성
 
-| 역할 | 현재 모델·실행 위치 | 근거 |
-| --- | --- | --- |
-| 설비 종류·형태·설치 방식 등 사진 의미 분석 | `@cf/google/gemma-4-26b-a4b-it`, Cloudflare Workers AI | [Gemma 계약](../../../../src/lib/reconstruction/cloud-gemma-contract.ts) |
-| 깊이·법선·평면 추정 | MoGe-2 ViT-S Normal ONNX, 사용자 브라우저 Worker; WebGPU 우선·CPU/WASM 대체 | [MoGe 아티팩트](../../../../src/lib/reconstruction/moge-browser/artifact.ts), [실행기](../../../../src/lib/reconstruction/moge-browser/worker.ts) |
-| 벽·바닥 영역 분류 | DeepLabV3 MobileNetV2 ADE20K, 브라우저 TensorFlow.js WASM | [분할 추론](../../../../src/lib/segmentation/worker.ts) |
-| 제품 배경 제거 | `studioludens/birefnet-lite-512`, 브라우저 ONNX Runtime Web | [모델 설정](../../../../src/lib/background-removal/model.ts) |
-| 제품 입체화 | `dcharlot65-aurasense/triposr-onnx-web`, 브라우저 ONNX Runtime Web | [모델 설정](../../../../src/lib/product3d/model.ts) |
-| 내보내기 사진화 | `@cf/black-forest-labs/flux-2-klein-4b`, Cloudflare Workers AI | [FLUX 계약](../../../../src/lib/ai-export/contract.ts) |
+| 역할                                       | 현재 모델·실행 위치                                                         | 근거                                                                                                                                              |
+| ------------------------------------------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 설비 종류·형태·설치 방식 등 사진 의미 분석 | `@cf/google/gemma-4-26b-a4b-it`, Cloudflare Workers AI                      | [Gemma 계약](../../../../src/lib/reconstruction/cloud-gemma-contract.ts)                                                                          |
+| 깊이·법선·평면 추정                        | MoGe-2 ViT-S Normal ONNX, 사용자 브라우저 Worker; WebGPU 우선·CPU/WASM 대체 | [MoGe 아티팩트](../../../../src/lib/reconstruction/moge-browser/artifact.ts), [실행기](../../../../src/lib/reconstruction/moge-browser/worker.ts) |
+| 벽·바닥 영역 분류                          | DeepLabV3 MobileNetV2 ADE20K, 브라우저 TensorFlow.js WASM                   | [분할 추론](../../../../src/lib/segmentation/worker.ts)                                                                                           |
+| 제품 배경 제거                             | `studioludens/birefnet-lite-512`, 브라우저 ONNX Runtime Web                 | [모델 설정](../../../../src/lib/background-removal/model.ts)                                                                                      |
+| 제품 입체화                                | `dcharlot65-aurasense/triposr-onnx-web`, 브라우저 ONNX Runtime Web          | [모델 설정](../../../../src/lib/product3d/model.ts)                                                                                               |
+| 내보내기 사진화                            | `@cf/black-forest-labs/flux-2-klein-4b`, Cloudflare Workers AI              | [FLUX 계약](../../../../src/lib/ai-export/contract.ts)                                                                                            |
 
-Gemma·FLUX는 사진을 Cloudflare로 보내며 동일 `AI` 바인딩을 사용한다. `sjn-gateway`는 Gemma만 거친다. FLUX는 multipart 스트림 요청이라 게이트웨이 없이 바인딩을 직접 호출한다. 브라우저 모델은 사용자의 기기에서 실행하지만 모델·런타임 다운로드는 발생할 수 있다. 기기별 지원·속도·메모리 한계가 있고, 코드에 연결되어 있다는 사실만으로 무료 사용·추론 성공을 보장하지 않는다.
+Gemma·FLUX는 사진을 Cloudflare로 보내며 동일 `AI` 바인딩을 사용한다. `sjn-gateway`는 Gemma만 거친다. FLUX는 multipart 스트림 요청이라 게이트웨이 없이 바인딩을 직접 호출한다. 브라우저 모델은 사용자의 기기에서 실행하지만 모델·런타임 다운로드는 발생할 수 있다. 기기별 지원·속도·메모리 한계가 있고, 코드에 연결되어 있다는 사실만으로 무료 사용·추론 성공을 보장하지 않는다. 브라우저 모델(배경 제거·360° 입체화·DeepLab·MoGe)을 준비하는 동안에는 공용 [로딩 진행 표시](../../../../src/components/model-loading-progress.tsx)가 전체 %·받은 MB·단계를 보인다. 사진 분석은 "AI 모델 준비 1/2"처럼 순서를 함께 보이고, 모델 준비가 끝나면 기존 단계 문구로 돌아간다. 계산은 [ai-progress](../../../../src/lib/ai-progress.ts)의 단계 가중치를 쓰며, 신호가 없는 단계(실행 모듈·세션 준비)는 경과 시간에 따라 천천히 오르는 추정값이다.
 
 새 분석의 Qwen/Ollama·Python/CUDA MoGe 서버 경로는 종료했다. 과거 결과를 읽는 호환 코드나 수치 대조용 Python 도구를 현재 서비스 실행 경로로 설명하지 않는다. 현재 연결·실행 절차는 [Gemma + 브라우저 MoGe 가이드](../../../../docs/reconstruction-cloud-browser-setup.md)에 둔다.
 
 ## 코드 구조와 저장 경계
 
-| 영역 | 주된 위치와 책임 |
-| --- | --- |
-| 화면·HTTP 경로 | [src/app](../../../../src/app/): 페이지와 서버 API |
-| UI·편집 상태 | [components](../../../../src/components/), [editor-store](../../../../src/lib/editor-store.ts): 사용자 조작과 Zustand 상태 |
-| 저장 문서 계약 | [types](../../../../src/lib/types.ts), [comparison](../../../../src/lib/comparison.ts): 직렬화 가능한 프로젝트·시안·장면, 이전 문서 정규화 |
-| 렌더링 | [render](../../../../src/lib/render/), [room-viewer](../../../../src/lib/room-viewer/): 편집 미리보기·공간 모형·이미지 출력. 공간 둘러보기와 벽 구조가 있는 프로젝트의 편집·내보내기·시안 카드는 3D 렌더러, 그 밖의 기본 방·사진 프로젝트는 2D 합성을 쓴다. 조명·재질 규칙은 [사실감 조명](../../../../src/lib/render/realistic-lighting.ts)·[마감](../../../../src/lib/render/finish.ts)·[렌더러 계약](../../../../docs/room-viewer-renderer-contract-20260914.md) 참고 |
-| 사진 재구성 | [reconstruction](../../../../src/lib/reconstruction/): 관측·추정·보정·모형 변환과 분석 공급자 |
-| 저장소 | [repositories](../../../../src/lib/repositories/), [storage](../../../../src/lib/storage/), [d1](../../../../src/lib/d1/): 로컬/클라우드 분리, 저장·충돌·복구 |
-| 인증·분류·관리 | [auth](../../../../src/lib/auth/), [catalog](../../../../src/lib/catalog/), [admin](../../../../src/lib/admin/): 활성 회원 인증, 회원·역할·상태, 공용 자재/기준 데이터, 관리자 프로젝트·감사 |
+| 영역           | 주된 위치와 책임                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 화면·HTTP 경로 | [src/app](../../../../src/app/): 페이지와 서버 API                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| UI·편집 상태   | [components](../../../../src/components/), [editor-store](../../../../src/lib/editor-store.ts): 사용자 조작과 Zustand 상태                                                                                                                                                                                                                                                                                                                                               |
+| 저장 문서 계약 | [types](../../../../src/lib/types.ts), [comparison](../../../../src/lib/comparison.ts): 직렬화 가능한 프로젝트·시안·장면, 이전 문서 정규화                                                                                                                                                                                                                                                                                                                               |
+| 렌더링         | [render](../../../../src/lib/render/), [room-viewer](../../../../src/lib/room-viewer/): 편집 미리보기·공간 모형·이미지 출력. 공간 둘러보기와 벽 구조가 있는 프로젝트의 편집·내보내기·시안 카드는 3D 렌더러, 그 밖의 기본 방·사진 프로젝트는 2D 합성을 쓴다. 조명·재질 규칙은 [사실감 조명](../../../../src/lib/render/realistic-lighting.ts)·[마감](../../../../src/lib/render/finish.ts)·[렌더러 계약](../../../../docs/room-viewer-renderer-contract-20260914.md) 참고 |
+| 사진 재구성    | [reconstruction](../../../../src/lib/reconstruction/): 관측·추정·보정·모형 변환과 분석 공급자                                                                                                                                                                                                                                                                                                                                                                            |
+| 저장소         | [repositories](../../../../src/lib/repositories/), [storage](../../../../src/lib/storage/), [d1](../../../../src/lib/d1/): 로컬/클라우드 분리, 저장·충돌·복구                                                                                                                                                                                                                                                                                                            |
+| 인증·분류·관리 | [auth](../../../../src/lib/auth/), [catalog](../../../../src/lib/catalog/), [admin](../../../../src/lib/admin/): 활성 회원 인증, 회원·역할·상태, 공용 자재/기준 데이터, 관리자 프로젝트·감사                                                                                                                                                                                                                                                                             |
 
 프로젝트 v3는 공통 공간과 독립 시안을 저장한다. 이미지 Blob을 문서에 복제하지 않고 자산 ID로 참조하며, 원본·파생 자료·편집 이력에 필요한 자산을 보존한다. 현재 정식 저장은 메타데이터·권한·참조를 D1에, 프로젝트 스냅샷·파일을 비공개 R2에 둔다. [게스트 세션](../../../../src/lib/guest/session.ts)은 별도 `sessionStorage` 임시 초안과 메모리 이미지로 동작하며 D1/R2 쓰기와 계정 저장소 초기화를 하지 않는다. IndexedDB는 본인 미저장 복구본·자산·시안·AI 단계 캐시에만 사용한다. 진단 로그는 별도 D1/R2 아카이브에서 본인 계정만 조회한다. 과거 로컬 자료를 읽기·쓰기·자동 업로드·삭제하지 않으며 로컬 저장 구현은 데이터 형식 회귀를 위한 테스트 전용으로만 남긴다.
 
 기존 문서 정규화와 참조 보존 규칙을 바꿀 때는 [DB 문서](database.md)도 읽는다. 화면·기능·AI 역할·시안 한도·코드 책임이 바뀌면 이 문서를 갱신하고, 연결 주소·모델 호스팅·환경 설정까지 바뀌면 [개발 환경](development-environment.md)도 함께 갱신한다.
-

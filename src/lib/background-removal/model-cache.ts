@@ -93,7 +93,22 @@ export async function loadBackgroundModel(precision: 'fp16' | 'fp32', progress: 
       cache = await caches.open(BACKGROUND_MODEL_CACHE);
       const cached = await getCachedModelBlob(cache, precision);
       if (cached) {
+        // No byte stream for a cache read; bracket it so the loading percentage still moves.
+        progress({
+          stage: 'download',
+          message: '저장된 AI 모델을 불러오는 중',
+          loadedBytes: 0,
+          totalBytes: expectedBytes,
+          source: 'cache',
+        });
         const buffer = await cached.arrayBuffer();
+        progress({
+          stage: 'download',
+          message: '저장된 AI 모델을 불러오는 중',
+          loadedBytes: expectedBytes,
+          totalBytes: expectedBytes,
+          source: 'cache',
+        });
         progress({ stage: 'initializing', message: '저장된 AI 모델을 캐시에서 불러왔어요.' });
         return {
           bytes: new Uint8Array(buffer),
@@ -159,6 +174,7 @@ export async function loadBackgroundModel(precision: 'fp16' | 'fp32', progress: 
     progress({
       stage: 'initializing',
       message: '모델 캐시 저장 공간이 부족해요. 이번 테스트는 계속 진행해요.',
+      cacheNotice: '모델을 브라우저에 보관하지 못했어요. 다음 실행 때 다시 내려받을 수 있어요.',
     });
   }
   return {

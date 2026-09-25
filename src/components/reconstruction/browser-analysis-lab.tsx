@@ -10,6 +10,7 @@ import {
 import type { MogeBrowserResult, MogeExecutionMode } from '@/lib/reconstruction/moge-browser/client';
 import { useFileDrop } from '@/components/use-file-drop';
 import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
+import { usePhotoAnalysisModelProgress } from '@/components/model-loading-progress';
 
 function useBlobUrl(blob?: Blob) {
   const [url, setUrl] = useState('');
@@ -96,6 +97,7 @@ export default function BrowserAnalysisLab() {
     [stage, setStage] = useState(''),
     [error, setError] = useState('');
   const [size, setSize] = useState({ widthMm: 2400, depthMm: 2400, heightMm: 2400 });
+  const modelProgress = usePhotoAnalysisModelProgress();
   const request = useRef<AbortController | null>(null),
     alive = useRef(true),
     selection = useRef(0);
@@ -129,6 +131,7 @@ export default function BrowserAnalysisLab() {
     request.current = controller;
     setError('');
     setIdleMessage('');
+    modelProgress.reset();
     setStage('사진 준비 중');
     const active = () => alive.current && request.current === controller && !controller.signal.aborted;
     try {
@@ -142,6 +145,9 @@ export default function BrowserAnalysisLab() {
           onStage: (message) => {
             if (active()) setStage(message);
           },
+          onModelProgress: (update) => {
+            if (active()) modelProgress.onModelProgress(update);
+          },
         },
       );
       if (active()) setResult(next);
@@ -150,7 +156,10 @@ export default function BrowserAnalysisLab() {
       else if (alive.current && controller.signal.aborted) setIdleMessage('분석을 취소했어요.');
     } finally {
       if (request.current === controller) request.current = null;
-      if (alive.current) setStage('');
+      if (alive.current) {
+        setStage('');
+        modelProgress.reset();
+      }
     }
   }
   function download() {
@@ -285,6 +294,7 @@ export default function BrowserAnalysisLab() {
           </button>
         )}
       </div>
+      {stage && modelProgress.view}
       <p role="status" aria-live="polite">
         {stage ||
           (reading

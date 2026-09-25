@@ -3,6 +3,12 @@ export interface BackgroundRemovalProgress {
   message: string;
   loadedBytes?: number;
   totalBytes?: number;
+  /** Download events: fetched now, or read back from CacheStorage. */
+  source?: 'network' | 'cache';
+  /** Set on the GPU → CPU restart notice. */
+  retry?: boolean;
+  /** The model is in use but could not be stored for the next run. */
+  cacheNotice?: string;
 }
 
 export interface BackgroundRemovalResult {

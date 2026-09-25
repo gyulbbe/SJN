@@ -12,6 +12,7 @@ import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
 import AnalysisProfilePicker, { type AnalysisProfileSelection } from './analysis-profile-picker';
 import DiagnosticLogDownload from './diagnostic-log-download';
 import styles from './reconstruction.module.css';
+import { usePhotoAnalysisModelProgress } from '@/components/model-loading-progress';
 
 export default function ReconstructionDialog({
   onClose,
@@ -34,6 +35,7 @@ export default function ReconstructionDialog({
   const [width, setWidth] = useState('2.4'),
     [depth, setDepth] = useState('2.4'),
     [height, setHeight] = useState('2.4');
+  const modelProgress = usePhotoAnalysisModelProgress();
   const [stage, setStage] = useState(''),
     [error, setError] = useState('');
   const controller = useRef<AbortController | null>(null);
@@ -107,6 +109,7 @@ export default function ReconstructionDialog({
     const current = () =>
       mounted.current && controller.current === request && !request.signal.aborted && canWrite.current;
     setError('');
+    modelProgress.reset();
     setStage(manual ? '참고 사진과 빈 공간을 준비하고 있어요…' : '사진 분석을 준비하고 있어요…');
     try {
       const project = await createReconstructionProject(
@@ -123,6 +126,9 @@ export default function ReconstructionDialog({
           analysisProfile: manual ? 'browser-basic' : analysis.profile,
           onStage: (message) => {
             if (current()) setStage(message);
+          },
+          onModelProgress: (update) => {
+            if (current()) modelProgress.onModelProgress(update);
           },
         },
       );
@@ -143,7 +149,10 @@ export default function ReconstructionDialog({
         );
     } finally {
       if (controller.current === request) controller.current = null;
-      if (mounted.current) setStage('');
+      if (mounted.current) {
+        setStage('');
+        modelProgress.reset();
+      }
     }
   }
   function submit(event: FormEvent) {
@@ -236,6 +245,7 @@ export default function ReconstructionDialog({
           <div style={{ marginTop: 12 }}>
             <DiagnosticLogDownload className="btn small" />
           </div>
+          {stage && modelProgress.view && <div style={{ marginTop: 12 }}>{modelProgress.view}</div>}
           {stage && (
             <p
               data-testid="reconstruction-progress"

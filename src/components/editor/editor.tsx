@@ -49,6 +49,8 @@ import {
   MAX_COMPARISON_DESIGNS,
 } from '@/lib/designs';
 import { useDesignThumbnail } from '@/components/designs/use-design-preview';
+import { ModelLoadingProgress, useModelLoadingProgress } from '@/components/model-loading-progress';
+import { DEEPLAB_LOAD } from '@/lib/ai-progress';
 import DesignManager from '@/components/designs/design-manager';
 import DesignComparison from '@/components/designs/design-comparison';
 import { getEditingScene, projectScenes } from '@/lib/comparison';
@@ -183,6 +185,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     [loaded, setLoaded] = useState(false),
     [savingPreview, setSavingPreview] = useState(false),
     [detectionStatus, setDetectionStatus] = useState(''),
+    detectionModel = useModelLoadingProgress(DEEPLAB_LOAD),
     [detectionNotice, setDetectionNotice] = useState('');
   const [wallEditor, setWallEditor] = useState<{
     projectId: string;
@@ -851,9 +854,18 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     if (!pending) {
       pending = (async () => {
         const { segmentRoom } = await import('@/lib/segmentation');
-        return segmentRoom(asset.blob, (message: string) => {
-          if (applyRequest.current === request) setDetectionStatus(message);
-        });
+        return segmentRoom(
+          asset.blob,
+          (message: string) => {
+            if (applyRequest.current === request) setDetectionStatus(message);
+          },
+          {
+            // Only the first analysis in this tab loads the bundled model; later ones reuse it.
+            onModelProgress: (event) => {
+              if (applyRequest.current === request) detectionModel.push(event);
+            },
+          },
+        );
       })();
       detectedPhotos.current.set(photoId, pending);
       void pending.catch(() => detectedPhotos.current.delete(photoId));
@@ -912,6 +924,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           if (requireLogin('사진 AI 분석')) return;
           st.setTool('select');
           setDetectionNotice('');
+          detectionModel.reset();
           setDetectionStatus('사진에서 벽과 바닥을 찾을 준비를 하고 있어요…');
           const detected = await analyzePhoto(source, request);
           if (!currentRequest()) return;
@@ -2059,7 +2072,19 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           aria-live="polite"
           data-testid={detectionStatus ? 'auto-detection-status' : 'auto-detection-notice'}
         >
-          <span>{detectionStatus || detectionNotice}</span>
+          <div className="min-w-0">
+            <span>{detectionStatus || detectionNotice}</span>
+            {detectionStatus && detectionModel.visible && detectionModel.snapshot && (
+              <div className="mt-1.5 w-[min(320px,70vw)]">
+                <ModelLoadingProgress
+                  compact
+                  title="벽·바닥 분석 AI 모델"
+                  snapshot={detectionModel.snapshot}
+                  showMessage={false}
+                />
+              </div>
+            )}
+          </div>
           <button
             className="icon-btn"
             aria-label={detectionStatus ? '영역 찾기 취소' : '자동 적용 안내 닫기'}
@@ -2067,6 +2092,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               applyRequest.current++;
               setDetectionStatus('');
               setDetectionNotice('');
+              detectionModel.reset();
             }}
           >
             <X size={16} />
