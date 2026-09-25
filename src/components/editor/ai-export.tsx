@@ -1,6 +1,13 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { prepareFluxImage, requestFluxImage } from '@/lib/ai-export/client';
+import { fluxInputLayout } from '@/lib/ai-export/contract';
+import {
+  buildFluxGrounding,
+  type FluxCaptureSource,
+  type FluxGrounding,
+  type FluxPlacedProduct,
+} from '@/lib/ai-export/scene';
 import styles from './ai-export.module.css';
 
 type Result = { url?: string; elapsed?: number; error?: string };
@@ -11,7 +18,7 @@ export default function AiExport({
   disabled,
   onBusyChange,
 }: {
-  capture: () => Promise<Blob>;
+  capture: () => Promise<FluxCaptureSource>;
   filename: string;
   userId?: string | null;
   disabled: boolean;
@@ -21,7 +28,13 @@ export default function AiExport({
   const [sourceUrl, setSourceUrl] = useState('');
   const [result, setResult] = useState<Result>({});
   const [busy, setBusy] = useState(false);
-  const state = useRef<{ image?: Blob; urls: string[]; controller?: AbortController }>({ urls: [] });
+  const [placed, setPlaced] = useState<FluxPlacedProduct[]>();
+  const state = useRef<{
+    image?: Blob;
+    grounding?: FluxGrounding;
+    urls: string[];
+    controller?: AbortController;
+  }>({ urls: [] });
   useEffect(() => {
     live.current = true;
     const current = state.current;
@@ -42,17 +55,41 @@ export default function AiExport({
     const timer = setTimeout(() => controller.abort(), 190_000);
     try {
       if (!state.current.image) {
-        const original = await capture();
-        const input = await prepareFluxImage(original);
+        const source = await capture();
+        const input = await prepareFluxImage(source.blob);
+        const bitmap = await createImageBitmap(source.blob);
+        let grounding: FluxGrounding | undefined;
+        try {
+          // What was actually placed goes with the image, so a 25px toilet is not left to guesswork.
+          grounding = await buildFluxGrounding({
+            snapshot: source.snapshot,
+            reader: source.reader,
+            capture: bitmap,
+            layout: fluxInputLayout(bitmap.width, bitmap.height),
+            boxes: source.boxes,
+          });
+        } catch {
+          grounding = undefined;
+        } finally {
+          bitmap.close();
+        }
         controller.signal.throwIfAborted();
         state.current.image = input;
+        state.current.grounding = grounding;
+        setPlaced(grounding?.placed ?? []);
         const url = URL.createObjectURL(input);
         state.current.urls.push(url);
         setSourceUrl(url);
       }
       // Same source image, fresh seed: re-generating gives a different variation.
       const seed = crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff;
-      const blob = await requestFluxImage(state.current.image, seed, controller.signal, userId);
+      const blob = await requestFluxImage(
+        state.current.image,
+        seed,
+        controller.signal,
+        userId,
+        state.current.grounding?.scene,
+      );
       controller.signal.throwIfAborted();
       const url = URL.createObjectURL(blob);
       state.current.urls.push(url);
@@ -79,8 +116,9 @@ export default function AiExport({
     <section className={styles.panel} aria-label="AI 현장 사진 변환">
       <h3>AI로 현장 사진처럼</h3>
       <p className={styles.note}>
-        버튼을 누를 때 현재 After 이미지를 Cloudflare로 보내 변환해요. 다시 만들 때마다 다른 결과가 나오고
-        사용량이 새로 발생해요. AI 결과는 자재나 형태가 달라질 수 있는 참고 이미지예요.
+        버튼을 누를 때 현재 After 이미지와 배치한 제품의 종류·위치·크기·색 정보를 Cloudflare로 보내 변환해요.
+        다시 만들 때마다 다른 결과가 나오고 사용량이 새로 발생해요. 그래도 AI가 자재나 제품을 바꿀 수 있으니
+        원본과 비교해 주세요.
       </p>
       <div className={styles.grid}>
         <div className={styles.card}>
@@ -101,6 +139,27 @@ export default function AiExport({
             <a className="btn" href={sourceUrl} download={`${filename}-AI비교원본.png`}>
               비교 원본 저장
             </a>
+          )}
+          {placed && (
+            <div
+              className="mt-3 text-xs leading-relaxed text-[color:var(--muted)]"
+              aria-label="변환에 전달한 제품"
+            >
+              {placed.length ? (
+                <>
+                  <div className="font-semibold text-[color:var(--ink)]">변환에 전달한 제품</div>
+                  <ul className="mt-1 space-y-0.5">
+                    {placed.map((product) => (
+                      <li key={product.id}>
+                        {product.label} · {product.where}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <div>전달할 제품 정보가 없어 이미지로만 변환해요.</div>
+              )}
+            </div>
           )}
         </div>
         <div className={styles.card}>

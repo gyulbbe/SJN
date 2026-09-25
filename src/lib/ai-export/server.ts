@@ -6,7 +6,11 @@ import {
   classifyCloudGemmaFailure,
   cloudProviderException,
 } from '@/lib/reconstruction/cloud-gemma-errors';
-import { FLUX_MODEL, FLUX_INPUT_EDGE, FLUX_MAX_IMAGE_BYTES, FLUX_PROMPT } from './contract';
+import { FLUX_MODEL, FLUX_INPUT_EDGE, FLUX_MAX_IMAGE_BYTES } from './contract';
+import { buildFluxPrompt } from './prompt';
+import { FLUX_MAX_SCENE_BYTES, fluxSceneSchema, type FluxScene } from './scene-contract';
+
+const MAX_REQUEST_BYTES = FLUX_MAX_IMAGE_BYTES + FLUX_MAX_SCENE_BYTES + 4096;
 
 type Environment = ReturnType<typeof getRuntimeEnvironment>;
 type FluxBinding = {
@@ -65,17 +69,19 @@ export async function runFluxExport(request: Request, environment: Environment =
     );
   const contentType = request.headers.get('content-type') ?? '';
   if (!contentType.startsWith('multipart/form-data;')) fail('이미지를 multipart 형식으로 전달해 주세요.');
-  const bytes = await bounded(request, FLUX_MAX_IMAGE_BYTES + 4096, request.signal);
+  const bytes = await bounded(request, MAX_REQUEST_BYTES, request.signal);
   let form: FormData;
   try {
     form = await new Response(bytes, { headers: { 'Content-Type': contentType } }).formData();
   } catch {
     return fail('이미지 요청 형식이 올바르지 않아요.');
   }
-  const fields = ['image', 'seed'];
+  const required = ['image', 'seed'],
+    allowed = [...required, 'scene'];
   if (
-    [...form.keys()].some((key) => !fields.includes(key)) ||
-    fields.some((key) => form.getAll(key).length !== 1)
+    [...form.keys()].some((key) => !allowed.includes(key)) ||
+    required.some((key) => form.getAll(key).length !== 1) ||
+    allowed.some((key) => form.getAll(key).length > 1)
   )
     fail('이미지 요청 필드를 확인해 주세요.');
   const seedText = form.get('seed');
@@ -96,9 +102,26 @@ export async function runFluxExport(request: Request, environment: Environment =
     [header.width, header.height].some((n) => n < 128 || n > FLUX_INPUT_EDGE || n % 16 !== 0)
   )
     fail('AI 변환용 PNG의 크기가 올바르지 않아요.');
+  // Placed-product facts arrive as enums and numbers only; every sentence is written here.
+  let scene: FluxScene | undefined;
+  const sceneText = form.get('scene');
+  if (sceneText !== null) {
+    if (typeof sceneText !== 'string' || new TextEncoder().encode(sceneText).length > FLUX_MAX_SCENE_BYTES)
+      fail('제품 정보가 너무 커요.');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(sceneText);
+    } catch {
+      fail('제품 정보 형식이 올바르지 않아요.');
+    }
+    const result = fluxSceneSchema.safeParse(parsed);
+    if (!result.success) fail('제품 정보 형식이 올바르지 않아요.');
+    scene = result.data;
+  }
+  const prompt = buildFluxPrompt(scene);
   const input = new FormData();
   input.set('input_image_0', image, 'after.png');
-  input.set('prompt', FLUX_PROMPT);
+  input.set('prompt', prompt);
   input.set('width', String(header.width * 2));
   input.set('height', String(header.height * 2));
   input.set('seed', String(seed));
@@ -111,6 +134,9 @@ export async function runFluxExport(request: Request, environment: Environment =
   const diagnostics: Record<string, unknown> = {
     model: FLUX_MODEL,
     phase: 'provider-request',
+    // Sizes only: never the prompt text, images or any user data.
+    promptLength: prompt.length,
+    fixtures: scene?.fixtures.length ?? 0,
   };
   try {
     request.signal.throwIfAborted();

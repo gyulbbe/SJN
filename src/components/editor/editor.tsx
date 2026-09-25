@@ -70,6 +70,7 @@ import { useAccess } from '../app-provider';
 import CanvasWorkspace from './canvas-workspace';
 import Inspector from './inspector';
 import AiExport from './ai-export';
+import type { FluxCaptureSource } from '@/lib/ai-export/scene';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
 import { accountLabel } from '@/lib/auth/credential-account';
@@ -1097,6 +1098,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     outputFormat: 'image/png' | 'image/jpeg',
     comparison: boolean,
     maxEdge = 4096,
+    /** Receives the exact snapshot (and 3D fixture boxes) behind this capture, for AI grounding. */
+    inspect?: (capture: Omit<FluxCaptureSource, 'blob' | 'reader'>) => void,
   ): Promise<Blob> {
     if (isGuest) throw new Error('이미지 출력은 로그인 후 사용할 수 있어요.');
     if (!scene || !st.project || (!renderer.current && !roomContext))
@@ -1123,11 +1126,22 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             mode: comparison ? 'compare' : 'after',
             longEdge: edge,
           });
+          // Same renderer and view as the export; only the aspect ratio matters for normalised boxes.
+          if (inspect && !comparison)
+            inspect({
+              snapshot,
+              boxes: roomRenderer.fixtureBounds(
+                snapshot.scene.imageWidth,
+                snapshot.scene.imageHeight,
+                roomContext.view,
+              ),
+            });
         } finally {
           roomRenderer.dispose();
         }
       } else {
         blob = await renderer.current!.exportImage(snapshot, w, h, outputFormat, comparison);
+        inspect?.({ snapshot });
       }
       return blob;
     } finally {
@@ -2388,7 +2402,15 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             </p>
             <AiExport
               key={`${scopeKey}-${activeDesign?.id}`}
-              capture={() => captureExport('image/png', false, 1024)}
+              capture={async () => {
+                let inspected: Omit<FluxCaptureSource, 'blob' | 'reader'> | undefined;
+                // The same render gives the scene facts (and 3D fixture boxes) sent with the image.
+                const blob = await captureExport('image/png', false, 1024, (capture) => {
+                  inspected = capture;
+                });
+                if (!inspected) throw new Error('AI 변환에 쓸 장면 정보를 만들지 못했어요.');
+                return { blob, reader: assetReader, ...inspected };
+              }}
               filename={`${st.project?.name ?? '공간'}-${activeDesign?.name ?? '시안'}`}
               userId={userId}
               disabled={exporting}

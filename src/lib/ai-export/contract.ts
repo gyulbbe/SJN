@@ -11,3 +11,19 @@ export function fluxDimensions(width: number, height: number) {
     height: Math.max(128, Math.min(FLUX_INPUT_EDGE, Math.ceil((height * scale) / 16) * 16)),
   };
 }
+/** Where the source lands inside the padded input, so fixture boxes can follow it exactly. */
+export function fluxInputLayout(width: number, height: number) {
+  const size = fluxDimensions(width, height);
+  const scale = Math.min(size.width / width, size.height / height);
+  const contentWidth = width * scale,
+    contentHeight = height * scale;
+  return {
+    ...size,
+    scale,
+    x: (size.width - contentWidth) / 2,
+    y: (size.height - contentHeight) / 2,
+    contentWidth,
+    contentHeight,
+  };
+}
+export type FluxInputLayout = ReturnType<typeof fluxInputLayout>;

@@ -487,6 +487,63 @@ export class RoomViewerRenderer {
     this.renders++;
     return this.canvas;
   }
+  /**
+   * Visible fixture boxes of an After frame of this size and view, normalised to that frame (y down).
+   * Uses the same camera and photo viewport as render(), so they line up with an exported image.
+   */
+  fixtureBounds(
+    width: number,
+    height: number,
+    view: RoomViewState,
+  ): Record<string, [number, number, number, number]> {
+    this.assertOpen();
+    if (!this.prepared || !this.snapshot) throw new Error('공간을 준비하는 중입니다.');
+    const size = fitOutput(width, height, this.maxOutputEdge);
+    const state = normalizeRoomView(view);
+    const camera = createRoomViewCamera(
+      this.snapshot.scene.room!,
+      size.width / size.height,
+      state,
+      this.prepared.bounds,
+      this.prepared.structureBounds,
+    );
+    const rect = roomViewViewport(size.width, size.height, state);
+    const after = this.prepared.after;
+    // Directional photo planes switch with the view; measure what this view actually shows.
+    after.fixtures.updateView(camera);
+    after.world.updateMatrixWorld(true);
+    const clamp = (value: number) => Math.max(0, Math.min(1, value));
+    const result: Record<string, [number, number, number, number]> = {};
+    for (const object of after.fixtures.group.children) {
+      const id = object.userData.fixtureId;
+      if (typeof id !== 'string') continue;
+      const xs: number[] = [],
+        ys: number[] = [];
+      object.traverseVisible((node) => {
+        const mesh = node as Mesh;
+        if (!mesh.isMesh) return;
+        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+        const box = mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld);
+        for (const x of [box.min.x, box.max.x])
+          for (const y of [box.min.y, box.max.y])
+            for (const z of [box.min.z, box.max.z]) {
+              const p = new Vector3(x, y, z).project(camera);
+              if (!Number.isFinite(p.x) || p.z < -1 || p.z > 1) continue;
+              xs.push((rect.x + ((p.x + 1) / 2) * rect.width) / size.width);
+              ys.push(1 - (rect.y + ((p.y + 1) / 2) * rect.height) / size.height);
+            }
+      });
+      if (!xs.length) continue;
+      const box: [number, number, number, number] = [
+        clamp(Math.min(...xs)),
+        clamp(Math.min(...ys)),
+        clamp(Math.max(...xs)),
+        clamp(Math.max(...ys)),
+      ];
+      if (box[2] > box[0] && box[3] > box[1]) result[id] = box;
+    }
+    return result;
+  }
   /** Normalized canvas coordinates, y down. Only the editable After panel is pickable. */
   private pointerRay(x: number, y: number): Raycaster | undefined {
     this.assertOpen();

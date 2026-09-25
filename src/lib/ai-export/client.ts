@@ -1,25 +1,24 @@
-import { fluxDimensions } from './contract';
+import { fluxInputLayout } from './contract';
+import type { FluxScene } from './scene-contract';
+
+function pngBlob(canvas: HTMLCanvasElement, message: string) {
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((result) => (result ? resolve(result) : reject(new Error(message))), 'image/png'),
+  );
+}
 export async function prepareFluxImage(blob: Blob): Promise<Blob> {
   const bitmap = await createImageBitmap(blob);
   try {
     const canvas = document.createElement('canvas');
-    const size = fluxDimensions(bitmap.width, bitmap.height);
-    canvas.width = size.width;
-    canvas.height = size.height;
+    const layout = fluxInputLayout(bitmap.width, bitmap.height);
+    canvas.width = layout.width;
+    canvas.height = layout.height;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('AI 변환용 이미지를 만들지 못했어요.');
     context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, size.width, size.height);
-    const scale = Math.min(size.width / bitmap.width, size.height / bitmap.height);
-    const w = bitmap.width * scale,
-      h = bitmap.height * scale;
-    context.drawImage(bitmap, (size.width - w) / 2, (size.height - h) / 2, w, h);
-    return await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob(
-        (result) => (result ? resolve(result) : reject(new Error('PNG 변환에 실패했어요.'))),
-        'image/png',
-      ),
-    );
+    context.fillRect(0, 0, layout.width, layout.height);
+    context.drawImage(bitmap, layout.x, layout.y, layout.contentWidth, layout.contentHeight);
+    return await pngBlob(canvas, 'PNG 변환에 실패했어요.');
   } finally {
     bitmap.close();
   }
@@ -29,10 +28,12 @@ export async function requestFluxImage(
   seed: number,
   signal: AbortSignal,
   userId?: string | null,
+  scene?: FluxScene,
 ) {
   const form = new FormData();
   form.set('image', image, 'after.png');
   form.set('seed', String(seed));
+  if (scene) form.set('scene', JSON.stringify(scene));
   const response = await fetch('/api/export/photoreal', {
     method: 'POST',
     body: form,
@@ -56,12 +57,7 @@ export async function requestFluxImage(
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('결과 이미지를 읽지 못했어요.');
     ctx.drawImage(bitmap, 0, 0);
-    return await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob(
-        (value) => (value ? resolve(value) : reject(new Error('결과 PNG 저장에 실패했어요.'))),
-        'image/png',
-      ),
-    );
+    return await pngBlob(canvas, '결과 PNG 저장에 실패했어요.');
   } finally {
     bitmap.close();
   }

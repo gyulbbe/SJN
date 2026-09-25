@@ -20,7 +20,7 @@ test('export converts with klein 4B, downloads PNG, re-generates with a new seed
   const png = await sharp({ create: { width: 992, height: 672, channels: 3, background: '#b8cbd0' } })
     .png()
     .toBuffer();
-  const calls: { fields: string[]; seed: string; hash: string }[] = [];
+  const calls: { fields: string[]; seed: string; hash: string; scene: string }[] = [];
   let fail = false;
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -32,6 +32,7 @@ test('export converts with klein 4B, downloads PNG, re-generates with a new seed
     calls.push({
       fields: [...form.keys()].sort(),
       seed: String(form.get('seed')),
+      scene: String(form.get('scene')),
       hash: createHash('sha256')
         .update(Buffer.from(await (form.get('image') as Blob).arrayBuffer()))
         .digest('hex'),
@@ -80,9 +81,13 @@ test('export converts with klein 4B, downloads PNG, re-generates with a new seed
   await expect(result).toBeVisible();
   expect(calls).toHaveLength(2);
   expect(calls.map((c) => c.fields)).toEqual([
-    ['image', 'seed'],
-    ['image', 'seed'],
+    ['image', 'scene', 'seed'],
+    ['image', 'scene', 'seed'],
   ]);
+  // The placed-product description travels with every request; an empty base room has none.
+  expect(JSON.parse(calls[0].scene)).toEqual({ version: 1, fixtures: [], surfaces: [] });
+  expect(calls[1].scene).toBe(calls[0].scene);
+  await expect(dialog.getByLabel('변환에 전달한 제품')).toContainText('전달할 제품 정보가 없어');
   // Re-generating reuses the captured After image with a fresh seed.
   expect(calls[0].hash).toBe(calls[1].hash);
   expect(calls[0].seed).not.toBe(calls[1].seed);
