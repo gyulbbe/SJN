@@ -81,9 +81,9 @@
 
 ### 내보내기
 
-일반 PNG/JPG 내보내기는 현재 시안이나 Before/After 비교를 렌더링하며 편집 도구를 이미지에 포함하지 않는다. FLUX 변환은 현재 After PNG를 기준으로 사용자가 klein 4B를 실행하고 결과를 미리 본 뒤 PNG로 다운로드한다. 다시 만들기는 같은 기준 PNG에 새 seed를 쓴다. 결과는 내보내기 창에서 관리하며 프로젝트 장면을 자동 교체하지 않는다. 사진처럼 보여도 실제 현장 촬영본은 아니다.
+일반 PNG/JPG 내보내기는 현재 시안이나 Before/After 비교를 렌더링하며 편집 도구를 이미지에 포함하지 않는다. FLUX 변환은 현재 After PNG를 기준으로 사용자가 klein 4B를 실행하고 결과를 미리 본 뒤 PNG로 다운로드한다. 배치한 제품의 종류·위치·크기·색(enum·숫자만)을 함께 보내고, 서버가 그 정보로 프롬프트를 만든다. 제품 사진은 보내지 않는다(실측 비교에서 구도가 바뀜). 다시 만들기는 같은 기준 PNG·제품 정보에 새 seed를 쓴다. 결과는 내보내기 창에서 관리하며 프로젝트 장면을 자동 교체하지 않는다. 사진처럼 보여도 실제 현장 촬영본은 아니다.
 
-근거: [AI 내보내기 UI](../../../../src/components/editor/ai-export.tsx), [FLUX 계약](../../../../src/lib/ai-export/contract.ts), [서버 경로](../../../../src/app/api/export/photoreal/route.ts). 상세: [FLUX 변환](../../../../docs/flux-export.md).
+근거: [AI 내보내기 UI](../../../../src/components/editor/ai-export.tsx), [FLUX 계약](../../../../src/lib/ai-export/contract.ts), [장면 계약](../../../../src/lib/ai-export/scene-contract.ts), [장면 추출](../../../../src/lib/ai-export/scene.ts), [프롬프트](../../../../src/lib/ai-export/prompt.ts), [서버 경로](../../../../src/app/api/export/photoreal/route.ts). 상세: [FLUX 변환](../../../../docs/flux-export.md).
 
 ## 현재 AI 구성
 
