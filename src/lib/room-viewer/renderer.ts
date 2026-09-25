@@ -9,6 +9,7 @@ import {
   NoToneMapping,
   OrthographicCamera,
   PCFShadowMap,
+  type PerspectiveCamera,
   Plane,
   Raycaster,
   PlaneGeometry,
@@ -616,26 +617,74 @@ export class RoomViewerRenderer {
       v: face === 'floor' ? point.z / room.depthMm : 1 - point.y / room.heightMm,
     };
   }
+  private exportSize(snapshot: RenderSnapshot, mode: RoomViewerMode, longEdge: number) {
+    const edge = Math.max(
+      1,
+      Math.min(
+        this.maxOutputEdge,
+        Math.max(snapshot.scene.imageWidth, snapshot.scene.imageHeight),
+        Number.isFinite(longEdge) ? longEdge : this.maxOutputEdge,
+      ),
+    );
+    const aspect = (snapshot.scene.imageWidth / snapshot.scene.imageHeight) * (mode === 'compare' ? 2 : 1);
+    return fitOutput(aspect >= 1 ? edge : edge * aspect, aspect >= 1 ? edge / aspect : edge, edge);
+  }
+  /**
+   * The After world and the camera an 'after' export of this view and long edge renders with, for
+   * offline renderers (path-tracing spike). The world belongs to the scene cache: callers must not
+   * modify, re-parent or dispose it; clone it instead. Nothing is drawn.
+   */
+  exportFrame(
+    view: RoomViewState,
+    longEdge: number,
+  ): {
+    world: ThreeScene;
+    camera: PerspectiveCamera;
+    width: number;
+    height: number;
+    viewport: ReturnType<typeof roomViewViewport>;
+  } {
+    this.assertOpen();
+    if (!this.snapshot || !this.prepared) throw new Error('공간을 먼저 준비해 주세요.');
+    const output = this.exportSize(this.snapshot, 'after', longEdge);
+    const size = fitOutput(output.width, output.height, this.maxOutputEdge);
+    const state = normalizeRoomView(structuredClone(view));
+    // Same construction as render(): shared bounds, and the source-photo depth clip over both sides.
+    const camera = createRoomViewCamera(
+      this.snapshot.scene.room!,
+      size.width / size.height,
+      state,
+      this.prepared.bounds,
+      this.prepared.structureBounds,
+    );
+    if (state.sourceCamera && state.projection === 'source-photo') {
+      for (const side of [this.prepared.before, this.prepared.after]) {
+        side.surfaces.updateView(camera);
+        side.fixtures.updateView(camera);
+      }
+      fitSourceDepthClip(camera, visibleMeshBounds([this.prepared.before.world, this.prepared.after.world]));
+    }
+    const after = this.prepared.after;
+    after.surfaces.updateView(camera);
+    after.fixtures.updateView(camera);
+    after.world.updateMatrixWorld(true);
+    return {
+      world: after.world,
+      camera,
+      width: size.width,
+      height: size.height,
+      viewport: roomViewViewport(size.width, size.height, state),
+    };
+  }
   async export(
     view: RoomViewState,
     options: { format: 'png' | 'jpeg'; mode: RoomViewerMode; longEdge: number },
   ): Promise<Blob> {
     this.assertOpen();
     if (!this.snapshot || !this.prepared) throw new Error('공간을 먼저 준비해 주세요.');
-    const snapshot = this.snapshot,
-      previous = this.lastFrame,
+    const previous = this.lastFrame,
       state = structuredClone(view);
-    const edge = Math.max(
-      1,
-      Math.min(
-        this.maxOutputEdge,
-        Math.max(snapshot.scene.imageWidth, snapshot.scene.imageHeight),
-        Number.isFinite(options.longEdge) ? options.longEdge : this.maxOutputEdge,
-      ),
-    );
-    const aspect =
-      (snapshot.scene.imageWidth / snapshot.scene.imageHeight) * (options.mode === 'compare' ? 2 : 1);
-    const output = fitOutput(aspect >= 1 ? edge : edge * aspect, aspect >= 1 ? edge / aspect : edge, edge);
+    const output = this.exportSize(this.snapshot, options.mode, options.longEdge);
     const copy = document.createElement('canvas');
     copy.width = output.width;
     copy.height = output.height;
