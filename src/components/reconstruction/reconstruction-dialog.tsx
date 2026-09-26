@@ -13,6 +13,7 @@ import AnalysisProfilePicker, { type AnalysisProfileSelection } from './analysis
 import DiagnosticLogDownload from './diagnostic-log-download';
 import styles from './reconstruction.module.css';
 import { usePhotoAnalysisModelProgress } from '@/components/model-loading-progress';
+import { useCloudAnalysisWait } from '@/components/server-wait-progress';
 
 export default function ReconstructionDialog({
   onClose,
@@ -36,6 +37,7 @@ export default function ReconstructionDialog({
     [depth, setDepth] = useState('2.4'),
     [height, setHeight] = useState('2.4');
   const modelProgress = usePhotoAnalysisModelProgress();
+  const cloudWait = useCloudAnalysisWait();
   const [stage, setStage] = useState(''),
     [error, setError] = useState('');
   const controller = useRef<AbortController | null>(null);
@@ -110,6 +112,7 @@ export default function ReconstructionDialog({
       mounted.current && controller.current === request && !request.signal.aborted && canWrite.current;
     setError('');
     modelProgress.reset();
+    cloudWait.reset();
     setStage(manual ? '참고 사진과 빈 공간을 준비하고 있어요…' : '사진 분석을 준비하고 있어요…');
     try {
       const project = await createReconstructionProject(
@@ -130,9 +133,13 @@ export default function ReconstructionDialog({
           onModelProgress: (update) => {
             if (current()) modelProgress.onModelProgress(update);
           },
+          onCloudWait: (event) => {
+            if (current()) cloudWait.onCloudWait(event);
+          },
         },
       );
       if (!current()) return;
+      cloudWait.reset();
       setStage('Before 초안을 이 브라우저에 저장하고 있어요…');
       await getRepositories().projects.create(project);
       if (!current()) {
@@ -152,6 +159,7 @@ export default function ReconstructionDialog({
       if (mounted.current) {
         setStage('');
         modelProgress.reset();
+        cloudWait.reset();
       }
     }
   }
@@ -246,6 +254,7 @@ export default function ReconstructionDialog({
             <DiagnosticLogDownload className="btn small" />
           </div>
           {stage && modelProgress.view && <div style={{ marginTop: 12 }}>{modelProgress.view}</div>}
+          {stage && cloudWait.view && <div className="mt-3">{cloudWait.view}</div>}
           {stage && (
             <p
               data-testid="reconstruction-progress"

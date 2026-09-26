@@ -625,6 +625,44 @@ test('quota failure is visible, not retried automatically, and does not silently
   expect(state.forbidden).toEqual([]);
 });
 
+test('a Gemma step wait shows its step number and elapsed seconds, with no made-up total or usual time', async ({
+  page,
+}, testInfo) => {
+  const state = await setup(page, { pending: true });
+  await fakeWorkers(page);
+  await openCreate(page);
+  await photo(page, 'reconstruction-upload');
+  await dialog(page).getByRole('button', { name: '자동 초안 만들기', exact: true }).click();
+  const wait = dialog(page).getByTestId('server-wait-progress');
+  await expect(wait).toBeVisible({ timeout: 30000 });
+  await expect.poll(() => state.posts).toEqual(['inventory-extended']);
+  await expect(wait).toContainText('Cloudflare AI 분석');
+  await expect(wait).toContainText('AI 확인 1번째');
+  // No measured per-step time and nothing recorded in this browser yet: elapsed only.
+  await expect(wait).not.toContainText('보통 약');
+  await expect(wait.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+  await expect(dialog(page).getByTestId('server-wait-elapsed')).toHaveText('2초', { timeout: 5000 });
+  await expect(wait).toContainText('경과 2초');
+  await expect(dialog(page).getByTestId('reconstruction-progress')).toContainText('설비 목록');
+  await page.screenshot({ path: testInfo.outputPath('gemma-wait-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await wait.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  const box = (await wait.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390.5);
+  await page.screenshot({ path: testInfo.outputPath('gemma-wait-390.png') });
+  state.release();
+  await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 45000 });
+  // The finished step becomes this browser's usual time for next time.
+  const history = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('sjn:server-wait:v1:gemma:extendedInventory') ?? '[]'),
+  );
+  expect(history).toHaveLength(1);
+  expect(history[0]).toBeGreaterThan(2000);
+  expect(state.forbidden).toEqual([]);
+});
+
 test('normal create and Before reanalysis persist the cloud profile and keep After empty with mocked observations', async ({
   page,
 }) => {

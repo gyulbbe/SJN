@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { prepareFluxImage, requestFluxImage } from '@/lib/ai-export/client';
 import { fluxInputLayout } from '@/lib/ai-export/contract';
+import { FLUX_WAIT } from '@/lib/server-wait';
+import { ServerWaitProgress, useServerWait } from '@/components/server-wait-progress';
 import {
   buildFluxGrounding,
   type FluxCaptureSource,
@@ -29,6 +31,7 @@ export default function AiExport({
   const [result, setResult] = useState<Result>({});
   const [busy, setBusy] = useState(false);
   const [placed, setPlaced] = useState<FluxPlacedProduct[]>();
+  const { wait, start: startWait, finish: finishWait } = useServerWait();
   const state = useRef<{
     image?: Blob;
     grounding?: FluxGrounding;
@@ -53,8 +56,10 @@ export default function AiExport({
     setResult((previous) => ({ ...previous, error: undefined }));
     const started = performance.now();
     const timer = setTimeout(() => controller.abort(), 190_000);
+    let converted = false;
     try {
       if (!state.current.image) {
+        startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
         const source = await capture();
         const input = await prepareFluxImage(source.blob);
         const bitmap = await createImageBitmap(source.blob);
@@ -83,6 +88,7 @@ export default function AiExport({
       }
       // Same source image, fresh seed: re-generating gives a different variation.
       const seed = crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff;
+      startWait({ spec: FLUX_WAIT, message: '서버에서 현장 사진처럼 변환하는 중이에요.' });
       const blob = await requestFluxImage(
         state.current.image,
         seed,
@@ -91,6 +97,7 @@ export default function AiExport({
         state.current.grounding?.scene,
       );
       controller.signal.throwIfAborted();
+      converted = true;
       const url = URL.createObjectURL(blob);
       state.current.urls.push(url);
       setResult({ url, elapsed: (performance.now() - started) / 1000 });
@@ -106,6 +113,8 @@ export default function AiExport({
     } finally {
       clearTimeout(timer);
       state.current.controller = undefined;
+      // Only a finished server conversion counts toward this browser's usual time.
+      finishWait(converted);
       if (live.current) {
         setBusy(false);
         onBusyChange(false);
@@ -167,6 +176,11 @@ export default function AiExport({
           <div className={styles.preview}>
             {result.url ? (
               <img src={result.url} alt="FLUX 4B 현장 사진 변환 결과" />
+            ) : wait ? (
+              // The first conversion waits where its result will appear.
+              <div className="w-full max-w-xs px-3">
+                <ServerWaitProgress title="AI 현장 사진 변환" wait={wait} compact />
+              </div>
             ) : (
               <span className={styles.placeholder}>
                 {busy ? '현장 사진처럼 변환 중…' : '아직 변환하지 않았어요.'}
@@ -183,6 +197,11 @@ export default function AiExport({
               </a>
             )}
           </div>
+          {wait && result.url && (
+            <div className="mt-2">
+              <ServerWaitProgress title="AI 현장 사진 변환" wait={wait} compact />
+            </div>
+          )}
           {result.elapsed !== undefined && (
             <p className={styles.note}>변환 시간 {result.elapsed.toFixed(1)}초</p>
           )}

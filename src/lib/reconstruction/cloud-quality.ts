@@ -10,12 +10,18 @@ import type { LocalModelMeasurement } from './lab-engine';
 import type { MogeExecutionMode, MogeBrowserResult } from './moge-browser/client';
 import { mogeLoadEvent, type ModelLoadEvent } from '../ai-progress';
 
+/** One Gemma step starting or ending, for a waiting display. `cached`: answered from the analysis cache. */
+export type CloudWaitEvent =
+  | { stage: string; phase: 'start' }
+  | { stage: string; phase: 'end'; ok: boolean; cached: boolean };
+
 /** Same reviewed placement/model pipeline; only observation providers differ. Never contacts a local AI server. */
 export async function runCloudBrowserQuality(input: QualityRunInput, options: {
   mode?: MogeExecutionMode;
   onGeometry?: (result: MogeBrowserResult) => void;
   /** Structured MoGe loading progress; stage text then drops its "NN%" suffix. */
   onModelProgress?: (event: ModelLoadEvent) => void;
+  onCloudWait?: (event: CloudWaitEvent) => void;
 } = {}) {
   const provider = 'cloudflare-workers-ai' as const;
   const usage: CloudStageUsage[] = [];
@@ -24,13 +30,18 @@ export async function runCloudBrowserQuality(input: QualityRunInput, options: {
     input.onCheckpoint?.('cloudUsage', summarizeCloudUsage(structuredClone(usage)));
   }
   async function track<T>(stage: string, work: Promise<T>, collectResult = true): Promise<T> {
+    options.onCloudWait?.({ stage, phase: 'start' });
     try {
       const value = await work;
       const measured = value as { measurement?: LocalModelMeasurement; measurements?: { candidateId: string; measurement: LocalModelMeasurement }[] };
+      const cached = measured.measurement?.cacheHit === true ||
+        (!!measured.measurements?.length && measured.measurements.every(item => item.measurement.cacheHit === true));
       if (collectResult && measured.measurement) record(stage, measured.measurement);
       if (collectResult) for (const item of measured.measurements ?? []) record(stage + ':' + item.candidateId, item.measurement);
+      options.onCloudWait?.({ stage, phase: 'end', ok: true, cached });
       return value;
     } catch (error) {
+      options.onCloudWait?.({ stage, phase: 'end', ok: false, cached: false });
       if (error && typeof error === 'object') {
         const failure = error as { diagnostics?: Record<string, unknown> };
         const diagnostics = failure.diagnostics ?? {};

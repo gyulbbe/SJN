@@ -11,6 +11,7 @@ import DiagnosticLogDownload from './diagnostic-log-download';
 import type { DiagnosticArchiveEntry } from '@/lib/reconstruction/lab-diagnostic-storage';
 import styles from './reconstruction.module.css';
 import { usePhotoAnalysisModelProgress } from '@/components/model-loading-progress';
+import { useCloudAnalysisWait } from '@/components/server-wait-progress';
 
 export default function ReconstructionRebuild({
   onMaterialsChanged,
@@ -29,6 +30,7 @@ export default function ReconstructionRebuild({
     [stage, setStage] = useState(''),
     [error, setError] = useState('');
   const modelProgress = usePhotoAnalysisModelProgress();
+  const cloudWait = useCloudAnalysisWait();
   const [initialProfile, setInitialProfile] = useState<ReconstructionAnalysisProfile>('browser-basic');
   const [analysis, setAnalysis] = useState<AnalysisProfileSelection>({
     profile: 'browser-basic',
@@ -98,6 +100,7 @@ export default function ReconstructionRebuild({
     controller.current = request;
     setError('');
     modelProgress.reset();
+    cloudWait.reset();
     setStage('원본 사진 준비 중');
     const current = () =>
       alive.current &&
@@ -135,9 +138,13 @@ export default function ReconstructionRebuild({
           onModelProgress: (update) => {
             if (current()) modelProgress.onModelProgress(update);
           },
+          onCloudWait: (event) => {
+            if (current()) cloudWait.onCloudWait(event);
+          },
         },
       );
       if (!current()) return;
+      cloudWait.reset();
       await onMaterialsChanged();
       if (!current()) return;
       useEditor.getState().changeProject((p) => {
@@ -154,7 +161,10 @@ export default function ReconstructionRebuild({
     } finally {
       if (controller.current === request) controller.current = null;
       if (alive.current && !request.signal.aborted) setStage('');
-      if (alive.current) modelProgress.reset();
+      if (alive.current) {
+        modelProgress.reset();
+        cloudWait.reset();
+      }
     }
   }
   return (
@@ -205,6 +215,7 @@ export default function ReconstructionRebuild({
                   records={adminProjectScope ? diagnosticRecords : undefined}
                 />
                 {stage && modelProgress.view && <div style={{ marginTop: 18 }}>{modelProgress.view}</div>}
+                {stage && cloudWait.view && <div className="mt-[18px]">{cloudWait.view}</div>}
                 {stage && (
                   <p data-testid="reconstruction-progress" role="status" style={{ marginTop: 18 }}>
                     {stage}

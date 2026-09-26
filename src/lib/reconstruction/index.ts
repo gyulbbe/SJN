@@ -761,6 +761,8 @@ export type ReconstructionProjectOptions = {
   onStage?: (message: string) => void;
   /** Structured AI model loading for a percentage display; onStage keeps the stage text. */
   onModelProgress?: (update: ReconstructionModelProgress) => void;
+  /** Each Gemma step of the precise analysis starting and ending, for a waiting display. */
+  onCloudWait?: (event: import('./cloud-quality').CloudWaitEvent) => void;
   signal?: AbortSignal;
   manual?: boolean;
   onAnalysis?: (size: { width: number; height: number }) => void;
@@ -959,6 +961,11 @@ async function createReconstructionProjectImpl(
       (await import('./cloud-quality')).runCloudBrowserQuality(input, {
         mode: options.mogeMode,
         onGeometry: options.onMogeGeometry,
+        onCloudWait: options.onCloudWait
+          ? (event) => {
+              if (!options.signal?.aborted) options.onCloudWait?.(event);
+            }
+          : undefined,
         onModelProgress: options.onModelProgress
           ? (event) => {
               if (!options.signal?.aborted)

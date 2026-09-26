@@ -137,3 +137,33 @@ describe('cloud shower installedness adapter (mock calls only)', () => {
     expect(analyzeShowerInstallations).toHaveBeenCalledOnce();
   });
 });
+
+describe('Gemma step waits (mock inference)', () => {
+  it('reports each step starting and ending, with cached answers and failures marked', async () => {
+    const events: unknown[] = [];
+    const input = { photo: new Blob(['photo']), signal: new AbortController().signal } as QualityRunInput;
+    vi.mocked(analyzeExtendedScene)
+      .mockResolvedValueOnce({ measurement } as Awaited<ReturnType<typeof analyzeExtendedScene>>)
+      .mockResolvedValueOnce({ measurement: { ...measurement, cacheHit: true } } as Awaited<
+        ReturnType<typeof analyzeExtendedScene>
+      >);
+    vi.mocked(analyzeShowerInstallations).mockRejectedValue(new Error('provider failed'));
+    vi.mocked(runQualityPipeline).mockImplementation(async (current, dependencies) => {
+      await dependencies!.inventory(current.photo, current.signal);
+      await dependencies!.extendedInventory!(current.photo, current.signal);
+      await dependencies!.showerInstallation!(current.photo, {} as never, current.signal, 'provider-managed');
+      throw new Error('unreachable');
+    });
+    await expect(
+      runCloudBrowserQuality(input, { onCloudWait: (event) => events.push(event) }),
+    ).rejects.toThrow('provider failed');
+    expect(events).toEqual([
+      { stage: 'inventory', phase: 'start' },
+      { stage: 'inventory', phase: 'end', ok: true, cached: false },
+      { stage: 'extendedInventory', phase: 'start' },
+      { stage: 'extendedInventory', phase: 'end', ok: true, cached: true },
+      { stage: 'showerInstallation', phase: 'start' },
+      { stage: 'showerInstallation', phase: 'end', ok: false, cached: false },
+    ]);
+  });
+});

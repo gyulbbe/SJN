@@ -137,3 +137,67 @@ test('closing during conversion discards late results and allows a fresh convers
   await expect(dialog.getByAltText('FLUX 4B 현장 사진 변환 결과')).toBeVisible();
   await expect(dialog.getByRole('button', { name: '이미지 다운로드', exact: true })).toBeEnabled();
 });
+
+test('server wait shows elapsed seconds, the usual time and a slow notice, never a percentage', async ({
+  page,
+}, testInfo) => {
+  const pending: import('@playwright/test').Route[] = [];
+  const png = await sharp({ create: { width: 992, height: 672, channels: 3, background: '#c7d0c4' } })
+    .png()
+    .toBuffer();
+  await page.route('**/api/export/photoreal', (route) => {
+    pending.push(route);
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  const wait = dialog.getByTestId('server-wait-progress');
+  const elapsed = dialog.getByTestId('server-wait-elapsed');
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  await expect.poll(() => pending.length).toBe(1);
+  // No history in this browser yet: the measured 2026-09-25 time.
+  await expect(wait).toContainText('보통 약 9초');
+  await expect(wait).toContainText('서버에서 현장 사진처럼 변환하는 중이에요.');
+  await expect(wait.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+  // Read in the page so the one-second steps are seen as they happen.
+  const seen = await elapsed.evaluate(async (element) => {
+    const values: string[] = [];
+    const end = performance.now() + 3300;
+    while (performance.now() < end) {
+      const text = element.textContent ?? '';
+      if (values.at(-1) !== text) values.push(text);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return values;
+  });
+  const numbers = seen.map((text) => Number(text.replace('초', '')));
+  expect(numbers.length).toBeGreaterThanOrEqual(3);
+  numbers.slice(1).forEach((value, index) => expect(value).toBe(numbers[index] + 1));
+  await page.screenshot({ path: testInfo.outputPath('flux-wait-desktop.png') });
+  await pending[0].fulfill({ contentType: 'image/png', body: png });
+  await expect(dialog.getByAltText('FLUX 4B 현장 사진 변환 결과')).toBeVisible();
+  await expect(wait).toHaveCount(0);
+  const history = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('sjn:server-wait:v1:flux') ?? '[]'),
+  );
+  expect(history).toHaveLength(1);
+  expect(history[0]).toBeGreaterThan(3000);
+  const usual = Math.max(1, Math.round(history[0] / 1000));
+  // This browser's own time now sets the usual time; going past it says so.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b 다시 만들기', exact: true }).click();
+  await expect.poll(() => pending.length).toBe(2);
+  await expect(wait).toContainText(`보통 약 ${usual}초`);
+  await expect(wait).toContainText('평소보다 오래 걸리고 있어요.', { timeout: (usual + 4) * 1000 });
+  expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await wait.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('flux-wait-390-slow.png') });
+  await pending[1].fulfill({ contentType: 'image/png', body: png });
+  await expect(wait).toHaveCount(0);
+  await expect(dialog.getByAltText('FLUX 4B 현장 사진 변환 결과')).toBeVisible();
+});

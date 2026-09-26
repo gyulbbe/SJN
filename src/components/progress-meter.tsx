@@ -5,11 +5,13 @@ import { formatPercent } from '@/lib/ai-progress';
 
 /**
  * Title, large percent, bar and one detail line for a long step (AI model loading, high-quality
- * image export). Screen readers hear 10% steps and `phase` changes, not every redraw.
+ * image export, a server wait of unknown length). Screen readers hear 10% steps and `phase`
+ * changes, not every redraw.
  */
 export function ProgressMeter({
   title,
   percent,
+  figure,
   valueText,
   label,
   eyebrow,
@@ -25,6 +27,8 @@ export function ProgressMeter({
   title: string;
   /** null while the amount is unknown: the bar pulses. */
   percent: number | null;
+  /** Shown in place of the percentage while it is null, e.g. elapsed "12초"; defaults to "—". */
+  figure?: string;
   /** Spoken value, e.g. "배경 제거 AI 모델 45%, 120MB 중 54MB". */
   valueText: string;
   /** Accessible name of the progress bar; defaults to the title. */
@@ -72,7 +76,7 @@ export function ProgressMeter({
           className={`shrink-0 font-bold tabular-nums text-[color:var(--ink)] ${compact ? 'text-lg' : 'text-3xl'}`}
           data-testid={percentTestId}
         >
-          {percent === null ? '—' : formatPercent(percent)}
+          {percent === null ? (figure ?? '—') : formatPercent(percent)}
         </div>
       </div>
       <div
