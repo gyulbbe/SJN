@@ -1,4 +1,5 @@
 import type { RepositoryOperations } from '../repositories/contracts';
+import { projectPhotoLight } from '../reconstruction/photo-lighting';
 import { DesignPreviewCancelled, DesignPreviewService, type PreviewDesign } from './design-preview';
 import { getCachedDesignThumbnail, type DesignPreviewIdentity } from './design-preview-cache';
 import {
@@ -58,6 +59,7 @@ export function prepareSummaryRoomThumbnail(
           design,
           materials: Object.fromEntries(entries),
           roomContext,
+          lighting: projectPhotoLight(project),
           purpose: 'thumbnail',
         });
       } finally {

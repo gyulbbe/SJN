@@ -13,7 +13,7 @@ import { handleD1Request } from '../src/lib/d1';
 
 const photos =
   '.codex-remote-attachments/01a071fe-92b3-77b3-a261-8698b3d3f8e9/04c0e236-9188-46ed-9a61-a8ff283287f8';
-const output = 'test-results/photo-lighting-match/projects';
+const output = `test-results/photo-lighting-match/${process.env.SJN_PHOTO_LIGHTING_DIR ?? 'projects'}`;
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 test.setTimeout(400000);
 

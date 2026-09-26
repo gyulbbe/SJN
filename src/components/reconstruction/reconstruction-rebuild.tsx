@@ -151,6 +151,10 @@ export default function ReconstructionRebuild({
         if (!p.shared.comparison || !next.shared.comparison) return;
         p.shared.comparison.before = next.shared.comparison.before;
         p.shared.comparison.review = next.shared.comparison.review;
+        // The new Before's colours were delit with this photo light: they belong together.
+        if (next.shared.comparison.photoLighting)
+          p.shared.comparison.photoLighting = next.shared.comparison.photoLighting;
+        else delete p.shared.comparison.photoLighting;
         p.shared.comparison.status = 'draft';
         delete p.thumbnailAssetId;
       });

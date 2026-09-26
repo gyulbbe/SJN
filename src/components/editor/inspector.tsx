@@ -14,6 +14,7 @@ import { DEFAULT_COLOR, type ColorAdjust, type MaterialVersion } from '@/lib/typ
 import { useEditingCapabilities } from './editing-capabilities';
 import { AssetImage } from '../materials/asset-image';
 import styles from './inspector-angles.module.css';
+import PhotoLightingControl from './photo-lighting-control';
 export function Range({
   label,
   value,
@@ -767,6 +768,7 @@ export default function Inspector({
               <RotateCcw size={13} />
             </button>
           </div>
+          <PhotoLightingControl />
           <div className="segmented" style={{ width: '100%', marginBottom: 17 }}>
             <button
               style={{ flex: 1 }}

@@ -172,8 +172,26 @@ export type LabProjectSource = {
   assetIds: string[];
   materialVersionIds: string[];
 };
+/**
+ * The reference photo's light (exposure and white balance), estimated from its pixels when a
+ * comparison is created. Before tiles and fixtures observed in the photo are stored delit; the
+ * renders multiply by this light (at `strength`, when `enabled`), so unchanged Before surfaces are
+ * not lit twice and new After materials sit in the photo's light.
+ */
+export type PhotoLighting = {
+  version: 1;
+  exposureEv: number;
+  /** Linear RGB light colour, luminance 1. */
+  gains: [number, number, number];
+  method: 'ceramic' | 'achromatic';
+  enabled: boolean;
+  /** 0–1. */
+  strength: number;
+};
 export type ComparisonState = {
   labSource?: LabProjectSource;
+  /** Absent on comparisons made before 2026-09-27 and when the photo gave no evidence. */
+  photoLighting?: PhotoLighting;
   before: Scene;
   room: RoomDefinition;
   cameraVersion: 1;
@@ -255,6 +273,8 @@ export type RenderSnapshot = {
   scene: Scene;
   beforeScene?: Scene;
   materials: Record<string, MaterialVersion>;
+  /** Linear RGB multiplier of the photo's light for both sides; absent means none (1, 1, 1). */
+  lighting?: [number, number, number];
 };
 export type MaterialInput = Omit<MaterialVersion, 'id' | 'materialId' | 'version' | 'createdAt'>;
 export const EMPTY_MASK = (): Mask => ({ polygon: [], strokes: [] });

@@ -580,7 +580,20 @@ export const reconstructionReviewSchema = z.object({
     )
     .max(100),
 });
+const photoLightingSchema = z.strictObject({
+  version: z.literal(1),
+  exposureEv: z.number().finite().min(-1.5).max(1.5),
+  gains: z.tuple([
+    z.number().finite().min(0.2).max(3),
+    z.number().finite().min(0.2).max(3),
+    z.number().finite().min(0.2).max(3),
+  ]),
+  method: z.enum(['ceramic', 'achromatic']),
+  enabled: z.boolean(),
+  strength: z.number().finite().min(0).max(1),
+});
 export const comparisonSchema = z.object({
+  photoLighting: photoLightingSchema.optional(),
   labSource: z
     .object({
       version: z.literal(1),

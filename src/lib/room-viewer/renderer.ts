@@ -132,7 +132,7 @@ const postVertex = `varying vec2 vUv; void main(){vUv=uv;gl_Position=vec4(positi
 const postFragment = `
 varying vec2 vUv;
 uniform sampler2D sjnBefore; uniform sampler2D sjnAfter;
-uniform vec4 sjnBeforeColor;uniform vec4 sjnAfterColor;uniform float sjnMode;uniform float sjnSplit;uniform vec4 sjnPhotoRect;
+uniform vec4 sjnBeforeColor;uniform vec4 sjnAfterColor;uniform float sjnMode;uniform float sjnSplit;uniform vec4 sjnPhotoRect;uniform vec3 sjnLighting;
 vec3 adjustColor(vec3 c,vec4 a){
  c*=exp2(a.x);c=(c-.18)*a.y+.18;c=mix(vec3(dot(c,vec3(.2126,.7152,.0722))),c,a.z);
  return max(vec3(0.),c*vec3(1.+a.w*.18,1.,1.-a.w*.18));
@@ -142,7 +142,8 @@ void main(){
  bool isBefore=sjnMode<.5||(sjnMode>1.5&&sjnMode<2.5&&vUv.x<sjnSplit)||(sjnMode>2.5&&vUv.x<.5);
  vec2 uv=vUv;if(sjnMode>2.5)uv.x=isBefore?uv.x*2.:(uv.x-.5)*2.;
  if(uv.x<sjnPhotoRect.x||uv.y<sjnPhotoRect.y||uv.x>sjnPhotoRect.x+sjnPhotoRect.z||uv.y>sjnPhotoRect.y+sjnPhotoRect.w){gl_FragColor=vec4(.909804,.909804,.894118,1.);return;}
- vec3 c=isBefore?adjustColor(texture2D(sjnBefore,uv).rgb,sjnBeforeColor):adjustColor(texture2D(sjnAfter,uv).rgb,sjnAfterColor);
+ // The photo's light (a comparison's PhotoLighting) under the user's colour adjustment, as in 2D.
+ vec3 c=isBefore?adjustColor(texture2D(sjnBefore,uv).rgb*sjnLighting,sjnBeforeColor):adjustColor(texture2D(sjnAfter,uv).rgb*sjnLighting,sjnAfterColor);
  gl_FragColor=vec4(encodeSRGB(c),1.);
 }
 `;
@@ -293,6 +294,7 @@ export class RoomViewerRenderer {
         sjnMode: { value: 1 },
         sjnSplit: { value: 0.5 },
         sjnPhotoRect: { value: new Vector4(0, 0, 1, 1) },
+        sjnLighting: { value: new Vector3(1, 1, 1) },
       },
     });
     this.postMesh = new Mesh(this.postGeometry, this.postMaterial);
@@ -614,6 +616,7 @@ export class RoomViewerRenderer {
     );
     uniforms.sjnBeforeColor.value = colorVector(this.prepared!.before.source.color);
     uniforms.sjnAfterColor.value = colorVector(this.prepared!.after.source.color);
+    uniforms.sjnLighting.value.set(...(this.snapshot?.lighting ?? [1, 1, 1]));
     uniforms.sjnMode.value = mode === 'before' ? 0 : mode === 'after' ? 1 : mode === 'split' ? 2 : 3;
     uniforms.sjnSplit.value = Number.isFinite(split) ? Math.max(0, Math.min(1, split)) : 0.5;
     let bloom: PhotoBloom | undefined;

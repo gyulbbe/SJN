@@ -27,6 +27,8 @@ export type DesignManagerProps = {
   materials: Record<string, MaterialVersion>;
   assetReader: AssetReader;
   roomContext?: DesignPreviewRoomContext;
+  /** The comparison photo's light for thumbnails (projectPhotoLight). */
+  lighting?: [number, number, number];
   writable: boolean;
   onCreate: (name?: string) => Action;
   onDuplicate: (id: string) => Action;
@@ -62,7 +64,10 @@ export function trapDesignDialog(event: KeyboardEvent<HTMLElement>) {
 function Thumbnail({
   design,
   ...props
-}: Pick<DesignManagerProps, 'projectId' | 'sharedRevision' | 'materials' | 'assetReader' | 'roomContext'> & {
+}: Pick<
+  DesignManagerProps,
+  'projectId' | 'sharedRevision' | 'materials' | 'assetReader' | 'roomContext' | 'lighting'
+> & {
   design: DesignDocument;
 }) {
   const preview = useDesignThumbnail({ ...props, design });
@@ -227,6 +232,7 @@ export default function DesignManager(props: DesignManagerProps) {
                         materials={props.materials}
                         assetReader={props.assetReader}
                         roomContext={props.roomContext}
+                        lighting={props.lighting}
                         design={design}
                       />
                       {active && <span className={styles.activeBadge}>현재 편집 중</span>}

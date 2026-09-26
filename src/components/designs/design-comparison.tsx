@@ -34,6 +34,8 @@ export type DesignComparisonProps = {
   materials: Record<string, MaterialVersion>;
   assetReader: AssetReader;
   roomContext?: DesignPreviewRoomContext;
+  /** The comparison photo's light (projectPhotoLight). */
+  lighting?: [number, number, number];
   writable: boolean;
   onEdit: (id: string) => void;
   onExclude: (id: string) => void;
@@ -369,6 +371,7 @@ export default function DesignComparison(props: DesignComparisonProps) {
     design,
     materials: props.materials,
     roomContext: props.roomContext,
+    lighting: props.lighting,
     transient: !!adminScope || guest,
   });
   async function exportImage(design?: DesignDocument) {

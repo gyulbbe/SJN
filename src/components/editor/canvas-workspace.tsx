@@ -5,6 +5,7 @@ import { PhotoCompositor } from '@/lib/render/compositor';
 import { useRepositories } from '@/components/repository-context';
 import { useEditor } from '@/lib/editor-store';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
+import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
 import type { MaterialVersion, Point, Scene } from '@/lib/types';
 import { useEditingCapabilities } from './editing-capabilities';
 type Props = {
@@ -26,6 +27,8 @@ export default function CanvasWorkspace({
     { writable } = useEditingCapabilities();
   const scene = st.draft || (st.project ? getEditingScene(st.project, st.editing) : undefined);
   const beforeScene = st.editing === 'after' ? st.project?.shared.comparison?.before : undefined;
+  const lighting = st.project ? projectPhotoLight(st.project) : undefined;
+  const lightingKey = lighting?.join();
   const activeDesign = st.project ? getActiveDesign(st.project) : undefined;
   const renderRevision = activeDesign?.renderRevision ?? activeDesign?.revision;
   const stage = useRef<HTMLDivElement>(null),
@@ -41,8 +44,8 @@ export default function CanvasWorkspace({
     base: Scene;
     pan?: Point;
   } | null>(null);
-  const current = useRef({ scene, beforeScene, materials, mode: st.mode, split: st.split });
-  current.current = { scene, beforeScene, materials, mode: st.mode, split: st.split };
+  const current = useRef({ scene, beforeScene, materials, lighting, mode: st.mode, split: st.split });
+  current.current = { scene, beforeScene, materials, lighting, mode: st.mode, split: st.split };
   const setView = useCallback(
     (zoom: number, pan: Point) => {
       const state = useEditor.getState();
@@ -97,7 +100,12 @@ export default function CanvasWorkspace({
             const c = current.current;
             if (!c.scene) break;
             await r.setSnapshot(
-              { scene: c.scene, beforeScene: c.beforeScene, materials: c.materials },
+              {
+                scene: c.scene,
+                beforeScene: c.beforeScene,
+                materials: c.materials,
+                ...(c.lighting ? { lighting: c.lighting } : {}),
+              },
               (id) => repositories.assets.get(id),
             );
             if (life.disposed) return;
@@ -143,6 +151,7 @@ export default function CanvasWorkspace({
     st.editing,
     st.draft,
     materials,
+    lightingKey,
     st.mode,
     st.split,
   ]);

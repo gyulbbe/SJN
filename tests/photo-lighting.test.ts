@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   achromaticSamples,
+  createPhotoLighting,
+  delightObserved,
+  photoLightingMultiplier,
+  projectPhotoLight,
+  samplePhotoLighting,
   chroma,
   delightColor,
   estimatePhotoLighting,
@@ -112,5 +117,91 @@ describe('taking the light out and putting it back', () => {
     // A photo colour brighter than the estimated light allows is clipped to a reflectance of 1.
     expect(delightColor('#e3dccf', estimate).slice(1, 3)).toBe('ff');
     expect(linearToHex(hexToLinear('#8a7f70'))).toBe('#8a7f70');
+  });
+});
+
+describe('stored photo light', () => {
+  const profile = {
+    version: 1 as const,
+    exposureEv: -0.5,
+    gains: [1.1, 0.98, 0.85] as Rgb,
+    method: 'ceramic' as const,
+    enabled: true,
+    strength: 1,
+  };
+  it('turns into a render multiplier only when switched on with some strength', () => {
+    expect(photoLightingMultiplier(undefined)).toBeUndefined();
+    expect(photoLightingMultiplier({ ...profile, enabled: false })).toBeUndefined();
+    expect(photoLightingMultiplier({ ...profile, strength: 0 })).toBeUndefined();
+    const full = photoLightingMultiplier(profile)!;
+    full.forEach((v, i) => expect(v).toBeCloseTo(profile.gains[i] * 2 ** -0.5, 6));
+    const half = photoLightingMultiplier({ ...profile, strength: 0.5 })!;
+    half.forEach((v, i) => expect(v).toBeCloseTo(1 + (full[i] - 1) / 2, 6));
+    expect(projectPhotoLight({ shared: { comparison: { photoLighting: profile } } } as never)).toEqual(full);
+    expect(projectPhotoLight({ shared: {} } as never)).toBeUndefined();
+  });
+  it('is created only from real evidence, on at full strength, and delights observed colours only', () => {
+    const evidence = { surfaces: 1, achromatic: 0, ceramics: 1 };
+    expect(
+      createPhotoLighting({ exposureEv: 0, gains: [1, 1, 1], method: 'neutral', evidence }),
+    ).toBeUndefined();
+    expect(
+      createPhotoLighting({ exposureEv: -0.5, gains: profile.gains, method: 'ceramic', evidence }),
+    ).toEqual(profile);
+    expect(delightObserved('#a0a0a0', undefined)).toBe('#a0a0a0');
+    expect(delightObserved('not-a-colour', profile)).toBe('not-a-colour');
+    expect(delightObserved('#a0a0a0', profile)).toBe(delightColor('#a0a0a0', profile));
+  });
+  it('samples faces without fixture boxes and takes the largest white toilet', () => {
+    const width = 20,
+      height = 10;
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+      const x = i % width;
+      const v = x < 10 ? 150 : 90;
+      rgba.set([v, v, v, 255], i * 4);
+    }
+    const quad = (l: number, r: number) =>
+      [
+        { x: l, y: 0 },
+        { x: r, y: 0 },
+        { x: r, y: 1 },
+        { x: l, y: 1 },
+      ] as [
+        { x: number; y: number },
+        { x: number; y: number },
+        { x: number; y: number },
+        { x: number; y: number },
+      ];
+    const samples = samplePhotoLighting(rgba, width, height, {
+      planes: [
+        { quad: quad(0, 0.5), tile: { color: '#969696' } },
+        { quad: quad(0.5, 1), tile: { color: '#5a5a5a' }, bands: [{ tile: { color: '#5b5b5b' } }] },
+      ],
+      candidates: [
+        {
+          kind: 'toilet',
+          status: 'unplaced',
+          color: '#d5d6d8',
+          bounds: { left: 0.6, top: 0.2, right: 0.9, bottom: 0.8 },
+        },
+        {
+          kind: 'toilet',
+          status: 'unplaced',
+          color: '#ffffff',
+          bounds: { left: 0.1, top: 0.1, right: 0.12, bottom: 0.12 },
+        },
+        {
+          kind: 'basin',
+          status: 'ignored',
+          color: '#eeeeee',
+          bounds: { left: 0, top: 0, right: 0.4, bottom: 0.9 },
+        },
+      ],
+    });
+    // 200 pixels, minus the toilet box (6 × 6) and the tiny one (none at this size).
+    expect(samples.surfaces).toHaveLength(200 - 36);
+    expect(samples.ceramics.map(linearToHex)).toEqual(['#d5d6d8']);
+    expect(samples.faces!.map(linearToHex)).toEqual(['#969696', '#5b5b5b']);
   });
 });

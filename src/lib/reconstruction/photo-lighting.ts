@@ -8,6 +8,8 @@
  * colour in the photo is the light's. Without it, only clearly achromatic bright surface pixels
  * count, and with too little evidence the profile stays neutral.
  */
+import type { PhotoLighting, ProjectDocument } from '../types';
+
 export type Rgb = [number, number, number];
 export type PhotoLightingMethod = 'neutral' | 'gray-world' | 'achromatic' | 'ceramic' | 'mixed';
 export type PhotoLightingEstimate = {
@@ -173,4 +175,123 @@ export function relightColor(
 ): string {
   const m = lightingMultiplier(estimate, strength);
   return linearToHex(hexToLinear(hex).map((v, i) => v * m[i]) as Rgb);
+}
+
+type Quad = [
+  { x: number; y: number },
+  { x: number; y: number },
+  { x: number; y: number },
+  { x: number; y: number },
+];
+type Bounds = { left: number; top: number; right: number; bottom: number };
+/** The parts of an analysis this needs: faces with their photo colour, fixture candidates. */
+export type PhotoLightingReview = {
+  planes: { quad: Quad; tile: { color: string }; bands?: { tile: { color: string } }[] }[];
+  candidates: { kind: string; status: string; color: string; bounds: Bounds }[];
+};
+function insideQuad(quad: Quad, x: number, y: number) {
+  let hit = false;
+  for (let i = 0, j = 3; i < 4; j = i++) {
+    const a = quad[i],
+      b = quad[j];
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+  }
+  return hit;
+}
+/** Candidates smaller than this share of the photo are detections of fittings or reflections. */
+const MIN_CERAMIC_AREA = 0.01;
+/**
+ * Samples of one analysed photo (RGBA, any size; coordinates are normalised): the face pixels
+ * without fixture boxes, the largest white-sanitaryware candidate's observed colour (a toilet,
+ * else a basin or bath that is not strongly coloured) and each face's photo colour.
+ */
+export function samplePhotoLighting(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  review: PhotoLightingReview,
+): PhotoLightingSamples {
+  const candidates = review.candidates.filter((c) => c.status !== 'ignored');
+  const inBox = (b: Bounds, x: number, y: number) =>
+    x >= b.left && x <= b.right && y >= b.top && y <= b.bottom;
+  const surfaces: Rgb[] = [];
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const u = (x + 0.5) / width,
+        v = (y + 0.5) / height;
+      if (!review.planes.some((p) => insideQuad(p.quad, u, v))) continue;
+      if (candidates.some((c) => inBox(c.bounds, u, v))) continue;
+      const i = (y * width + x) * 4;
+      if (!rgba[i + 3]) continue;
+      surfaces.push([srgbToLinear(rgba[i]), srgbToLinear(rgba[i + 1]), srgbToLinear(rgba[i + 2])]);
+    }
+  const area = (b: Bounds) => (b.right - b.left) * (b.bottom - b.top);
+  const valid = (c: (typeof candidates)[number]) =>
+    /^#[0-9a-f]{6}$/i.test(c.color) && area(c.bounds) >= MIN_CERAMIC_AREA;
+  const largest = (list: typeof candidates) =>
+    [...list].sort((a, b) => area(b.bounds) - area(a.bounds)).slice(0, 1);
+  const toilets = candidates.filter((c) => c.kind === 'toilet' && valid(c));
+  const others = candidates.filter(
+    (c) => (c.kind === 'basin' || c.kind === 'bath') && valid(c) && chroma(hexToLinear(c.color)) <= 0.35,
+  );
+  const ceramics = (toilets.length ? largest(toilets) : largest(others)).map((c) => hexToLinear(c.color));
+  const faces = review.planes
+    .flatMap((p) => (p.bands?.length ? p.bands.map((b) => b.tile.color) : [p.tile.color]))
+    .filter((hex) => /^#[0-9a-f]{6}$/i.test(hex))
+    .map(hexToLinear);
+  return { surfaces, ceramics, faces };
+}
+
+/** The stored profile for an estimate, or undefined when the photo gave no evidence. */
+export function createPhotoLighting(estimate: PhotoLightingEstimate): PhotoLighting | undefined {
+  if (estimate.method !== 'ceramic' && estimate.method !== 'achromatic') return;
+  return {
+    version: 1,
+    exposureEv: estimate.exposureEv,
+    gains: [...estimate.gains],
+    method: estimate.method,
+    enabled: true,
+    strength: 1,
+  };
+}
+/** What a render multiplies by for a stored profile; undefined leaves every pixel unchanged. */
+export function photoLightingMultiplier(profile: PhotoLighting | undefined): Rgb | undefined {
+  if (!profile?.enabled || profile.strength <= 0) return;
+  return lightingMultiplier(profile, profile.strength);
+}
+/** A colour observed in the photo, delit when the project has a profile (else unchanged). */
+export function delightObserved(hex: string, profile: PhotoLighting | undefined): string {
+  return profile && /^#[0-9a-f]{6}$/i.test(hex) ? delightColor(hex, profile) : hex;
+}
+/** The render multiplier of a project's comparison photo light, if it has one switched on. */
+export function projectPhotoLight(project: Pick<ProjectDocument, 'shared'>): Rgb | undefined {
+  return photoLightingMultiplier(project.shared.comparison?.photoLighting);
+}
+
+/**
+ * Estimates the light of an analysed photo in the browser (the photo never leaves it): at most
+ * 640 px wide, the faces and fixture candidates of its review, the mixed method. Undefined when
+ * the photo gives no evidence.
+ */
+export async function estimateReviewLighting(
+  photo: Blob,
+  review: PhotoLightingReview,
+): Promise<PhotoLighting | undefined> {
+  if (!review.planes.length) return;
+  const bitmap = await createImageBitmap(photo);
+  try {
+    const width = Math.min(640, bitmap.width),
+      height = Math.max(1, Math.round((width * bitmap.height) / bitmap.width));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return;
+    context.drawImage(bitmap, 0, 0, width, height);
+    const rgba = context.getImageData(0, 0, width, height).data;
+    canvas.width = canvas.height = 1;
+    return createPhotoLighting(estimatePhotoLighting(samplePhotoLighting(rgba, width, height, review)));
+  } finally {
+    bitmap.close();
+  }
 }

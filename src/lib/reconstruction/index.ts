@@ -1,4 +1,5 @@
 import { photoAnalysisSignal, type AnalysisCachePolicy } from './analysis-cache-policy';
+import { delightObserved, estimateReviewLighting } from './photo-lighting';
 import { createProjectMaterial } from '@/lib/repositories/project-material';
 import { fixtureVariantErrors, openCounterDefaults, showerVariantDefaults } from './fixture-variants';
 import { resolveProductColor } from './product-color';
@@ -997,6 +998,12 @@ async function createReconstructionProjectImpl(
     estimated: true,
   };
   checkAbort(options.signal);
+  // The photo's light, so the colours measured in it are stored as the materials' own colours
+  // and the renders put the light back once (PhotoLighting). A direct build has no measurements.
+  const photoLighting = options.manual
+    ? undefined
+    : await estimateReviewLighting(reference.preview.blob, review).catch(() => undefined);
+  checkAbort(options.signal);
   options.onAnalysisPhase?.('render');
   options.onStage?.('같은 구도의 비교 공간 생성 중');
   const background = targetBackground ?? (await renderRoomBackground(room));
@@ -1027,8 +1034,17 @@ async function createReconstructionProjectImpl(
     const parts = bands ?? [{ from: 0, to: 1, tile: plane.tile }];
     const replacements = [];
     for (const [index, band] of parts.entries()) {
+      const tile = photoLighting
+        ? {
+            ...band.tile,
+            color: delightObserved(band.tile.color, photoLighting),
+            ...(band.tile.groutColor
+              ? { groutColor: delightObserved(band.tile.groutColor, photoLighting) }
+              : {}),
+          }
+        : band.tile;
       const material = await createReconstructionTile({
-        ...band.tile,
+        ...tile,
         kind: surface.kind,
         repositories: repos,
         signal: options.signal,
@@ -1036,9 +1052,9 @@ async function createReconstructionProjectImpl(
       const part = structuredClone(surface);
       if (index > 0) part.id = crypto.randomUUID();
       part.materialVersionId = material.id;
-      part.tile.pattern = band.tile.pattern ?? 'grid';
-      part.tile.groutWidth = band.tile.groutWidth;
-      part.tile.groutColor = band.tile.groutColor ?? material.defaultGroutColor;
+      part.tile.pattern = tile.pattern ?? 'grid';
+      part.tile.groutWidth = tile.groutWidth;
+      part.tile.groutColor = tile.groutColor ?? material.defaultGroutColor;
       part.tile.shading = 0.4;
       if (bands) {
         const top = plane.verticalStart ?? 0,
@@ -1137,7 +1153,7 @@ async function createReconstructionProjectImpl(
       fixture = await createReconstructionFixture({
         kind: candidate.kind,
         room,
-        color: candidate.color,
+        color: delightObserved(candidate.color, photoLighting),
         ...placement,
         ...(candidatePlans ? customPlan : estimateCandidateFixture(candidate, review, room, placement)),
         ...(parentLink && parentFixture
@@ -1213,6 +1229,7 @@ async function createReconstructionProjectImpl(
       referencePreviewAssetId: reference.preview.id,
       status: 'draft',
       review,
+      ...(photoLighting ? { photoLighting } : {}),
     },
     history: { past: [], future: [] },
     viewport: { zoom: 1, pan: { x: 0, y: 0 } },

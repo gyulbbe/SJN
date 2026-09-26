@@ -17,6 +17,7 @@ import {
   ShaderMaterial,
   UnsignedByteType,
   Vector2,
+  Vector3,
   Vector4,
   WebGLRenderer,
   WebGLRenderTarget,
@@ -206,12 +207,13 @@ void main(){
 const outputShader = `
 varying vec2 vUv;uniform sampler2D edited;uniform sampler2D original;uniform sampler2D beforeEdited;
 uniform vec4 adjustment;uniform vec4 beforeAdjustment;uniform float hasBeforeScene;
-uniform float mode;uniform float splitPosition;
+uniform float mode;uniform float splitPosition;uniform vec3 lighting;
 ${colorFunctions}
 void main(){
   vec3 before=texture2D(original,vUv).rgb;
-  if(hasBeforeScene>.5) before=encodeSRGB(adjustColor(texture2D(beforeEdited,vUv).rgb,beforeAdjustment));
-  vec3 after=encodeSRGB(adjustColor(texture2D(edited,vUv).rgb,adjustment));
+  // The photo's light (a comparison's PhotoLighting) under the user's colour adjustment; 1 otherwise.
+  if(hasBeforeScene>.5) before=encodeSRGB(adjustColor(texture2D(beforeEdited,vUv).rgb*lighting,beforeAdjustment));
+  vec3 after=encodeSRGB(adjustColor(texture2D(edited,vUv).rgb*lighting,adjustment));
   gl_FragColor=vec4(mode<.5?before:(mode>1.5&&vUv.x<splitPosition?before:after),1.);
 }
 `;
@@ -1006,6 +1008,7 @@ export class PhotoCompositor {
     uniform(final, 'hasBeforeScene', before ? 1 : 0);
     uniform(final, 'beforeAdjustment', colorVector(before?.scene.color ?? this.snapshot.scene.color));
     uniform(final, 'adjustment', colorVector(this.snapshot.scene.color));
+    uniform(final, 'lighting', new Vector3(...(this.snapshot.lighting ?? [1, 1, 1])));
     uniform(final, 'mode', mode === 'before' ? 0 : mode === 'after' ? 1 : 2);
     uniform(final, 'splitPosition', Math.max(0, Math.min(1, split)));
     this.draw(final, null);

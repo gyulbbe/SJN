@@ -55,14 +55,13 @@ vec3 sjnPhotoDisplay(vec3 y){
  return y;
 }
 void main(){`;
-  return postFragment
-    .replace('void main(){', functions)
-    .replace(
-      output,
-      'vec2 sjnP=(uv-sjnPhotoRect.xy)/sjnPhotoRect.zw;' +
-        'c=sjnPhotoLinear(c,isBefore?texture2D(sjnBloomBefore,uv).rgb:texture2D(sjnBloomAfter,uv).rgb,sjnP);' +
-        'gl_FragColor=vec4(sjnPhotoDisplay(encodeSRGB(c)),1.);',
-    );
+  return postFragment.replace('void main(){', functions).replace(
+    output,
+    'vec2 sjnP=(uv-sjnPhotoRect.xy)/sjnPhotoRect.zw;' +
+      // The glow comes from the unlit sides, so it takes the same photo light (1 without one).
+      'c=sjnPhotoLinear(c,(isBefore?texture2D(sjnBloomBefore,uv).rgb:texture2D(sjnBloomAfter,uv).rgb)*sjnLighting,sjnP);' +
+      'gl_FragColor=vec4(sjnPhotoDisplay(encodeSRGB(c)),1.);',
+  );
 }
 
 export function photoEffectUniforms(effects: PhotoEffects) {

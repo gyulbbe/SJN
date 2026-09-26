@@ -22,6 +22,8 @@ export type DesignPreviewInput = {
   design: PreviewDesign;
   materials: Record<string, MaterialVersion>;
   roomContext?: DesignPreviewRoomContext;
+  /** A comparison photo's light (projectPhotoLight); absent renders without one. */
+  lighting?: [number, number, number];
   purpose?: 'thumbnail' | 'comparison';
   edge?: number;
   /** Do not read or write durable previews while editing another member's project. */
@@ -75,6 +77,7 @@ const snapshotFor = (input: DesignPreviewInput): RenderSnapshot => {
       ? { beforeScene: input.roomContext.beforeScene, roomView: input.roomContext.view }
       : {}),
     materials: Object.fromEntries([...ids].sort().map((id) => [id, input.materials[id]])),
+    ...(input.lighting ? { lighting: input.lighting } : {}),
   });
 };
 export function designPreviewSize(input: DesignPreviewInput) {

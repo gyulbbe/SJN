@@ -283,3 +283,52 @@ describe('comparison persistence and reference integrity', () => {
     raw.close();
   });
 });
+
+describe('photo lighting on a comparison', () => {
+  it('keeps the stored photo light through local and cloud schemas, and older documents without it', async () => {
+    const older = await setup();
+    const withoutLight = normalizeProjectDocument(
+      projectSchema.parse(await older.repo.projects.create(older.p)),
+    );
+    expect(withoutLight.shared.comparison!.photoLighting).toBeUndefined();
+    const { repo, p } = await setup();
+    p.comparison!.photoLighting = {
+      version: 1,
+      exposureEv: -0.25,
+      gains: [0.99, 1.001, 1.022],
+      method: 'ceramic',
+      enabled: true,
+      strength: 0.6,
+    };
+    const saved = await repo.projects.create(p);
+    expect((await repo.projects.load(saved.id)).shared.comparison!.photoLighting).toEqual(
+      p.comparison!.photoLighting,
+    );
+    const parsed = normalizeProjectDocument(projectSchema.parse(saved));
+    expect(parsed.shared.comparison!.photoLighting).toEqual(p.comparison!.photoLighting);
+  });
+
+  it('refuses a photo light outside its ranges', async () => {
+    const { repo, p } = await setup();
+    const saved = await repo.projects.create(p);
+    for (const bad of [
+      { exposureEv: 3 },
+      { strength: 1.5 },
+      { gains: [0, 1, 1] },
+      { method: 'gray-world' },
+      { extra: true },
+    ]) {
+      const copy = structuredClone(saved);
+      copy.shared.comparison!.photoLighting = {
+        version: 1,
+        exposureEv: 0,
+        gains: [1, 1, 1],
+        method: 'achromatic',
+        enabled: true,
+        strength: 1,
+        ...bad,
+      } as never;
+      expect(() => projectSchema.parse(copy), JSON.stringify(bad)).toThrow();
+    }
+  });
+});

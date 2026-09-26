@@ -57,6 +57,7 @@ export function useDesignPreview(source: Input) {
       input.purpose,
       input.edge,
       input.roomContext,
+      input.lighting,
       ids.map((id) => input.materials[id]),
     ]);
   }, [
@@ -68,6 +69,7 @@ export function useDesignPreview(source: Input) {
     input.edge,
     input.materials,
     input.roomContext,
+    input.lighting,
   ]);
   const enabled = input.enabled !== false && !!input.design;
   useEffect(() => {

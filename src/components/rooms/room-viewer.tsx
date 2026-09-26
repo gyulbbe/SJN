@@ -20,6 +20,7 @@ import { ProgressMeter } from '@/components/progress-meter';
 import { usePhotoEffectsPreference } from '@/components/photo-effects-preference';
 import { PHOTO_EFFECTS } from '@/lib/room-viewer/photo-effects';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
+import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
 import {
   clampRoomEye,
   moveRoomEye,
@@ -130,11 +131,18 @@ export default function RoomViewer({
   const fitScenes = projectDesignPreviewRoomContext(project)?.fitScenes;
   const fitScenesRef = useRef(fitScenes);
   fitScenesRef.current = fitScenes;
-  const sceneKey = JSON.stringify([after, before, materials, fitScenes]);
+  const lighting = projectPhotoLight(project);
+  const sceneKey = JSON.stringify([after, before, materials, fitScenes, lighting]);
   // A cached preparation can finish in one React batch. Track its identity rather than a boolean.
   const prepared = readySnapshot?.renderer === renderer && readySnapshot?.key === sceneKey;
-  const snapshotRef = useRef<RenderSnapshot>({ scene: after, beforeScene: before, materials });
-  snapshotRef.current = { scene: after, beforeScene: before, materials };
+  const snapshot: RenderSnapshot = {
+    scene: after,
+    beforeScene: before,
+    materials,
+    ...(lighting ? { lighting } : {}),
+  };
+  const snapshotRef = useRef<RenderSnapshot>(snapshot);
+  snapshotRef.current = snapshot;
   const aspect = after.imageWidth / after.imageHeight;
   const displayAspect = aspect * (mode === 'compare' ? 2 : 1);
   const fit = useMemo(() => {

@@ -85,6 +85,7 @@ import RoomViewer from '@/components/rooms/room-viewer';
 import WallFeaturesDialog from '@/components/rooms/wall-features-dialog';
 import RoomCanvasWorkspace from '@/components/rooms/room-canvas-workspace';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
+import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
 import type { RoomDefinition } from '@/lib/room-types';
 import { renderRoomBackground } from '@/lib/room-background';
 import { projectWallFeatureResizeError, roomResetWarnings } from '@/lib/room-editing';
@@ -233,6 +234,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   const recoveryCopy = useRef<ProjectDocument | null>(null);
   const activeDesign = st.project ? getActiveDesign(st.project) : undefined;
   const roomContext = st.project ? projectDesignPreviewRoomContext(st.project) : undefined;
+  const photoLight = st.project ? projectPhotoLight(st.project) : undefined;
   const assetReader = useCallback((assetId: string) => repositories.assets.get(assetId), [repositories]);
   useDesignThumbnail({
     projectId: id,
@@ -241,6 +243,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     materials,
     assetReader,
     roomContext,
+    lighting: photoLight,
     transient: isGuest,
     enabled:
       !isGuest &&
@@ -1137,6 +1140,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         scene: structuredClone(getActiveScene(st.project)),
         beforeScene: structuredClone(st.project.shared.comparison?.before ?? st.project.shared.baseline),
         materials: structuredClone(materials),
+        // Downloads, previews and the FLUX input show the photo's light as the editor does.
+        ...(photoLight ? { lighting: photoLight } : {}),
       };
       let blob: Blob;
       if (roomContext) {
@@ -1768,6 +1773,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         <DesignComparison
           projectId={st.project.id}
           roomContext={roomContext}
+          lighting={photoLight}
           sharedRevision={st.project.shared.revision}
           designs={st.project.comparisonDesignIds
             .map((designId) => st.project!.designs.find((d) => d.id === designId)!)
@@ -2064,6 +2070,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         <DesignManager
           projectId={st.project.id}
           roomContext={roomContext}
+          lighting={photoLight}
           sharedRevision={st.project.shared.revision}
           designs={st.project.designs}
           activeDesignId={st.project.activeDesignId}

@@ -5,6 +5,7 @@ import { getEditingScene } from '@/lib/comparison';
 import type { MaterialVersion, Scene } from '@/lib/types';
 import type { AssetReader } from '@/lib/render/compositor';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
+import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
 import { RoomViewerRenderer } from '@/lib/room-viewer/renderer';
 import { normalizeRoomView, resetRoomView, rotateRoomView } from '@/lib/room-viewer/view-state';
 import { useEditingCapabilities } from '../editor/editing-capabilities';
@@ -29,6 +30,7 @@ export default function RoomCanvasWorkspace({
   const context = st.project ? projectDesignPreviewRoomContext(st.project) : undefined;
   const before = st.editing === 'before' ? scene : context?.beforeScene;
   const view = normalizeRoomView(st.project?.roomView);
+  const lighting = st.project ? projectPhotoLight(st.project) : undefined;
   const stage = useRef<HTMLDivElement>(null),
     mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<RoomViewerRenderer | null>(null);
@@ -38,12 +40,13 @@ export default function RoomCanvasWorkspace({
   const canPick = useRef(false),
     preparedKey = useRef<string | null>(null);
   const [retry, setRetry] = useState(0);
-  const sceneKey = JSON.stringify([scene, before, materials, context?.fitScenes]);
+  const sceneKey = JSON.stringify([scene, before, materials, context?.fitScenes, lighting]);
   const current = useRef({
     scene,
     before,
     materials,
     context,
+    lighting,
     view,
     mode: st.mode,
     split: st.split,
@@ -55,6 +58,7 @@ export default function RoomCanvasWorkspace({
     before,
     materials,
     context,
+    lighting,
     view,
     mode: st.mode,
     split: st.split,
@@ -145,7 +149,12 @@ export default function RoomCanvasWorkspace({
             if (!c.scene || !c.before) break;
             try {
               await instance.setSnapshot(
-                { scene: c.scene, beforeScene: c.before, materials: c.materials },
+                {
+                  scene: c.scene,
+                  beforeScene: c.before,
+                  materials: c.materials,
+                  ...(c.lighting ? { lighting: c.lighting } : {}),
+                },
                 assetReader,
                 { fitScenes: c.context?.fitScenes },
               );

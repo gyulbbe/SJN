@@ -32,6 +32,7 @@ import { useAccess } from '@/components/app-provider';
 import styles from './reconstruction.module.css';
 import ReconstructionRebuild from './reconstruction-rebuild';
 import { ReviewPlacementPicker } from './review-placement-picker';
+import { delightObserved } from '@/lib/reconstruction/photo-lighting';
 
 export default function ReconstructionReviewPanel({
   open,
@@ -212,7 +213,11 @@ export default function ReconstructionReviewPanel({
             ? 'floor'
             : (candidate?.installation?.wall ?? mapped?.face ?? defaults.face),
         ...proposal,
-        color: colorEvidence.color,
+        // A colour seen in the photo is stored without the photo's light, like the other Before colours.
+        color:
+          colorEvidence.source === 'inferred'
+            ? delightObserved(colorEvidence.color, captured.shared.comparison.photoLighting)
+            : colorEvidence.color,
         colorEvidence,
         placementPolicy: candidate ? 'preserve' : undefined,
         toiletLidState: lidObservation?.value ?? defaults.toiletLidState,
@@ -428,8 +433,8 @@ export default function ReconstructionReviewPanel({
                           : candidate.source === 'gemma'
                             ? 'Gemma 관측'
                             : candidate.source === 'qwen'
-                            ? 'Qwen 관측'
-                            : 'DeepLab 관측'}
+                              ? 'Qwen 관측'
+                              : 'DeepLab 관측'}
                     </span>
                     {candidate.installation && (
                       <span>

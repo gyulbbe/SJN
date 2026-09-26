@@ -17,17 +17,21 @@ import sharp from 'sharp';
 import { deltaE2000, type Rgb as Rgb8 } from './helpers/delta-e';
 
 const root = 'test-results/photo-lighting-match';
-const chosen = process.argv.find((a) => a.startsWith('--method='))?.slice(9) ?? 'mixed';
-const projects = (await readdir(`${root}/projects`)).sort();
+const app = process.argv.includes('--app');
+// --app reads projects made by the app with the photo light (capture with SJN_PHOTO_LIGHTING_DIR=projects-app).
+const chosen = app ? 'app' : (process.argv.find((a) => a.startsWith('--method='))?.slice(9) ?? 'mixed');
+const projectDir = app ? 'projects-app' : 'projects';
+const projects = (await readdir(`${root}/${projectDir}`)).sort();
 const inputs = [];
 for (const name of projects) {
-  const dir = `${root}/projects/${name}`;
+  const dir = `${root}/${projectDir}/${name}`;
   const assets = JSON.parse(await readFile(`${dir}/assets.json`, 'utf8')) as Record<string, { mime: string }>;
   const bytes: Record<string, string> = {};
   for (const id of Object.keys(assets))
     bytes[id] = (await readFile(`${dir}/assets/${id}`)).toString('base64');
   inputs.push({
     name,
+    app,
     project: JSON.parse(await readFile(`${dir}/project.json`, 'utf8')),
     materials: JSON.parse(await readFile(`${dir}/materials.json`, 'utf8')),
     assets,
@@ -65,6 +69,7 @@ try {
   for (const input of inputs) {
     const result = await page.evaluate(
       async ({ input, chosen }) => {
+        // (input.app marks projects made by the app with the photo light.)
         type Lib = typeof import('../src/lib/render/compositor') &
           typeof import('../src/lib/reconstruction/photo-lighting') &
           typeof import('../src/lib/ai-export/scene');
@@ -132,43 +137,21 @@ try {
         };
         const candidates = review.candidates.filter((c) => c.status !== 'ignored');
         const boxes = candidates.map((c) => c.bounds);
-        // Samples: room surfaces from the analysed planes, fixtures excluded.
-        const surfaces: Rgb[] = [];
-        const planeIndex = (x: number, y: number) => review.planes.findIndex((p) => inside(p.quad, x, y));
-        for (let y = 0; y < H; y++)
-          for (let x = 0; x < W; x++) {
-            const u = (x + 0.5) / W,
-              v = (y + 0.5) / H;
-            if (planeIndex(u, v) < 0 || boxes.some((b) => inBox(b, u, v))) continue;
-            surfaces.push(lin(photo, (y * W + x) * 4));
-          }
-        // White sanitaryware: the largest toilet, else a large basin or bath that is not strongly
-        // coloured. Small detections (reflections, fittings) are not evidence of the light.
-        const area = (c: (typeof candidates)[number]) =>
-          (c.bounds.right - c.bounds.left) * (c.bounds.bottom - c.bounds.top);
-        const large = (c: (typeof candidates)[number]) => area(c) >= 0.01;
-        const toilets = candidates
-          .filter((c) => c.kind === 'toilet' && large(c))
-          .sort((a, b) => area(b) - area(a));
-        const others = candidates
-          .filter(
-            (c) =>
-              (c.kind === 'basin' || c.kind === 'bath') &&
-              large(c) &&
-              lib.chroma(lib.hexToLinear(c.color)) <= 0.35,
-          )
-          .sort((a, b) => area(b) - area(a));
-        const ceramicCandidates = toilets.length ? toilets.slice(0, 1) : others.slice(0, 1);
-        const ceramics = ceramicCandidates.map((c) => lib.hexToLinear(c.color));
-        // The faces' representative colours: the tile materials made from the photo.
-        const faces = before.surfaces
-          .map((s) => (s.materialVersionId ? materials[s.materialVersionId] : undefined))
-          .filter((m): m is MaterialVersion => !!m && m.category === 'tile')
-          .map((m) => lib.hexToLinear(m.color));
-        const samples = { surfaces, ceramics, faces };
+        // The same sampling as the app (faces without fixture boxes, the largest white sanitaryware).
+        const samples = lib.samplePhotoLighting(photo, W, H, review);
         const methods = ['gray-world', 'achromatic', 'ceramic', 'mixed'] as const;
         const estimates = Object.fromEntries(methods.map((m) => [m, lib.estimatePhotoLighting(samples, m)]));
-        const estimate = estimates[chosen as (typeof methods)[number]];
+        // --app: the project was made by the app, so its colours are delit already and it carries the
+        // stored light; renders take that light through the shader (RenderSnapshot.lighting).
+        const stored = input.app ? comparison.photoLighting : undefined;
+        const estimate = input.app
+          ? {
+              ...(stored ?? { exposureEv: 0, gains: [1, 1, 1] as Rgb }),
+              method: stored?.method ?? 'neutral',
+              evidence: estimates.mixed.evidence,
+            }
+          : estimates[chosen as (typeof methods)[number]];
+        const appLight = lib.photoLightingMultiplier(stored);
         // Delit copies of the photo-derived colours.
         const extraAssets: Record<string, AssetRecord> = {};
         const solid = async (id: string, hex: string) => {
@@ -254,8 +237,8 @@ try {
         }));
         const reader = async (id: string) => extraAssets[id] ?? assets[id];
         const compositor = new lib.PhotoCompositor();
-        const render = async (scene: Scene, mats: Record<string, MaterialVersion>) => {
-          const snapshot = { scene, beforeScene: scene, materials: mats };
+        const render = async (scene: Scene, mats: Record<string, MaterialVersion>, lighting?: Rgb) => {
+          const snapshot = { scene, beforeScene: scene, materials: mats, ...(lighting ? { lighting } : {}) };
           await compositor.setSnapshot(snapshot, reader);
           const blob = await compositor.exportImage(snapshot, 1280, 1280, 'image/png', false);
           const bitmap = await createImageBitmap(blob);
@@ -270,19 +253,36 @@ try {
               out[i + c] = lib.linearToSrgb(lib.srgbToLinear(image.data[i + c]) * m[c]);
           return { ...image, data: out };
         };
-        let images: Record<string, Img>;
-        try {
+        // The app's Before as shown, and an After with the light off and on, all in the shader.
+        const appImages = async (): Promise<Record<string, Img>> => {
+          const appAfter = structuredClone(after);
+          appAfter.fixtures = structuredClone(before.fixtures);
+          const shown = await render(structuredClone(before), materials, appLight);
+          return {
+            current: shown,
+            delit: shown,
+            delitOff: await render(structuredClone(before), materials),
+            afterOff: await render(appAfter, delitMaterials),
+            afterOn: await render(appAfter, delitMaterials, appLight),
+          };
+        };
+        // The measurement: today's Before, delit colours relit on the CPU, the After off and on.
+        const measuredImages = async (): Promise<Record<string, Img>> => {
           const current = await render(structuredClone(before), materials);
           const delitOff = await render(delitScene(before), delitMaterials);
           const afterOff = await render(after, delitMaterials);
           const m = lib.lightingMultiplier(estimate);
-          images = {
+          return {
             current,
             delit: multiply(delitOff, m),
             delitOff,
             afterOff,
             afterOn: multiply(afterOff, m),
           };
+        };
+        let images: Record<string, Img>;
+        try {
+          images = input.app ? await appImages() : await measuredImages();
         } finally {
           compositor.dispose();
         }
@@ -350,19 +350,15 @@ try {
           return c.toDataURL('image/png');
         };
         // After's white wall against the photo's white sanitaryware (how the same white reads).
-        const whiteWall = (data: Uint8ClampedArray) =>
+        const whiteWall = (image: Img) =>
           mean(
-            data,
+            image,
             (u, v) =>
               after.surfaces.some((s) => s.kind === 'wall' && inside(s.quad, u, v)) &&
               !fixtureBoxes.some((b) => inBox(b, u, v)),
           );
         return {
-          ceramic: ceramicCandidates.map((c) => ({
-            kind: c.kind,
-            color: c.color,
-            area: +area(c).toFixed(3),
-          })),
+          ceramic: samples.ceramics.map((c) => ({ color: lib.linearToHex(c) })),
           afterWhite: { off: whiteWall(images.afterOff), on: whiteWall(images.afterOn) },
           estimates,
           chosen: estimate,
