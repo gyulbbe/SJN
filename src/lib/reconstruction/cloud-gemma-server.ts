@@ -182,7 +182,7 @@ export async function assertCloudGemmaRequest(request: Request, environment: Env
   }
   throw new CloudGemmaError('Google 로그인과 D1 연결 설정이 필요해요.', 'authentication_unavailable', 503);
 }
-function binding(environment: Environment): CloudGemmaBinding {
+export function binding(environment: Environment): CloudGemmaBinding {
   const ai = environment.AI;
   if (
     environment.platform !== 'cloudflare' ||
@@ -211,7 +211,7 @@ export async function cloudGemmaAvailability(request: Request, environment = get
     upstreamVerified: false,
   };
 }
-async function boundedBytes(
+export async function boundedBytes(
   message: Request | Response,
   limit: number,
   signal: AbortSignal,
@@ -283,7 +283,7 @@ async function imageField(form: FormData, key: string) {
     return invalid('분석 이미지는 긴 변 1600px 이하여야 해요.');
   return { bytes, header, hash: await sha256(bytes) };
 }
-function dataUrl(bytes: Uint8Array, mime: string): string {
+export function dataUrl(bytes: Uint8Array, mime: string): string {
   // Bounded chunks avoid argument/stack overflow and Buffer/Node dependencies in Workers.
   let binary = '';
   for (let offset = 0; offset < bytes.length; offset += 8192)
@@ -519,7 +519,7 @@ function stage(input: Input) {
     }
   }
 }
-const completionSchema = z.object({
+export const completionSchema = z.object({
   model: z.string().optional(),
   choices: z
     .array(

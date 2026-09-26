@@ -4,7 +4,8 @@ import type { FluxFixture, FluxFixtureKind, FluxScene, FluxSurface } from './sce
 /** Workers AI does not document a prompt limit; stay well inside typical text-encoder budgets. */
 export const FLUX_PROMPT_MAX_CHARS = 2400;
 
-const NOUNS: Record<FluxFixtureKind, string> = {
+/** English names of the fixture kinds, shared with the result check. */
+export const FLUX_KIND_NOUNS: Record<FluxFixtureKind, string> = {
   toilet: 'toilet',
   basin: 'washbasin',
   vanity: 'bathroom vanity cabinet with a basin',
@@ -107,7 +108,7 @@ function place([left, top, right, bottom]: FluxFixture['box']) {
 const percent = (value: number) => Math.round(value * 100);
 
 function fixtureSentence(fixture: FluxFixture, index: number, detailed: boolean): string {
-  const noun = NOUNS[fixture.kind];
+  const noun = FLUX_KIND_NOUNS[fixture.kind];
   const forms = fixture.forms.length ? `${fixture.forms.join(', ')} ` : '';
   const [left, top, right, bottom] = fixture.box;
   const where = detailed
@@ -133,7 +134,7 @@ export function buildFluxPrompt(scene: FluxScene | undefined): string {
   if (!scene || (!scene.fixtures.length && !scene.surfaces.length)) return FLUX_PROMPT;
   const counts = new Map<string, number>();
   for (const fixture of scene.fixtures)
-    counts.set(NOUNS[fixture.kind], (counts.get(NOUNS[fixture.kind]) ?? 0) + 1);
+    counts.set(FLUX_KIND_NOUNS[fixture.kind], (counts.get(FLUX_KIND_NOUNS[fixture.kind]) ?? 0) + 1);
   const summary = scene.fixtures.length
     ? `Image 0 contains exactly these fixtures: ${[...counts].map(([noun, count]) => `${count} ${noun}${count > 1 ? 's' : ''}`).join(', ')}. Each one keeps its type, position, size, shape and colour; no fixture turns into a different object and nothing is added.`
     : '';
