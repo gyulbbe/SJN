@@ -15,6 +15,7 @@ import {
   type WebGLRenderer,
 } from 'three';
 import type { RoomDimensions } from '../room-types';
+import { applyRoomShadow } from '../room-viewer/shadow';
 
 /**
  * Khronos PBR Neutral tone mapping, the same curve as three's NeutralToneMapping. It keeps base
@@ -47,7 +48,7 @@ const LIGHT_COLOR = '#ffffff';
  * Positions follow the room's millimetre dimensions, so the view never drags the light along.
  */
 export function createRoomLightRig(room: RoomDimensions, options: { environment: boolean }): Object3D[] {
-  const { widthMm: width, heightMm: height, depthMm: depth } = room;
+  const { heightMm: height, depthMm: depth } = room;
   // A 90° cone with full penumbra falls off like a flat ceiling panel (≈cos), so the upper walls
   // fade softly instead of forming a bright band under the ceiling.
   const ceiling = new SpotLight(LIGHT_COLOR, 1, 0, Math.PI / 2, 1, 2);
@@ -55,13 +56,10 @@ export function createRoomLightRig(room: RoomDimensions, options: { environment:
   ceiling.target.position.set(0, 0, depth * 0.52);
   // Physically based falloff in millimetres: irradiance = intensity / distance², diffuse = irradiance / π.
   ceiling.intensity = CEILING_LIGHT * Math.PI * (height * 0.985) ** 2;
-  ceiling.castShadow = true;
-  ceiling.shadow.mapSize.set(1024, 1024);
-  ceiling.shadow.radius = 5;
   ceiling.shadow.bias = -0.0004;
   ceiling.shadow.normalBias = 1.5;
-  ceiling.shadow.camera.near = Math.max(1, height * 0.01);
-  ceiling.shadow.camera.far = Math.hypot(width, height, depth) * 1.5;
+  // Frustum, map and filter: one rule for live frames, previews and exports (room-viewer/shadow).
+  applyRoomShadow(ceiling, room);
   const objects: Object3D[] = [ceiling, ceiling.target];
   // Without an environment map the hemisphere carries the same bounce level (low-end fallback).
   if (!options.environment) objects.push(new HemisphereLight('#f7f7f7', '#a8a8a8', BOUNCE * Math.PI));

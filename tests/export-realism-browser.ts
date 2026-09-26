@@ -2,7 +2,8 @@
  * Export realism stage 1: the same authored bathroom as an orbit frame, in-room eye views,
  * accumulated exports and photo effects, side by side with metrics. No AI, no network.
  * Usage: node tests/run-browser-test.mjs tests/export-realism-browser.ts [label] [--gpu] [--headed]
- * Writes test-results/export-realism-stage-1/<label>/.
+ *   [--edges=1024,2048] [--samples=8,16] [--dir=export-realism-stage-1]
+ * Writes test-results/<dir>/<label>/. The scene is tests/helpers/export-realism-scene.ts.
  */
 import { chromium } from '@playwright/test';
 import { build } from 'esbuild';
@@ -20,7 +21,8 @@ const option = (name: string) =>
 // Accumulation matrix: SwiftShader keeps it small; the real GPU runs the full 1024–4096 × 8–64 table.
 const edges = (option('edges') ?? (gpu ? '1024,2048,4096' : '1024,2048')).split(',').map(Number);
 const sampleCounts = (option('samples') ?? (gpu ? '8,16,32,64' : '8,16')).split(',').map(Number);
-const output = `test-results/export-realism-stage-1/${label}`;
+// Stage 2 re-runs this measurement into its own folder: --dir=export-realism-stage-2.
+const output = `test-results/${option('dir') ?? 'export-realism-stage-1'}/${label}`;
 await mkdir(output, { recursive: true });
 const power = (() => {
   try {
@@ -36,7 +38,7 @@ const power = (() => {
 
 const bundle = await build({
   stdin: {
-    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {createRoomSurfaces,DEFAULT_ROOM} from './src/lib/room-geometry';export {PHOTO_EFFECTS} from './src/lib/room-viewer/photo-effects';`,
+    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {createRoomSurfaces,DEFAULT_ROOM} from './src/lib/room-geometry';export {PHOTO_EFFECTS} from './src/lib/room-viewer/photo-effects';export {buildRealismScene,toImage} from './tests/helpers/export-realism-scene';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -67,154 +69,15 @@ try {
   const result = await page.evaluate(async () => {
     type Lib = typeof import('../src/lib/room-viewer/renderer') &
       typeof import('../src/lib/room-viewer/view-state') &
-      typeof import('../src/lib/room-geometry');
-    type MaterialVersion = import('../src/lib/types').MaterialVersion;
-    type Scene = import('../src/lib/types').Scene;
-    type AssetRecord = import('../src/lib/types').AssetRecord;
-    type FixtureInstance = import('../src/lib/types').FixtureInstance;
+      typeof import('../src/lib/room-geometry') &
+      typeof import('./helpers/export-realism-scene');
     type RoomViewState = import('../src/lib/room-viewer/view-state').RoomViewState;
     const lib = (window as unknown as { Realism: Lib }).Realism;
-    const room = structuredClone(lib.DEFAULT_ROOM);
-    const color = { exposure: 0, contrast: 1, saturation: 1, warmth: 0 };
-    const empty = () => ({ polygon: [], strokes: [] });
-    const assets: Record<string, AssetRecord> = {};
-    const materials: Record<string, MaterialVersion> = {};
-    const tiles = {
-      wall: { fill: '#ecebe6', w: 300, h: 600, finish: '무광' },
-      floor: { fill: '#8e8b85', w: 600, h: 600, finish: '무광' },
-    } as const;
-    for (const [id, tile] of Object.entries(tiles)) {
-      const canvas = document.createElement('canvas');
-      canvas.width = canvas.height = 64;
-      const ctx = canvas.getContext('2d')!;
-      ctx.fillStyle = tile.fill;
-      ctx.fillRect(0, 0, 64, 64);
-      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!)));
-      assets[id] = {
-        id,
-        ownerId: 'test',
-        name: id,
-        mime: 'image/png',
-        size: blob.size,
-        width: 64,
-        height: 64,
-        kind: 'texture',
-        blob,
-        createdAt: '2026-09-26',
-      };
-      materials[id] = {
-        id,
-        materialId: id,
-        version: 1,
-        name: id,
-        brand: '',
-        code: '',
-        category: 'tile',
-        scope: 'personal',
-        description: '',
-        color: tile.fill,
-        finish: tile.finish,
-        widthMm: tile.w,
-        heightMm: tile.h,
-        depthMm: 9,
-        usage: 'both',
-        installation: 'wall',
-        textureAssetIds: [id],
-        views: [],
-        defaultGroutWidth: 2,
-        defaultGroutColor: '#dddddd',
-        defaultPattern: 'grid',
-        createdAt: '2026-09-26',
-      };
-    }
-    materials.standard = { ...materials.wall, id: 'standard', materialId: 'standard', category: 'toilet' };
-    const fixture = (
-      id: string,
-      kind: string,
-      face: 'floor' | 'back',
-      u: number,
-      v: number,
-      w: number,
-      h: number,
-      d: number,
-      base = 0,
-    ): FixtureInstance => ({
-      id,
-      name: id,
-      materialVersionId: 'standard',
-      viewIndex: 0,
-      position: { x: 0.5, y: 0.5 },
-      width: 0.2,
-      height: 0.4,
-      rotation: 0,
-      anchor: { x: 0.5, y: 1 },
-      locked: false,
-      shadow: { x: 0, y: 0, opacity: 0, blur: 0.01, scale: 1 },
-      occlusion: empty(),
-      color: { ...color },
-      roomPlacement: {
-        face,
-        u,
-        v,
-        scale: 1,
-        widthMm: w,
-        heightMm: h,
-        imageAspect: w / h,
-        contentBounds: { left: 0, right: 1, top: 0, bottom: 1 },
-      },
-      reconstruction: {
-        version: 2,
-        kind,
-        color: '#f2f1ec',
-        widthMm: w,
-        heightMm: h,
-        depthMm: d,
-        baseHeightMm: base,
-        yawDegrees: 0,
-      },
-    });
-    const basin = fixture('basin', 'basin', 'back', 0.28, 0.62, 600, 220, 430, 800);
-    basin.reconstruction!.basinVariant = 'wall';
-    const scene: Scene = {
-      room: structuredClone(room),
-      originalAssetId: 'none',
-      previewAssetId: 'none',
-      imageWidth: 3600,
-      imageHeight: 2400,
-      surfaces: lib.createRoomSurfaces(room, 1.5).map((s) => ({
-        ...s,
-        materialVersionId: s.roomFace === 'floor' ? 'floor' : 'wall',
-        tile: {
-          ...s.tile,
-          groutWidth: 2,
-          groutColor: s.roomFace === 'floor' ? '#6f6c66' : '#d9d8d2',
-          pattern: 'grid',
-          seed: 11,
-        },
-      })),
-      fixtures: [
-        fixture('toilet', 'toilet', 'floor', 0.72, 0.28, 400, 750, 680),
-        basin,
-        fixture('mirror', 'mirror', 'back', 0.28, 0.25, 700, 550, 30, 1300),
-        fixture('bath', 'bath', 'floor', 0.3, 0.3, 750, 520, 1500),
-      ],
-      protection: empty(),
-      color: { ...color },
-    };
-    const snapshot = { scene, beforeScene: structuredClone(scene), materials };
+    const { room, assets, materials, scene, snapshot } = await lib.buildRealismScene();
     const viewer = new lib.RoomViewerRenderer();
     const images: Record<string, string> = {};
     const metrics: Record<string, unknown> = {};
-    const toImage = async (blob: Blob) => {
-      const bitmap = await createImageBitmap(blob);
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-      ctx.drawImage(bitmap, 0, 0);
-      bitmap.close();
-      return { canvas, data: ctx.getImageData(0, 0, canvas.width, canvas.height).data };
-    };
+    const toImage = lib.toImage;
     // The viewer's clear colour outside the room (#e8e8e4); an in-room view must never show it.
     const backgroundRatio = (data: Uint8ClampedArray) => {
       let hits = 0;

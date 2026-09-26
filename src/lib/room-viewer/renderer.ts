@@ -43,6 +43,7 @@ import {
 import { buildViewerFixtures, ProductAssetCache } from './fixtures';
 import { buildViewerCeiling, type ViewerCeiling } from './ceiling';
 import { EXPORT_LIGHT_PANEL_MM, ExportAccumulator, exportJitter, jitterProjection } from './accumulate';
+import { bindRoomShadows, MOVING_LIGHT_SHADOW_RADIUS } from './shadow';
 import { PhotoBloom, photoEffectUniforms, photoPostFragment, type PhotoEffects } from './photo-effects';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
@@ -67,13 +68,10 @@ type Prepared = {
   dispose(): void;
 };
 const POLICY = 'room-quarter-turn-world-v1';
-/** Export-only shadow camera for the 90° ceiling cone: fov = 2·angle·focus = 144° instead of 180°. */
-const EXPORT_SHADOW_FOCUS = 0.8;
-const EXPORT_SHADOW_MAP = 2048;
 /**
  * Multi-sample export settings; absent means the single-frame export used by previews. With
  * `budgetMs`, a slow device times its first (unjittered) sample and lowers the count so the export
- * ends near the budget; below 16 samples the light moves only within 100 mm (one shadow, no copies).
+ * ends near the budget; below 16 samples the light stays still (the live frame's soft shadow).
  */
 export type RoomExportQuality = { samples: number; budgetMs?: number };
 /**
@@ -81,13 +79,11 @@ export type RoomExportQuality = { samples: number; budgetMs?: number };
  * 2.7 s for 3600×2400 on Iris Xe (D3D11). The budget keeps slower devices near the 10 s target.
  */
 export const ROOM_PHOTO_EXPORT_QUALITY: RoomExportQuality = { samples: 32, budgetMs: 10_000 };
-/** Fewer light positions than this across the whole panel leave visible copies of each shadow. */
-const SOFT_SHADOW_SAMPLES = 16;
 /**
- * Light travel below that count: too short to split a shadow into copies, long enough that the
- * screen-space PCF dither (which the camera shift cannot average) differs between samples.
+ * Fewer light positions than this across the panel leave visible copies of each shadow; below it
+ * the light stays still and the shadow filter's wide blur stands in for the panel (as live).
  */
-const NARROW_LIGHT_MM = 100;
+const SOFT_SHADOW_SAMPLES = 16;
 /**
  * Resolves after the next paint: a zero timeout alone lets back-to-back samples starve rendering.
  * Hidden tabs do not paint, so a short timer wins the race there.
@@ -326,6 +322,7 @@ export class RoomViewerRenderer {
     }
     surfaces.setContacts(contacts);
     this.lighting.bindTree(world);
+    bindRoomShadows(world);
     world.updateMatrixWorld(true);
     const roomBounds = new Box3(
       new Vector3(-room.widthMm / 2, 0, 0),
@@ -650,9 +647,9 @@ export class RoomViewerRenderer {
   /**
    * Export-only multi-sample frame: each sample shifts the camera by a sub-pixel and moves the
    * ceiling light inside its 600×600 panel (shadow maps re-render every sample), then all samples
-   * are averaged. Only during this call the spot light's shadow camera is narrowed to a usable
-   * field of view and a larger map; both are restored afterwards so live frames stay identical.
-   * `capture` runs while the averaged frame is on the canvas.
+   * are averaged. Shadows follow the same rule as live frames (room-viewer/shadow); only the light
+   * position moves, and it is restored afterwards. `capture` runs while the averaged frame is on
+   * the canvas.
    */
   private async renderAccumulated(
     width: number,
@@ -676,27 +673,16 @@ export class RoomViewerRenderer {
       light,
       position: light.position.clone(),
       target: light.target.position.clone(),
-      focus: light.shadow.focus,
-      mapSize: light.shadow.mapSize.clone(),
+      radius: light.shadow.radius,
     }));
-    const resetShadowMap = (light: SpotLight) => {
-      light.shadow.map?.dispose();
-      light.shadow.map = null;
-    };
     this.accumulating = true;
     let accumulator: ExportAccumulator | undefined;
     try {
       const frame = this.frame(width, height, view, mode);
       const projection = frame.camera.projectionMatrix.clone();
       accumulator = new ExportAccumulator(frame.targetWidth, frame.size.height);
-      for (const { light } of saved) {
-        // A 90° cone gives a 180° shadow frustum (no usable shadow); 0.8 → 144°.
-        light.shadow.focus = EXPORT_SHADOW_FOCUS;
-        light.shadow.mapSize.set(EXPORT_SHADOW_MAP, EXPORT_SHADOW_MAP);
-        resetShadowMap(light);
-      }
       let samples = quality.samples,
-        lightSpread = samples >= SOFT_SHADOW_SAMPLES ? EXPORT_LIGHT_PANEL_MM : NARROW_LIGHT_MM;
+        moveLight = samples >= SOFT_SHADOW_SAMPLES;
       // 0% paints before the first sample, the slowest one on software rendering (shaders, maps).
       onProgress?.(0, samples);
       await nextPaint();
@@ -715,8 +701,11 @@ export class RoomViewerRenderer {
           frame.rect.height,
         );
         for (const entry of saved) {
-          const dx = jitter.light[0] * lightSpread,
-            dz = jitter.light[1] * lightSpread;
+          // Sample 0 is the live frame; a moving light makes the penumbra, so later samples blur less.
+          const spread = moveLight ? EXPORT_LIGHT_PANEL_MM : 0,
+            dx = jitter.light[0] * spread,
+            dz = jitter.light[1] * spread;
+          entry.light.shadow.radius = moveLight && k > 0 ? MOVING_LIGHT_SHADOW_RADIUS : entry.radius;
           entry.light.position.set(entry.position.x + dx, entry.position.y, entry.position.z + dz);
           entry.light.target.position.set(entry.target.x + dx, entry.target.y, entry.target.z + dz);
           entry.light.updateMatrixWorld(true);
@@ -732,7 +721,7 @@ export class RoomViewerRenderer {
           const affordable = Math.floor(quality.budgetMs / Math.max(1, performance.now() - started));
           if (affordable < samples) {
             samples = Math.max(1, affordable);
-            if (samples < SOFT_SHADOW_SAMPLES) lightSpread = NARROW_LIGHT_MM;
+            moveLight &&= samples >= SOFT_SHADOW_SAMPLES;
           }
         }
         onProgress?.(k + 1, samples);
@@ -754,16 +743,14 @@ export class RoomViewerRenderer {
         effects,
       );
       capture(this.canvas);
-      return { samples, softShadows: lightSpread === EXPORT_LIGHT_PANEL_MM };
+      return { samples, softShadows: moveLight };
     } finally {
       for (const entry of saved) {
         entry.light.position.copy(entry.position);
         entry.light.target.position.copy(entry.target);
         entry.light.updateMatrixWorld(true);
         entry.light.target.updateMatrixWorld(true);
-        entry.light.shadow.focus = entry.focus;
-        entry.light.shadow.mapSize.copy(entry.mapSize);
-        resetShadowMap(entry.light);
+        entry.light.shadow.radius = entry.radius;
       }
       accumulator?.dispose();
       this.accumulating = false;
