@@ -4,6 +4,7 @@ import {
   HalfFloatType,
   LinearFilter,
   LinearSRGBColorSpace,
+  Matrix4,
   Mesh,
   NoBlending,
   NoToneMapping,
@@ -42,7 +43,15 @@ import {
 } from '../render/realistic-lighting';
 import { buildViewerFixtures, ProductAssetCache } from './fixtures';
 import { buildViewerCeiling, type ViewerCeiling } from './ceiling';
-import { EXPORT_LIGHT_PANEL_MM, ExportAccumulator, exportJitter, jitterProjection } from './accumulate';
+import {
+  BandPlanner,
+  BAND_TARGET_MS,
+  EXPORT_LIGHT_PANEL_MM,
+  ExportAccumulator,
+  exportJitter,
+  jitterProjection,
+  cropProjectionRows,
+} from './accumulate';
 import { bindRoomShadows, MOVING_LIGHT_SHADOW_RADIUS } from './shadow';
 import { PhotoBloom, photoEffectUniforms, photoPostFragment, type PhotoEffects } from './photo-effects';
 import { ViewerLightingLut } from './lighting';
@@ -79,6 +88,21 @@ export type RoomExportQuality = { samples: number; budgetMs?: number };
  * 2.7 s for 3600×2400 on Iris Xe (D3D11). The budget keeps slower devices near the 10 s target.
  */
 export const ROOM_PHOTO_EXPORT_QUALITY: RoomExportQuality = { samples: 32, budgetMs: 10_000 };
+/** Tile counts per sample for an export in tiles; the first is the probe (see renderAccumulated). */
+const PROBE_TILES = 64;
+const TILE_COUNTS = [1, 4, 16, 64] as const;
+/**
+ * A whole sample up to this long stays one tile. The probe overestimates (a 64th tile carries a
+ * sync), and a GPU's 50–300 ms estimate stays far below this, so it always draws one tile.
+ */
+const ONE_TILE_MS = 600;
+/** Otherwise a tile may take this long. */
+const TILE_TARGET_MS = 300;
+/** Tiles per sample for a device whose whole sample is estimated at `sampleMs`. */
+export function chooseTileCount(sampleMs: number) {
+  if (sampleMs <= ONE_TILE_MS) return 1;
+  return TILE_COUNTS.find((count) => sampleMs / count <= TILE_TARGET_MS) ?? PROBE_TILES;
+}
 /**
  * Fewer light positions than this across the panel leave visible copies of each shadow; below it
  * the light stays still and the shadow filter's wide blur stands in for the panel (as live).
@@ -486,7 +510,7 @@ export class RoomViewerRenderer {
     }
   }
   /** Camera, sizes and photo rectangle for one frame; resizes the targets and the canvas. */
-  private frame(width: number, height: number, view: RoomViewState, mode: RoomViewerMode) {
+  private frame(width: number, height: number, view: RoomViewState, mode: RoomViewerMode, canvas = true) {
     const size = fitOutput(width, height, this.maxOutputEdge);
     const state = normalizeRoomView(view);
     const panelWidth = mode === 'compare' ? size.width / 2 : size.width;
@@ -512,14 +536,19 @@ export class RoomViewerRenderer {
     const targetWidth = mode === 'compare' ? Math.max(1, Math.ceil(size.width / 2)) : size.width;
     this.beforeTarget.setSize(targetWidth, size.height);
     this.afterTarget.setSize(targetWidth, size.height);
-    this.renderer.setSize(size.width, size.height, false);
+    if (canvas) this.renderer.setSize(size.width, size.height, false);
     const rect = roomViewViewport(targetWidth, size.height, state);
     return { size, state, camera, targetWidth, rect };
   }
+  /**
+   * Draws one side into its target: the whole photo rectangle, or (an export in tiles) `rows` rows
+   * into the bottom of a tile-sized target, the camera already cropped to them.
+   */
   private paint(
     prepared: Prepared,
     target: WebGLRenderTarget,
     frame: ReturnType<RoomViewerRenderer['frame']>,
+    tile?: { rows: number },
   ) {
     const { camera, rect, targetWidth, size, state } = frame;
     prepared.surfaces.updateView(camera);
@@ -527,21 +556,45 @@ export class RoomViewerRenderer {
     prepared.ceiling.setVisible(state.projection === 'room-eye');
     this.renderer.setRenderTarget(target);
     this.renderer.setScissorTest(false);
-    this.renderer.setViewport(0, 0, targetWidth, size.height);
-    this.renderer.clear();
+    const viewport = tile
+        ? ([rect.x, 0, rect.width, tile.rows] as const)
+        : ([rect.x, rect.y, rect.width, rect.height] as const),
+      scissor = viewport;
+    if (!tile) {
+      this.renderer.setViewport(0, 0, targetWidth, size.height);
+      this.renderer.clear();
+    }
     // Shadow rendering restores the render target's viewport/scissor, not the renderer-only state.
     // Persist the photo rectangle on the target too, or portrait optics stretch to the full canvas.
-    target.viewport.set(rect.x, rect.y, rect.width, rect.height).round();
-    target.scissor.set(rect.x, rect.y, rect.width, rect.height).round();
+    target.viewport.set(...viewport).round();
+    target.scissor.set(...scissor).round();
     target.scissorTest = true;
-    this.renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
-    this.renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
+    this.renderer.setViewport(...viewport);
+    this.renderer.setScissor(...scissor);
     this.renderer.setScissorTest(true);
+    // A tile target is reused: clear just its rows.
+    if (tile) this.renderer.clear();
     this.renderer.render(prepared.world, camera);
     this.renderer.setScissorTest(false);
   }
   /** Colour adjustment, split/compare layout and sRGB output of the two side textures. */
   private composite(
+    frame: ReturnType<RoomViewerRenderer['frame']>,
+    mode: RoomViewerMode,
+    split: number,
+    before: Texture,
+    after: Texture,
+    effects?: PhotoEffects,
+  ) {
+    const output = this.beginComposite(frame, mode, split, before, after, effects);
+    output.draw();
+    output.end();
+  }
+  /**
+   * Sets up the output pass (and the photo look's glow); `draw` then writes the canvas, whole or
+   * rows [y, y + rows) from the bottom, and `end` releases the glow and restores the live inputs.
+   */
+  private beginComposite(
     frame: ReturnType<RoomViewerRenderer['frame']>,
     mode: RoomViewerMode,
     split: number,
@@ -590,19 +643,30 @@ export class RoomViewerRenderer {
       photo.sjnGrainSeed.value = values.grainSeed;
       this.postMesh.material = this.photoMaterial;
     }
-    this.renderer.setRenderTarget(null);
-    this.renderer.setViewport(0, 0, size.width, size.height);
-    this.renderer.setScissorTest(false);
-    this.renderer.render(this.post, this.postCamera);
-    if (bloom) {
-      this.postMesh.material = this.postMaterial;
-      this.photoMaterial!.uniforms.sjnBloomBefore.value = null;
-      this.photoMaterial!.uniforms.sjnBloomAfter.value = null;
-      bloom.dispose();
-    }
-    // The live targets are the default inputs again.
-    uniforms.sjnBefore.value = this.beforeTarget.texture;
-    uniforms.sjnAfter.value = this.afterTarget.texture;
+    return {
+      draw: (rows?: readonly [y: number, height: number], target: WebGLRenderTarget | null = null) => {
+        this.renderer.setRenderTarget(target);
+        this.renderer.setViewport(0, 0, size.width, size.height);
+        this.renderer.setScissorTest(false);
+        if (rows) {
+          this.renderer.setScissor(0, rows[0], size.width, rows[1]);
+          this.renderer.setScissorTest(true);
+        }
+        this.renderer.render(this.post, this.postCamera);
+        this.renderer.setScissorTest(false);
+      },
+      end: () => {
+        if (bloom) {
+          this.postMesh.material = this.postMaterial;
+          this.photoMaterial!.uniforms.sjnBloomBefore.value = null;
+          this.photoMaterial!.uniforms.sjnBloomAfter.value = null;
+          bloom.dispose();
+        }
+        // The live targets are the default inputs again.
+        uniforms.sjnBefore.value = this.beforeTarget.texture;
+        uniforms.sjnAfter.value = this.afterTarget.texture;
+      },
+    };
   }
   render(
     width: number,
@@ -648,8 +712,9 @@ export class RoomViewerRenderer {
    * Export-only multi-sample frame: each sample shifts the camera by a sub-pixel and moves the
    * ceiling light inside its 600×600 panel (shadow maps re-render every sample), then all samples
    * are averaged. Shadows follow the same rule as live frames (room-viewer/shadow); only the light
-   * position moves, and it is restored afterwards. `capture` runs while the averaged frame is on
-   * the canvas.
+   * position moves, and it is restored afterwards. The averaged image is written into `context`.
+   * Every step runs in bands of about BAND_TARGET_MS so a slow (software) renderer never holds the
+   * page for long: progress paints and a cancel lands within a band.
    */
   private async renderAccumulated(
     width: number,
@@ -658,7 +723,7 @@ export class RoomViewerRenderer {
     mode: RoomViewerMode,
     quality: RoomExportQuality,
     effects: PhotoEffects | undefined,
-    capture: (canvas: HTMLCanvasElement) => void,
+    context: CanvasRenderingContext2D,
     onProgress?: (done: number, total: number) => void,
     signal?: AbortSignal,
   ) {
@@ -676,9 +741,11 @@ export class RoomViewerRenderer {
       radius: light.shadow.radius,
     }));
     this.accumulating = true;
+    const autoUpdate = this.renderer.shadowMap.autoUpdate;
     let accumulator: ExportAccumulator | undefined;
     try {
-      const frame = this.frame(width, height, view, mode);
+      // The canvas keeps the live frame: the export draws into targets only.
+      const frame = this.frame(width, height, view, mode, false);
       const projection = frame.camera.projectionMatrix.clone();
       accumulator = new ExportAccumulator(frame.targetWidth, frame.size.height);
       let samples = quality.samples,
@@ -687,10 +754,61 @@ export class RoomViewerRenderer {
       onProgress?.(0, samples);
       await nextPaint();
       if (this.disposed) throw new DOMException('공간 둘러보기가 닫혔습니다.', 'AbortError');
-      const started = performance.now();
-      for (let k = 0; k < samples; k++) {
+      let lastYield = performance.now();
+      const stop = () => {
         if (signal?.aborted) throw new DOMException('이미지 만들기를 취소했어요.', 'AbortError');
+        if (this.disposed) throw new DOMException('공간 둘러보기가 닫혔습니다.', 'AbortError');
         this.assertOpen();
+      };
+      // The page gets a paint (progress, a cancel click) once half a band's time has passed.
+      const breathe = async () => {
+        if (performance.now() - lastYield < BAND_TARGET_MS / 2) return;
+        await nextPaint();
+        lastYield = performance.now();
+        stop();
+      };
+      // Each sample is drawn in horizontal tiles, the camera cropped to each, into a tile-sized
+      // target (an MSAA resolve costs the target's size, not the scissor's). Two probe tiles of a
+      // 64th time this device and fix the tile count for the export. A GPU draws each sample as one
+      // tile, exactly as a single frame; more tiles differ from it only by rounding.
+      const rectY = Math.round(frame.rect.y),
+        rectRows = Math.max(1, Math.round(frame.rect.height));
+      let tiles = PROBE_TILES,
+        probing = true;
+      const tileRows = () => Math.ceil(rectRows / tiles);
+      const setTiles = (count: number) => {
+        tiles = count;
+        for (const [, , target] of sides) target.setSize(frame.targetWidth, tileRows());
+      };
+      setTiles(PROBE_TILES);
+      // Settle earlier GPU work (the live frame just drawn) and allocate and clear the means, each
+      // in its own task, so the first tile carries only its own cost.
+      this.renderer.setRenderTarget(null);
+      this.renderer
+        .getContext()
+        .readPixels(
+          0,
+          0,
+          1,
+          1,
+          WebGL2RenderingContext.RGBA,
+          WebGL2RenderingContext.UNSIGNED_BYTE,
+          new Uint8Array(4),
+        );
+      for (const [index] of sides) {
+        await nextPaint();
+        stop();
+        accumulator.prepare(this.renderer, index);
+      }
+      await nextPaint();
+      lastYield = performance.now();
+      stop();
+      const jittered = new Matrix4();
+      // One shadow map per side and sample: the tiles after the first reuse it.
+      this.renderer.shadowMap.autoUpdate = false;
+      for (let k = 0; k < samples; k++) {
+        stop();
+        const sampleStarted = performance.now();
         const jitter = exportJitter(k);
         frame.camera.projectionMatrix.copy(projection);
         jitterProjection(
@@ -700,6 +818,7 @@ export class RoomViewerRenderer {
           frame.rect.width,
           frame.rect.height,
         );
+        jittered.copy(frame.camera.projectionMatrix);
         for (const entry of saved) {
           // Sample 0 is the live frame; a moving light makes the penumbra, so later samples blur less.
           const spread = moveLight ? EXPORT_LIGHT_PANEL_MM : 0,
@@ -711,30 +830,70 @@ export class RoomViewerRenderer {
           entry.light.updateMatrixWorld(true);
           entry.light.target.updateMatrixWorld(true);
         }
-        for (const [index, side, target] of sides) {
-          this.paint(side, target, frame);
-          accumulator.add(this.renderer, index, target.texture, k);
-        }
-        accumulator.finish(this.renderer, sides.at(-1)![0]);
-        if (k === 0 && quality.budgetMs) {
-          // Sample 0 is unjittered, so it stands alone when the device cannot afford more.
-          const affordable = Math.floor(quality.budgetMs / Math.max(1, performance.now() - started));
-          if (affordable < samples) {
-            samples = Math.max(1, affordable);
-            moveLight &&= samples >= SOFT_SHADOW_SAMPLES;
+        let restart = false;
+        sides: for (const [index, side, target] of sides)
+          for (let tile = 0; tile < tiles; tile++) {
+            const row = tile * tileRows(),
+              rows = Math.min(tileRows(), rectRows - row);
+            if (rows <= 0) break;
+            const tileStarted = performance.now();
+            frame.camera.projectionMatrix.copy(jittered);
+            if (tiles > 1) cropProjectionRows(frame.camera, row, rows, rectRows);
+            this.renderer.shadowMap.needsUpdate = tile === 0;
+            this.paint(side, target, frame, { rows });
+            accumulator.add(this.renderer, index, target.texture, k, {
+              y: rectY + row,
+              height: rows,
+              first: tile === 0,
+            });
+            accumulator.finish(this.renderer, index);
+            const ms = performance.now() - tileStarted;
+            // Slow devices finish few samples: progress also moves tile by tile (done is fractional).
+            if (!probing && tiles > 1)
+              onProgress?.(
+                k + (sides.findIndex(([i]) => i === index) * tiles + tile + 1) / (sides.length * tiles),
+                samples,
+              );
+            // The second probe tile has no shadow map or first-use costs: it prices a row.
+            if (probing && tile === 1) {
+              probing = false;
+              const count = chooseTileCount(ms * PROBE_TILES);
+              // A first guess at the sample count for the progress bar (sample 0 settles it).
+              if (quality.budgetMs)
+                samples = Math.min(
+                  quality.samples,
+                  Math.max(1, Math.floor(quality.budgetMs / (ms * PROBE_TILES * sides.length))),
+                );
+              if (count !== tiles) {
+                setTiles(count);
+                restart = true;
+                break sides;
+              }
+            }
+            await breathe();
           }
+        if (restart) {
+          // Sample 0 again with the chosen tiles (its weight 1 replaces the probe tiles).
+          k = -1;
+          continue;
+        }
+        if (k === 0 && quality.budgetMs) {
+          // Sample 0 is unjittered, so it stands alone when the device cannot afford more. Its wall
+          // time counts the pauses for the page too.
+          const affordable = Math.floor(quality.budgetMs / Math.max(1, performance.now() - sampleStarted));
+          samples = Math.min(quality.samples, Math.max(1, affordable));
+          moveLight = samples >= SOFT_SHADOW_SAMPLES;
         }
         onProgress?.(k + 1, samples);
-        // Let the page paint progress and take a cancel click between samples.
-        if (k + 1 < samples) await nextPaint();
-        if (this.disposed) throw new DOMException('공간 둘러보기가 닫혔습니다.', 'AbortError');
       }
       // A cancel clicked during the last sample lands here, before the file is made.
       await nextPaint();
-      if (signal?.aborted) throw new DOMException('이미지 만들기를 취소했어요.', 'AbortError');
-      if (this.disposed) throw new DOMException('공간 둘러보기가 닫혔습니다.', 'AbortError');
-      this.assertOpen();
-      this.composite(
+      stop();
+      // The output pass and its read-back go in bands too, into an 8-bit target of the output's
+      // size (the canvas never grows to export size: on software WebGL that alone takes seconds).
+      const { width: w, height: h } = frame.size;
+      const outputTarget = new WebGLRenderTarget(w, h, { depthBuffer: false, stencilBuffer: false });
+      const output = this.beginComposite(
         frame,
         mode,
         0.5,
@@ -742,7 +901,27 @@ export class RoomViewerRenderer {
         accumulator.texture(1) ?? this.afterTarget.texture,
         effects,
       );
-      capture(this.canvas);
+      try {
+        const image = context.createImageData(w, h),
+          bands = new BandPlanner(h);
+        for (let y = 0; y < h;) {
+          const rows = bands.next(h - y),
+            bandStarted = performance.now();
+          output.draw([y, rows], outputTarget);
+          const pixels = new Uint8Array(w * rows * 4);
+          this.renderer.readRenderTargetPixels(outputTarget, 0, y, w, rows, pixels);
+          // Read rows run bottom-up, image rows top-down.
+          for (let r = 0; r < rows; r++)
+            image.data.set(pixels.subarray(r * w * 4, (r + 1) * w * 4), (h - 1 - y - r) * w * 4);
+          bands.record(rows, performance.now() - bandStarted);
+          y += rows;
+          await breathe();
+        }
+        context.putImageData(image, 0, 0);
+      } finally {
+        output.end();
+        outputTarget.dispose();
+      }
       return { samples, softShadows: moveLight };
     } finally {
       for (const entry of saved) {
@@ -752,6 +931,7 @@ export class RoomViewerRenderer {
         entry.light.target.updateMatrixWorld(true);
         entry.light.shadow.radius = entry.radius;
       }
+      this.renderer.shadowMap.autoUpdate = autoUpdate;
       accumulator?.dispose();
       this.accumulating = false;
     }
@@ -895,6 +1075,7 @@ export class RoomViewerRenderer {
       quality?: RoomExportQuality;
       /** Photo look for downloads; never for AI input or previews. */
       effects?: PhotoEffects;
+      /** `done` counts finished samples and may be fractional while a sample is drawn in tiles. */
       onProgress?: (done: number, total: number) => void;
       signal?: AbortSignal;
     },
@@ -945,7 +1126,7 @@ export class RoomViewerRenderer {
             options.mode,
             { samples, budgetMs: options.quality?.budgetMs },
             options.effects,
-            (canvas) => context.drawImage(canvas, 0, 0),
+            context,
             options.onProgress,
             options.signal,
           ),
@@ -967,10 +1148,28 @@ export class RoomViewerRenderer {
         };
         context.drawImage(this.exportFrame(output.width, output.height, state, options), 0, 0);
       } finally {
-        const next = this.deferredFrame ?? previous;
+        // The canvas still shows the live frame; draw only one the page asked for meanwhile, later
+        // and on its own (on a software renderer a live frame is slow too), so the export (or its
+        // cancel) settles first.
+        const next = this.deferredFrame;
         this.deferredFrame = undefined;
-        if (next && !this.disposed && !this.lost && !this.renderer.getContext().isContextLost())
-          this.render(next.width, next.height, next.view, next.mode, next.split);
+        const renders = this.renders;
+        if (next)
+          void nextPaint().then(() => {
+            if (
+              this.renders !== renders ||
+              this.accumulating ||
+              this.disposed ||
+              this.lost ||
+              this.renderer.getContext().isContextLost()
+            )
+              return;
+            try {
+              this.render(next.width, next.height, next.view, next.mode, next.split);
+            } catch {
+              // The page's next frame reports any renderer problem; nothing waits for this one.
+            }
+          });
       }
     } else {
       // Paint + detached pixel copy are synchronous. Later scene changes cannot alter this file.

@@ -813,7 +813,7 @@ test('방 안 시점: 프리셋·15° 회전·이동·저장 후 새로고침 �
   expect(requests.forbidden).toEqual([]);
 });
 
-test('고화질 다운로드: 여러 장 진행률·취소·창 닫기에서 멈춤', async ({ page }, info) => {
+test('고화질 다운로드: 여러 장 진행률·취소 1초 안 반응·창 닫기에서 멈춤', async ({ page }, info) => {
   const requests = observeRequests(page);
   await start(page);
   await opened(page);
@@ -821,68 +821,68 @@ test('고화질 다운로드: 여러 장 진행률·취소·창 닫기에서 멈
   await viewer(page).getByLabel('둘러보기 파일 형식', { exact: true }).selectOption('png');
   await viewer(page).getByLabel('둘러보기 출력 종류', { exact: true }).selectOption('after');
   const progress = viewer(page).getByTestId('room-export-progress');
+  const percent = progress.getByTestId('room-export-percent');
   const downloadButton = viewer(page).getByRole('button', { name: '현재 시점 다운로드', exact: true });
   let downloads = 0;
   page.on('download', () => downloads++);
 
-  // A full export shows n/N samples rising to the end, then downloads.
+  // A full export shows its percent rising to the end, then downloads. Even on software WebGL the
+  // page answers between tiles, so ordinary reads and clicks work throughout.
   const seen: string[] = [];
-  let cancelBox: { x: number; y: number; width: number; height: number } | null = null;
-  const event = page.waitForEvent('download', { timeout: 180000 });
+  const event = page.waitForEvent('download', { timeout: 120000 });
   const exportStarted = performance.now();
-  await downloadButton.click({ timeout: 60000 });
-  const watcher = (async () => {
-    // Software WebGL leaves the page busy during each sample; this reads whenever it answers.
-    // One call per look (percent and the cancel button's place), as its free moments are short.
-    for (let tries = 0; tries < 1800 && !downloads; tries++) {
-      const state = await page.evaluate(() => {
-        const meter = document.querySelector('[data-testid="room-export-progress"]');
-        const button = [...(meter?.querySelectorAll('button') ?? [])].find(
-          (element) => element.textContent?.trim() === '다운로드 취소',
-        );
-        const rect = button?.getBoundingClientRect();
-        return {
-          value: meter?.querySelector('[data-testid="room-export-percent"]')?.textContent ?? null,
-          box: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
-        };
-      });
-      if (state.value && seen.at(-1) !== state.value) seen.push(state.value);
-      cancelBox ??= state.box;
-      await page.waitForTimeout(50);
-    }
-  })();
+  await downloadButton.click();
+  await expect(progress).toBeVisible();
+  while (!downloads) {
+    const value = await percent.textContent({ timeout: 1000 }).catch(() => null);
+    if (value && seen.at(-1) !== value) seen.push(value);
+    await page.waitForTimeout(100);
+  }
   const download = await event;
   const exportMs = performance.now() - exportStarted;
-  await watcher;
   const meta = await sharp(await streamBuffer(await download.createReadStream())).metadata();
   expect(meta.width).toBe(4096);
-  expect(seen.length).toBeGreaterThan(0);
   const numbers = seen.map((value) => Number.parseInt(value, 10));
   expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
-  expect(cancelBox).not.toBeNull();
+  // Tiles move the percent even while the first sample is drawn.
+  expect(numbers.length).toBeGreaterThan(2);
   await expect(progress).toHaveCount(0);
 
-  // Cancel: the page answers only between samples on software WebGL, where real input is handled
-  // but a multi-step locator click is not, so press the button where it appeared above.
+  // Cancel stops within a second: nothing is downloaded and the button comes back.
   downloads = 0;
-  const box = cancelBox!;
-  const cancelled = performance.now();
-  await downloadButton.click({ timeout: 60000 });
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(progress).toHaveCount(0, { timeout: 60000 });
-  const cancelMs = performance.now() - cancelled;
+  await downloadButton.click();
+  await expect(progress).toBeVisible();
+  await page.waitForTimeout(1500);
+  // Timed in the page, from the click event to the progress leaving the DOM.
+  await page.evaluate(() => {
+    const clock: { clicked?: number; gone?: number } = {};
+    (window as unknown as { cancelClock: typeof clock }).cancelClock = clock;
+    const meter = document.querySelector('[data-testid="room-export-progress"]')!;
+    meter.addEventListener('click', () => (clock.clicked ??= performance.now()), { capture: true });
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('[data-testid="room-export-progress"]')) return;
+      clock.gone = performance.now();
+      observer.disconnect();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+  await progress.getByRole('button', { name: '다운로드 취소', exact: true }).click();
+  await expect(progress).toHaveCount(0);
+  const cancelMs = await page.evaluate(() => {
+    const clock = (window as unknown as { cancelClock: { clicked: number; gone: number } }).cancelClock;
+    return clock.gone - clock.clicked;
+  });
+  expect(cancelMs).toBeLessThan(1000);
   await expect(downloadButton).toBeEnabled();
   await page.waitForTimeout(1500);
   expect(downloads).toBe(0);
   await expect(viewer(page).getByRole('alert')).toHaveCount(0);
 
   // Closing the viewer while exporting stops it without an error or a download.
-  const close = (await viewer(page)
-    .getByRole('button', { name: '공간 둘러보기 닫기', exact: true })
-    .boundingBox())!;
-  await downloadButton.click({ timeout: 60000 });
-  await page.mouse.click(close.x + close.width / 2, close.y + close.height / 2);
-  await expect(viewer(page)).toHaveCount(0, { timeout: 60000 });
+  await downloadButton.click();
+  await expect(progress).toBeVisible();
+  await viewer(page).getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
+  await expect(viewer(page)).toHaveCount(0);
   await page.waitForTimeout(1500);
   expect(downloads).toBe(0);
   await info.attach('export-timing', {

@@ -722,9 +722,9 @@ export default function RoomViewer({
               title="고화질로 만드는 중"
               label="고화질 이미지 만들기"
               percent={(exportProgress.done / exportProgress.total) * 100}
-              valueText={`고화질 이미지 ${exportProgress.done}/${exportProgress.total}장, ${Math.floor((exportProgress.done / exportProgress.total) * 100)}%`}
+              valueText={`고화질 이미지 ${Math.floor(exportProgress.done)}/${exportProgress.total}장, ${Math.floor((exportProgress.done / exportProgress.total) * 100)}%`}
               message="여러 장을 겹쳐 부드러운 그림자와 윤곽을 만들어요."
-              detail={`${exportProgress.done}/${exportProgress.total}장`}
+              detail={`${Math.floor(exportProgress.done)}/${exportProgress.total}장`}
               testId="room-export-progress"
               percentTestId="room-export-percent"
               action={
