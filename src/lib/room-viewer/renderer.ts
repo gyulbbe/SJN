@@ -15,6 +15,8 @@ import {
   Scene as ThreeScene,
   ShaderMaterial,
   SRGBColorSpace,
+  type SpotLight,
+  type Texture,
   UnsignedByteType,
   Vector2,
   Vector3,
@@ -40,6 +42,7 @@ import {
 } from '../render/realistic-lighting';
 import { buildViewerFixtures, ProductAssetCache } from './fixtures';
 import { buildViewerCeiling, type ViewerCeiling } from './ceiling';
+import { EXPORT_LIGHT_PANEL_MM, ExportAccumulator, exportJitter, jitterProjection } from './accumulate';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
 import { fitSourceDepthClip, visibleMeshBounds, type SourceDepthClip } from './depth-clip';
@@ -55,12 +58,50 @@ type Prepared = {
   fixtures: Awaited<ReturnType<typeof buildViewerFixtures>>;
   surfaces: Awaited<ReturnType<typeof buildViewerSurfaces>>;
   ceiling: ViewerCeiling;
+  /** The ceiling downlight (moved inside its panel by multi-sample exports). */
+  light?: SpotLight;
   bounds: Box3;
   structureBounds: Box3;
   notices: SurfaceNotice[];
   dispose(): void;
 };
 const POLICY = 'room-quarter-turn-world-v1';
+/** Export-only shadow camera for the 90° ceiling cone: fov = 2·angle·focus = 144° instead of 180°. */
+const EXPORT_SHADOW_FOCUS = 0.8;
+const EXPORT_SHADOW_MAP = 2048;
+/**
+ * Multi-sample export settings; absent means the single-frame export used by previews. With
+ * `budgetMs`, a slow device times its first (unjittered) sample and lowers the count so the export
+ * ends near the budget; below 16 samples the light stays still (one crisp shadow, edges averaged).
+ */
+export type RoomExportQuality = { samples: number; budgetMs?: number };
+/**
+ * Photo downloads: 32 samples look like 64 (soft shadow without banding) at half the cost — about
+ * 2.7 s for 3600×2400 on Iris Xe (D3D11). The budget keeps slower devices near the 10 s target.
+ */
+export const ROOM_PHOTO_EXPORT_QUALITY: RoomExportQuality = { samples: 32, budgetMs: 10_000 };
+/** Fewer light positions than this leave visible copies of each shadow. */
+const SOFT_SHADOW_SAMPLES = 16;
+/**
+ * Resolves after the next paint: a zero timeout alone lets back-to-back samples starve rendering.
+ * Hidden tabs do not paint, so a short timer wins the race there.
+ */
+function nextPaint() {
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    const timer = setTimeout(finish, 100);
+    if (typeof requestAnimationFrame === 'function')
+      requestAnimationFrame(() => {
+        clearTimeout(timer);
+        setTimeout(finish, 0);
+      });
+  });
+}
 const postVertex = `varying vec2 vUv; void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`;
 const postFragment = `
 varying vec2 vUv;
@@ -142,6 +183,23 @@ export class RoomViewerRenderer {
   private renders = 0;
   private sourceDepthClip?: SourceDepthClip;
   private preparations = 0;
+  private accumulating = false;
+  private deferredFrame?: {
+    width: number;
+    height: number;
+    view: RoomViewState;
+    mode: RoomViewerMode;
+    split: number;
+  };
+  private lastExport?: {
+    samples: number;
+    ms: number;
+    width: number;
+    height: number;
+    /** False when the budget left too few samples to move the light. */
+    softShadows?: boolean;
+    fallbackReason?: string;
+  };
   private lastFrame?: {
     width: number;
     height: number;
@@ -309,6 +367,7 @@ export class RoomViewerRenderer {
       surfaces,
       fixtures,
       ceiling,
+      light: lights.find((light): light is SpotLight => (light as SpotLight).isSpotLight),
       bounds,
       structureBounds: surfaces.structureBounds,
       notices,
@@ -417,6 +476,91 @@ export class RoomViewerRenderer {
       );
     }
   }
+  /** Camera, sizes and photo rectangle for one frame; resizes the targets and the canvas. */
+  private frame(width: number, height: number, view: RoomViewState, mode: RoomViewerMode) {
+    const size = fitOutput(width, height, this.maxOutputEdge);
+    const state = normalizeRoomView(view);
+    const panelWidth = mode === 'compare' ? size.width / 2 : size.width;
+    const camera = createRoomViewCamera(
+      this.snapshot!.scene.room!,
+      panelWidth / size.height,
+      state,
+      this.prepared!.bounds,
+      this.prepared!.structureBounds,
+    );
+    this.sourceDepthClip = undefined;
+    if (state.sourceCamera && state.projection === 'source-photo') {
+      // Decide visible cutaway walls/directional meshes before deriving one shared depth interval.
+      for (const side of [this.prepared!.before, this.prepared!.after]) {
+        side.surfaces.updateView(camera);
+        side.fixtures.updateView(camera);
+      }
+      this.sourceDepthClip = fitSourceDepthClip(
+        camera,
+        visibleMeshBounds([this.prepared!.before.world, this.prepared!.after.world]),
+      );
+    }
+    const targetWidth = mode === 'compare' ? Math.max(1, Math.ceil(size.width / 2)) : size.width;
+    this.beforeTarget.setSize(targetWidth, size.height);
+    this.afterTarget.setSize(targetWidth, size.height);
+    this.renderer.setSize(size.width, size.height, false);
+    const rect = roomViewViewport(targetWidth, size.height, state);
+    return { size, state, camera, targetWidth, rect };
+  }
+  private paint(
+    prepared: Prepared,
+    target: WebGLRenderTarget,
+    frame: ReturnType<RoomViewerRenderer['frame']>,
+  ) {
+    const { camera, rect, targetWidth, size, state } = frame;
+    prepared.surfaces.updateView(camera);
+    prepared.fixtures.updateView(camera);
+    prepared.ceiling.setVisible(state.projection === 'room-eye');
+    this.renderer.setRenderTarget(target);
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, targetWidth, size.height);
+    this.renderer.clear();
+    // Shadow rendering restores the render target's viewport/scissor, not the renderer-only state.
+    // Persist the photo rectangle on the target too, or portrait optics stretch to the full canvas.
+    target.viewport.set(rect.x, rect.y, rect.width, rect.height).round();
+    target.scissor.set(rect.x, rect.y, rect.width, rect.height).round();
+    target.scissorTest = true;
+    this.renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
+    this.renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
+    this.renderer.setScissorTest(true);
+    this.renderer.render(prepared.world, camera);
+    this.renderer.setScissorTest(false);
+  }
+  /** Colour adjustment, split/compare layout and sRGB output of the two side textures. */
+  private composite(
+    frame: ReturnType<RoomViewerRenderer['frame']>,
+    mode: RoomViewerMode,
+    split: number,
+    before: Texture,
+    after: Texture,
+  ) {
+    const { rect, targetWidth, size } = frame;
+    const uniforms = this.postMaterial.uniforms;
+    uniforms.sjnBefore.value = before;
+    uniforms.sjnAfter.value = after;
+    uniforms.sjnPhotoRect.value.set(
+      rect.x / targetWidth,
+      rect.y / size.height,
+      rect.width / targetWidth,
+      rect.height / size.height,
+    );
+    uniforms.sjnBeforeColor.value = colorVector(this.prepared!.before.source.color);
+    uniforms.sjnAfterColor.value = colorVector(this.prepared!.after.source.color);
+    uniforms.sjnMode.value = mode === 'before' ? 0 : mode === 'after' ? 1 : mode === 'split' ? 2 : 3;
+    uniforms.sjnSplit.value = Number.isFinite(split) ? Math.max(0, Math.min(1, split)) : 0.5;
+    this.renderer.setRenderTarget(null);
+    this.renderer.setViewport(0, 0, size.width, size.height);
+    this.renderer.setScissorTest(false);
+    this.renderer.render(this.post, this.postCamera);
+    // The live targets are the default inputs again.
+    uniforms.sjnBefore.value = this.beforeTarget.texture;
+    uniforms.sjnAfter.value = this.afterTarget.texture;
+  }
   render(
     width: number,
     height: number,
@@ -426,73 +570,145 @@ export class RoomViewerRenderer {
   ): HTMLCanvasElement {
     this.assertOpen();
     if (!this.prepared || !this.snapshot) throw new Error('공간을 준비하는 중입니다.');
-    const size = fitOutput(width, height, this.maxOutputEdge);
-    const state = normalizeRoomView(view);
-    const panelWidth = mode === 'compare' ? size.width / 2 : size.width;
-    const camera = createRoomViewCamera(
-      this.snapshot.scene.room!,
-      panelWidth / size.height,
-      state,
-      this.prepared.bounds,
-      this.prepared.structureBounds,
-    );
-    this.sourceDepthClip = undefined;
-    if (state.sourceCamera && state.projection === 'source-photo') {
-      // Decide visible cutaway walls/directional meshes before deriving one shared depth interval.
-      for (const side of [this.prepared.before, this.prepared.after]) {
-        side.surfaces.updateView(camera);
-        side.fixtures.updateView(camera);
-      }
-      this.sourceDepthClip = fitSourceDepthClip(
-        camera,
-        visibleMeshBounds([this.prepared.before.world, this.prepared.after.world]),
-      );
+    if (this.accumulating) {
+      // An export owns the targets between its samples; draw the latest request when it ends.
+      this.deferredFrame = { width, height, view: structuredClone(view), mode, split };
+      return this.canvas;
     }
-    const targetWidth = mode === 'compare' ? Math.max(1, Math.ceil(size.width / 2)) : size.width;
-    this.beforeTarget.setSize(targetWidth, size.height);
-    this.afterTarget.setSize(targetWidth, size.height);
-    this.renderer.setSize(size.width, size.height, false);
-    const rect = roomViewViewport(targetWidth, size.height, state);
-    const paint = (prepared: Prepared, target: WebGLRenderTarget) => {
-      prepared.surfaces.updateView(camera);
-      prepared.fixtures.updateView(camera);
-      prepared.ceiling.setVisible(state.projection === 'room-eye');
-      this.renderer.setRenderTarget(target);
-      this.renderer.setScissorTest(false);
-      this.renderer.setViewport(0, 0, targetWidth, size.height);
-      this.renderer.clear();
-      // Shadow rendering restores the render target's viewport/scissor, not the renderer-only state.
-      // Persist the photo rectangle on the target too, or portrait optics stretch to the full canvas.
-      target.viewport.set(rect.x, rect.y, rect.width, rect.height).round();
-      target.scissor.set(rect.x, rect.y, rect.width, rect.height).round();
-      target.scissorTest = true;
-      this.renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
-      this.renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
-      this.renderer.setScissorTest(true);
-      this.renderer.render(prepared.world, camera);
-      this.renderer.setScissorTest(false);
-    };
-    if (mode !== 'after') paint(this.prepared.before, this.beforeTarget);
-    if (mode !== 'before') paint(this.prepared.after, this.afterTarget);
-    const uniforms = this.postMaterial.uniforms;
-    uniforms.sjnPhotoRect.value.set(
-      rect.x / targetWidth,
-      rect.y / size.height,
-      rect.width / targetWidth,
-      rect.height / size.height,
-    );
-    uniforms.sjnBeforeColor.value = colorVector(this.prepared.before.source.color);
-    uniforms.sjnAfterColor.value = colorVector(this.prepared.after.source.color);
-    uniforms.sjnMode.value = mode === 'before' ? 0 : mode === 'after' ? 1 : mode === 'split' ? 2 : 3;
-    uniforms.sjnSplit.value = Number.isFinite(split) ? Math.max(0, Math.min(1, split)) : 0.5;
-    this.renderer.setRenderTarget(null);
-    this.renderer.setViewport(0, 0, size.width, size.height);
-    this.renderer.setScissorTest(false);
-    this.renderer.render(this.post, this.postCamera);
+    const frame = this.frame(width, height, view, mode);
+    if (mode !== 'after') this.paint(this.prepared.before, this.beforeTarget, frame);
+    if (mode !== 'before') this.paint(this.prepared.after, this.afterTarget, frame);
+    this.composite(frame, mode, split, this.beforeTarget.texture, this.afterTarget.texture);
     this.assertOpen();
-    this.lastFrame = { width: size.width, height: size.height, view: structuredClone(state), mode, split };
+    this.lastFrame = {
+      width: frame.size.width,
+      height: frame.size.height,
+      view: structuredClone(frame.state),
+      mode,
+      split,
+    };
     this.renders++;
     return this.canvas;
+  }
+  /**
+   * Export-only multi-sample frame: each sample shifts the camera by a sub-pixel and moves the
+   * ceiling light inside its 600×600 panel (shadow maps re-render every sample), then all samples
+   * are averaged. Only during this call the spot light's shadow camera is narrowed to a usable
+   * field of view and a larger map; both are restored afterwards so live frames stay identical.
+   * `capture` runs while the averaged frame is on the canvas.
+   */
+  private async renderAccumulated(
+    width: number,
+    height: number,
+    view: RoomViewState,
+    mode: RoomViewerMode,
+    quality: RoomExportQuality,
+    capture: (canvas: HTMLCanvasElement) => void,
+    onProgress?: (done: number, total: number) => void,
+    signal?: AbortSignal,
+  ) {
+    const prepared = this.prepared!;
+    const sides: [number, Prepared, WebGLRenderTarget][] = [];
+    if (mode !== 'after') sides.push([0, prepared.before, this.beforeTarget]);
+    if (mode !== 'before') sides.push([1, prepared.after, this.afterTarget]);
+    const lights = [
+      ...new Set(sides.map(([, side]) => side.light).filter((light): light is SpotLight => !!light)),
+    ];
+    const saved = lights.map((light) => ({
+      light,
+      position: light.position.clone(),
+      target: light.target.position.clone(),
+      focus: light.shadow.focus,
+      mapSize: light.shadow.mapSize.clone(),
+    }));
+    const resetShadowMap = (light: SpotLight) => {
+      light.shadow.map?.dispose();
+      light.shadow.map = null;
+    };
+    this.accumulating = true;
+    let accumulator: ExportAccumulator | undefined;
+    try {
+      const frame = this.frame(width, height, view, mode);
+      const projection = frame.camera.projectionMatrix.clone();
+      accumulator = new ExportAccumulator(frame.targetWidth, frame.size.height);
+      for (const { light } of saved) {
+        // A 90° cone gives a 180° shadow frustum (no usable shadow); 0.8 → 144°.
+        light.shadow.focus = EXPORT_SHADOW_FOCUS;
+        light.shadow.mapSize.set(EXPORT_SHADOW_MAP, EXPORT_SHADOW_MAP);
+        resetShadowMap(light);
+      }
+      let samples = quality.samples,
+        moveLight = samples >= SOFT_SHADOW_SAMPLES;
+      // 0% paints before the first sample, the slowest one on software rendering (shaders, maps).
+      onProgress?.(0, samples);
+      await nextPaint();
+      if (this.disposed) throw new DOMException('공간 둘러보기가 닫혔습니다.', 'AbortError');
+      const started = performance.now();
+      for (let k = 0; k < samples; k++) {
+        if (signal?.aborted) throw new DOMException('이미지 만들기를 취소했어요.', 'AbortError');
+        this.assertOpen();
+        const jitter = exportJitter(k);
+        frame.camera.projectionMatrix.copy(projection);
+        jitterProjection(
+          frame.camera,
+          jitter.camera[0],
+          jitter.camera[1],
+          frame.rect.width,
+          frame.rect.height,
+        );
+        for (const entry of saved) {
+          const dx = moveLight ? jitter.light[0] * EXPORT_LIGHT_PANEL_MM : 0,
+            dz = moveLight ? jitter.light[1] * EXPORT_LIGHT_PANEL_MM : 0;
+          entry.light.position.set(entry.position.x + dx, entry.position.y, entry.position.z + dz);
+          entry.light.target.position.set(entry.target.x + dx, entry.target.y, entry.target.z + dz);
+          entry.light.updateMatrixWorld(true);
+          entry.light.target.updateMatrixWorld(true);
+        }
+        for (const [index, side, target] of sides) {
+          this.paint(side, target, frame);
+          accumulator.add(this.renderer, index, target.texture, k);
+        }
+        accumulator.finish(this.renderer, sides.at(-1)![0]);
+        if (k === 0 && quality.budgetMs) {
+          // Sample 0 is unjittered, so it stands alone when the device cannot afford more.
+          const affordable = Math.floor(quality.budgetMs / Math.max(1, performance.now() - started));
+          if (affordable < samples) {
+            samples = Math.max(1, affordable);
+            moveLight &&= samples >= SOFT_SHADOW_SAMPLES;
+          }
+        }
+        onProgress?.(k + 1, samples);
+        // Let the page paint progress and take a cancel click between samples.
+        if (k + 1 < samples) await nextPaint();
+        if (this.disposed) throw new DOMException('공간 둘러보기가 닫혔습니다.', 'AbortError');
+      }
+      // A cancel clicked during the last sample lands here, before the file is made.
+      await nextPaint();
+      if (signal?.aborted) throw new DOMException('이미지 만들기를 취소했어요.', 'AbortError');
+      if (this.disposed) throw new DOMException('공간 둘러보기가 닫혔습니다.', 'AbortError');
+      this.assertOpen();
+      this.composite(
+        frame,
+        mode,
+        0.5,
+        accumulator.texture(0) ?? this.beforeTarget.texture,
+        accumulator.texture(1) ?? this.afterTarget.texture,
+      );
+      capture(this.canvas);
+      return { samples, softShadows: moveLight };
+    } finally {
+      for (const entry of saved) {
+        entry.light.position.copy(entry.position);
+        entry.light.target.position.copy(entry.target);
+        entry.light.updateMatrixWorld(true);
+        entry.light.target.updateMatrixWorld(true);
+        entry.light.shadow.focus = entry.focus;
+        entry.light.shadow.mapSize.copy(entry.mapSize);
+        resetShadowMap(entry.light);
+      }
+      accumulator?.dispose();
+      this.accumulating = false;
+    }
   }
   /**
    * Visible fixture boxes of an After frame of this size and view, normalised to that frame (y down).
@@ -625,7 +841,15 @@ export class RoomViewerRenderer {
   }
   async export(
     view: RoomViewState,
-    options: { format: 'png' | 'jpeg'; mode: RoomViewerMode; longEdge: number },
+    options: {
+      format: 'png' | 'jpeg';
+      mode: RoomViewerMode;
+      longEdge: number;
+      /** Multi-sample photo export; omitted for previews, which stay one synchronous frame. */
+      quality?: RoomExportQuality;
+      onProgress?: (done: number, total: number) => void;
+      signal?: AbortSignal;
+    },
   ): Promise<Blob> {
     this.assertOpen();
     if (!this.snapshot || !this.prepared) throw new Error('공간을 먼저 준비해 주세요.');
@@ -648,13 +872,66 @@ export class RoomViewerRenderer {
     copy.height = output.height;
     const context = copy.getContext('2d');
     if (!context) throw new Error('다운로드 이미지를 만들 수 없습니다.');
-    // Paint + detached pixel copy are synchronous. Later scene changes cannot alter this file.
-    try {
-      context.drawImage(this.render(output.width, output.height, state, options.mode), 0, 0);
-    } finally {
-      if (previous && !this.disposed)
-        this.render(previous.width, previous.height, previous.view, previous.mode, previous.split);
+    const samples = Math.max(1, Math.min(256, Math.floor(options.quality?.samples ?? 1)));
+    // Averaging needs a float target; an 8-bit one would band and clip, so export one frame instead.
+    const floatTargets = this.afterTarget.texture.type === HalfFloatType;
+    const started = performance.now();
+    this.lastExport = {
+      samples: samples > 1 && floatTargets ? samples : 1,
+      ms: 0,
+      width: output.width,
+      height: output.height,
+      ...(samples > 1 && !floatTargets
+        ? { fallbackReason: '이 브라우저는 float 렌더 타깃이 없어 한 장으로 내보냈어요.' }
+        : {}),
+    };
+    if (samples > 1 && floatTargets) {
+      try {
+        Object.assign(
+          this.lastExport,
+          await this.renderAccumulated(
+            output.width,
+            output.height,
+            state,
+            options.mode,
+            { samples, budgetMs: options.quality?.budgetMs },
+            (canvas) => context.drawImage(canvas, 0, 0),
+            options.onProgress,
+            options.signal,
+          ),
+        );
+      } catch (error) {
+        const cancelled = error instanceof DOMException && error.name === 'AbortError';
+        if (cancelled || this.disposed || this.lost || this.renderer.getContext().isContextLost()) {
+          // The preview frame is restored in finally; nothing half-averaged is encoded.
+          copy.width = copy.height = 1;
+          throw error;
+        }
+        // Allocation or GPU trouble while averaging: keep the user's export as one frame.
+        this.lastExport = {
+          ...this.lastExport,
+          samples: 1,
+          fallbackReason:
+            '여러 장 겹쳐 찍기를 하지 못해 한 장으로 내보냈어요. ' +
+            (error instanceof Error ? error.message : String(error)),
+        };
+        context.drawImage(this.render(output.width, output.height, state, options.mode), 0, 0);
+      } finally {
+        const next = this.deferredFrame ?? previous;
+        this.deferredFrame = undefined;
+        if (next && !this.disposed && !this.lost && !this.renderer.getContext().isContextLost())
+          this.render(next.width, next.height, next.view, next.mode, next.split);
+      }
+    } else {
+      // Paint + detached pixel copy are synchronous. Later scene changes cannot alter this file.
+      try {
+        context.drawImage(this.render(output.width, output.height, state, options.mode), 0, 0);
+      } finally {
+        if (previous && !this.disposed)
+          this.render(previous.width, previous.height, previous.view, previous.mode, previous.split);
+      }
     }
+    this.lastExport.ms = performance.now() - started;
     return new Promise<Blob>((resolve, reject) =>
       copy.toBlob(
         (blob) => {
@@ -699,6 +976,7 @@ export class RoomViewerRenderer {
       lightingCache: this.lighting.diagnostics,
       countersMayBeStaleAfterContextLoss: this.disposed || gl.isContextLost(),
       canvasSize: new Vector2(this.canvas.width, this.canvas.height).toArray(),
+      lastExport: this.lastExport ? { ...this.lastExport } : null,
     };
   }
   dispose() {

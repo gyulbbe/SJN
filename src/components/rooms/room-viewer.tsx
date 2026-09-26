@@ -15,7 +15,8 @@ import {
 import type { MaterialVersion, ProjectDocument, RenderSnapshot } from '@/lib/types';
 import type { AssetReader } from '@/lib/render/compositor';
 import { getActiveDesign } from '@/lib/comparison';
-import { RoomViewerRenderer } from '@/lib/room-viewer/renderer';
+import { ROOM_PHOTO_EXPORT_QUALITY, RoomViewerRenderer } from '@/lib/room-viewer/renderer';
+import { ProgressMeter } from '@/components/progress-meter';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import {
   clampRoomEye,
@@ -108,6 +109,9 @@ export default function RoomViewer({
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const [exporting, setExporting] = useState(false);
+  /** Samples averaged so far for a high-quality download. */
+  const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
+  const exportAbort = useRef<AbortController | null>(null);
   const [format, setFormat] = useState<'png' | 'jpeg'>('png');
   const [exportMode, setExportMode] = useState<'after' | 'compare'>('compare');
   const [frame, setFrame] = useState(0);
@@ -173,6 +177,7 @@ export default function RoomViewer({
     viewport.current?.focus();
     return () => {
       live.current = false;
+      exportAbort.current?.abort();
       document.body.style.overflow = oldOverflow;
       element?.close();
       previousFocus?.focus();
@@ -300,14 +305,25 @@ export default function RoomViewer({
     if (!renderer || !prepared || exporting) return;
     setExporting(true);
     setError('');
+    const controller = new AbortController();
+    exportAbort.current = controller;
     const capturedView = structuredClone(viewRef.current);
     const name = `${project.name}-${design?.name ?? '공간'}-${roomViewLabel(capturedView)}`.replace(
       /[<>:"/\\|?*]/g,
       '-',
     );
     try {
-      const blob = await renderer.export(capturedView, { format, mode: exportMode, longEdge: 4096 });
-      if (!live.current) return;
+      const blob = await renderer.export(capturedView, {
+        format,
+        mode: exportMode,
+        longEdge: 4096,
+        quality: ROOM_PHOTO_EXPORT_QUALITY,
+        onProgress: (done, total) => {
+          if (live.current) setExportProgress({ done, total });
+        },
+        signal: controller.signal,
+      });
+      if (!live.current || controller.signal.aborted) return;
       const url = URL.createObjectURL(blob);
       urls.current.add(url);
       const anchor = document.createElement('a');
@@ -318,9 +334,14 @@ export default function RoomViewer({
       anchor.remove();
       // Keep until dialog cleanup so even a slow browser can acquire the download bytes.
     } catch (cause) {
-      if (live.current) setError(cause instanceof Error ? cause.message : String(cause));
+      const cancelled = cause instanceof DOMException && cause.name === 'AbortError';
+      if (live.current && !cancelled) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      if (live.current) setExporting(false);
+      if (exportAbort.current === controller) exportAbort.current = null;
+      if (live.current) {
+        setExporting(false);
+        setExportProgress(null);
+      }
     }
   }
   return (
@@ -689,6 +710,26 @@ export default function RoomViewer({
               ))}
             </ul>
           </details>
+        )}
+        {exporting && exportProgress && (
+          <div className="mx-5 mb-2 max-[650px]:mx-2.5">
+            <ProgressMeter
+              compact
+              title="고화질로 만드는 중"
+              label="고화질 이미지 만들기"
+              percent={(exportProgress.done / exportProgress.total) * 100}
+              valueText={`고화질 이미지 ${exportProgress.done}/${exportProgress.total}장, ${Math.floor((exportProgress.done / exportProgress.total) * 100)}%`}
+              message="여러 장을 겹쳐 부드러운 그림자와 윤곽을 만들어요."
+              detail={`${exportProgress.done}/${exportProgress.total}장`}
+              testId="room-export-progress"
+              percentTestId="room-export-percent"
+              action={
+                <button type="button" onClick={() => exportAbort.current?.abort()}>
+                  다운로드 취소
+                </button>
+              }
+            />
+          </div>
         )}
         <footer className={styles.footer}>
           <span>{prepared ? '현재 시점으로 저장' : '준비 후 다운로드할 수 있어요'}</span>

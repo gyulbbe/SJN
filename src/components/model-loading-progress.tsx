@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ProgressMeter } from '@/components/progress-meter';
 import {
   createModelLoadTracker,
   DEEPLAB_LOAD,
   formatMegabytes,
-  formatPercent,
   MOGE_LOAD,
   modelProgressValueText,
   type ModelLoadEvent,
@@ -82,17 +82,6 @@ export function ModelLoadingProgress({
   /** Hide the stage line where the screen already shows the same stage text. */
   showMessage?: boolean;
 }) {
-  const percent = snapshot.percent;
-  const [announcement, setAnnouncement] = useState('');
-  const announced = useRef<{ bucket: number; phase: string } | null>(null);
-  useEffect(() => {
-    // Screen readers hear 10% steps and stage changes, not every redraw.
-    const bucket = percent === null ? -1 : Math.floor(percent / 10);
-    const previous = announced.current;
-    if (previous && previous.bucket === bucket && previous.phase === snapshot.phase) return;
-    announced.current = { bucket, phase: snapshot.phase };
-    setAnnouncement(modelProgressValueText(title, snapshot));
-  }, [percent, snapshot, title]);
   const bytes =
     snapshot.loadedBytes !== undefined
       ? snapshot.totalBytes
@@ -109,57 +98,22 @@ export function ModelLoadingProgress({
           ? '처음 한 번만 내려받아요. 다음부터는 저장된 모델을 써요.'
           : '';
   return (
-    <div
-      className={`min-w-0 rounded-[var(--radius-sm,8px)] border border-[color:var(--line)] bg-[color:var(--paper)] ${compact ? 'px-3 py-2' : 'px-4 py-3'}`}
-      data-testid="model-loading-progress"
-    >
-      <div className="flex min-w-0 items-end justify-between gap-3">
-        <div className="min-w-0">
-          {sequence && sequence.count > 1 && (
-            <div className="text-xs font-semibold text-[color:var(--accent)]">
-              AI 모델 준비 {sequence.index}/{sequence.count}
-            </div>
-          )}
-          <div
-            className={`truncate font-semibold text-[color:var(--ink)] ${compact ? 'text-sm' : 'text-base'}`}
-          >
-            {title}
-          </div>
-        </div>
-        <div
-          className={`shrink-0 font-bold tabular-nums text-[color:var(--ink)] ${compact ? 'text-lg' : 'text-3xl'}`}
-          data-testid="model-loading-percent"
-        >
-          {percent === null ? '—' : formatPercent(percent)}
-        </div>
-      </div>
-      <div
-        role="progressbar"
-        aria-label={label ?? title}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent === null ? undefined : Math.floor(percent)}
-        aria-valuetext={modelProgressValueText(title, snapshot)}
-        className={`mt-2 overflow-hidden rounded-full bg-[color:var(--surface-soft,#eeefea)] ${compact ? 'h-1.5' : 'h-2.5'}`}
-      >
-        {percent === null ? (
-          <div className="h-full w-1/3 rounded-full bg-[color:var(--accent)] motion-safe:animate-pulse" />
-        ) : (
-          <div
-            className="h-full rounded-full bg-[color:var(--accent)] transition-[width] duration-200 motion-reduce:transition-none"
-            style={{ width: `${percent}%` }}
-          />
-        )}
-      </div>
-      <div className="mt-1.5 flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-0.5 text-xs text-[color:var(--muted)]">
-        <span className="min-w-0 break-keep">{showMessage ? snapshot.message : ''}</span>
-        {bytes && <span className="shrink-0 tabular-nums">{bytes}</span>}
-      </div>
-      {notice && !compact && <div className="mt-1 text-xs text-[color:var(--muted)]">{notice}</div>}
-      <div className="sr-only" aria-live="polite">
-        {announcement}
-      </div>
-    </div>
+    <ProgressMeter
+      title={title}
+      percent={snapshot.percent}
+      valueText={modelProgressValueText(title, snapshot)}
+      label={label}
+      eyebrow={
+        sequence && sequence.count > 1 ? `AI 모델 준비 ${sequence.index}/${sequence.count}` : undefined
+      }
+      message={showMessage ? snapshot.message : ''}
+      detail={bytes}
+      notice={notice}
+      phase={snapshot.phase}
+      compact={compact}
+      testId="model-loading-progress"
+      percentTestId="model-loading-percent"
+    />
   );
 }
 

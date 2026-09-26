@@ -50,6 +50,7 @@ import {
 } from '@/lib/designs';
 import { useDesignThumbnail } from '@/components/designs/use-design-preview';
 import { ModelLoadingProgress, useModelLoadingProgress } from '@/components/model-loading-progress';
+import { ProgressMeter } from '@/components/progress-meter';
 import { DEEPLAB_LOAD } from '@/lib/ai-progress';
 import DesignManager from '@/components/designs/design-manager';
 import DesignComparison from '@/components/designs/design-comparison';
@@ -187,6 +188,9 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     [detectionStatus, setDetectionStatus] = useState(''),
     detectionModel = useModelLoadingProgress(DEEPLAB_LOAD),
     [detectionNotice, setDetectionNotice] = useState('');
+  /** Samples averaged so far while a 3D download is made in high quality. */
+  const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
+  const exportAbort = useRef<AbortController | null>(null);
   const [wallEditor, setWallEditor] = useState<{
     projectId: string;
     editRevision: number;
@@ -1113,6 +1117,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     maxEdge = 4096,
     /** Receives the exact snapshot (and 3D fixture boxes) behind this capture, for AI grounding. */
     inspect?: (capture: Omit<FluxCaptureSource, 'blob' | 'reader'>) => void,
+    /** Photo downloads average several samples in the 3D view; AI input stays one frame. */
+    photo?: { onProgress: (done: number, total: number) => void; signal: AbortSignal },
   ): Promise<Blob> {
     if (isGuest) throw new Error('이미지 출력은 로그인 후 사용할 수 있어요.');
     if (!scene || !st.project || (!renderer.current && !roomContext))
@@ -1128,7 +1134,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       };
       let blob: Blob;
       if (roomContext) {
-        const { RoomViewerRenderer } = await import('@/lib/room-viewer/renderer');
+        const { RoomViewerRenderer, ROOM_PHOTO_EXPORT_QUALITY } = await import('@/lib/room-viewer/renderer');
         const roomRenderer = new RoomViewerRenderer();
         try {
           await roomRenderer.setSnapshot(snapshot, assetReader, {
@@ -1138,6 +1144,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             format: outputFormat === 'image/png' ? 'png' : 'jpeg',
             mode: comparison ? 'compare' : 'after',
             longEdge: edge,
+            ...(photo ? { quality: ROOM_PHOTO_EXPORT_QUALITY, ...photo } : {}),
           });
           // Same renderer and view as the export; only the aspect ratio matters for normalised boxes.
           if (inspect && !comparison)
@@ -1172,8 +1179,14 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     if (exporting || aiExporting) return;
     setExporting(true);
     setError('');
+    const controller = new AbortController();
+    exportAbort.current = controller;
     try {
-      const blob = await captureExport(format, compare);
+      const blob = await captureExport(format, compare, undefined, undefined, {
+        onProgress: (done, total) => setExportProgress({ done, total }),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob),
         link = document.createElement('a');
       link.href = url;
@@ -1182,9 +1195,12 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       setExportModal(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!(e instanceof DOMException && e.name === 'AbortError'))
+        setError(e instanceof Error ? e.message : String(e));
     } finally {
+      if (exportAbort.current === controller) exportAbort.current = null;
       setExporting(false);
+      setExportProgress(null);
     }
   }
   async function saveWithThumbnail() {
@@ -2386,6 +2402,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               <button
                 className="icon-btn"
                 onClick={() => {
+                  exportAbort.current?.abort();
                   setExportModal(false);
                   setAiExporting(false);
                 }}
@@ -2426,6 +2443,26 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             <p className="muted" style={{ fontSize: 12 }}>
               가상 시공 이미지이며 실제 색상, 치수, 설치 가능 여부는 실측 및 현장 확인이 필요합니다.
             </p>
+            {exporting && exportProgress && (
+              <div className="mb-3">
+                <ProgressMeter
+                  compact
+                  title="고화질로 만드는 중"
+                  label="고화질 이미지 만들기"
+                  percent={(exportProgress.done / exportProgress.total) * 100}
+                  valueText={`고화질 이미지 ${exportProgress.done}/${exportProgress.total}장, ${Math.floor((exportProgress.done / exportProgress.total) * 100)}%`}
+                  message="여러 장을 겹쳐 부드러운 그림자와 윤곽을 만들어요."
+                  detail={`${exportProgress.done}/${exportProgress.total}장`}
+                  testId="editor-export-progress"
+                  percentTestId="editor-export-percent"
+                  action={
+                    <button type="button" className="btn" onClick={() => exportAbort.current?.abort()}>
+                      다운로드 취소
+                    </button>
+                  }
+                />
+              </div>
+            )}
             <AiExport
               key={`${scopeKey}-${activeDesign?.id}`}
               capture={async () => {
@@ -2446,6 +2483,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               <button
                 className="btn"
                 onClick={() => {
+                  exportAbort.current?.abort();
                   setExportModal(false);
                   setAiExporting(false);
                 }}

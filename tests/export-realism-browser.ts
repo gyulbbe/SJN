@@ -9,11 +9,17 @@ import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import { deltaE2000 } from './helpers/delta-e';
 
 const label = process.argv.slice(3).find((arg) => !arg.startsWith('--')) ?? 'stage-1';
 if (!/^[a-z0-9-]+$/.test(label)) throw new Error('label must be lowercase letters, digits or dashes');
 const gpu = process.argv.includes('--gpu');
 const headed = process.argv.includes('--headed');
+const option = (name: string) =>
+  process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
+// Accumulation matrix: SwiftShader keeps it small; the real GPU runs the full 1024–4096 × 8–64 table.
+const edges = (option('edges') ?? (gpu ? '1024,2048,4096' : '1024,2048')).split(',').map(Number);
+const sampleCounts = (option('samples') ?? (gpu ? '8,16,32,64' : '8,16')).split(',').map(Number);
 const output = `test-results/export-realism-stage-1/${label}`;
 await mkdir(output, { recursive: true });
 const power = (() => {
@@ -307,15 +313,333 @@ try {
       images['eye-center-compare'] = compare.canvas.toDataURL('image/png');
       metrics['eye-center-compare'] = { backgroundRatio: backgroundRatio(compare.data) };
       const diagnostics = viewer.diagnostics();
+      // Kept for the accumulation section below; disposed at the end of the run.
+      Object.assign(window, { __xr: { viewer, views, toImage } });
       return { images, metrics, gpu: diagnostics.gpu };
-    } finally {
+    } catch (error) {
       viewer.dispose();
+      throw error;
     }
   });
+  const accumulation = await page.evaluate(
+    async ({ edges, sampleCounts }) => {
+      type Viewer = InstanceType<typeof import('../src/lib/room-viewer/renderer').RoomViewerRenderer>;
+      type RoomViewState = import('../src/lib/room-viewer/view-state').RoomViewState;
+      const { viewer, views, toImage } = (
+        window as unknown as {
+          __xr: {
+            viewer: Viewer;
+            views: [string, RoomViewState][];
+            toImage: (blob: Blob) => Promise<{ canvas: HTMLCanvasElement; data: Uint8ClampedArray }>;
+          };
+        }
+      ).__xr;
+      const view = (name: string) => views.find(([n]) => n === name)![1];
+      const images: Record<string, string> = {};
+      const timings: {
+        edge: number;
+        samples: number;
+        ms: number;
+        averaged?: number;
+        width: number;
+        height: number;
+        fallback?: string;
+      }[] = [];
+      const exportImage = async (name: string, edge: number, samples: number, progress?: number[]) => {
+        const started = performance.now();
+        const blob = await viewer.export(view(name), {
+          format: 'png',
+          mode: 'after',
+          longEdge: edge,
+          ...(samples > 1
+            ? { quality: { samples }, onProgress: (done: number) => progress?.push(done) }
+            : {}),
+        });
+        const ms = performance.now() - started;
+        const last = viewer.diagnostics().lastExport;
+        return { ...(await toImage(blob)), ms, last };
+      };
+      const luminance = (d: Uint8ClampedArray, i: number) =>
+        0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      const median = (image: { canvas: HTMLCanvasElement; data: Uint8ClampedArray }, r: number[]) => {
+        const { width, height } = image.canvas;
+        const channels: number[][] = [[], [], []];
+        for (let y = Math.round(r[1] * height); y < Math.round(r[3] * height); y++)
+          for (let x = Math.round(r[0] * width); x < Math.round(r[2] * width); x++)
+            for (let c = 0; c < 3; c++) channels[c].push(image.data[(y * width + x) * 4 + c]);
+        return channels.map((v) => v.sort((a, b) => a - b)[v.length >> 1]) as [number, number, number];
+      };
+      type Image = { canvas: HTMLCanvasElement; data: Uint8ClampedArray };
+      /**
+       * Stair steps along a straight diagonal edge (orbit view floor/wall corner, given in image
+       * fractions): per column, the sub-pixel crossing from the pixel coverage between the two flat
+       * sides, then the RMS distance (px) of the crossings to their fitted line. 0 = perfectly smooth.
+       */
+      const staircase = (image: Image, from: [number, number], to: [number, number]) => {
+        const { width, height } = image.canvas;
+        const half = Math.max(6, Math.round(height * 0.012));
+        const points: [number, number][] = [];
+        const x0 = Math.round((from[0] + (to[0] - from[0]) * 0.15) * width),
+          x1 = Math.round((from[0] + (to[0] - from[0]) * 0.85) * width);
+        for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) {
+          const t = (x / width - from[0]) / (to[0] - from[0]);
+          const yp = Math.round((from[1] + (to[1] - from[1]) * t) * height);
+          const column: number[] = [];
+          for (let y = yp - half; y <= yp + half; y++)
+            column.push(luminance(image.data, (y * width + x) * 4));
+          const mid = (v: number[]) => v.sort((a, b) => a - b)[1];
+          const above = mid(column.slice(0, 3)),
+            below = mid(column.slice(-3));
+          if (Math.abs(above - below) < 20) continue;
+          let covered = 0;
+          for (const v of column) covered += Math.max(0, Math.min(1, (v - below) / (above - below)));
+          points.push([x, yp - half + covered]);
+        }
+        const n = points.length,
+          mx = points.reduce((s, p) => s + p[0], 0) / n,
+          my = points.reduce((s, p) => s + p[1], 0) / n;
+        const slope =
+          points.reduce((s, p) => s + (p[0] - mx) * (p[1] - my), 0) /
+          points.reduce((s, p) => s + (p[0] - mx) ** 2, 0);
+        // Tile grout meeting the corner makes a few outliers: drop the worst 10%.
+        const residuals = points.map((p) => (p[1] - my - slope * (p[0] - mx)) ** 2).sort((a, b) => a - b);
+        const kept = residuals.slice(0, Math.max(1, Math.floor(n * 0.9)));
+        return {
+          columns: n,
+          rmsPx: Number(Math.sqrt(kept.reduce((s, r) => s + r, 0) / kept.length).toFixed(3)),
+        };
+      };
+      /**
+       * Floor luminance along a row from a fixture's base outwards: contrast of the cast shadow and
+       * its 10–90% penumbra width in px (null when there is no shadow to measure).
+       */
+      const shadowProfile = (image: Image, row: number, x0: number, x1: number) => {
+        const { width, height } = image.canvas;
+        const y = Math.round(row * height);
+        const values: number[] = [];
+        for (let x = Math.round(x0 * width); x < Math.round(x1 * width); x++)
+          values.push(luminance(image.data, (y * width + x) * 4));
+        // Darkest floor point, then outwards until the lit floor at the far end of the row.
+        const darkest = values.indexOf(Math.min(...values)),
+          low = values[darkest],
+          high = Math.max(...values.slice(-Math.ceil(values.length / 4)));
+        const contrast = Number((high - low).toFixed(1));
+        if (contrast < 4) return { contrast, penumbraPx: null };
+        const reach = (level: number) =>
+          values.findIndex((v, i) => i >= darkest && v >= low + (high - low) * level);
+        return { contrast, penumbraPx: reach(0.9) - reach(0.1) };
+      };
+      // Timing table.
+      for (const edge of edges)
+        for (const samples of [1, ...sampleCounts]) {
+          const result = await exportImage('eye-center', edge, samples);
+          timings.push({
+            edge,
+            samples,
+            ms: Math.round(result.ms),
+            averaged: result.last?.samples,
+            width: result.canvas.width,
+            height: result.canvas.height,
+            ...(result.last?.fallbackReason ? { fallback: result.last.fallbackReason } : {}),
+          });
+          if (edge === edges[0]) images[`accumulate-eye-${samples}`] = result.canvas.toDataURL('image/png');
+        }
+      // Quality at the first edge: one frame vs the largest sample count.
+      const edge = edges[0],
+        best = Math.max(...sampleCounts);
+      const progress: number[] = [];
+      const orbitSingle = await exportImage('orbit-front', edge, 1);
+      const orbitAccumulated = await exportImage('orbit-front', edge, best, progress);
+      images['accumulate-orbit-1'] = orbitSingle.canvas.toDataURL('image/png');
+      images[`accumulate-orbit-${best}`] = orbitAccumulated.canvas.toDataURL('image/png');
+      // The other sample counts, for the shadow banding comparison.
+      const orbit: Record<number, Image & { ms: number }> = { 1: orbitSingle, [best]: orbitAccumulated };
+      for (const samples of sampleCounts.filter((n) => n !== best)) {
+        orbit[samples] = await exportImage('orbit-front', edge, samples);
+        images[`accumulate-orbit-${samples}`] = orbit[samples].canvas.toDataURL('image/png');
+      }
+      // FLUX sees the 1024 capture reduced to about 496 px: how much of it would 8 samples change?
+      const fluxInput = (() => {
+        const eight = orbit[8];
+        if (!eight || edge !== 1024) return null;
+        const reduce = (image: Image) => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 496;
+          canvas.height = Math.round((496 * image.canvas.height) / image.canvas.width);
+          const context = canvas.getContext('2d', { willReadFrequently: true })!;
+          context.imageSmoothingQuality = 'high';
+          context.drawImage(image.canvas, 0, 0, canvas.width, canvas.height);
+          return context.getImageData(0, 0, canvas.width, canvas.height).data;
+        };
+        const a = reduce(orbitSingle),
+          b = reduce(eight);
+        let changed = 0,
+          total = 0;
+        for (let i = 0; i < a.length; i += 4) {
+          const difference = Math.abs(luminance(a, i) - luminance(b, i));
+          total += difference;
+          if (difference > 6) changed++;
+        }
+        return {
+          singleMs: Math.round(orbitSingle.ms),
+          eightMs: Math.round(eight.ms),
+          meanLuminanceDifference: Number((total / (a.length / 4)).toFixed(2)),
+          changedShare: Number((changed / (a.length / 4)).toFixed(4)),
+        };
+      })();
+      const regions = { backWall: [0.42, 0.3, 0.58, 0.44], floor: [0.42, 0.84, 0.58, 0.92] };
+      const colour = Object.fromEntries(
+        Object.entries(regions).map(([name, r]) => [
+          name,
+          { single: median(orbitSingle, r), accumulated: median(orbitAccumulated, r) },
+        ]),
+      );
+      // Left and right floor/wall corners of the orbit frame run at about 45°.
+      const corners: [[number, number], [number, number]][] = [
+        [
+          [0.339, 0.744],
+          [0.207, 0.937],
+        ],
+        [
+          [0.661, 0.744],
+          [0.793, 0.937],
+        ],
+      ];
+      const aliasing = {
+        single: corners.map(([a, b]) => staircase(orbitSingle, a, b)),
+        accumulated: corners.map(([a, b]) => staircase(orbitAccumulated, a, b)),
+      };
+      // Floor to the right of the toilet base, just behind its front.
+      const shadow = {
+        single: shadowProfile(orbitSingle, 0.775, 0.61, 0.72),
+        accumulated: shadowProfile(orbitAccumulated, 0.775, 0.61, 0.72),
+      };
+      // Resources over three accumulated exports.
+      const memory: { textures: number; geometries: number; programs: number }[] = [];
+      for (let i = 0; i < 3; i++) {
+        await exportImage('eye-center', edge, 8);
+        const d = viewer.diagnostics();
+        memory.push({ textures: d.textures, geometries: d.geometries, programs: d.programs });
+      }
+      // A cancelled export stops and the viewer still renders.
+      const controller = new AbortController();
+      let cancelled = false;
+      try {
+        await viewer.export(view('eye-center'), {
+          format: 'png',
+          mode: 'after',
+          longEdge: edge,
+          quality: { samples: 16 },
+          signal: controller.signal,
+          onProgress: (done) => {
+            if (done === 3) controller.abort();
+          },
+        });
+      } catch (error) {
+        cancelled = error instanceof DOMException && error.name === 'AbortError';
+      }
+      const afterCancel = viewer.diagnostics();
+      // A device too slow for the budget keeps the plain first sample and a still light.
+      await viewer.export(view('eye-center'), {
+        format: 'png',
+        mode: 'after',
+        longEdge: edge,
+        quality: { samples: 32, budgetMs: 1 },
+      });
+      const budget = viewer.diagnostics().lastExport;
+      return {
+        budget,
+        images,
+        timings,
+        colour,
+        aliasing,
+        fluxInput,
+        shadow,
+        progress,
+        memory,
+        cancelled,
+        afterCancel: { textures: afterCancel.textures, geometries: afterCancel.geometries },
+      };
+    },
+    { edges, sampleCounts },
+  );
+  await page.evaluate(() =>
+    (window as unknown as { __xr: { viewer: { dispose(): void } } }).__xr.viewer.dispose(),
+  );
   assert.deepEqual(errors, [], errors.join('\n'));
-  for (const [name, url] of Object.entries(result.images))
+  for (const [name, url] of Object.entries({
+    ...result.images,
+    ...accumulation.images,
+  }))
     await writeFile(`${output}/${name}.png`, Buffer.from(url.split(',')[1], 'base64'));
-  const report = { label, gpu: result.gpu, power, headed, metrics: result.metrics };
+  // Zoomed crops (3×, nearest): toilet shadow and left floor corner, one frame | accumulated.
+  {
+    const sharp = (await import('sharp')).default;
+    const best = Math.max(...sampleCounts);
+    const single = `${output}/accumulate-orbit-1.png`,
+      accumulated = `${output}/accumulate-orbit-${best}.png`;
+    const { width = 1, height = 1 } = await sharp(single).metadata();
+    const crop = (file: string, x: number, y: number, w: number, h: number) =>
+      sharp(file)
+        .extract({
+          left: Math.round(x * width),
+          top: Math.round(y * height),
+          width: Math.round(w * width),
+          height: Math.round(h * height),
+        })
+        .resize(Math.round(w * 1024) * 3, Math.round(h * 683) * 3, { kernel: 'nearest' })
+        .png()
+        .toBuffer();
+    const toilet = [0.527, 0.703, 0.156, 0.117] as const,
+      corner = [0.195, 0.732, 0.156, 0.22] as const;
+    const tw = Math.round(toilet[2] * 1024) * 3,
+      th = Math.round(toilet[3] * 683) * 3,
+      ch = Math.round(corner[3] * 683) * 3;
+    await sharp({ create: { width: tw * 2 + 8, height: th + ch + 8, channels: 3, background: '#ffffff' } })
+      .composite([
+        { input: await crop(single, ...toilet), left: 0, top: 0 },
+        { input: await crop(accumulated, ...toilet), left: tw + 8, top: 0 },
+        { input: await crop(single, ...corner), left: 0, top: th + 8 },
+        { input: await crop(accumulated, ...corner), left: tw + 8, top: th + 8 },
+      ])
+      .png()
+      .toFile(`${output}/accumulate-crops.png`);
+    // Toilet shadow at 1, then each sample count, left to right.
+    const counts = [1, ...sampleCounts];
+    await sharp({
+      create: { width: (tw + 8) * counts.length, height: th, channels: 3, background: '#ffffff' },
+    })
+      .composite(
+        await Promise.all(
+          counts.map(async (samples, i) => ({
+            input: await crop(`${output}/accumulate-orbit-${samples}.png`, ...toilet),
+            left: i * (tw + 8),
+            top: 0,
+          })),
+        ),
+      )
+      .png()
+      .toFile(`${output}/accumulate-shadow-steps.png`);
+  }
+
+  const accumulationReport = {
+    ...accumulation,
+    images: undefined,
+    colour: Object.fromEntries(
+      Object.entries(accumulation.colour).map(([name, c]) => [
+        name,
+        { ...c, deltaE2000: Number(deltaE2000(c.single, c.accumulated).toFixed(2)) },
+      ]),
+    ),
+  };
+  const report = {
+    label,
+    gpu: result.gpu,
+    power,
+    headed,
+    metrics: result.metrics,
+    accumulation: accumulationReport,
+  };
   await writeFile(`${output}/metrics.json`, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
   for (const [name, value] of Object.entries(result.metrics))
