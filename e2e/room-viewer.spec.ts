@@ -146,9 +146,12 @@ async function download(
 ) {
   await viewer(page).getByLabel('둘러보기 파일 형식', { exact: true }).selectOption(format);
   await viewer(page).getByLabel('둘러보기 출력 종류', { exact: true }).selectOption(mode);
-  // High-quality downloads average samples for up to ~10 s on software WebGL, then encode.
+  // High-quality downloads average samples for up to ~10 s on software WebGL, then encode. The page
+  // is busy through the first sample, so the click's own settle wait can outlast the action timeout.
   const event = page.waitForEvent('download', { timeout: 120000 });
-  await viewer(page).getByRole('button', { name: '현재 시점 다운로드', exact: true }).click();
+  await viewer(page)
+    .getByRole('button', { name: '현재 시점 다운로드', exact: true })
+    .click({ timeout: 60000 });
   const path = info.outputPath(filename);
   const download = await event;
   const bytes = await streamBuffer(await download.createReadStream());
@@ -827,7 +830,7 @@ test('고화질 다운로드: 여러 장 진행률·취소·창 닫기에서 멈
   let cancelBox: { x: number; y: number; width: number; height: number } | null = null;
   const event = page.waitForEvent('download', { timeout: 180000 });
   const exportStarted = performance.now();
-  await downloadButton.click();
+  await downloadButton.click({ timeout: 60000 });
   const watcher = (async () => {
     // Software WebGL leaves the page busy during each sample; this reads whenever it answers.
     // One call per look (percent and the cancel button's place), as its free moments are short.
@@ -864,7 +867,7 @@ test('고화질 다운로드: 여러 장 진행률·취소·창 닫기에서 멈
   downloads = 0;
   const box = cancelBox!;
   const cancelled = performance.now();
-  await downloadButton.click();
+  await downloadButton.click({ timeout: 60000 });
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(progress).toHaveCount(0, { timeout: 60000 });
   const cancelMs = performance.now() - cancelled;
@@ -877,7 +880,7 @@ test('고화질 다운로드: 여러 장 진행률·취소·창 닫기에서 멈
   const close = (await viewer(page)
     .getByRole('button', { name: '공간 둘러보기 닫기', exact: true })
     .boundingBox())!;
-  await downloadButton.click();
+  await downloadButton.click({ timeout: 60000 });
   await page.mouse.click(close.x + close.width / 2, close.y + close.height / 2);
   await expect(viewer(page)).toHaveCount(0, { timeout: 60000 });
   await page.waitForTimeout(1500);
