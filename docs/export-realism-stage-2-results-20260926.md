@@ -117,7 +117,7 @@
   - `reconstruction-analysis-profile` 진단 로그: 진단 보관함은 서버(D1/R2)로 옮겨졌는데, 격리 도우미가 이 API를 여전히 503으로 막았다. 그래서 "아직 기록 없음" 대신 읽기 실패 문구가 떴다. 도우미가 격리 D1/R2의 실제 처리기(`diagnosticArchiveRequest`)로 보내도록 고쳤다([authenticated-app](../e2e/helpers/authenticated-app.ts)).
   - `upload-read-error` 2개: 실행 도중 Playwright 브라우저 폴더(`ms-playwright`)가 이 작업 밖에서 지워졌다. 다시 설치한 뒤 통과했다.
   - 부하에 따른 시간 초과: `wall-features-ui` 2개, `simple-editor` 1개, `studio-ui` 3개가 실패했다. 이때 같은 PC에서 게임과 방송이 돌아 CPU 사용률이 74~85%였다. 테스트 프로세스 안에서 몇 ms면 끝나는 카탈로그 API가 53초 걸렸다. SwiftShader는 CPU로 그리므로 부하에 크게 영향받는다. `wall-features-ui`는 1단계 코드로 되돌려도 같은 자리에서 같은 시간 초과가 났다. 이 6개는 PC가 한가할 때 다시 돌렸다(아래 "검증").
-- **판단 기준:** e2e 전체 결과는 아래 "검증"에 있다.
+- **판단 기준:** 충족. 실패 10개 중 테스트 문제 4개를 고쳐 통과했고, 부하 때문이던 6개도 PC가 한가할 때 통과했다. 이제 e2e 실패는 0이고, 건너뜀 19개는 이유를 아래 "검증"에 적었다.
 
 ## 남은 한계
 
@@ -140,7 +140,7 @@
 - **e2e 전체 196개(2.2시간):** 167개 통과, 19개 건너뜀, 10개 실패. 실패 원인과 수정은 위 2-3에 있다.
   - 고친 뒤 다시 돌림: `model-loading-progress` 8개, `reconstruction-analysis-profile` 7개, `upload-read-error` 2개 모두 통과. `base-room`·`reconstruction`의 좁은 화면 테스트는 전체 실행에서 통과했다.
   - 건너뜀 19개는 옵트인 검증이다. 실제 AI 모델(배경 제거·입체화), 로컬 사진, 비공개 보고서 환경변수가 없거나, `login-simple`의 변경 전 캡처 단계다.
-- **부하 뒤 재검증:** (한가할 때 채운다)
+- **부하 뒤 재검증(게임·방송 종료 뒤, 2026-09-27):** e2e 6개(`wall-features-ui` 2, `simple-editor` 1, `studio-ui` 3) 모두 통과(6.3분). 시간 초과였던 vitest 11개가 든 8개 파일 107개도 모두 통과했다.
 - **정적 검사:** typecheck·lint·변경 파일 Prettier 통과
 
 ## 다음 단계 후보 (3단계 AI 마무리)
