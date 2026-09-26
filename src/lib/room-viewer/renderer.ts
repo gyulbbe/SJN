@@ -43,6 +43,7 @@ import {
 import { buildViewerFixtures, ProductAssetCache } from './fixtures';
 import { buildViewerCeiling, type ViewerCeiling } from './ceiling';
 import { EXPORT_LIGHT_PANEL_MM, ExportAccumulator, exportJitter, jitterProjection } from './accumulate';
+import { PhotoBloom, photoEffectUniforms, photoPostFragment, type PhotoEffects } from './photo-effects';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
 import { fitSourceDepthClip, visibleMeshBounds, type SourceDepthClip } from './depth-clip';
@@ -72,7 +73,7 @@ const EXPORT_SHADOW_MAP = 2048;
 /**
  * Multi-sample export settings; absent means the single-frame export used by previews. With
  * `budgetMs`, a slow device times its first (unjittered) sample and lowers the count so the export
- * ends near the budget; below 16 samples the light stays still (one crisp shadow, edges averaged).
+ * ends near the budget; below 16 samples the light moves only within 100 mm (one shadow, no copies).
  */
 export type RoomExportQuality = { samples: number; budgetMs?: number };
 /**
@@ -80,8 +81,13 @@ export type RoomExportQuality = { samples: number; budgetMs?: number };
  * 2.7 s for 3600×2400 on Iris Xe (D3D11). The budget keeps slower devices near the 10 s target.
  */
 export const ROOM_PHOTO_EXPORT_QUALITY: RoomExportQuality = { samples: 32, budgetMs: 10_000 };
-/** Fewer light positions than this leave visible copies of each shadow. */
+/** Fewer light positions than this across the whole panel leave visible copies of each shadow. */
 const SOFT_SHADOW_SAMPLES = 16;
+/**
+ * Light travel below that count: too short to split a shadow into copies, long enough that the
+ * screen-space PCF dither (which the camera shift cannot average) differs between samples.
+ */
+const NARROW_LIGHT_MM = 100;
 /**
  * Resolves after the next paint: a zero timeout alone lets back-to-back samples starve rendering.
  * Hidden tabs do not paint, so a short timer wins the race there.
@@ -168,6 +174,9 @@ export class RoomViewerRenderer {
   private readonly postCamera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private readonly postMaterial: ShaderMaterial;
   private readonly postGeometry = new PlaneGeometry(2, 2);
+  private readonly postMesh: Mesh;
+  /** Post program with the photo look, compiled on the first download that asks for it. */
+  private photoMaterial?: ShaderMaterial;
   private readonly tiles: ViewerTileCache;
   private readonly products: ProductAssetCache;
   private readonly lighting = new ViewerLightingLut();
@@ -196,7 +205,9 @@ export class RoomViewerRenderer {
     ms: number;
     width: number;
     height: number;
-    /** False when the budget left too few samples to move the light. */
+    /** Photo look (bloom, vignette, grain, tone curve) applied. */
+    effects: boolean;
+    /** False when the budget left too few samples to move the light across the whole panel. */
     softShadows?: boolean;
     fallbackReason?: string;
   };
@@ -264,7 +275,8 @@ export class RoomViewerRenderer {
         sjnPhotoRect: { value: new Vector4(0, 0, 1, 1) },
       },
     });
-    this.post.add(new Mesh(this.postGeometry, this.postMaterial));
+    this.postMesh = new Mesh(this.postGeometry, this.postMaterial);
+    this.post.add(this.postMesh);
     // Shared by every prepared scene of this context; Before and After see identical light.
     this.environment = createInteriorEnvironment(this.renderer);
     this.tiles = new ViewerTileCache((id) => this.reader(id), this.maxOutputEdge);
@@ -538,6 +550,7 @@ export class RoomViewerRenderer {
     split: number,
     before: Texture,
     after: Texture,
+    effects?: PhotoEffects,
   ) {
     const { rect, targetWidth, size } = frame;
     const uniforms = this.postMaterial.uniforms;
@@ -553,10 +566,43 @@ export class RoomViewerRenderer {
     uniforms.sjnAfterColor.value = colorVector(this.prepared!.after.source.color);
     uniforms.sjnMode.value = mode === 'before' ? 0 : mode === 'after' ? 1 : mode === 'split' ? 2 : 3;
     uniforms.sjnSplit.value = Number.isFinite(split) ? Math.max(0, Math.min(1, split)) : 0.5;
+    let bloom: PhotoBloom | undefined;
+    if (effects) {
+      // Same uniform objects as the plain post, plus the glow and effect strengths.
+      this.photoMaterial ??= new ShaderMaterial({
+        vertexShader: postVertex,
+        fragmentShader: photoPostFragment(postFragment),
+        depthTest: false,
+        depthWrite: false,
+        blending: NoBlending,
+        toneMapped: false,
+        uniforms: {
+          ...uniforms,
+          sjnBloomBefore: { value: null },
+          sjnBloomAfter: { value: null },
+          sjnEffects: { value: new Vector4() },
+          sjnGrainSeed: { value: 0 },
+        },
+      });
+      const photo = this.photoMaterial.uniforms,
+        values = photoEffectUniforms(effects);
+      bloom = new PhotoBloom(targetWidth, size.height);
+      photo.sjnBloomBefore.value = mode === 'after' ? null : bloom.run(this.renderer, 0, before);
+      photo.sjnBloomAfter.value = mode === 'before' ? null : bloom.run(this.renderer, 1, after);
+      photo.sjnEffects.value.set(...values.effects);
+      photo.sjnGrainSeed.value = values.grainSeed;
+      this.postMesh.material = this.photoMaterial;
+    }
     this.renderer.setRenderTarget(null);
     this.renderer.setViewport(0, 0, size.width, size.height);
     this.renderer.setScissorTest(false);
     this.renderer.render(this.post, this.postCamera);
+    if (bloom) {
+      this.postMesh.material = this.postMaterial;
+      this.photoMaterial!.uniforms.sjnBloomBefore.value = null;
+      this.photoMaterial!.uniforms.sjnBloomAfter.value = null;
+      bloom.dispose();
+    }
     // The live targets are the default inputs again.
     uniforms.sjnBefore.value = this.beforeTarget.texture;
     uniforms.sjnAfter.value = this.afterTarget.texture;
@@ -575,10 +621,21 @@ export class RoomViewerRenderer {
       this.deferredFrame = { width, height, view: structuredClone(view), mode, split };
       return this.canvas;
     }
+    return this.drawFrame(width, height, view, mode, split);
+  }
+  private drawFrame(
+    width: number,
+    height: number,
+    view: RoomViewState,
+    mode: RoomViewerMode,
+    split: number,
+    effects?: PhotoEffects,
+  ): HTMLCanvasElement {
+    const prepared = this.prepared!;
     const frame = this.frame(width, height, view, mode);
-    if (mode !== 'after') this.paint(this.prepared.before, this.beforeTarget, frame);
-    if (mode !== 'before') this.paint(this.prepared.after, this.afterTarget, frame);
-    this.composite(frame, mode, split, this.beforeTarget.texture, this.afterTarget.texture);
+    if (mode !== 'after') this.paint(prepared.before, this.beforeTarget, frame);
+    if (mode !== 'before') this.paint(prepared.after, this.afterTarget, frame);
+    this.composite(frame, mode, split, this.beforeTarget.texture, this.afterTarget.texture, effects);
     this.assertOpen();
     this.lastFrame = {
       width: frame.size.width,
@@ -603,6 +660,7 @@ export class RoomViewerRenderer {
     view: RoomViewState,
     mode: RoomViewerMode,
     quality: RoomExportQuality,
+    effects: PhotoEffects | undefined,
     capture: (canvas: HTMLCanvasElement) => void,
     onProgress?: (done: number, total: number) => void,
     signal?: AbortSignal,
@@ -638,7 +696,7 @@ export class RoomViewerRenderer {
         resetShadowMap(light);
       }
       let samples = quality.samples,
-        moveLight = samples >= SOFT_SHADOW_SAMPLES;
+        lightSpread = samples >= SOFT_SHADOW_SAMPLES ? EXPORT_LIGHT_PANEL_MM : NARROW_LIGHT_MM;
       // 0% paints before the first sample, the slowest one on software rendering (shaders, maps).
       onProgress?.(0, samples);
       await nextPaint();
@@ -657,8 +715,8 @@ export class RoomViewerRenderer {
           frame.rect.height,
         );
         for (const entry of saved) {
-          const dx = moveLight ? jitter.light[0] * EXPORT_LIGHT_PANEL_MM : 0,
-            dz = moveLight ? jitter.light[1] * EXPORT_LIGHT_PANEL_MM : 0;
+          const dx = jitter.light[0] * lightSpread,
+            dz = jitter.light[1] * lightSpread;
           entry.light.position.set(entry.position.x + dx, entry.position.y, entry.position.z + dz);
           entry.light.target.position.set(entry.target.x + dx, entry.target.y, entry.target.z + dz);
           entry.light.updateMatrixWorld(true);
@@ -674,7 +732,7 @@ export class RoomViewerRenderer {
           const affordable = Math.floor(quality.budgetMs / Math.max(1, performance.now() - started));
           if (affordable < samples) {
             samples = Math.max(1, affordable);
-            moveLight &&= samples >= SOFT_SHADOW_SAMPLES;
+            if (samples < SOFT_SHADOW_SAMPLES) lightSpread = NARROW_LIGHT_MM;
           }
         }
         onProgress?.(k + 1, samples);
@@ -693,9 +751,10 @@ export class RoomViewerRenderer {
         0.5,
         accumulator.texture(0) ?? this.beforeTarget.texture,
         accumulator.texture(1) ?? this.afterTarget.texture,
+        effects,
       );
       capture(this.canvas);
-      return { samples, softShadows: moveLight };
+      return { samples, softShadows: lightSpread === EXPORT_LIGHT_PANEL_MM };
     } finally {
       for (const entry of saved) {
         entry.light.position.copy(entry.position);
@@ -847,6 +906,8 @@ export class RoomViewerRenderer {
       longEdge: number;
       /** Multi-sample photo export; omitted for previews, which stay one synchronous frame. */
       quality?: RoomExportQuality;
+      /** Photo look for downloads; never for AI input or previews. */
+      effects?: PhotoEffects;
       onProgress?: (done: number, total: number) => void;
       signal?: AbortSignal;
     },
@@ -881,6 +942,7 @@ export class RoomViewerRenderer {
       ms: 0,
       width: output.width,
       height: output.height,
+      effects: !!options.effects,
       ...(samples > 1 && !floatTargets
         ? { fallbackReason: '이 브라우저는 float 렌더 타깃이 없어 한 장으로 내보냈어요.' }
         : {}),
@@ -895,6 +957,7 @@ export class RoomViewerRenderer {
             state,
             options.mode,
             { samples, budgetMs: options.quality?.budgetMs },
+            options.effects,
             (canvas) => context.drawImage(canvas, 0, 0),
             options.onProgress,
             options.signal,
@@ -915,7 +978,7 @@ export class RoomViewerRenderer {
             '여러 장 겹쳐 찍기를 하지 못해 한 장으로 내보냈어요. ' +
             (error instanceof Error ? error.message : String(error)),
         };
-        context.drawImage(this.render(output.width, output.height, state, options.mode), 0, 0);
+        context.drawImage(this.exportFrame(output.width, output.height, state, options), 0, 0);
       } finally {
         const next = this.deferredFrame ?? previous;
         this.deferredFrame = undefined;
@@ -925,7 +988,7 @@ export class RoomViewerRenderer {
     } else {
       // Paint + detached pixel copy are synchronous. Later scene changes cannot alter this file.
       try {
-        context.drawImage(this.render(output.width, output.height, state, options.mode), 0, 0);
+        context.drawImage(this.exportFrame(output.width, output.height, state, options), 0, 0);
       } finally {
         if (previous && !this.disposed)
           this.render(previous.width, previous.height, previous.view, previous.mode, previous.split);
@@ -943,6 +1006,17 @@ export class RoomViewerRenderer {
         0.94,
       ),
     );
+  }
+  /** One export frame: the plain render, or with the photo look when asked for. */
+  private exportFrame(
+    width: number,
+    height: number,
+    view: RoomViewState,
+    options: { mode: RoomViewerMode; effects?: PhotoEffects },
+  ) {
+    if (!options.effects) return this.render(width, height, view, options.mode);
+    this.assertOpen();
+    return this.drawFrame(width, height, view, options.mode, 0.5, options.effects);
   }
   diagnostics() {
     const gl = this.renderer.getContext(),
@@ -1001,6 +1075,7 @@ export class RoomViewerRenderer {
     this.beforeTarget.dispose();
     this.afterTarget.dispose();
     this.postMaterial.dispose();
+    this.photoMaterial?.dispose();
     this.postGeometry.dispose();
     this.post.clear();
     this.renderer.dispose();

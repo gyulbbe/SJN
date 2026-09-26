@@ -36,7 +36,7 @@ const power = (() => {
 
 const bundle = await build({
   stdin: {
-    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {createRoomSurfaces,DEFAULT_ROOM} from './src/lib/room-geometry';`,
+    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {createRoomSurfaces,DEFAULT_ROOM} from './src/lib/room-geometry';export {PHOTO_EFFECTS} from './src/lib/room-viewer/photo-effects';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -563,6 +563,116 @@ try {
     },
     { edges, sampleCounts },
   );
+  // Photo effects (1-3): the same accumulated export with and without the photo look.
+  const effects = await page.evaluate(
+    async ({ edge }) => {
+      type Viewer = InstanceType<typeof import('../src/lib/room-viewer/renderer').RoomViewerRenderer>;
+      type RoomViewState = import('../src/lib/room-viewer/view-state').RoomViewState;
+      type PhotoEffects = import('../src/lib/room-viewer/photo-effects').PhotoEffects;
+      const { viewer, views, toImage } = (
+        window as unknown as {
+          __xr: {
+            viewer: Viewer;
+            views: [string, RoomViewState][];
+            toImage: (blob: Blob) => Promise<{ canvas: HTMLCanvasElement; data: Uint8ClampedArray }>;
+          };
+        }
+      ).__xr;
+      const look = (window as unknown as { Realism: { PHOTO_EFFECTS: PhotoEffects } }).Realism.PHOTO_EFFECTS;
+      const center = views.find(([n]) => n === 'eye-center')![1];
+      // Looking up a little brings the ceiling lamp into the frame, where the glow shows.
+      const scenes: [string, RoomViewState][] = [
+        ['orbit', views.find(([n]) => n === 'orbit-front')![1]],
+        ['eye', center],
+        ['eye-up', { ...center, eye: { ...center.eye!, shift: 0.3 } }],
+      ];
+      const images: Record<string, string> = {};
+      const tiles: Record<string, { off: number[][]; on: number[][] }> = {};
+      const corners: Record<string, { off: number; on: number }> = {};
+      const timing: Record<string, { off: number; on: number }> = {};
+      const grid = 6;
+      const tileMedians = (image: { canvas: HTMLCanvasElement; data: Uint8ClampedArray }) => {
+        const { width, height } = image.canvas;
+        const result: number[][] = [];
+        for (let j = 0; j < grid; j++)
+          for (let i = 0; i < grid; i++) {
+            const x0 = Math.round((0.2 + (0.6 * i) / grid) * width),
+              x1 = Math.round((0.2 + (0.6 * (i + 1)) / grid) * width),
+              y0 = Math.round((0.2 + (0.6 * j) / grid) * height),
+              y1 = Math.round((0.2 + (0.6 * (j + 1)) / grid) * height);
+            const channels: number[][] = [[], [], []];
+            for (let y = y0; y < y1; y++)
+              for (let x = x0; x < x1; x++)
+                for (let c = 0; c < 3; c++) channels[c].push(image.data[(y * width + x) * 4 + c]);
+            result.push(channels.map((v) => v.sort((a, b) => a - b)[v.length >> 1]));
+          }
+        return result;
+      };
+      const cornerLuminance = (image: { canvas: HTMLCanvasElement; data: Uint8ClampedArray }) => {
+        const { width, height } = image.canvas;
+        let total = 0,
+          count = 0;
+        for (const [cx, cy] of [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+          [1, 1],
+        ])
+          for (let y = 0; y < height * 0.06; y++)
+            for (let x = 0; x < width * 0.06; x++) {
+              const px = Math.round(cx ? width - 1 - x : x),
+                py = Math.round(cy ? height - 1 - y : y);
+              const i = (py * width + px) * 4;
+              total += 0.2126 * image.data[i] + 0.7152 * image.data[i + 1] + 0.0722 * image.data[i + 2];
+              count++;
+            }
+        return total / count;
+      };
+      const exportImage = async (view: RoomViewState, photo?: PhotoEffects) => {
+        const started = performance.now();
+        const blob = await viewer.export(view, {
+          format: 'png',
+          mode: 'after',
+          longEdge: edge,
+          quality: { samples: 16 },
+          ...(photo ? { effects: photo } : {}),
+        });
+        return { ...(await toImage(blob)), ms: performance.now() - started };
+      };
+      for (const [name, view] of scenes) {
+        const off = await exportImage(view),
+          on = await exportImage(view, look);
+        images[`effects-${name}-off`] = off.canvas.toDataURL('image/png');
+        images[`effects-${name}-on`] = on.canvas.toDataURL('image/png');
+        tiles[name] = { off: tileMedians(off), on: tileMedians(on) };
+        corners[name] = { off: cornerLuminance(off), on: cornerLuminance(on) };
+        timing[name] = { off: Math.round(off.ms), on: Math.round(on.ms) };
+      }
+      // Fixed grain seed: the same export twice is the same file.
+      const first = await exportImage(center, look),
+        second = await exportImage(center, look);
+      let identical = first.data.length === second.data.length;
+      for (let i = 0; identical && i < first.data.length; i++) identical = first.data[i] === second.data[i];
+      // No growth once the photo program exists.
+      const memory: { textures: number; geometries: number; programs: number }[] = [];
+      for (let i = 0; i < 3; i++) {
+        await exportImage(center, look);
+        const d = viewer.diagnostics();
+        memory.push({ textures: d.textures, geometries: d.geometries, programs: d.programs });
+      }
+      // One frame (no averaging) also takes the look, as used by the float-less fallback.
+      const single = await viewer.export(center, {
+        format: 'png',
+        mode: 'after',
+        longEdge: edge,
+        effects: look,
+      });
+      const singleExport = viewer.diagnostics().lastExport;
+      images['effects-eye-single-on'] = (await toImage(single)).canvas.toDataURL('image/png');
+      return { images, tiles, corners, timing, identical, memory, singleExport };
+    },
+    { edge: edges.includes(2048) ? 2048 : edges[0] },
+  );
   await page.evaluate(() =>
     (window as unknown as { __xr: { viewer: { dispose(): void } } }).__xr.viewer.dispose(),
   );
@@ -570,6 +680,7 @@ try {
   for (const [name, url] of Object.entries({
     ...result.images,
     ...accumulation.images,
+    ...effects.images,
   }))
     await writeFile(`${output}/${name}.png`, Buffer.from(url.split(',')[1], 'base64'));
   // Zoomed crops (3×, nearest): toilet shadow and left floor corner, one frame | accumulated.
@@ -639,9 +750,39 @@ try {
     headed,
     metrics: result.metrics,
     accumulation: accumulationReport,
+    effects: {
+      centre: Object.fromEntries(
+        Object.entries(effects.tiles).map(([name, { off, on }]) => {
+          const differences = off.map((colour, i) =>
+            deltaE2000(colour as [number, number, number], on[i] as [number, number, number]),
+          );
+          return [
+            name,
+            {
+              tiles: differences.length,
+              maxDeltaE2000: Number(Math.max(...differences).toFixed(2)),
+              meanDeltaE2000: Number(
+                (differences.reduce((a, b) => a + b, 0) / differences.length).toFixed(2),
+              ),
+            },
+          ];
+        }),
+      ),
+      cornerLuminance: effects.corners,
+      timing: effects.timing,
+      identical: effects.identical,
+      memory: effects.memory,
+      singleExport: effects.singleExport,
+    },
   };
   await writeFile(`${output}/metrics.json`, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
+  for (const [name, centre] of Object.entries(report.effects.centre))
+    assert.ok(
+      centre.maxDeltaE2000 <= 2,
+      `${name}: photo look changes the centre by ΔE ${centre.maxDeltaE2000}`,
+    );
+  assert.ok(report.effects.identical, 'photo look is not reproducible');
   for (const [name, value] of Object.entries(result.metrics))
     if ('probeBackgroundRatio' in (value as object))
       assert.equal(

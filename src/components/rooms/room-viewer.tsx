@@ -17,6 +17,8 @@ import type { AssetReader } from '@/lib/render/compositor';
 import { getActiveDesign } from '@/lib/comparison';
 import { ROOM_PHOTO_EXPORT_QUALITY, RoomViewerRenderer } from '@/lib/room-viewer/renderer';
 import { ProgressMeter } from '@/components/progress-meter';
+import { usePhotoEffectsPreference } from '@/components/photo-effects-preference';
+import { PHOTO_EFFECTS } from '@/lib/room-viewer/photo-effects';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import {
   clampRoomEye,
@@ -112,6 +114,7 @@ export default function RoomViewer({
   /** Samples averaged so far for a high-quality download. */
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const exportAbort = useRef<AbortController | null>(null);
+  const [photoEffects, setPhotoEffects] = usePhotoEffectsPreference();
   const [format, setFormat] = useState<'png' | 'jpeg'>('png');
   const [exportMode, setExportMode] = useState<'after' | 'compare'>('compare');
   const [frame, setFrame] = useState(0);
@@ -318,6 +321,7 @@ export default function RoomViewer({
         mode: exportMode,
         longEdge: 4096,
         quality: ROOM_PHOTO_EXPORT_QUALITY,
+        ...(photoEffects ? { effects: PHOTO_EFFECTS } : {}),
         onProgress: (done, total) => {
           if (live.current) setExportProgress({ done, total });
         },
@@ -743,6 +747,15 @@ export default function RoomViewer({
               <option value="compare">Before / After 나란히</option>
               <option value="after">After</option>
             </select>
+          </label>
+          <label title="약한 빛 번짐·가장자리 어두움·입자감. 견적용 원본은 끄고 받으세요.">
+            <input
+              type="checkbox"
+              checked={photoEffects}
+              disabled={exporting}
+              onChange={(event) => setPhotoEffects(event.target.checked)}
+            />{' '}
+            사진 효과
           </label>
           <label>
             형식{' '}

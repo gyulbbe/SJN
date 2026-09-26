@@ -890,3 +890,32 @@ test('고화질 다운로드: 여러 장 진행률·취소·창 닫기에서 멈
   expect(requests.errors).toEqual([]);
   expect(requests.forbidden).toEqual([]);
 });
+
+test('사진 효과: 기본 켬·끄면 가장자리가 원본 그대로·다시 열어도 선택 유지', async ({ page }, info) => {
+  const requests = observeRequests(page);
+  await start(page);
+  await opened(page);
+  await action(page, '방 안 · 가운데');
+  const toggle = viewer(page).getByRole('checkbox', { name: '사진 효과', exact: true });
+  await expect(toggle).toBeChecked();
+  const corner = async (bytes: Buffer) => {
+    const { data, info: meta } = await sharp(bytes)
+      .extract({ left: 0, top: 0, width: 64, height: 64 })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let total = 0;
+    for (let i = 0; i < data.length; i += meta.channels) total += data[i] + data[i + 1] + data[i + 2];
+    return total / (data.length / meta.channels) / 3;
+  };
+  const withEffects = await download(page, info, 'png', 'after', 'photo-effects-on.png');
+  await toggle.uncheck();
+  const plain = await download(page, info, 'png', 'after', 'photo-effects-off.png');
+  // The vignette only darkens the edge; the plain file keeps the rendered corner.
+  expect(await corner(withEffects)).toBeLessThan((await corner(plain)) - 3);
+  await viewer(page).getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
+  await opened(page);
+  await expect(viewer(page).getByRole('checkbox', { name: '사진 효과', exact: true })).not.toBeChecked();
+  await viewer(page).getByRole('checkbox', { name: '사진 효과', exact: true }).check();
+  expect(requests.errors).toEqual([]);
+  expect(requests.forbidden).toEqual([]);
+});

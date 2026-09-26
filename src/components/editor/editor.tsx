@@ -51,6 +51,7 @@ import {
 import { useDesignThumbnail } from '@/components/designs/use-design-preview';
 import { ModelLoadingProgress, useModelLoadingProgress } from '@/components/model-loading-progress';
 import { ProgressMeter } from '@/components/progress-meter';
+import { usePhotoEffectsPreference } from '@/components/photo-effects-preference';
 import { DEEPLAB_LOAD } from '@/lib/ai-progress';
 import DesignManager from '@/components/designs/design-manager';
 import DesignComparison from '@/components/designs/design-comparison';
@@ -191,6 +192,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   /** Samples averaged so far while a 3D download is made in high quality. */
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const exportAbort = useRef<AbortController | null>(null);
+  const [photoEffects, setPhotoEffects] = usePhotoEffectsPreference();
   const [wallEditor, setWallEditor] = useState<{
     projectId: string;
     editRevision: number;
@@ -1118,7 +1120,11 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     /** Receives the exact snapshot (and 3D fixture boxes) behind this capture, for AI grounding. */
     inspect?: (capture: Omit<FluxCaptureSource, 'blob' | 'reader'>) => void,
     /** Photo downloads average several samples in the 3D view; AI input stays one frame. */
-    photo?: { onProgress: (done: number, total: number) => void; signal: AbortSignal },
+    photo?: {
+      onProgress: (done: number, total: number) => void;
+      signal: AbortSignal;
+      effects: boolean;
+    },
   ): Promise<Blob> {
     if (isGuest) throw new Error('이미지 출력은 로그인 후 사용할 수 있어요.');
     if (!scene || !st.project || (!renderer.current && !roomContext))
@@ -1134,7 +1140,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       };
       let blob: Blob;
       if (roomContext) {
-        const { RoomViewerRenderer, ROOM_PHOTO_EXPORT_QUALITY } = await import('@/lib/room-viewer/renderer');
+        const [{ RoomViewerRenderer, ROOM_PHOTO_EXPORT_QUALITY }, { PHOTO_EFFECTS }] = await Promise.all([
+          import('@/lib/room-viewer/renderer'),
+          import('@/lib/room-viewer/photo-effects'),
+        ]);
         const roomRenderer = new RoomViewerRenderer();
         try {
           await roomRenderer.setSnapshot(snapshot, assetReader, {
@@ -1144,7 +1153,14 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             format: outputFormat === 'image/png' ? 'png' : 'jpeg',
             mode: comparison ? 'compare' : 'after',
             longEdge: edge,
-            ...(photo ? { quality: ROOM_PHOTO_EXPORT_QUALITY, ...photo } : {}),
+            ...(photo
+              ? {
+                  quality: ROOM_PHOTO_EXPORT_QUALITY,
+                  onProgress: photo.onProgress,
+                  signal: photo.signal,
+                  ...(photo.effects ? { effects: PHOTO_EFFECTS } : {}),
+                }
+              : {}),
           });
           // Same renderer and view as the export; only the aspect ratio matters for normalised boxes.
           if (inspect && !comparison)
@@ -1185,6 +1201,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       const blob = await captureExport(format, compare, undefined, undefined, {
         onProgress: (done, total) => setExportProgress({ done, total }),
         signal: controller.signal,
+        effects: photoEffects,
       });
       if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob),
@@ -2434,6 +2451,24 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 </select>
               </label>
             </div>
+            {roomContext && (
+              <label className="mt-3 flex items-start gap-2 text-[13px] font-medium">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={photoEffects}
+                  disabled={exporting}
+                  onChange={(e) => setPhotoEffects(e.target.checked)}
+                />
+                <span>
+                  사진 효과{' '}
+                  <span className="font-normal text-[color:var(--muted)]">
+                    · 약한 빛 번짐·가장자리 어두움·입자감. 견적용 원본은 끄고 받으세요. AI 변환에는 넣지
+                    않아요.
+                  </span>
+                </span>
+              </label>
+            )}
             <div className="export-preview">
               <Check size={17} style={{ display: 'inline', marginRight: 8 }} />
               자재·배치·색감 반영 · 편집 도구 제외
