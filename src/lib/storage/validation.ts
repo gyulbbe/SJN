@@ -710,13 +710,25 @@ export const roomViewSchema = z
     zoom: number.min(0.25).max(8),
     pan: z.object({ x: number.min(-4).max(4), y: number.min(-4).max(4) }).strict(),
     sourceCamera: roomSourceCameraSchema.optional(),
-    projection: z.enum(['source-photo', 'room-fit']).optional(),
+    projection: z.enum(['source-photo', 'room-fit', 'room-eye']).optional(),
+    // In-room eye-level camera (room millimetres). Older documents simply omit it.
+    eye: z
+      .object({
+        position: z.tuple([
+          number.min(-100000).max(100000),
+          number.min(-100000).max(100000),
+          number.min(-100000).max(100000),
+        ]),
+        yaw: number.min(-180).max(180),
+        shift: number.min(-0.5).max(0.5),
+        fov: number.min(40).max(100),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
-  .refine(
-    (view) => view.projection !== 'source-photo' || !!view.sourceCamera,
-    '사진 시점 정보가 필요합니다.',
-  );
+  .refine((view) => view.projection !== 'source-photo' || !!view.sourceCamera, '사진 시점 정보가 필요합니다.')
+  .refine((view) => (view.projection === 'room-eye') === !!view.eye, '방 안 시점 정보가 올바르지 않아요.');
 
 function createProjectV3Schema(maxDesigns: number) {
   const workspaceShape = {

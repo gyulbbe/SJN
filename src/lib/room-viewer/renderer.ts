@@ -39,6 +39,7 @@ import {
   type InteriorEnvironment,
 } from '../render/realistic-lighting';
 import { buildViewerFixtures, ProductAssetCache } from './fixtures';
+import { buildViewerCeiling, type ViewerCeiling } from './ceiling';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
 import { fitSourceDepthClip, visibleMeshBounds, type SourceDepthClip } from './depth-clip';
@@ -53,6 +54,7 @@ type Prepared = {
   source: Scene;
   fixtures: Awaited<ReturnType<typeof buildViewerFixtures>>;
   surfaces: Awaited<ReturnType<typeof buildViewerSurfaces>>;
+  ceiling: ViewerCeiling;
   bounds: Box3;
   structureBounds: Box3;
   notices: SurfaceNotice[];
@@ -238,7 +240,9 @@ export class RoomViewerRenderer {
     world.environment = this.environment?.texture ?? null;
     world.environmentIntensity = this.environment?.intensity ?? 1;
     const lights = createRoomLightRig(room, { environment: !!this.environment });
-    world.add(surfaces.group, fixtures.group, ...lights);
+    // Closes the room for in-room eye views only; hidden for orbit and photo cameras.
+    const ceiling = buildViewerCeiling(room);
+    world.add(surfaces.group, fixtures.group, ceiling.group, ...lights);
     // Objects standing on the floor get a soft contact shade (Before and After alike).
     const contacts: Box3[] = [];
     for (const object of fixtures.group.children) {
@@ -304,12 +308,14 @@ export class RoomViewerRenderer {
       source: scene,
       surfaces,
       fixtures,
+      ceiling,
       bounds,
       structureBounds: surfaces.structureBounds,
       notices,
       dispose() {
         surfaces.dispose();
         fixtures.dispose();
+        ceiling.dispose();
         for (const light of lights) (light as { shadow?: { dispose(): void } }).shadow?.dispose();
         world.clear();
       },
@@ -450,6 +456,7 @@ export class RoomViewerRenderer {
     const paint = (prepared: Prepared, target: WebGLRenderTarget) => {
       prepared.surfaces.updateView(camera);
       prepared.fixtures.updateView(camera);
+      prepared.ceiling.setVisible(state.projection === 'room-eye');
       this.renderer.setRenderTarget(target);
       this.renderer.setScissorTest(false);
       this.renderer.setViewport(0, 0, targetWidth, size.height);

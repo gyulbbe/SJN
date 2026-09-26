@@ -416,7 +416,9 @@ test('보기 WebGL 시작 실패 재시도와 저장 실패에서도 기존 장�
   failViewSave = false;
   const frame = Number(await viewport(page).getAttribute('data-frame'));
   await viewer(page).getByRole('button', { name: '위로 90°', exact: true }).click();
-  await expect.poll(async () => Number(await viewport(page).getAttribute('data-frame'))).toBeGreaterThan(frame);
+  await expect
+    .poll(async () => Number(await viewport(page).getAttribute('data-frame')))
+    .toBeGreaterThan(frame);
   const recoveredView = await viewState(page);
   await expect(viewer(page).getByRole('alert')).toContainText('검증용 서버 저장 실패');
   expect((await storedProject(page)).roomView).toBeUndefined();
@@ -761,4 +763,48 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
       2,
     ),
   );
+});
+
+test('방 안 시점: 프리셋·15° 회전·이동·저장 후 새로고침 유지·다운로드·390px·바깥 시점 복귀', async ({
+  page,
+}, info) => {
+  const requests = observeRequests(page);
+  await start(page);
+  await opened(page);
+  await action(page, '방 안 · 가운데');
+  const center = await viewState(page);
+  expect(center.projection).toBe('room-eye');
+  expect(center.eye).toMatchObject({ yaw: 0, fov: 74 });
+  expect(center.eye!.position[1]).toBe(1500);
+  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('방 안 시점 · 정면');
+  // Inside the room the direction buttons turn the head in 15° steps.
+  await action(page, '오른쪽 15°');
+  expect((await viewState(page)).eye!.yaw).toBe(15);
+  await action(page, '앞으로');
+  const moved = await viewState(page);
+  expect(moved.eye!.position[2]).toBeLessThan(center.eye!.position[2]);
+  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('방 안 시점 · 오른쪽 15°');
+  await waitSavedView(page, moved);
+  const bytes = await download(page, info, 'png', 'after', 'room-eye-after.png');
+  const meta = await sharp(bytes).metadata();
+  expect(meta.width).toBe(4096);
+  await viewer(page).getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
+
+  // A saved in-room view survives a reload exactly.
+  await page.reload();
+  await ready(page);
+  await opened(page);
+  expect(await viewState(page)).toEqual(moved);
+  await action(page, '방 안 · 왼쪽 모서리');
+  expect((await viewState(page)).eye!.yaw).toBeGreaterThan(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await viewer(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await viewer(page).getByRole('button', { name: '방 안 · 오른쪽 모서리', exact: true }).tap();
+  await expect.poll(async () => (await viewState(page)).eye?.yaw ?? 0).toBeLessThan(0);
+  await page.screenshot({ path: info.outputPath('room-eye-390.png') });
+  await viewer(page).getByRole('button', { name: '바깥 시점으로', exact: true }).tap();
+  await expect.poll(() => viewState(page)).toEqual(defaultRoomView());
+  expect(requests.errors).toEqual([]);
+  expect(requests.forbidden).toEqual([]);
 });

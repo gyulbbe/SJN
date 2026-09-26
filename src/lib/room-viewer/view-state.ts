@@ -6,11 +6,27 @@ import { createSourceCamera, type SourceCamera } from '../reconstruction/source-
 
 /** A preserved estimated/user photo camera in the same millimetre world coordinates as the room. */
 export type RoomSourceCamera = SourceCamera & { referenceRoom: RoomDimensions; source: 'estimated' | 'user' };
+/**
+ * An eye-level camera standing inside the room, like an architectural photograph. Millimetres in
+ * room coordinates (x across, y up, z from the back wall towards the open front). The pitch is
+ * always 0 so vertical edges stay vertical; framing up or down is a lens shift instead.
+ */
+export type RoomEye = {
+  position: [number, number, number];
+  /** Degrees. 0 faces the back wall (−z); positive turns towards the right wall (+x). */
+  yaw: number;
+  /** Vertical lens shift in frame heights, positive shows more ceiling. */
+  shift: number;
+  /** Horizontal field of view in degrees. */
+  fov: number;
+};
 /** A shared camera rig, not an edit to any wall, product or design. Pan uses viewport fractions. */
 export type RoomViewState = {
   version: 1;
   sourceCamera?: RoomSourceCamera;
-  projection?: 'source-photo' | 'room-fit';
+  projection?: 'source-photo' | 'room-fit' | 'room-eye';
+  /** Present exactly when projection is 'room-eye'; quaternion/zoom/pan are then unused. */
+  eye?: RoomEye;
   quaternion: [number, number, number, number];
   zoom: number;
   pan: { x: number; y: number };
@@ -21,6 +37,147 @@ export const ROOM_VIEW_MAX_ZOOM = 8;
 export const ROOM_VIEW_MAX_PAN = 4;
 const FOV = 50;
 const FIT_AVAILABLE = 0.88;
+
+/** Eye height of a standing photographer. */
+export const ROOM_EYE_HEIGHT_MM = 1500;
+/** Horizontal angle of a full-frame 24 mm lens. */
+export const ROOM_EYE_FOV = 74;
+export const ROOM_EYE_MIN_FOV = 60;
+export const ROOM_EYE_MAX_FOV = 90;
+/** Architectural framing: a slight downward lens shift shows the floor and fixtures, not ceiling. */
+export const ROOM_EYE_DEFAULT_SHIFT = -0.2;
+/** Keeps the lens off the wall surfaces, and away from the ceiling and the floor. */
+export const ROOM_EYE_WALL_MARGIN_MM = 150;
+export const ROOM_EYE_MIN_HEIGHT_MM = 300;
+export const ROOM_EYE_MAX_SHIFT = 0.3;
+/** Extra angle so the frustum edge never grazes the open front, which has no material. */
+const FRONT_MARGIN_DEGREES = 3;
+const YAW_STEP = 15;
+const SHIFT_STEP = 0.1;
+export const ROOM_EYE_STEP_MM = 150;
+
+export function validRoomEye(value: unknown): value is RoomEye {
+  if (!value || typeof value !== 'object') return false;
+  const eye = value as RoomEye;
+  return (
+    Array.isArray(eye.position) &&
+    eye.position.length === 3 &&
+    eye.position.every((v) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 100_000) &&
+    typeof eye.yaw === 'number' &&
+    Number.isFinite(eye.yaw) &&
+    Math.abs(eye.yaw) <= 180 &&
+    typeof eye.shift === 'number' &&
+    Number.isFinite(eye.shift) &&
+    Math.abs(eye.shift) <= 0.5 &&
+    typeof eye.fov === 'number' &&
+    Number.isFinite(eye.fov) &&
+    eye.fov >= 40 &&
+    eye.fov <= 100
+  );
+}
+
+/**
+ * Largest |yaw| whose frustum stays away from the open front. A frustum edge ray has heading
+ * yaw ± fov/2 at every image row (pitch 0), and it points towards the front (+z) once
+ * |heading| > 90°, so |yaw| ≤ 90° − fov/2 − margin keeps every ray on the back/side/floor/ceiling.
+ */
+export function roomEyeYawLimit(fov: number) {
+  return Math.max(0, 90 - fov / 2 - FRONT_MARGIN_DEGREES);
+}
+
+/** The eye as rendered: inside the room, a supported lens, and a yaw that never sees the front. */
+export function clampRoomEye(room: RoomDimensions, eye: RoomEye): RoomEye {
+  const fov = Math.max(ROOM_EYE_MIN_FOV, Math.min(ROOM_EYE_MAX_FOV, eye.fov));
+  const limit = roomEyeYawLimit(fov);
+  const within = (value: number, low: number, high: number) =>
+    low > high ? (low + high) / 2 : Math.max(low, Math.min(high, value));
+  const margin = ROOM_EYE_WALL_MARGIN_MM;
+  return {
+    position: [
+      within(eye.position[0], -room.widthMm / 2 + margin, room.widthMm / 2 - margin),
+      within(eye.position[1], ROOM_EYE_MIN_HEIGHT_MM, room.heightMm - margin),
+      within(eye.position[2], margin, room.depthMm - margin),
+    ],
+    yaw: Math.max(-limit, Math.min(limit, eye.yaw)),
+    shift: Math.max(-ROOM_EYE_MAX_SHIFT, Math.min(ROOM_EYE_MAX_SHIFT, eye.shift)),
+    fov,
+  };
+}
+
+export type RoomEyePreset = 'center' | 'left-corner' | 'right-corner';
+/**
+ * Standing at the open front: facing the back wall from the middle, or from either front corner
+ * looking across to the opposite back corner (clamped so the front stays out of frame).
+ */
+export function roomEyeView(
+  room: RoomDimensions,
+  preset: RoomEyePreset,
+  base?: RoomViewState,
+): RoomViewState {
+  const margin = ROOM_EYE_WALL_MARGIN_MM;
+  const height = Math.min(ROOM_EYE_HEIGHT_MM, room.heightMm - margin);
+  const z = room.depthMm - margin;
+  const side = preset === 'left-corner' ? -1 : preset === 'right-corner' ? 1 : 0;
+  const x = side * (room.widthMm / 2 - margin);
+  // Towards the opposite back corner: from the left corner that is +x (turning right).
+  const yaw = side ? (-side * Math.atan2(room.widthMm - 2 * margin, z) * 180) / Math.PI : 0;
+  const eye = clampRoomEye(room, {
+    position: [x, height, z],
+    yaw,
+    shift: ROOM_EYE_DEFAULT_SHIFT,
+    fov: ROOM_EYE_FOV,
+  });
+  const view = normalizeRoomView(base ?? defaultRoomView());
+  return {
+    ...view,
+    quaternion: [0, 0, 0, 1],
+    zoom: 1,
+    pan: { x: 0, y: 0 },
+    projection: 'room-eye',
+    eye,
+  };
+}
+
+/** Walks the eye on the floor plane relative to where it looks, staying inside the room. */
+export function moveRoomEye(
+  room: RoomDimensions,
+  input: RoomViewState,
+  direction: 'forward' | 'back' | 'left' | 'right',
+): RoomViewState {
+  const view = normalizeRoomView(input);
+  if (view.projection !== 'room-eye' || !view.eye) return view;
+  const eye = clampRoomEye(room, view.eye);
+  const yaw = (eye.yaw * Math.PI) / 180;
+  const ahead: [number, number] = [Math.sin(yaw), -Math.cos(yaw)];
+  const [dx, dz] =
+    direction === 'forward'
+      ? ahead
+      : direction === 'back'
+        ? [-ahead[0], -ahead[1]]
+        : direction === 'right'
+          ? [-ahead[1], ahead[0]]
+          : [ahead[1], -ahead[0]];
+  return {
+    ...view,
+    eye: clampRoomEye(room, {
+      ...eye,
+      position: [
+        eye.position[0] + dx * ROOM_EYE_STEP_MM,
+        eye.position[1],
+        eye.position[2] + dz * ROOM_EYE_STEP_MM,
+      ],
+    }),
+  };
+}
+
+/** A narrower or wider lens for the in-room camera (zoom in = narrower). */
+export function zoomRoomEye(input: RoomViewState, factor: number): RoomViewState {
+  const view = normalizeRoomView(input);
+  if (view.projection !== 'room-eye' || !view.eye || !Number.isFinite(factor) || factor <= 0) return view;
+  const fov = Math.max(ROOM_EYE_MIN_FOV, Math.min(ROOM_EYE_MAX_FOV, view.eye.fov / factor));
+  const limit = roomEyeYawLimit(fov);
+  return { ...view, eye: { ...view.eye, fov, yaw: Math.max(-limit, Math.min(limit, view.eye.yaw)) } };
+}
 
 export function validRoomSourceCamera(value: unknown): value is RoomSourceCamera {
   if (!value || typeof value !== 'object') return false;
@@ -76,14 +233,16 @@ export function sourceRoomViewAvailable(room: RoomDimensions, view: RoomViewStat
 }
 /** Explicit mode changes preserve the reference camera; ordinary legacy views gain no new fields. */
 export function resetRoomView(input: RoomViewState, mode?: 'source-photo' | 'room-fit'): RoomViewState {
-  const view = normalizeRoomView(input);
+  // Resetting always leaves the in-room eye: back to the photo camera or the default orbit.
+  const { eye: _eye, ...view } = normalizeRoomView(input);
+  void _eye;
   if (!view.sourceCamera) return defaultRoomView();
   return {
     ...view,
     quaternion: [0, 0, 0, 1],
     zoom: 1,
     pan: { x: 0, y: 0 },
-    projection: mode ?? view.projection ?? 'source-photo',
+    projection: mode ?? (view.projection === 'room-fit' ? 'room-fit' : 'source-photo'),
   };
 }
 export function defaultRoomView(): RoomViewState {
@@ -124,6 +283,8 @@ export function normalizeRoomView(input: unknown): RoomViewState {
     )
   )
     return defaultRoomView();
+  // An in-room eye needs its own valid parameters; otherwise the view falls back as before.
+  const eye = value.projection === 'room-eye' && validRoomEye(value.eye) ? value.eye : undefined;
   return {
     version: 1,
     quaternion: canonicalQuaternion(new Quaternion(...q)),
@@ -135,12 +296,38 @@ export function normalizeRoomView(input: unknown): RoomViewState {
           projection: value.projection === 'room-fit' ? ('room-fit' as const) : ('source-photo' as const),
         }
       : {}),
+    ...(eye
+      ? {
+          projection: 'room-eye' as const,
+          eye: {
+            position: [eye.position[0], eye.position[1], eye.position[2]] as [number, number, number],
+            yaw: eye.yaw,
+            shift: eye.shift,
+            fov: eye.fov,
+          },
+        }
+      : {}),
   };
 }
 
 /** At the initial front (+Z), up goes to +Y, right to +X. Axes remain screen-local thereafter. */
 export function rotateRoomView(input: RoomViewState, direction: RoomViewDirection): RoomViewState {
   const view = normalizeRoomView(input);
+  if (view.projection === 'room-eye' && view.eye) {
+    // In the room: turn the head in small steps and frame up/down with a lens shift (no pitch).
+    const eye = view.eye;
+    const limit = roomEyeYawLimit(Math.max(ROOM_EYE_MIN_FOV, Math.min(ROOM_EYE_MAX_FOV, eye.fov)));
+    const yaw = eye.yaw + (direction === 'right' ? YAW_STEP : direction === 'left' ? -YAW_STEP : 0);
+    const shift = eye.shift + (direction === 'up' ? SHIFT_STEP : direction === 'down' ? -SHIFT_STEP : 0);
+    return {
+      ...view,
+      eye: {
+        ...eye,
+        yaw: Math.max(-limit, Math.min(limit, yaw)),
+        shift: Math.round(Math.max(-ROOM_EYE_MAX_SHIFT, Math.min(ROOM_EYE_MAX_SHIFT, shift)) * 1000) / 1000,
+      },
+    };
+  }
   const axis = direction === 'left' || direction === 'right' ? new Vector3(0, 1, 0) : new Vector3(1, 0, 0);
   const sign = direction === 'left' || direction === 'up' ? -1 : 1;
   const rotation = new Quaternion().setFromAxisAngle(axis, (sign * Math.PI) / 2);
@@ -151,6 +338,10 @@ export function rotateRoomView(input: RoomViewState, direction: RoomViewDirectio
 
 export function roomViewLabel(input: RoomViewState): string {
   const view = normalizeRoomView(input);
+  if (view.projection === 'room-eye' && view.eye) {
+    const yaw = Math.round(view.eye.yaw);
+    return `방 안 시점 · ${yaw === 0 ? '정면' : yaw > 0 ? `오른쪽 ${yaw}°` : `왼쪽 ${-yaw}°`}`;
+  }
   const rotation = new Quaternion(...view.quaternion);
   const side = new Vector3(0, 0, 1).applyQuaternion(rotation);
   const labels = [
@@ -223,6 +414,27 @@ export function createRoomViewCamera(
   if (!Number.isFinite(aspect) || aspect <= 0 || aspect > 100)
     throw new Error('보기 화면 비율이 올바르지 않아요.');
   const view = normalizeRoomView(input);
+  if (view.projection === 'room-eye' && view.eye) {
+    if (!validateRoomDimensions(room)) throw new Error('공간 크기가 올바르지 않아요.');
+    const eye = clampRoomEye(room, view.eye);
+    const tanX = Math.tan((eye.fov * Math.PI) / 360);
+    const verticalFov = (2 * Math.atan(tanX / aspect) * 180) / Math.PI;
+    const camera = new PerspectiveCamera(
+      verticalFov,
+      aspect,
+      10,
+      Math.hypot(room.widthMm, room.heightMm, room.depthMm) * 1.2,
+    );
+    camera.position.set(...eye.position);
+    // Pitch and roll stay 0: vertical edges project as vertical lines.
+    camera.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), (-eye.yaw * Math.PI) / 180);
+    camera.up.set(0, 1, 0);
+    // A shift lens: move the frame up/down without tilting the camera.
+    if (eye.shift) camera.setViewOffset(aspect * 1000, 1000, 0, -eye.shift * 1000, aspect * 1000, 1000);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
+    return camera;
+  }
   if (view.sourceCamera && view.projection === 'source-photo') {
     if (!sourceRoomViewAvailable(room, view))
       throw new Error(

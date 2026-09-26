@@ -78,6 +78,7 @@
 }
 .turns,
 .tools,
+.eye,
 .modes {
   display: flex;
   flex-wrap: wrap;
@@ -258,11 +259,13 @@
   .turns svg {
     width: 14px;
   }
-  .tools {
+  .tools,
+  .eye {
     width: 100%;
     justify-content: center;
   }
-  .tools button {
+  .tools button,
+  .eye button {
     font-size: 11px;
     padding: 6px 8px;
   }

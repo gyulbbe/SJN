@@ -18,12 +18,19 @@ import { getActiveDesign } from '@/lib/comparison';
 import { RoomViewerRenderer } from '@/lib/room-viewer/renderer';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import {
+  clampRoomEye,
+  moveRoomEye,
   resetRoomView,
+  roomEyeView,
+  ROOM_EYE_DEFAULT_SHIFT,
+  ROOM_EYE_FOV,
   sourceRoomViewAvailable,
   normalizeRoomView,
   rotateRoomView,
   roomViewLabel,
   roomViewViewport,
+  zoomRoomEye,
+  type RoomEyePreset,
   type RoomViewState,
 } from '@/lib/room-viewer/view-state';
 import styles from './room-viewer.module.css';
@@ -47,6 +54,24 @@ const directionButtons = [
   ['right', '오른쪽 90°', ArrowRight],
   ['up', '위로 90°', ArrowUp],
   ['down', '아래로 90°', ArrowDown],
+] as const;
+/** Inside the room the same buttons turn the head a little and shift the frame (verticals stay upright). */
+const eyeDirectionLabels = {
+  left: '왼쪽 15°',
+  right: '오른쪽 15°',
+  up: '위로 보기',
+  down: '아래로 보기',
+} as const;
+const eyePresets: [RoomEyePreset, string][] = [
+  ['center', '방 안 · 가운데'],
+  ['left-corner', '방 안 · 왼쪽 모서리'],
+  ['right-corner', '방 안 · 오른쪽 모서리'],
+];
+const eyeMoves = [
+  ['forward', '앞으로'],
+  ['back', '뒤로'],
+  ['left', '왼쪽으로 이동'],
+  ['right', '오른쪽으로 이동'],
 ] as const;
 
 export default function RoomViewer({
@@ -240,6 +265,10 @@ export default function RoomViewer({
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
       const current = viewRef.current;
+      if (current.projection === 'room-eye') {
+        update(zoomRoomEye(current, Math.exp(-Math.max(-120, Math.min(120, event.deltaY)) * 0.002)));
+        return;
+      }
       update({
         ...current,
         zoom: Math.max(
@@ -329,18 +358,44 @@ export default function RoomViewer({
         </header>
         <div className={styles.toolbar}>
           <div className={styles.turns}>
-            {directionButtons.map(([direction, label, Icon]) => (
-              <button
-                type="button"
-                key={direction}
-                onClick={() => turn(direction)}
-                title={`${label} · 현재 화면 축 기준`}
-              >
-                <Icon size={18} />
-                {label}
-              </button>
-            ))}
+            {directionButtons.map(([direction, orbitLabel, Icon]) => {
+              const label = view.projection === 'room-eye' ? eyeDirectionLabels[direction] : orbitLabel;
+              return (
+                <button
+                  type="button"
+                  key={direction}
+                  onClick={() => turn(direction)}
+                  title={view.projection === 'room-eye' ? label : `${label} · 현재 화면 축 기준`}
+                >
+                  <Icon size={18} />
+                  {label}
+                </button>
+              );
+            })}
           </div>
+          {after.room && (
+            <div className={styles.eye} role="group" aria-label="방 안 시점">
+              {eyePresets.map(([preset, label]) => (
+                <button
+                  type="button"
+                  key={preset}
+                  onClick={() => update(roomEyeView(after.room!, preset, viewRef.current))}
+                >
+                  {label}
+                </button>
+              ))}
+              {view.projection === 'room-eye' &&
+                eyeMoves.map(([direction, label]) => (
+                  <button
+                    type="button"
+                    key={direction}
+                    onClick={() => update(moveRoomEye(after.room!, viewRef.current, direction))}
+                  >
+                    {label}
+                  </button>
+                ))}
+            </div>
+          )}
           <div className={styles.tools}>
             {view.sourceCamera && (
               <>
@@ -363,11 +418,21 @@ export default function RoomViewer({
             )}
             <button type="button" onClick={() => update(resetRoomView(viewRef.current))}>
               <RotateCcw size={16} />
-              기본 시점
+              {view.projection === 'room-eye' ? '바깥 시점으로' : '기본 시점'}
             </button>
             <button
               type="button"
-              onClick={() => update({ ...viewRef.current, zoom: 1, pan: { x: 0, y: 0 } })}
+              onClick={() => {
+                const current = viewRef.current;
+                update(
+                  current.projection === 'room-eye' && current.eye
+                    ? {
+                        ...current,
+                        eye: { ...current.eye, fov: ROOM_EYE_FOV, shift: ROOM_EYE_DEFAULT_SHIFT },
+                      }
+                    : { ...current, zoom: 1, pan: { x: 0, y: 0 } },
+                );
+              }}
             >
               <Maximize size={16} />
               화면 맞춤
@@ -376,16 +441,30 @@ export default function RoomViewer({
               type="button"
               aria-label="공간 축소"
               onClick={() =>
-                update({ ...viewRef.current, zoom: Math.max(0.25, viewRef.current.zoom / 1.25) })
+                update(
+                  viewRef.current.projection === 'room-eye'
+                    ? zoomRoomEye(viewRef.current, 1 / 1.1)
+                    : { ...viewRef.current, zoom: Math.max(0.25, viewRef.current.zoom / 1.25) },
+                )
               }
             >
               <Minus size={17} />
             </button>
-            <output aria-label="공간 확대율">{Math.round(view.zoom * 100)}%</output>
+            {view.projection === 'room-eye' && view.eye ? (
+              <output aria-label="방 안 시점 화각">{Math.round(view.eye.fov)}°</output>
+            ) : (
+              <output aria-label="공간 확대율">{Math.round(view.zoom * 100)}%</output>
+            )}
             <button
               type="button"
               aria-label="공간 확대"
-              onClick={() => update({ ...viewRef.current, zoom: Math.min(8, viewRef.current.zoom * 1.25) })}
+              onClick={() =>
+                update(
+                  viewRef.current.projection === 'room-eye'
+                    ? zoomRoomEye(viewRef.current, 1.1)
+                    : { ...viewRef.current, zoom: Math.min(8, viewRef.current.zoom * 1.25) },
+                )
+              }
             >
               <Plus size={17} />
             </button>
@@ -474,6 +553,26 @@ export default function RoomViewer({
             pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
             const points = [...pointers.current.values()],
               base = gesture.current;
+            if (base.view.projection === 'room-eye' && base.view.eye && after.room) {
+              // Drag turns the head (and shifts the frame); pinch changes the lens angle.
+              if (points.length > 1 && base.distance > 0)
+                update(
+                  zoomRoomEye(
+                    base.view,
+                    Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y) / base.distance,
+                  ),
+                );
+              else
+                update({
+                  ...base.view,
+                  eye: clampRoomEye(after.room, {
+                    ...base.view.eye,
+                    yaw: base.view.eye.yaw - ((event.clientX - base.x) / fit.width) * base.view.eye.fov,
+                    shift: base.view.eye.shift + (event.clientY - base.y) / fit.height,
+                  }),
+                });
+              return;
+            }
             const dragArea =
               base.view.projection === 'source-photo'
                 ? roomViewViewport(fit.width / (mode === 'compare' ? 2 : 1), fit.height, base.view)
@@ -549,7 +648,11 @@ export default function RoomViewer({
           </label>
         )}
         <div className={styles.information}>
-          <span>드래그로 이동 · 휠/핀치로 확대 · 가까운 벽과 바닥은 내부가 보이도록 생략해요.</span>
+          <span>
+            {view.projection === 'room-eye'
+              ? '방 안 눈높이 시점 · 드래그로 둘러보기 · 휠/핀치로 화각 · 앞벽 쪽은 보지 않아요.'
+              : '드래그로 이동 · 휠/핀치로 확대 · 가까운 벽과 바닥은 내부가 보이도록 생략해요.'}
+          </span>
           {!writable && <strong>읽기 전용 · 시점은 이 창에서만 유지돼요.</strong>}
         </div>
         {writable && (
