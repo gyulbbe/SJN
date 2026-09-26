@@ -1,8 +1,9 @@
 /**
  * Builds the FLUX inputs for the stage-3 real comparison (no AI call): the stage-2 measurement
  * bathroom from the room-eye view, as one frame and as an 8-sample average, each with the model
- * input (496 px), the placed-product scene, the server prompt and the fixture id mask of the
- * 1024 capture. Real calls use these files through a separate temporary Worker.
+ * input (496 px), the placed-product scene and the server prompt. Real calls use these files
+ * through a separate temporary Worker. (The fixture masks used to evaluate painting fixtures back,
+ * not adopted, are in commit c98ef27.)
  *
  * Usage: node tests/run-browser-test.mjs tests/flux-stage3-payload.ts [--gpu]
  */
@@ -61,12 +62,6 @@ try {
     const out = [];
     try {
       await viewer.setSnapshot(snapshot, reader);
-      const kinds = Object.fromEntries(
-        snapshot.scene.fixtures.map((f) => [
-          f.id,
-          f.reconstruction?.kind ?? snapshot.materials[f.materialVersionId]?.category,
-        ]),
-      );
       for (const name of ['center', 'left-corner'] as const) {
         const view = lib.roomEyeView(room, name);
         for (const samples of [1, 8]) {
@@ -81,22 +76,10 @@ try {
           const capture = await createImageBitmap(blob);
           const layout = lib.fluxInputLayout(capture.width, capture.height);
           const boxes = viewer.fixtureBounds(capture.width, capture.height, view);
-          const mask = viewer.fixtureMask(capture.width, capture.height, view);
           const grounding = await lib.buildFluxGrounding({ snapshot, reader, capture, layout, boxes });
           capture.close();
           const input = await lib.prepareFluxImage(blob);
           const inputBitmap = await createImageBitmap(input);
-          // Ids in the red channel (0 none, n the nth id) so the node side can read the mask back.
-          const maskCanvas = document.createElement('canvas');
-          maskCanvas.width = mask.width;
-          maskCanvas.height = mask.height;
-          const mctx = maskCanvas.getContext('2d')!;
-          const pixels = mctx.createImageData(mask.width, mask.height);
-          mask.data.forEach((id, i) => {
-            pixels.data[i * 4] = id;
-            pixels.data[i * 4 + 3] = 255;
-          });
-          mctx.putImageData(pixels, 0, 0);
           out.push({
             label: `${name}-${samples === 1 ? 'single' : 'acc8'}`,
             samples,
@@ -108,9 +91,6 @@ try {
             scene: grounding.scene,
             placed: grounding.placed,
             prompt: lib.buildFluxPrompt(grounding.scene),
-            mask: maskCanvas.toDataURL('image/png'),
-            maskIds: mask.ids,
-            kinds,
           });
           inputBitmap.close();
         }
@@ -126,11 +106,10 @@ try {
     const png = (url: string) => Buffer.from(url.split(',')[1], 'base64');
     await writeFile(`${output}/${r.label}-capture.png`, png(r.capture));
     await writeFile(`${output}/${r.label}-input.png`, png(r.input));
-    await writeFile(`${output}/${r.label}-mask.png`, png(r.mask));
     await writeFile(`${output}/${r.label}-prompt.txt`, r.prompt);
     await writeFile(
       `${output}/${r.label}-scene.json`,
-      JSON.stringify({ scene: r.scene, layout: r.layout, maskIds: r.maskIds, kinds: r.kinds }, null, 2),
+      JSON.stringify({ scene: r.scene, layout: r.layout }, null, 2),
     );
     summary.push({
       label: r.label,

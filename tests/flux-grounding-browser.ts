@@ -12,7 +12,7 @@ const output = 'test-results/flux-grounding';
 await mkdir(output, { recursive: true });
 const bundle = await build({
   stdin: {
-    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {PhotoCompositor} from './src/lib/render/compositor';export {renderRoomBackground} from './src/lib/room-background';export {createRoomSurfaces,DEFAULT_ROOM} from './src/lib/room-geometry';export {projectRoomFixture} from './src/lib/room-fixtures';export {projectReconstructionFixture} from './src/lib/reconstruction/projection';export {buildFluxGrounding,fixtureImageBox} from './src/lib/ai-export/scene';export {fluxInputLayout} from './src/lib/ai-export/contract';export {prepareFluxImage} from './src/lib/ai-export/client';export {buildFluxPrompt} from './src/lib/ai-export/prompt';export {fluxSceneSchema} from './src/lib/ai-export/scene-contract';`,
+    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {PhotoCompositor} from './src/lib/render/compositor';export {renderRoomBackground} from './src/lib/room-background';export {createRoomSurfaces,DEFAULT_ROOM} from './src/lib/room-geometry';export {projectRoomFixture} from './src/lib/room-fixtures';export {projectReconstructionFixture} from './src/lib/reconstruction/projection';export {buildFluxGrounding} from './src/lib/ai-export/scene';export {fluxInputLayout} from './src/lib/ai-export/contract';export {prepareFluxImage} from './src/lib/ai-export/client';export {buildFluxPrompt} from './src/lib/ai-export/prompt';export {fluxSceneSchema} from './src/lib/ai-export/scene-contract';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -241,76 +241,8 @@ try {
       blob: Blob,
       snapshot: import('../src/lib/types').RenderSnapshot,
       boxes?: Record<string, [number, number, number, number]>,
-      mask?: { width: number; height: number; ids: string[]; data: Uint8Array },
     ) {
       const capture = await createImageBitmap(blob);
-      // The fixture id mask: each silhouette inside its fixture box, filling a fair part of it.
-      const maskStats: {
-        id: string;
-        pixels: number;
-        maskBox: number[];
-        box?: number[];
-        inside: boolean;
-        fill: number;
-      }[] = [];
-      let maskOverlay = '';
-      if (mask) {
-        const overlay = document.createElement('canvas');
-        overlay.width = mask.width;
-        overlay.height = mask.height;
-        const octx = overlay.getContext('2d')!;
-        octx.drawImage(capture, 0, 0, mask.width, mask.height);
-        const tint = octx.getImageData(0, 0, mask.width, mask.height);
-        const colors = [
-          [224, 36, 94],
-          [37, 99, 235],
-          [22, 163, 74],
-        ];
-        for (let i = 0; i < mask.data.length; i++) {
-          const id = mask.data[i];
-          if (!id) continue;
-          const c = colors[(id - 1) % colors.length];
-          for (let k = 0; k < 3; k++) tint.data[i * 4 + k] = tint.data[i * 4 + k] * 0.35 + c[k] * 0.65;
-        }
-        octx.putImageData(tint, 0, 0);
-        maskOverlay = overlay.toDataURL('image/png');
-        mask.ids.forEach((id, index) => {
-          let left = mask.width,
-            top = mask.height,
-            right = -1,
-            bottom = -1,
-            pixels = 0;
-          for (let y = 0; y < mask.height; y++)
-            for (let x = 0; x < mask.width; x++)
-              if (mask.data[y * mask.width + x] === index + 1) {
-                pixels++;
-                left = Math.min(left, x);
-                top = Math.min(top, y);
-                right = Math.max(right, x + 1);
-                bottom = Math.max(bottom, y + 1);
-              }
-          const fixture = snapshot.scene.fixtures.find((f) => f.id === id)!;
-          const box = boxes ? boxes[id] : lib.fixtureImageBox(fixture, capture.width / capture.height);
-          const px = box
-            ? [box[0] * mask.width, box[1] * mask.height, box[2] * mask.width, box[3] * mask.height]
-            : undefined;
-          maskStats.push({
-            id,
-            pixels,
-            maskBox: [left, top, right, bottom],
-            box: px?.map((v) => +v.toFixed(1)),
-            // Two pixels of slack for rounding at the silhouette edge.
-            inside:
-              !!px &&
-              pixels > 0 &&
-              left >= px[0] - 2 &&
-              top >= px[1] - 2 &&
-              right <= px[2] + 2 &&
-              bottom <= px[3] + 2,
-            fill: px ? +(pixels / ((px[2] - px[0]) * (px[3] - px[1]))).toFixed(3) : 0,
-          });
-        });
-      }
       const layout = lib.fluxInputLayout(capture.width, capture.height);
       const grounding = await lib.buildFluxGrounding({ snapshot, reader, capture, layout, boxes });
       capture.close();
@@ -336,8 +268,6 @@ try {
         placed: grounding.placed,
         prompt: lib.buildFluxPrompt(grounding.scene),
         overlay: canvas.toDataURL('image/png'),
-        maskStats,
-        maskOverlay,
       };
     }
     const out = [];
@@ -347,11 +277,8 @@ try {
       const compositor = new lib.PhotoCompositor();
       try {
         await compositor.setSnapshot(snapshot, reader as never);
-        let mask: { width: number; height: number; ids: string[]; data: Uint8Array } | undefined;
-        const blob = await compositor.exportImage(snapshot, 1024, 1024, 'image/png', false, (m) => {
-          mask = m;
-        });
-        out.push(await ground('compositor', blob, snapshot, undefined, mask));
+        const blob = await compositor.exportImage(snapshot, 1024, 1024, 'image/png', false);
+        out.push(await ground('compositor', blob, snapshot));
       } finally {
         compositor.dispose();
       }
@@ -379,8 +306,7 @@ try {
         const view = lib.defaultRoomView();
         const blob = await viewer.export(view, { format: 'png', mode: 'after', longEdge: 1024 });
         const boxes = viewer.fixtureBounds(3600, 2400, view);
-        const mask = viewer.fixtureMask(1024, 683, view);
-        out.push(await ground('viewer', blob, snapshot, boxes, mask));
+        out.push(await ground('viewer', blob, snapshot, boxes));
       } finally {
         viewer.dispose();
       }
@@ -395,19 +321,6 @@ try {
       Buffer.from(result.overlay.split(',')[1], 'base64'),
     );
     await writeFile(`${output}/${result.label}-prompt.txt`, result.prompt);
-    await writeFile(
-      `${output}/${result.label}-mask.png`,
-      Buffer.from(result.maskOverlay.split(',')[1], 'base64'),
-    );
-    assert.deepEqual(
-      result.maskStats.map((m) => m.id),
-      ['toilet', 'basin', 'shower'],
-      `${result.label}: every drawn fixture has an id in the mask`,
-    );
-    for (const m of result.maskStats) {
-      assert.ok(m.inside, `${result.label} ${m.id}: silhouette inside its box ${JSON.stringify(m)}`);
-      assert.ok(m.fill > 0.1, `${result.label} ${m.id}: silhouette fills its box ${JSON.stringify(m)}`);
-    }
     await writeFile(`${output}/${result.label}-scene.json`, JSON.stringify(result.scene, null, 2));
     assert.equal(result.valid, true, `${result.label} scene failed the server schema`);
     assert.deepEqual(
@@ -434,7 +347,6 @@ try {
       surfaces: result.scene.surfaces,
       placed: result.placed,
       promptLength: result.prompt.length,
-      mask: result.maskStats,
     });
   }
   await writeFile(`${output}/summary.json`, JSON.stringify(summary, null, 2));

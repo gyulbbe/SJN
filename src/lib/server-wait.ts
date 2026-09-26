@@ -14,6 +14,12 @@ export type ServerWaitSpec = {
 
 /** 2026-09-25 real klein 4B calls with the current prompt took 8.8 s and 9.0 s (docs/flux-export.md). */
 export const FLUX_WAIT: ServerWaitSpec = { kind: 'flux', fallbackMs: 9_000, limitMs: 180_000 };
+/** Checking a FLUX result with Gemma: 12 real checks on 2026-09-27 took 1.0–3.4 s, median 1.4 s. */
+export const FLUX_CHECK_WAIT: ServerWaitSpec = {
+  kind: 'gemma:fluxCheck',
+  fallbackMs: 1_400,
+  limitMs: 120_000,
+};
 /**
  * One Gemma analysis step. There is no measured per-step time (the recorded 20–44 s are whole
  * analyses), so the usual time appears once this browser has finished that step before.

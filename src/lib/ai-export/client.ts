@@ -1,5 +1,12 @@
+import { z } from 'zod';
 import { fluxInputLayout } from './contract';
-import type { FluxScene } from './scene-contract';
+import { FLUX_FIXTURE_KINDS, type FluxScene } from './scene-contract';
+import {
+  FLUX_CHECK_MAX_EDGE,
+  FLUX_CHECK_SEEN,
+  type FluxCheckResult,
+  type FluxCheckScene,
+} from './check-contract';
 
 function pngBlob(canvas: HTMLCanvasElement, message: string) {
   return new Promise<Blob>((resolve, reject) =>
@@ -61,4 +68,69 @@ export async function requestFluxImage(
   } finally {
     bitmap.close();
   }
+}
+
+/** The fixtures to look for in a result: kind and box only. None when nothing was placed. */
+export function fluxCheckScene(scene: FluxScene | undefined): FluxCheckScene | undefined {
+  if (!scene?.fixtures.length) return;
+  return { version: 1, fixtures: scene.fixtures.map(({ kind, box }) => ({ kind, box })) };
+}
+const checkResponse = z.object({
+  fixtures: z.array(
+    z.object({
+      index: z.number().int().positive(),
+      kind: z.enum(FLUX_FIXTURE_KINDS),
+      present: z.enum(['yes', 'no', 'unsure']),
+      seenAs: z.enum(FLUX_CHECK_SEEN),
+    }),
+  ),
+});
+/**
+ * Asks once whether each placed fixture still appears in a FLUX result (Gemma on the server). The
+ * result is sent as a JPEG: the check reads objects, not fine texture. No automatic retry.
+ */
+export async function requestFluxCheck(
+  result: Blob,
+  scene: FluxCheckScene,
+  signal: AbortSignal,
+  userId?: string | null,
+): Promise<FluxCheckResult> {
+  const bitmap = await createImageBitmap(result);
+  let image: Blob;
+  try {
+    const scale = Math.min(1, FLUX_CHECK_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('설비 확인용 이미지를 만들지 못했어요.');
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    image = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('설비 확인용 이미지를 만들지 못했어요.'))),
+        'image/jpeg',
+        0.9,
+      ),
+    );
+  } finally {
+    bitmap.close();
+  }
+  const form = new FormData();
+  form.set('image', image, 'result.jpg');
+  form.set('scene', JSON.stringify(scene));
+  const response = await fetch('/api/export/photoreal/check', {
+    method: 'POST',
+    body: form,
+    credentials: 'same-origin',
+    signal,
+    headers: userId ? { 'X-SJN-User-Id': userId } : {},
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => null);
+    throw new Error(failure?.error || '설비 확인에 실패했어요. 자동 재시도하지 않았어요.');
+  }
+  const body = checkResponse.safeParse(await response.json().catch(() => null));
+  if (!body.success || body.data.fixtures.length !== scene.fixtures.length)
+    throw new Error('설비 확인 응답이 올바르지 않아요.');
+  return { fixtures: body.data.fixtures };
 }

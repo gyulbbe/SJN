@@ -36,7 +36,6 @@ import { fitOutput, homography, validateQuad } from './math';
 import { finishAppearance } from './finish';
 import { maskCanvas } from './mask';
 import { StandardModelRenderer, type StandardFixturePass } from './standard-model-render';
-import { maskFromPixels } from '../room-viewer/fixture-mask';
 
 export type AssetReader = (id: string) => Promise<AssetRecord>;
 export type CompareMode = 'before' | 'after' | 'split';
@@ -194,33 +193,6 @@ void main(){
   float alpha=productColor.a*inside*visibility*(1.-shadowOnly);
   vec3 result=adjustColor(decodeSRGB(productColor.rgb),adjustment);
   gl_FragColor=vec4(mix(background,result,alpha),1.);
-}
-`;
-/** Fixture id pass for AI result protection: the fixture shader's placement, its index in red. */
-const fixtureMaskShader = `
-varying vec2 vUv;uniform sampler2D product;uniform sampler2D occlusion;
-uniform vec2 photoSize;uniform vec2 productPosition;uniform vec2 productSize;uniform vec2 anchor;
-uniform float angle;uniform float projective;uniform mat3 inverseProduct;uniform float index;
-void main(){
-  vec2 photo=vec2(vUv.x,1.-vUv.y);
-  float visibility=1.-texture2D(occlusion,vUv).a;
-  vec2 d=(photo-productPosition)*photoSize;
-  float c=cos(angle),s=sin(angle);
-  vec2 local=vec2(c*d.x+s*d.y,-s*d.x+c*d.y)/(productSize*photoSize)+anchor;
-  if(projective>.5){
-    vec3 projected=inverseProduct*vec3(photo,1.);
-    local=abs(projected.z)<.0000001?vec2(-1.):projected.xy/projected.z;
-  }
-  float inside=step(0.,local.x)*step(0.,local.y)*step(local.x,1.)*step(local.y,1.);
-  if(texture2D(product,vec2(local.x,1.-local.y)).a*inside*visibility<.5) discard;
-  gl_FragColor=vec4(index/255.,0.,0.,1.);
-}
-`;
-const standardMaskShader = `
-varying vec2 vUv;uniform sampler2D models;uniform float index;
-void main(){
-  if(texture2D(models,vUv).a<.5) discard;
-  gl_FragColor=vec4(index/255.,0.,0.,1.);
 }
 `;
 const standardCompositeShader = `
@@ -1048,8 +1020,6 @@ export class PhotoCompositor {
     height: number,
     format: 'image/png' | 'image/jpeg',
     compare: boolean,
-    /** After only: also receives which fixture covers each pixel of the exported image. */
-    onFixtureMask?: (mask: { width: number; height: number; ids: string[]; data: Uint8Array }) => void,
   ): Promise<Blob> {
     if (this.exporting) await this.exporting;
     if (!this.reader) throw new Error('편집할 사진을 먼저 열어 주세요.');
@@ -1092,10 +1062,7 @@ export class PhotoCompositor {
           output.width - panelWidth,
           output.height,
         );
-      } else {
-        ctx.drawImage(this.render(output.width, output.height, 'after'), 0, 0);
-        if (onFixtureMask) onFixtureMask(this.fixtureMask(output.width, output.height));
-      }
+      } else ctx.drawImage(this.render(output.width, output.height, 'after'), 0, 0);
       return await new Promise<Blob>((resolve, reject) =>
         canvas.toBlob(
           (blob) => (blob ? resolve(blob) : reject(new Error('내보내기 이미지를 만들지 못했습니다.'))),
@@ -1114,75 +1081,6 @@ export class PhotoCompositor {
         this.exporting = undefined;
         release();
       }
-    }
-  }
-
-  /**
-   * Fixture ids of the prepared After at this size (0 none, n the nth id), in drawing order so a
-   * later fixture covers an earlier one. Cut-out product photos give their silhouette; standard
-   * models give theirs one at a time. Drawn into its own target; nothing else changes.
-   */
-  private fixtureMask(width: number, height: number) {
-    const scene = this.snapshot!.scene;
-    const target = new WebGLRenderTarget(width, height, { type: UnsignedByteType, depthBuffer: false });
-    const product = shader(fixtureMaskShader),
-      standard = shader(standardMaskShader);
-    const ids: string[] = [];
-    const clearColor = this.renderer.getClearColor(new Color()),
-      clearAlpha = this.renderer.getClearAlpha(),
-      autoClear = this.renderer.autoClear;
-    try {
-      this.renderer.setRenderTarget(target);
-      this.renderer.setClearColor(0x000000, 0);
-      this.renderer.clear();
-      // Each fixture adds its pixels to the same target.
-      this.renderer.autoClear = false;
-      for (const pass of this.fixturePasses) {
-        if (ids.length >= 254) break;
-        ids.push(pass.fixture.id);
-        if (pass.standardKey && scene.room) {
-          // The model renderer clears its own target for each fixture.
-          this.renderer.autoClear = true;
-          const models = this.standardModels.render(
-            [pass as StandardFixturePass],
-            scene.room,
-            scene.imageWidth / scene.imageHeight,
-            width,
-            height,
-          );
-          this.renderer.autoClear = false;
-          uniform(standard, 'models', models);
-          uniform(standard, 'index', ids.length);
-          this.draw(standard, target);
-          continue;
-        }
-        const { fixture, texture, occlusion, inverse } = pass;
-        if (!texture) continue;
-        const values: Record<string, unknown> = {
-          product: texture,
-          occlusion,
-          photoSize: new Vector2(scene.imageWidth / scene.imageHeight, 1),
-          productPosition: new Vector2(fixture.position.x, fixture.position.y),
-          productSize: new Vector2(Math.max(0.0001, fixture.width), Math.max(0.0001, fixture.height)),
-          anchor: new Vector2(fixture.anchor.x, fixture.anchor.y),
-          angle: (fixture.rotation * Math.PI) / 180,
-          projective: inverse ? 1 : 0,
-          inverseProduct: inverse ?? new Matrix3(),
-          index: ids.length,
-        };
-        Object.entries(values).forEach(([key, value]) => uniform(product, key, value));
-        this.draw(product, target);
-      }
-      const pixels = new Uint8Array(width * height * 4);
-      this.renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
-      return { width, height, ids, data: maskFromPixels(pixels, width, height) };
-    } finally {
-      this.renderer.autoClear = autoClear;
-      this.renderer.setClearColor(clearColor, clearAlpha);
-      this.renderer.setRenderTarget(null);
-      product.dispose();
-      standard.dispose();
-      target.dispose();
     }
   }
 

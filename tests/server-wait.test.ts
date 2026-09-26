@@ -3,6 +3,7 @@ import {
   describeWait,
   expectedWait,
   formatWaitSeconds,
+  FLUX_CHECK_WAIT,
   FLUX_WAIT,
   gemmaWait,
   median,
@@ -66,6 +67,8 @@ describe('expected wait', () => {
     expect(expectedWait(gemmaWait('identity'), [])).toBeUndefined();
     expect(expectedWait(gemmaWait('identity'), [6000])).toEqual({ ms: 6000, source: 'history' });
     expect(gemmaWait('layout')).toEqual({ kind: 'gemma:layout', limitMs: 120_000 });
+    // The result check was measured (12 real calls): its usual time is known from the start.
+    expect(expectedWait(FLUX_CHECK_WAIT, [])).toEqual({ ms: 1400, source: 'measured' });
   });
 });
 

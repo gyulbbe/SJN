@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { prepareFluxImage, requestFluxImage } from '@/lib/ai-export/client';
+import { fluxCheckScene, prepareFluxImage, requestFluxCheck, requestFluxImage } from '@/lib/ai-export/client';
 import { fluxInputLayout } from '@/lib/ai-export/contract';
-import { FLUX_WAIT } from '@/lib/server-wait';
+import { FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
 import { ServerWaitProgress, useServerWait } from '@/components/server-wait-progress';
 import {
   buildFluxGrounding,
@@ -13,6 +13,16 @@ import {
 import styles from './ai-export.module.css';
 
 type Result = { url?: string; elapsed?: number; error?: string };
+/** Gemma's look at the latest result: which placed products it could not find. */
+type Check =
+  | { status: 'checking' }
+  | { status: 'done'; count: number; missing: FluxPlacedProduct[] }
+  | { status: 'failed'; message: string };
+/** 이/가 after a Korean word, by its last syllable. */
+const subject = (word: string) => {
+  const code = word.charCodeAt(word.length - 1) - 0xac00;
+  return word + (code >= 0 && code < 11172 && code % 28 ? '이' : '가');
+};
 export default function AiExport({
   capture,
   filename,
@@ -31,6 +41,7 @@ export default function AiExport({
   const [result, setResult] = useState<Result>({});
   const [busy, setBusy] = useState(false);
   const [placed, setPlaced] = useState<FluxPlacedProduct[]>();
+  const [check, setCheck] = useState<Check>();
   const { wait, start: startWait, finish: finishWait } = useServerWait();
   const state = useRef<{
     image?: Blob;
@@ -54,9 +65,9 @@ export default function AiExport({
     setBusy(true);
     onBusyChange(true);
     setResult((previous) => ({ ...previous, error: undefined }));
+    setCheck(undefined);
     const started = performance.now();
-    const timer = setTimeout(() => controller.abort(), 190_000);
-    let converted = false;
+    let timer = setTimeout(() => controller.abort(), 190_000);
     try {
       if (!state.current.image) {
         startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
@@ -97,10 +108,41 @@ export default function AiExport({
         state.current.grounding?.scene,
       );
       controller.signal.throwIfAborted();
-      converted = true;
+      // Only a finished server conversion counts toward this browser's usual time.
+      finishWait(true);
       const url = URL.createObjectURL(blob);
       state.current.urls.push(url);
       setResult({ url, elapsed: (performance.now() - started) / 1000 });
+      // Every result is checked once for the placed products; a missing one is only reported.
+      const scene = fluxCheckScene(state.current.grounding?.scene);
+      if (!scene) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(), 130_000);
+      setCheck({ status: 'checking' });
+      startWait({ spec: FLUX_CHECK_WAIT, message: '결과에 배치한 제품이 그대로 있는지 확인하는 중이에요.' });
+      try {
+        const checked = await requestFluxCheck(blob, scene, controller.signal, userId);
+        finishWait(true);
+        if (!live.current) return;
+        const products = state.current.grounding?.placed ?? [];
+        setCheck({
+          status: 'done',
+          count: scene.fixtures.length,
+          missing: checked.fixtures.flatMap((entry, i) =>
+            entry.present === 'no' && products[i] ? [products[i]] : [],
+          ),
+        });
+      } catch (error) {
+        if (!live.current) return;
+        setCheck({
+          status: 'failed',
+          message: controller.signal.aborted
+            ? '확인 응답이 늦어 더 기다리지 않았어요.'
+            : error instanceof Error
+              ? error.message
+              : '확인하지 못했어요.',
+        });
+      }
     } catch (error) {
       if (!live.current) return;
       const message = controller.signal.aborted
@@ -113,8 +155,7 @@ export default function AiExport({
     } finally {
       clearTimeout(timer);
       state.current.controller = undefined;
-      // Only a finished server conversion counts toward this browser's usual time.
-      finishWait(converted);
+      finishWait(false);
       if (live.current) {
         setBusy(false);
         onBusyChange(false);
@@ -126,8 +167,9 @@ export default function AiExport({
       <h3>AI로 현장 사진처럼</h3>
       <p className={styles.note}>
         버튼을 누를 때 현재 After 이미지와 배치한 제품의 종류·위치·크기·색 정보를 Cloudflare로 보내 변환해요.
-        다시 만들 때마다 다른 결과가 나오고 사용량이 새로 발생해요. 그래도 AI가 자재나 제품을 바꿀 수 있으니
-        원본과 비교해 주세요.
+        결과가 나오면 배치한 제품이 그대로 있는지 AI(Gemma)로 한 번 더 확인해요. 다시 만들 때마다 다른 결과가
+        나오고 두 요청의 사용량이 새로 발생해요. 그래도 AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해
+        주세요.
       </p>
       <div className={styles.grid}>
         <div className={styles.card}>
@@ -199,11 +241,44 @@ export default function AiExport({
           </div>
           {wait && result.url && (
             <div className="mt-2">
-              <ServerWaitProgress title="AI 현장 사진 변환" wait={wait} compact />
+              <ServerWaitProgress
+                title={check?.status === 'checking' ? 'AI 제품 확인' : 'AI 현장 사진 변환'}
+                wait={wait}
+                compact
+              />
             </div>
           )}
           {result.elapsed !== undefined && (
             <p className={styles.note}>변환 시간 {result.elapsed.toFixed(1)}초</p>
+          )}
+          {check?.status === 'done' &&
+            (check.missing.length ? (
+              <div
+                role="alert"
+                className="mt-2 rounded-[var(--radius-sm,8px)] border border-[color:var(--danger)] bg-[color:var(--paper)] px-3 py-2 text-xs leading-relaxed text-[color:var(--ink)]"
+              >
+                <div className="font-semibold text-[color:var(--danger)]">
+                  배치한 제품이 바뀌었을 수 있어요
+                </div>
+                <ul className="mt-1 space-y-0.5">
+                  {check.missing.map((product) => (
+                    <li key={product.id}>
+                      {subject(product.label)} {product.where}에서 보이지 않거나 다른 물건으로 바뀌었을 수
+                      있어요.
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-1">다시 만들어 보세요. 자동으로 다시 만들지는 않아요.</div>
+              </div>
+            ) : (
+              <div className="mt-2 text-xs text-[color:var(--muted)]">
+                AI 제품 확인: 배치한 제품 {check.count}개가 모두 보여요.
+              </div>
+            ))}
+          {check?.status === 'failed' && (
+            <div className="mt-2 text-xs text-[color:var(--muted)]">
+              AI 제품 확인을 하지 못했어요. {check.message}
+            </div>
           )}
           {result.error && (
             <p role="alert" className={styles.error}>

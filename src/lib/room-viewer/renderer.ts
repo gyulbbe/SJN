@@ -5,7 +5,6 @@ import {
   LinearFilter,
   LinearSRGBColorSpace,
   Matrix4,
-  type Material,
   Mesh,
   NoBlending,
   NoToneMapping,
@@ -54,7 +53,6 @@ import {
   cropProjectionRows,
 } from './accumulate';
 import { bindRoomShadows, MOVING_LIGHT_SHADOW_RADIUS } from './shadow';
-import { fixtureMaskMaterial, maskFromPixels } from './fixture-mask';
 import { PhotoBloom, photoEffectUniforms, photoPostFragment, type PhotoEffects } from './photo-effects';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
@@ -994,98 +992,6 @@ export class RoomViewerRenderer {
       if (box[2] > box[0] && box[3] > box[1]) result[id] = box;
     }
     return result;
-  }
-  /**
-   * Which placed fixture covers each pixel of an After frame of this size and view (0 none, n the
-   * nth id), for protecting fixtures in an AI result. Same camera and photo rectangle as export().
-   * Room surfaces hide what is behind them; glass hides nothing. It draws into its own target with
-   * temporary flat materials and puts every material and renderer setting back, so other frames
-   * are unchanged.
-   */
-  fixtureMask(
-    width: number,
-    height: number,
-    view: RoomViewState,
-  ): { width: number; height: number; ids: string[]; data: Uint8Array } {
-    this.assertOpen();
-    if (!this.prepared || !this.snapshot) throw new Error('공간을 준비하는 중입니다.');
-    const size = fitOutput(width, height, this.maxOutputEdge);
-    const state = normalizeRoomView(view);
-    const camera = createRoomViewCamera(
-      this.snapshot.scene.room!,
-      size.width / size.height,
-      state,
-      this.prepared.bounds,
-      this.prepared.structureBounds,
-    );
-    const rect = roomViewViewport(size.width, size.height, state);
-    const after = this.prepared.after;
-    after.surfaces.updateView(camera);
-    after.fixtures.updateView(camera);
-    after.ceiling.setVisible(state.projection === 'room-eye');
-    const ids: string[] = [];
-    const owner = new Map<Mesh, number>();
-    for (const object of after.fixtures.group.children) {
-      const id = object.userData.fixtureId;
-      if (typeof id !== 'string' || ids.length >= 254) continue;
-      ids.push(id);
-      object.traverse((node) => {
-        if (node instanceof Mesh) owner.set(node, ids.length);
-      });
-    }
-    const swapped: [Mesh, Material | Material[]][] = [];
-    const created: Material[] = [];
-    after.world.traverse((node) => {
-      if (!(node instanceof Mesh)) return;
-      const index = owner.get(node) ?? 0;
-      const flat = (material: Material) => {
-        const replacement = fixtureMaskMaterial(material, index);
-        created.push(replacement);
-        return replacement;
-      };
-      swapped.push([node, node.material]);
-      node.material = Array.isArray(node.material) ? node.material.map(flat) : flat(node.material);
-    });
-    const target = new WebGLRenderTarget(size.width, size.height, { type: UnsignedByteType });
-    const background = after.world.background;
-    const clearColor = this.renderer.getClearColor(new Color());
-    const clearAlpha = this.renderer.getClearAlpha();
-    const autoUpdate = this.renderer.shadowMap.autoUpdate;
-    const previous = this.renderer.getRenderTarget();
-    try {
-      // Nothing here casts or needs a shadow; the live shadow map stays as it was.
-      this.renderer.shadowMap.autoUpdate = false;
-      after.world.background = null;
-      this.renderer.setClearColor(0x000000, 0);
-      this.renderer.setRenderTarget(target);
-      this.renderer.setScissorTest(false);
-      this.renderer.setViewport(0, 0, size.width, size.height);
-      this.renderer.clear();
-      target.viewport.set(rect.x, rect.y, rect.width, rect.height).round();
-      target.scissor.copy(target.viewport);
-      target.scissorTest = true;
-      this.renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
-      this.renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
-      this.renderer.setScissorTest(true);
-      this.renderer.render(after.world, camera);
-      const pixels = new Uint8Array(size.width * size.height * 4);
-      this.renderer.readRenderTargetPixels(target, 0, 0, size.width, size.height, pixels);
-      return {
-        width: size.width,
-        height: size.height,
-        ids,
-        data: maskFromPixels(pixels, size.width, size.height),
-      };
-    } finally {
-      for (const [mesh, material] of swapped) mesh.material = material;
-      created.forEach((material) => material.dispose());
-      after.world.background = background;
-      this.renderer.setClearColor(clearColor, clearAlpha);
-      this.renderer.shadowMap.autoUpdate = autoUpdate;
-      this.renderer.setScissorTest(false);
-      this.renderer.setRenderTarget(previous);
-      target.dispose();
-    }
   }
   /** Normalized canvas coordinates, y down. Only the editable After panel is pickable. */
   private pointerRay(x: number, y: number): Raycaster | undefined {

@@ -201,3 +201,118 @@ test('server wait shows elapsed seconds, the usual time and a slow notice, never
   await expect(wait).toHaveCount(0);
   await expect(dialog.getByAltText('FLUX 4B 현장 사진 변환 결과')).toBeVisible();
 });
+
+test('every result is checked once for the placed products; a missing one is reported, never re-generated', async ({
+  page,
+}, testInfo) => {
+  const png = await sharp({ create: { width: 992, height: 672, channels: 3, background: '#c9c3b8' } })
+    .png()
+    .toBuffer();
+  const converts: string[] = [];
+  const checks: { type: string; scene: { version: number; fixtures: Record<string, unknown>[] } }[] = [];
+  let missing = false,
+    checkFails = false;
+  await page.route('**/api/export/photoreal', async (route) => {
+    converts.push(route.request().url());
+    await route.fulfill({ status: 200, contentType: 'image/png', body: png });
+  });
+  await page.route('**/api/export/photoreal/check', async (route) => {
+    const req = route.request();
+    const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
+      headers: { 'content-type': req.headers()['content-type'] },
+    }).formData();
+    expect([...form.keys()].sort()).toEqual(['image', 'scene']);
+    const scene = JSON.parse(String(form.get('scene')));
+    checks.push({ type: (form.get('image') as Blob).type, scene });
+    if (checkFails)
+      return route.fulfill({
+        status: 429,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Cloudflare AI 사용 한도를 모두 사용했어요.' }),
+      });
+    await route.fulfill({
+      json: {
+        fixtures: scene.fixtures.map((f: { kind: string }, i: number) => ({
+          index: i + 1,
+          kind: f.kind,
+          present: missing ? 'no' : 'yes',
+          seenAs: missing ? 'other' : f.kind,
+        })),
+      },
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  // One registered product placed in the room, so the result has something to look for.
+  const product = await sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="200"><rect x="30" y="15" width="100" height="170" rx="20" fill="#f1f0ec"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
+  await page.getByRole('button', { name: '신규 자재 등록', exact: true }).click();
+  const form = page.getByRole('dialog', { name: '신규 자재 등록', exact: true });
+  await form.getByLabel('상품명').fill('확인할 세면대');
+  await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
+  await form.getByLabel('가로 (mm)', { exact: true }).fill('600');
+  await form.getByLabel('높이 (mm)', { exact: true }).fill('800');
+  await form
+    .getByLabel('+ 제품 이미지 올리기', { exact: true })
+    .setInputFiles({ name: 'basin.png', mimeType: 'image/png', buffer: product });
+  await expect(
+    form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+  ).toBeVisible();
+  await form.getByRole('button', { name: '자재 등록', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await page.getByRole('button', { name: '위생도기', exact: true }).click();
+  await page.locator('button.material-tile').filter({ hasText: '확인할 세면대' }).click();
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  await expect(dialog.getByText('AI 제품 확인: 배치한 제품 1개가 모두 보여요.')).toBeVisible({
+    timeout: 30000,
+  });
+  await expect(result).toBeVisible();
+  await dialog.getByText('AI 제품 확인: 배치한 제품 1개가 모두 보여요.').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('flux-check-ok.png') });
+  expect(converts).toHaveLength(1);
+  expect(checks).toHaveLength(1);
+  // The check gets a JPEG of the result and, per product, its kind and box only.
+  expect(checks[0].type).toBe('image/jpeg');
+  expect(checks[0].scene.version).toBe(1);
+  expect(checks[0].scene.fixtures.map((f) => Object.keys(f).sort())).toEqual([['box', 'kind']]);
+  expect(checks[0].scene.fixtures[0].kind).toBe('basin');
+  const regenerate = dialog.getByRole('button', {
+    name: 'AI 변환 · flux-2-klein-4b 다시 만들기',
+    exact: true,
+  });
+  missing = true;
+  await regenerate.click();
+  const warning = dialog.getByRole('alert');
+  await expect(warning).toContainText('배치한 제품이 바뀌었을 수 있어요');
+  await expect(warning).toContainText('세면대가');
+  await expect(warning).toContainText('자동으로 다시 만들지는 않아요');
+  await warning.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('flux-check-warning.png') });
+  await expect(regenerate).toBeEnabled();
+  expect(converts).toHaveLength(2);
+  expect(checks).toHaveLength(2);
+  // A failed check keeps the result and says so; nothing is retried.
+  checkFails = true;
+  await regenerate.click();
+  await expect(dialog.getByText(/AI 제품 확인을 하지 못했어요\. Cloudflare AI 사용 한도/)).toBeVisible();
+  await expect(result).toBeVisible();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await expect(regenerate).toBeEnabled();
+  expect(converts).toHaveLength(3);
+  expect(checks).toHaveLength(3);
+  const downloaded = page.waitForEvent('download');
+  await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
+  expect((await sharp(await downloadedArtifact(await downloaded)).metadata()).format).toBe('png');
+});
