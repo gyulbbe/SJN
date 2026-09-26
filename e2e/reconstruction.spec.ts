@@ -5,6 +5,7 @@ import { getActiveDesign } from '../src/lib/designs';
 import { test, expect, type Page } from '@playwright/test';
 import sharp from 'sharp';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
+import { closeEditorActions, editorAction } from '../tests/helpers/editor-actions';
 import type { Point, Quad } from '../src/lib/types';
 
 const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
@@ -75,7 +76,9 @@ async function uploadReference(page: Page) {
 async function afterEditing(page: Page) {
   await expect(page.getByRole('button', { name: 'After', exact: true })).toHaveClass('active');
   await expect(page.getByText('AFTER · 실시간 미리보기', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '내보내기', exact: true })).toBeEnabled();
+  // Narrow editors keep 내보내기 in the 더보기 menu (since 2026-09-18).
+  await expect(await editorAction(page, '내보내기')).toBeEnabled();
+  await closeEditorActions(page);
   await expect(page.getByRole('button', { name: '견적서', exact: true })).toHaveCount(0);
 }
 async function beforeEditing(page: Page) {

@@ -4,6 +4,7 @@ import { test, expect, type Page } from '@playwright/test';
 import sharp from 'sharp';
 import { buffer as streamBuffer } from 'node:stream/consumers';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
+import { editorAction } from '../tests/helpers/editor-actions';
 import type { ProjectDocument } from '../src/lib/types';
 
 let app: AuthenticatedApp;
@@ -318,10 +319,12 @@ for (const width of [390, 320]) {
     await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
     await dialog.getByRole('button', { name: '공간 만들기', exact: true }).click();
     await editorReady(page);
-    await expect(page.getByRole('button', { name: '공간 크기', exact: true })).toBeVisible();
+    // Narrow editors keep 공간 크기 in the 더보기 menu (since 2026-09-18).
+    const size = await editorAction(page, '공간 크기');
+    await expect(size).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`room-editor-${width}.png`) });
-    await page.getByRole('button', { name: '공간 크기', exact: true }).click();
+    await size.click();
     await dialog.getByLabel('가로 (m)', { exact: true }).fill('3.6');
     await dialog.getByRole('button', { name: '크기 적용', exact: true }).click();
     await expect(dialog).toHaveCount(0);

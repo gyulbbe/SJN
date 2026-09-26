@@ -1,6 +1,7 @@
 import { handleAdminUsers } from '../../src/lib/admin/users';
 import { adminProjects, adminProjectAssets, adminProjectMaterials } from '../../src/lib/admin/projects';
 import { readAiUsage } from '../../src/lib/admin/ai-usage';
+import { diagnosticArchiveRequest } from '../../src/lib/reconstruction/diagnostic-archive-server';
 import { serverError } from '../../src/lib/storage/server';
 import type { Page, Route } from '@playwright/test';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
@@ -100,6 +101,8 @@ export async function authenticatedApp(
       );
     if (path === '/api/catalog/materials') return fulfill(route, await publicMaterials(env));
     if (path === '/api/catalog/images') return fulfill(route, await publicImage(env, request));
+    if (path === '/api/reconstruction/diagnostics')
+      return fulfill(route, await diagnosticArchiveRequest({ env, actor }, request));
     if (path.startsWith('/api/d1/'))
       return fulfill(
         route,

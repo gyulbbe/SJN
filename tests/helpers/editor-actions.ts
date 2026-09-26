@@ -40,3 +40,25 @@ export async function selectFixture(page: Page, fixture: Pick<FixtureInstance, '
   await page.locator(`[data-testid="editor-canvas"] [data-entity="${fixture.id}"]`).click();
   await expect(page.getByRole('heading', { name: '제품 속성', exact: true })).toBeVisible();
 }
+
+/**
+ * A top-bar editor action (공간 둘러보기, 공간 크기, 내보내기, …). Below 1280px wide these sit in the
+ * 더보기 menu: it is opened when the button is not already on screen. Clicking an action in the
+ * menu closes it; after only looking at one, call closeEditorActions.
+ */
+export async function editorAction(page: Page, name: string) {
+  const button = page.getByRole('button', { name, exact: true });
+  if (!(await button.isVisible())) {
+    await page.getByRole('button', { name: '더보기', exact: true }).click();
+    await expect(button).toBeVisible();
+  }
+  return button;
+}
+
+export async function closeEditorActions(page: Page) {
+  const more = page.getByRole('button', { name: '더보기', exact: true });
+  if ((await more.isVisible()) && (await more.getAttribute('aria-expanded')) === 'true') {
+    await page.keyboard.press('Escape');
+    await expect(more).toHaveAttribute('aria-expanded', 'false');
+  }
+}

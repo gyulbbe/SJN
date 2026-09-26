@@ -111,10 +111,23 @@ async function expectPercent(progress: Locator, previous: number) {
   await expect(bar).toHaveAttribute('aria-valuemin', '0');
   await expect(bar).toHaveAttribute('aria-valuemax', '100');
   await expect.poll(() => percentOf(progress)).toBeGreaterThan(previous);
-  const value = await percentOf(progress);
-  await expect(progress.getByTestId('model-loading-percent')).toHaveText(`${value}%`);
-  await expect(bar).toHaveAttribute('aria-valuetext', new RegExp(`${value}%`));
-  return value;
+  // Estimated steps keep rising every 250 ms: read the three values from one moment, not in turns.
+  const snapshot = () =>
+    progress.evaluate((element) => {
+      const meter = element.querySelector('[role="progressbar"]')!;
+      return {
+        now: Number(meter.getAttribute('aria-valuenow')),
+        text: meter.getAttribute('aria-valuetext') ?? '',
+        big: element.querySelector('[data-testid="model-loading-percent"]')?.textContent ?? '',
+      };
+    });
+  await expect
+    .poll(async () => {
+      const s = await snapshot();
+      return s.big === `${s.now}%` && s.text.includes(`${s.now}%`) && s.now > previous;
+    })
+    .toBe(true);
+  return (await snapshot()).now;
 }
 async function capture(page: Page, name: string, progress: Locator) {
   await progress.screenshot({ path: resolve(captures, `${name}.png`) });
@@ -269,7 +282,7 @@ test('360° 입체화: 세 모델 파일 합산 %, 추론 사이 단계 문구, 
       totalBytes: backbone,
     },
   });
-  value = await expectPercent(progress, value);
+  await expectPercent(progress, value);
   await capture(page, 'product3d-1440', progress);
   await dialog.getByRole('button', { name: '생성 취소', exact: true }).click();
   await expect(progress).toHaveCount(0);
