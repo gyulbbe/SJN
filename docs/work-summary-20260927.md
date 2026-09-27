@@ -5,7 +5,7 @@
 | 작업                             | 브랜치                       | 커밋                                  | 상세 문서                                                                                                              |
 | -------------------------------- | ---------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | 1. 휴대폰 사진(Ultra HDR) 업로드 | `claude/ultra-hdr-upload`    | abd3542 → 2704c48 → df15829 → 631939d | 그 브랜치의 `docs/material-images.md` "휴대폰 사진" 절, `docs/verification.md` 맨 위                                   |
-| 2. FLUX가 자재 색을 바꾸는 문제  | `claude/flux-material-color` | c85bea5 → 81be643 → (문서·e2e 커밋)   | [자재 색 결과](flux-material-color-results-20260927.md), [FLUX 내보내기](flux-export.md), [검증 기록](verification.md) |
+| 2. FLUX가 자재 색을 바꾸는 문제  | `claude/flux-material-color` | c85bea5 → 81be643 → 5df5da7           | [자재 색 결과](flux-material-color-results-20260927.md), [FLUX 내보내기](flux-export.md), [검증 기록](verification.md) |
 
 ## 1. 휴대폰 사진(Ultra HDR·모션 포토) 업로드
 
