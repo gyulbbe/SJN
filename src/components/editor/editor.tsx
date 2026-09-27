@@ -1176,13 +1176,27 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 snapshot.scene.imageHeight,
                 roomContext.view,
               ),
+              // The export's framing at its size (the mask only has to share the aspect ratio).
+              regions: roomRenderer.regionMask(
+                Math.min(edge, (edge * snapshot.scene.imageWidth) / snapshot.scene.imageHeight),
+                Math.min(edge, (edge * snapshot.scene.imageHeight) / snapshot.scene.imageWidth),
+                roomContext.view,
+              ),
             });
         } finally {
           roomRenderer.dispose();
         }
       } else {
-        blob = await renderer.current!.exportImage(snapshot, w, h, outputFormat, comparison);
-        inspect?.({ snapshot });
+        let regions: FluxCaptureSource['regions'];
+        blob = await renderer.current!.exportImage(
+          snapshot,
+          w,
+          h,
+          outputFormat,
+          comparison,
+          inspect && !comparison ? (mask) => (regions = mask) : undefined,
+        );
+        inspect?.({ snapshot, ...(regions ? { regions } : {}) });
       }
       return blob;
     } finally {

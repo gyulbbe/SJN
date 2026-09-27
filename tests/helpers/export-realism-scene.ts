@@ -15,15 +15,16 @@ const tileBlob = async (fill: string) => {
   return new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!)));
 };
 
-export async function buildRealismScene() {
+/** `colors` swaps the wall or floor tile colour (the FLUX colour comparison's beige room); defaults unchanged. */
+export async function buildRealismScene(colors: { wall?: string; floor?: string } = {}) {
   const room = structuredClone(DEFAULT_ROOM);
   const color = { exposure: 0, contrast: 1, saturation: 1, warmth: 0 };
   const empty = () => ({ polygon: [], strokes: [] });
   const assets: Record<string, AssetRecord> = {};
   const materials: Record<string, MaterialVersion> = {};
   const tiles = {
-    wall: { fill: '#ecebe6', w: 300, h: 600, finish: '무광' },
-    floor: { fill: '#8e8b85', w: 600, h: 600, finish: '무광' },
+    wall: { fill: colors.wall ?? '#ecebe6', w: 300, h: 600, finish: '무광' },
+    floor: { fill: colors.floor ?? '#8e8b85', w: 600, h: 600, finish: '무광' },
   } as const;
   for (const [id, tile] of Object.entries(tiles)) {
     const blob = await tileBlob(tile.fill);

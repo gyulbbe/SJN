@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Pixels } from './color';
 import { fluxInputLayout } from './contract';
 import { FLUX_FIXTURE_KINDS, type FluxScene } from './scene-contract';
 import {
@@ -12,6 +13,34 @@ function pngBlob(canvas: HTMLCanvasElement, message: string) {
   return new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((result) => (result ? resolve(result) : reject(new Error(message))), 'image/png'),
   );
+}
+/** RGBA pixels of an image blob (sRGB, as drawn on a 2D canvas). */
+export async function readPixels(blob: Blob): Promise<Pixels> {
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('이미지를 읽지 못했어요.');
+    context.drawImage(bitmap, 0, 0);
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      data: context.getImageData(0, 0, canvas.width, canvas.height).data,
+    };
+  } finally {
+    bitmap.close();
+  }
+}
+export async function pixelsToPng(image: Pixels): Promise<Blob> {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('보정한 이미지를 만들지 못했어요.');
+  context.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
+  return pngBlob(canvas, '보정한 PNG 저장에 실패했어요.');
 }
 export async function prepareFluxImage(blob: Blob): Promise<Blob> {
   const bitmap = await createImageBitmap(blob);

@@ -9,6 +9,8 @@ import {
 } from '../types';
 import { finishAppearance } from '../render/finish';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
+import { hexToLinear, linearToHex } from '../reconstruction/photo-lighting';
+import type { RegionMask } from './color';
 import type { FluxInputLayout } from './contract';
 import { FLUX_KIND_PRIORITY } from './prompt';
 import {
@@ -240,6 +242,21 @@ async function assetBitmap(reader: FluxAssetReader, id: string | undefined) {
   }
 }
 
+/**
+ * A material colour as image 0 shows it: under a comparison photo's light (RenderSnapshot.lighting,
+ * linear RGB) the render is darker or warmer than the stored colour, and the text must name the
+ * colour the model sees, or text and image disagree.
+ */
+export function litColor(hex: string, lighting: RenderSnapshot['lighting']): string {
+  if (!lighting) return hex;
+  const linear = hexToLinear(hex);
+  return linearToHex([
+    linear[0] * lighting[0],
+    linear[1] * lighting[1],
+    linear[2] * lighting[2],
+  ]).toLowerCase();
+}
+
 export type FluxAssetReader = (id: string) => Promise<AssetRecord | undefined>;
 /** One After capture plus the snapshot it was rendered from (and 3D boxes when the viewer drew it). */
 export type FluxCaptureSource = {
@@ -247,6 +264,8 @@ export type FluxCaptureSource = {
   snapshot: RenderSnapshot;
   reader: FluxAssetReader;
   boxes?: Record<string, Box>;
+  /** Which wall, floor or fixture covers each capture pixel, for the result's colour check. */
+  regions?: RegionMask;
 };
 export type FluxPlacedProduct = { id: string; label: string; where: string };
 export type FluxGrounding = { scene: FluxScene; placed: FluxPlacedProduct[] };
@@ -284,12 +303,14 @@ export async function buildFluxGrounding(input: {
   const fixtures: FluxFixture[] = [];
   const placed: FluxPlacedProduct[] = [];
   for (const draft of ordered) {
-    let color = draft.color;
+    let color = draft.color && litColor(draft.color, snapshot.lighting);
     if (!color) {
       const photo = await assetBitmap(reader, draft.photoAssetId);
-      color = photo ? averageColor(photo, whole(photo)) : undefined;
+      const average = photo ? averageColor(photo, whole(photo)) : undefined;
+      color = average && litColor(average, snapshot.lighting);
       photo?.close();
     }
+    // Read from the render itself: already under the photo's light.
     color ??= averageColor(capture, pixels(draft.captureBox));
     fixtures.push({
       kind: draft.kind,
@@ -323,13 +344,13 @@ export async function buildFluxGrounding(input: {
     if (!color || !HEX.test(surface.tile.groutColor)) continue;
     const face: FluxFace = surface.roomFace ?? (surface.kind === 'floor' ? 'floor' : 'back');
     const entry: Omit<FluxSurface, 'faces'> = {
-      color: color.toLowerCase(),
+      color: litColor(color.toLowerCase(), snapshot.lighting),
       tileMm: [
         Math.max(1, Math.min(20000, material.widthMm)),
         Math.max(1, Math.min(20000, material.heightMm)),
       ],
       pattern: surface.tile.pattern === 'brick' ? 'brick' : 'grid',
-      groutColor: surface.tile.groutColor.toLowerCase(),
+      groutColor: litColor(surface.tile.groutColor.toLowerCase(), snapshot.lighting),
       groutMm: Math.max(0, Math.min(50, surface.tile.groutWidth)),
       finish: finishCategory(material.finish),
     };
