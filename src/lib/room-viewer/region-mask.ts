@@ -47,6 +47,48 @@ export function regionMaskMaterial(original: Material, index: number): ShaderMat
   });
 }
 
+const coverageFragment = `
+uniform sampler2D map;
+uniform float useMap;
+uniform float cutoff;
+uniform float value;
+uniform float opacity;
+varying vec2 vUv;
+void main() {
+  if (useMap > .5 && texture2D(map, vUv).a < cutoff) discard;
+  gl_FragColor = vec4(vec3(value), opacity);
+}`;
+/**
+ * How much of each pixel a fixture covers, for the composite FLUX export's fixture layer: fixtures
+ * draw white at their own opacity (glass lets the room through), every other mesh black and
+ * opaque so walls still hide what is behind them. Drawn into a multisampled target, so edges get
+ * the same partial coverage as the render's antialiasing; cut-out photos keep their alpha test.
+ */
+export function coverageMaterial(original: Material, fixture: boolean): ShaderMaterial {
+  const source = original as Maybe & { opacity?: number };
+  const map = source.map ?? null;
+  const cutout = !!map && ((source.alphaTest ?? 0) > 0 || source.transparent === true);
+  if (map?.matrixAutoUpdate) map.updateMatrix();
+  const opacity = fixture && source.transparent ? Math.max(0, Math.min(1, source.opacity ?? 1)) : 1;
+  return new ShaderMaterial({
+    vertexShader,
+    fragmentShader: coverageFragment,
+    uniforms: {
+      map: { value: cutout ? map : null },
+      mapTransform: { value: cutout ? map!.matrix.clone() : new Matrix3() },
+      useMap: { value: cutout ? 1 : 0 },
+      // The render's own alpha test, so the covered silhouette is exactly the drawn one.
+      cutoff: { value: (source.alphaTest ?? 0) > 0 ? source.alphaTest! : 0.5 },
+      value: { value: fixture ? 1 : 0 },
+      opacity: { value: opacity },
+    },
+    side: original.side,
+    transparent: opacity < 1,
+    depthWrite: opacity >= 1,
+    depthTest: true,
+  });
+}
+
 /** GL rows run bottom-up; labels come back top-down, one byte per pixel. */
 export function labelsFromPixels(pixels: Uint8Array, width: number, height: number) {
   const data = new Uint8Array(width * height);

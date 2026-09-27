@@ -57,7 +57,7 @@ import { bindRoomShadows, MOVING_LIGHT_SHADOW_RADIUS } from './shadow';
 import { PhotoBloom, photoEffectUniforms, photoPostFragment, type PhotoEffects } from './photo-effects';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
-import { labelsFromPixels, regionMaskMaterial } from './region-mask';
+import { coverageMaterial, labelsFromPixels, regionMaskMaterial } from './region-mask';
 import { fitSourceDepthClip, visibleMeshBounds, type SourceDepthClip } from './depth-clip';
 import { buildViewerSurfaces, ViewerTileCache, type SurfaceNotice } from './surfaces';
 import { createRoomViewCamera, normalizeRoomView, roomViewViewport, type RoomViewState } from './view-state';
@@ -76,6 +76,8 @@ type Prepared = {
   bounds: Box3;
   structureBounds: Box3;
   notices: SurfaceNotice[];
+  /** Floor contact shades of the fixtures (cleared for an empty-room layer, then restored). */
+  contacts: Box3[];
   dispose(): void;
 };
 const POLICY = 'room-quarter-turn-world-v1';
@@ -85,6 +87,15 @@ const POLICY = 'room-quarter-turn-world-v1';
  * ends near the budget; below 16 samples the light stays still (the live frame's soft shadow).
  */
 export type RoomExportQuality = { samples: number; budgetMs?: number };
+/** See RoomViewerRenderer.exportLayers: one After frame split into room and fixture layers. */
+export type RoomExportLayers = {
+  width: number;
+  height: number;
+  full: Uint8ClampedArray;
+  shadowed: Uint8ClampedArray;
+  empty: Uint8ClampedArray;
+  coverage: Uint8Array;
+};
 /**
  * Photo downloads: 32 samples look like 64 (soft shadow without banding) at half the cost — about
  * 2.7 s for 3600×2400 on Iris Xe (D3D11). The budget keeps slower devices near the 10 s target.
@@ -314,10 +325,14 @@ export class RoomViewerRenderer {
     if (this.lost || this.renderer.getContext().isContextLost())
       throw new Error('그래픽 연결이 끊겼습니다. 창을 닫고 공간 둘러보기를 다시 열어 주세요.');
   }
-  private async prepare(scene: Scene, materials: Record<string, MaterialVersion>): Promise<Prepared> {
+  private async prepare(
+    scene: Scene,
+    materials: Record<string, MaterialVersion>,
+    exportAngles = false,
+  ): Promise<Prepared> {
     const [surfacesResult, fixturesResult] = await Promise.allSettled([
       buildViewerSurfaces(scene, materials, this.tiles),
-      buildViewerFixtures(scene, materials, this.reader, this.products),
+      buildViewerFixtures(scene, materials, this.reader, this.products, { exportAngles }),
     ]);
     if (surfacesResult.status === 'rejected' || fixturesResult.status === 'rejected') {
       if (surfacesResult.status === 'fulfilled') surfacesResult.value.dispose();
@@ -408,6 +423,7 @@ export class RoomViewerRenderer {
       bounds,
       structureBounds: surfaces.structureBounds,
       notices,
+      contacts,
       dispose() {
         surfaces.dispose();
         fixtures.dispose();
@@ -420,7 +436,11 @@ export class RoomViewerRenderer {
   async setSnapshot(
     input: RenderSnapshot,
     reader: Reader,
-    options?: { fitScenes?: readonly Scene[] },
+    options?: {
+      fitScenes?: readonly Scene[];
+      /** The AI export: product photos follow the camera by angle (chooseExportPhoto). */
+      exportAngles?: boolean;
+    },
   ): Promise<void> {
     this.assertOpen();
     const id = ++this.request,
@@ -442,12 +462,15 @@ export class RoomViewerRenderer {
     )
       throw new Error('Before와 After의 공간 크기가 달라 같은 시점으로 비교할 수 없습니다.');
     this.reader = reader;
-    const beforeKey = roomViewerSceneKey(snapshot.beforeScene, snapshot.materials),
-      afterKey = roomViewerSceneKey(snapshot.scene, snapshot.materials);
+    const exportAngles = !!options?.exportAngles;
+    const sceneKey = (scene: Scene) =>
+      roomViewerSceneKey(scene, snapshot.materials) + (exportAngles ? '|export-angles' : '');
+    const beforeKey = sceneKey(snapshot.beforeScene),
+      afterKey = sceneKey(snapshot.scene);
     const get = (key: string, scene: Scene) => {
       let promise = this.scenes.get(key);
       if (!promise) {
-        promise = this.prepare(scene, snapshot.materials);
+        promise = this.prepare(scene, snapshot.materials, exportAngles);
         this.scenes.set(key, promise);
         const pending = promise;
         void pending.catch(() => {
@@ -490,7 +513,7 @@ export class RoomViewerRenderer {
         scene.room.depthMm !== room.depthMm
       )
         throw new Error('비교할 공간들의 크기가 달라 공통 시점을 만들 수 없습니다.');
-      const fitted = await get(roomViewerSceneKey(scene, snapshot.materials), scene);
+      const fitted = await get(sceneKey(scene), scene);
       bounds.union(fitted.bounds);
       structureBounds.union(fitted.structureBounds);
       if (this.disposed || id !== this.request) return;
@@ -1098,6 +1121,129 @@ export class RoomViewerRenderer {
       target.dispose();
     }
   }
+  /**
+   * The After frame of an export (one frame, no photo look) split into layers on one camera and
+   * pixel grid, for the composite FLUX export (an empty room for the AI, our own fixtures on top):
+   * - `full`: the frame as `export()` draws it
+   * - `shadowed`: the room with the fixtures' shadows and contact shade, the fixtures themselves
+   *   hidden (the shadow map made with them is kept for this frame)
+   * - `empty`: the room with no fixture at all: shadows recomputed without them, no contact shade
+   * - `coverage`: how much of each pixel the fixtures cover (0–255, antialiased like the render,
+   *   glass at its opacity)
+   * With these, full = fixture·coverage + shadowed·(1 − coverage) solves for the fixtures' own
+   * colours, and shadowed ÷ empty is the shadow they cast. RGBA rows are top-down.
+   */
+  exportLayers(view: RoomViewState, options: { longEdge: number }): RoomExportLayers {
+    this.assertOpen();
+    if (!this.snapshot || !this.prepared) throw new Error('공간을 먼저 준비해 주세요.');
+    if (this.accumulating) throw new Error('다른 이미지를 만드는 중이에요. 잠시 뒤 다시 시도해 주세요.');
+    const previous = this.lastFrame;
+    const { width, height } = this.exportSize(options.longEdge, 'after');
+    const after = this.prepared.after;
+    const copy = document.createElement('canvas');
+    copy.width = width;
+    copy.height = height;
+    const context = copy.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('이미지를 만들 수 없습니다.');
+    const frame = () => {
+      context.clearRect(0, 0, width, height);
+      context.drawImage(this.render(width, height, view, 'after'), 0, 0);
+      return context.getImageData(0, 0, width, height).data;
+    };
+    const autoUpdate = this.renderer.shadowMap.autoUpdate;
+    let full: Uint8ClampedArray, shadowed: Uint8ClampedArray, empty: Uint8ClampedArray;
+    try {
+      this.renderer.shadowMap.autoUpdate = true;
+      full = frame();
+      // Same shadow map, cast with the fixtures: their shadows stay while they are hidden.
+      this.renderer.shadowMap.autoUpdate = false;
+      after.fixtures.group.visible = false;
+      shadowed = frame();
+      this.renderer.shadowMap.autoUpdate = true;
+      after.surfaces.setContacts([]);
+      empty = frame();
+    } finally {
+      after.fixtures.group.visible = true;
+      after.surfaces.setContacts(after.contacts);
+      this.renderer.shadowMap.autoUpdate = autoUpdate;
+      this.renderer.shadowMap.needsUpdate = true;
+      copy.width = copy.height = 1;
+    }
+    const coverage = this.fixtureCoverage(width, height, view);
+    if (previous && !this.disposed)
+      this.render(previous.width, previous.height, previous.view, previous.mode, previous.split);
+    return { width, height, full, shadowed, empty, coverage };
+  }
+  /** Fixture coverage of an After frame (see coverageMaterial), top-down, one byte per pixel. */
+  private fixtureCoverage(width: number, height: number, view: RoomViewState): Uint8Array {
+    const size = fitOutput(width, height, this.maxOutputEdge);
+    const state = normalizeRoomView(view);
+    const camera = createRoomViewCamera(
+      this.snapshot!.scene.room!,
+      size.width / size.height,
+      state,
+      this.prepared!.bounds,
+      this.prepared!.structureBounds,
+    );
+    const rect = roomViewViewport(size.width, size.height, state);
+    const after = this.prepared!.after;
+    after.surfaces.updateView(camera);
+    after.fixtures.updateView(camera);
+    after.ceiling.setVisible(state.projection === 'room-eye');
+    const fixtures = new Set<Mesh>();
+    after.fixtures.group.traverse((node) => {
+      if (node instanceof Mesh) fixtures.add(node);
+    });
+    const swapped: [Mesh, Material | Material[]][] = [];
+    const created: Material[] = [];
+    after.world.traverse((node) => {
+      if (!(node instanceof Mesh)) return;
+      const flat = (material: Material) => {
+        const replacement = coverageMaterial(material, fixtures.has(node));
+        created.push(replacement);
+        return replacement;
+      };
+      swapped.push([node, node.material]);
+      node.material = Array.isArray(node.material) ? node.material.map(flat) : flat(node.material);
+    });
+    const target = new WebGLRenderTarget(size.width, size.height, {
+      type: UnsignedByteType,
+      samples: this.afterTarget.samples,
+    });
+    const background = after.world.background;
+    const clearColor = this.renderer.getClearColor(new Color());
+    const clearAlpha = this.renderer.getClearAlpha();
+    const autoUpdate = this.renderer.shadowMap.autoUpdate;
+    const previous = this.renderer.getRenderTarget();
+    try {
+      this.renderer.shadowMap.autoUpdate = false;
+      after.world.background = null;
+      this.renderer.setClearColor(0x000000, 1);
+      this.renderer.setRenderTarget(target);
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, size.width, size.height);
+      this.renderer.clear();
+      target.viewport.set(rect.x, rect.y, rect.width, rect.height).round();
+      target.scissor.copy(target.viewport);
+      target.scissorTest = true;
+      this.renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
+      this.renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
+      this.renderer.setScissorTest(true);
+      this.renderer.render(after.world, camera);
+      const pixels = new Uint8Array(size.width * size.height * 4);
+      this.renderer.readRenderTargetPixels(target, 0, 0, size.width, size.height, pixels);
+      return labelsFromPixels(pixels, size.width, size.height);
+    } finally {
+      for (const [mesh, material] of swapped) mesh.material = material;
+      created.forEach((material) => material.dispose());
+      after.world.background = background;
+      this.renderer.setClearColor(clearColor, clearAlpha);
+      this.renderer.shadowMap.autoUpdate = autoUpdate;
+      this.renderer.setScissorTest(false);
+      this.renderer.setRenderTarget(previous);
+      target.dispose();
+    }
+  }
   /** Normalized canvas coordinates, y down. Only the editable After panel is pickable. */
   private pointerRay(x: number, y: number): Raycaster | undefined {
     this.assertOpen();
@@ -1187,20 +1333,9 @@ export class RoomViewerRenderer {
   ): Promise<Blob> {
     this.assertOpen();
     if (!this.snapshot || !this.prepared) throw new Error('공간을 먼저 준비해 주세요.');
-    const snapshot = this.snapshot,
-      previous = this.lastFrame,
+    const previous = this.lastFrame,
       state = structuredClone(view);
-    const edge = Math.max(
-      1,
-      Math.min(
-        this.maxOutputEdge,
-        Math.max(snapshot.scene.imageWidth, snapshot.scene.imageHeight),
-        Number.isFinite(options.longEdge) ? options.longEdge : this.maxOutputEdge,
-      ),
-    );
-    const aspect =
-      (snapshot.scene.imageWidth / snapshot.scene.imageHeight) * (options.mode === 'compare' ? 2 : 1);
-    const output = fitOutput(aspect >= 1 ? edge : edge * aspect, aspect >= 1 ? edge / aspect : edge, edge);
+    const output = this.exportSize(options.longEdge, options.mode);
     const copy = document.createElement('canvas');
     copy.width = output.width;
     copy.height = output.height;
@@ -1297,6 +1432,20 @@ export class RoomViewerRenderer {
         0.94,
       ),
     );
+  }
+  /** Output size of an export: the scene's aspect (doubled side by side for compare) at `longEdge`. */
+  private exportSize(longEdge: number, mode: RoomViewerMode) {
+    const scene = this.snapshot!.scene;
+    const edge = Math.max(
+      1,
+      Math.min(
+        this.maxOutputEdge,
+        Math.max(scene.imageWidth, scene.imageHeight),
+        Number.isFinite(longEdge) ? longEdge : this.maxOutputEdge,
+      ),
+    );
+    const aspect = (scene.imageWidth / scene.imageHeight) * (mode === 'compare' ? 2 : 1);
+    return fitOutput(aspect >= 1 ? edge : edge * aspect, aspect >= 1 ? edge / aspect : edge, edge);
   }
   /** One export frame: the plain render, or with the photo look when asked for. */
   private exportFrame(

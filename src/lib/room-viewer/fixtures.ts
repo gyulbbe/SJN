@@ -25,7 +25,7 @@ import { decodeProductMesh } from '../product3d/codec';
 import { validatePose } from '../product3d/pose';
 import { estimateAlbedo } from '../product3d/albedo';
 import { shadingNormals } from '../product3d/mesh-cleanup';
-import type { Product3dReference, ProductMesh } from '../product3d/state-types';
+import type { Product3dReference, ProductMesh, ProductPose } from '../product3d/state-types';
 import { createTemplateModel, disposeTemplateModel } from '../reconstruction/templates';
 import { orientationAngle, reconstructionModelTransform } from '../reconstruction/projection';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
@@ -207,6 +207,91 @@ export function chooseDirectionalPhoto(
   return index;
 }
 
+/** The angle-name presets' diagonals, for the AI export's photo choice only. */
+const DIAGONALS: Record<string, number> = { '왼쪽 사선': -45, '오른쪽 사선': 45 };
+/**
+ * Horizontal angle (degrees) of a product3d pose's camera around the product, 0 at the photographed
+ * side (TripoSR +x, +z up), positive towards +y, the product's right side as seen from the front,
+ * like "오른쪽 측면" (90). Undefined for a bad pose or a view from more than 35° above or below.
+ */
+export function poseAzimuth(pose: ProductPose): number | undefined {
+  let valid: ProductPose;
+  try {
+    valid = validatePose(pose);
+  } catch {
+    return;
+  }
+  const toCamera = new Vector3(0, 0, 1)
+    .applyQuaternion(new Quaternion(...valid.cameraQuaternion))
+    .applyQuaternion(new Quaternion(...valid.objectQuaternion).invert());
+  if (Math.abs(degrees(Math.asin(Math.max(-1, Math.min(1, toCamera.z))))) > 35) return;
+  return degrees(Math.atan2(toCamera.y, toCamera.x));
+}
+/** A photo's horizontal angle for the AI export: its name (front, sides, back, diagonals) or pose. */
+export function photoViewAngle(view: MaterialVersion['views'][number]): number | undefined {
+  const named = declaredProductDirection(view.direction) ?? DIAGONALS[view.direction.trim()];
+  if (named !== undefined) return named;
+  return view.product3d ? poseAzimuth(view.product3d.pose) : undefined;
+}
+/** The drawn product in a photo plane: content width × height (mm) and the anchor within it. */
+export type PhotoFootprint = { width: number; height: number; anchorX: number; anchorY: number };
+export function photoFootprint(
+  placement: Pick<RoomPlacement, 'widthMm' | 'heightMm' | 'scale'>,
+  bounds: ProductBounds,
+  aspect: number,
+  anchor: { x: number; y: number },
+): PhotoFootprint {
+  const bw = bounds.right - bounds.left,
+    bh = bounds.bottom - bounds.top;
+  const width = Math.min(placement.widthMm / bw, (placement.heightMm * aspect) / bh) * placement.scale;
+  const height = width / aspect;
+  return {
+    width: width * bw,
+    height: height * bh,
+    anchorX: (anchor.x - bounds.left) / bw,
+    anchorY: (anchor.y - bounds.top) / bh,
+  };
+}
+/**
+ * Whether another photo keeps the product's footprint (width, height within 5%, the anchor within
+ * 2% of the content): only then may the AI export swap photos without moving or resizing it.
+ */
+export function sameFootprint(a: PhotoFootprint, b: PhotoFootprint) {
+  return (
+    Math.abs(a.width - b.width) <= a.width * 0.05 &&
+    Math.abs(a.height - b.height) <= a.height * 0.05 &&
+    Math.abs(a.anchorX - b.anchorX) <= 0.02 &&
+    Math.abs(a.anchorY - b.anchorY) <= 0.02
+  );
+}
+/**
+ * The AI export's photo for a camera direction: the usable photo whose angle is nearest to where
+ * the camera stands. The selected photo stays when it has no angle, from steeply above or below,
+ * or when it is the nearest; `usable` holds the photos that keep the footprint.
+ */
+export function chooseExportPhoto(
+  angles: readonly (number | undefined)[],
+  selected: number,
+  localAzimuth: number,
+  elevation: number,
+  usable: ReadonlySet<number>,
+): number {
+  const base = angles[selected];
+  if (base === undefined || Math.abs(elevation) > 35) return selected;
+  const target = base + localAzimuth;
+  let index = selected,
+    distance = angularDistance(base, target);
+  angles.forEach((angle, i) => {
+    if (angle === undefined || i === selected || !usable.has(i)) return;
+    const delta = angularDistance(angle, target);
+    if (delta < distance) {
+      index = i;
+      distance = delta;
+    }
+  });
+  return index;
+}
+
 function checkPlacement(fixture: FixtureInstance): RoomPlacement {
   const p = fixture.roomPlacement;
   if (!p) throw new Error('공간 설치 위치가 없어요. 기존 정면 보기에서 확인해 주세요.');
@@ -364,6 +449,8 @@ export async function buildViewerFixtures(
   materials: Record<string, MaterialVersion>,
   reader: ViewerAssetReader,
   sharedCache?: ProductAssetCache,
+  /** `exportAngles`: the AI export's photo choice (chooseExportPhoto); the saved viewIndex is kept. */
+  options: { exportAngles?: boolean } = {},
 ) {
   const cache = sharedCache ?? new ProductAssetCache(reader);
   const group = new Group(),
@@ -461,20 +548,33 @@ export async function buildViewerFixtures(
             '저장된 입체 형상·선택 사진 자세를 사용해요. 폭·높이에 비율을 유지해 맞추며 깊이는 저장 형상의 비율이에요.',
           );
         } else {
-          const base = declaredProductDirection(selected.direction);
+          // The AI export picks among every photo with a known angle (diagonals and 3D poses
+          // included) that keeps the footprint; other views switch only between exact sides.
+          const angleOf = (view: MaterialVersion['views'][number]) =>
+            options.exportAngles ? photoViewAngle(view) : declaredProductDirection(view.direction);
+          const base = angleOf(selected);
+          const angles = material.views.map(angleOf);
           const choices = material.views
             .map((view, index) => ({ view, index }))
             .filter(
               ({ view, index }) =>
                 index === fixture.viewIndex ||
                 (base !== undefined &&
-                  declaredProductDirection(view.direction) !== undefined &&
-                  !view.product3d),
+                  angles[index] !== undefined &&
+                  (options.exportAngles || !view.product3d)),
             );
+          const footprint = photoFootprint(p, p.contentBounds, p.imageAspect, fixture.anchor);
           const planes = new Map<number, Mesh>();
           for (const { view, index } of choices) {
             try {
               const image = await cache.image(view.assetId);
+              // A photo that would change the product's width, height or anchor is not used.
+              if (
+                options.exportAngles &&
+                index !== fixture.viewIndex &&
+                !sameFootprint(footprint, photoFootprint(p, image.bounds, image.aspect, view.anchor))
+              )
+                continue;
               const plane = new Mesh(
                 planeGeometry(
                   fixture,
@@ -490,8 +590,11 @@ export async function buildViewerFixtures(
                   toneMapped: false,
                 }),
               );
-              plane.rotation.y =
-                (((declaredProductDirection(view.direction) ?? base ?? 0) - (base ?? 0)) * Math.PI) / 180;
+              // The AI export keeps every photo on the face-parallel plane (same footprint, nothing
+              // turned into the wall); elsewhere a side photo turns to face its side.
+              plane.rotation.y = options.exportAngles
+                ? 0
+                : (((angles[index] ?? base ?? 0) - (base ?? 0)) * Math.PI) / 180;
               plane.visible = index === fixture.viewIndex;
               plane.userData.viewIndex = index;
               planes.set(index, plane);
@@ -510,12 +613,11 @@ export async function buildViewerFixtures(
             target.updateMatrixWorld(true);
             const point = camera.getWorldPosition(new Vector3());
             target.worldToLocal(point);
-            const index = chooseDirectionalPhoto(
-              material.views,
-              fixture.viewIndex,
-              degrees(Math.atan2(point.x, point.z)),
-              degrees(Math.atan2(point.y, Math.hypot(point.x, point.z))),
-            );
+            const azimuth = degrees(Math.atan2(point.x, point.z)),
+              elevation = degrees(Math.atan2(point.y, Math.hypot(point.x, point.z)));
+            const index = options.exportAngles
+              ? chooseExportPhoto(angles, fixture.viewIndex, azimuth, elevation, new Set(planes.keys()))
+              : chooseDirectionalPhoto(material.views, fixture.viewIndex, azimuth, elevation);
             const actual = planes.has(index) ? index : fixture.viewIndex;
             for (const [i, plane] of planes) plane.visible = i === actual;
           });
