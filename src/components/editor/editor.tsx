@@ -1217,7 +1217,11 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
    * same camera. A scene without a room keeps the 2D front composite. The renderer lives only for
    * this capture; the editor, previews and downloads are untouched.
    */
-  async function captureAiInput(choice?: FluxViewChoice): Promise<FluxCaptureSource> {
+  async function captureAiInput(
+    choice?: FluxViewChoice,
+    /** The composite export: also the room/fixture layers, with photos chosen by angle. */
+    composite?: boolean,
+  ): Promise<FluxCaptureSource> {
     if (isGuest) throw new Error('이미지 출력은 로그인 후 사용할 수 있어요.');
     if (!st.project) throw new Error('내보낼 공간이 아직 준비되지 않았어요.');
     const after = getActiveScene(st.project);
@@ -1246,8 +1250,9 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     ]);
     const roomRenderer = new RoomViewerRenderer();
     try {
-      // An eye camera ignores the fit bounds, so the other designs need not be prepared.
-      await roomRenderer.setSnapshot(snapshot, assetReader);
+      // An eye camera ignores the fit bounds, so the other designs need not be prepared. The
+      // composite export shows each product photo nearest the camera's angle (this capture only).
+      await roomRenderer.setSnapshot(snapshot, assetReader, composite ? { exportAngles: true } : undefined);
       // One frame, no photo look: stage 3 found averaged samples made no difference to FLUX.
       const blob = await roomRenderer.export(view, { format: 'png', mode: 'after', longEdge: edge });
       const regions = roomRenderer.regionMask(
@@ -1262,6 +1267,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         boxes: roomRenderer.fixtureBounds(width, height, view),
         regions,
         ...(visibleCeiling(regions) ? { ceiling: VIEWER_CEILING_COLOR } : {}),
+        // Same renderer, camera and pixel grid as the frame above.
+        ...(composite ? { layers: roomRenderer.exportLayers(view, { longEdge: edge }) } : {}),
       };
     } finally {
       roomRenderer.dispose();

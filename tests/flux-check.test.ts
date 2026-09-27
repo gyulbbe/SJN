@@ -373,3 +373,76 @@ describe('FLUX result check v2: added objects, moved fixtures and tile layout', 
     expect(JSON.stringify(failure.diagnostics)).not.toMatch(/left|shower|basin/);
   });
 });
+
+describe('FLUX result check: the composite export (room sent empty)', () => {
+  const empty: FluxCheckScene = { version: 1, fixtures: [], walls: ['left', 'back', 'right'], room: 'empty' };
+
+  it('asks only about added objects, and says placeholders are not objects', () => {
+    const prompt = fluxCheckPrompt(empty);
+    expect(prompt).toContain('given as an empty room');
+    expect(prompt).toContain('List in extras every object');
+    expect(prompt).not.toMatch(/numbered fixture|present:/);
+    expect(prompt).toContain('uniformTiles');
+    const placeholders = fluxCheckPrompt({ ...empty, room: 'placeholders' });
+    expect(placeholders).toContain('plain grey shapes marking where fixtures will be added later');
+    expect(placeholders).toContain('neither are the plain grey placeholder shapes');
+    const schema = fluxCheckJsonSchema(0, empty.walls) as {
+      properties: { fixtures: { minItems: number; maxItems: number } };
+    };
+    expect(schema.properties.fixtures).toMatchObject({ minItems: 0, maxItems: 0 });
+    const parsed = parseFluxCheck(
+      JSON.stringify({ fixtures: [], extras: [{ kind: 'showerHead', place: 'right' }] }),
+      empty,
+    );
+    expect(parsed).toEqual({ fixtures: [], extras: [{ kind: 'showerHead', place: 'right' }] });
+  });
+
+  it.each([
+    ['an empty room with fixtures', { ...empty, fixtures: [{ kind: 'toilet', box: [0, 0, 0.1, 0.1] }] }],
+    ['no fixtures without the room mode', { version: 1, fixtures: [] }],
+    ['an unknown room mode', { ...empty, room: 'blank' }],
+  ])('rejects %s before inference', async (_label, value) => {
+    const env = environment();
+    await expect(
+      runFluxCheck(
+        request(await jpeg(), (f) => f.set('scene', JSON.stringify(value))),
+        env,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(env.AI.run).not.toHaveBeenCalled();
+  });
+
+  it('runs one call for an empty room and returns its extras', async () => {
+    const run = vi.fn(async () =>
+      Response.json({
+        result: {
+          model: CLOUD_GEMMA_MODEL,
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: JSON.stringify({
+                  fixtures: [],
+                  extras: [{ kind: 'glassPartition', place: 'middle' }],
+                  walls: [
+                    { face: 'left', uniformTiles: 'yes' },
+                    { face: 'back', uniformTiles: 'yes' },
+                    { face: 'right', uniformTiles: 'yes' },
+                  ],
+                }),
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const response = await runFluxCheck(
+      request(await jpeg(), (f) => f.set('scene', JSON.stringify(empty))),
+      environment(run),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    const body = await response.json();
+    expect(body.fixtures).toEqual([]);
+    expect(body.extras).toEqual([{ kind: 'glassPartition', place: 'middle' }]);
+  });
+});

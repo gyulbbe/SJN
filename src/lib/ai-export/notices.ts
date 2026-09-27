@@ -68,10 +68,34 @@ export type FluxCheckReading = {
   extrasChecked: boolean;
 };
 
+/**
+ * In the composite export the model got the room empty and our fixtures go on top afterwards, so
+ * nothing it draws is a placed fixture: sanitary ware and a shower it adds are reported with the
+ * large objects, the rest stays with the answer.
+ */
+const ADDED_TO_EMPTY_ROOM: readonly FluxExtraKind[] = ['toilet', 'basin', 'bathtub', 'showerHead'];
+
 export function readFluxCheck(
   result: FluxCheckResult,
   placed: readonly FluxPlacedFixture[],
+  options: { emptyRoom?: boolean } = {},
 ): FluxCheckReading {
+  if (options.emptyRoom) {
+    const shown = (extra: FluxExtra) =>
+      FLUX_LARGE_EXTRAS.includes(extra.kind) || ADDED_TO_EMPTY_ROOM.includes(extra.kind);
+    const found = result.extras ?? [];
+    return {
+      missing: [],
+      moved: [],
+      extras: [
+        ...found.filter((extra) => FLUX_LARGE_EXTRAS.includes(extra.kind)),
+        ...found.filter((extra) => shown(extra) && !FLUX_LARGE_EXTRAS.includes(extra.kind)),
+      ],
+      minor: found.filter((extra) => !shown(extra)),
+      tiles: (result.walls ?? []).filter((wall) => wall.uniformTiles === 'no').map((wall) => wall.face),
+      extrasChecked: !!result.extras,
+    };
+  }
   const missing = new Set(
     result.fixtures.flatMap((entry, i) => (entry.present === 'no' && !cutOff(placed[i]?.box) ? [i] : [])),
   );
@@ -181,6 +205,11 @@ export type FluxNoticeInput = {
   corrected: boolean;
   /** Tile-layout answers are shown only when they proved reliable enough. */
   showTiles: boolean;
+  /**
+   * The composite export: our fixtures were put on the model's empty room. "shifted" when the
+   * model moved the room's floor line (or reframed), so fixtures standing on it may look afloat.
+   */
+  composite?: { shifted: boolean };
 };
 export type FluxNoticeSection = { key: string; title?: string; lines: string[] };
 export type FluxNotices = {
@@ -195,8 +224,12 @@ export type FluxNotices = {
 export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
   const warnings: FluxNoticeSection[] = [];
   const infos: FluxNotices['infos'] = [];
-  const { check, colors, products } = input;
+  const { check, colors, products, composite } = input;
   let retry = false;
+  if (composite?.shifted) {
+    warnings.push({ key: 'framing', lines: ['AI가 방 구도를 바꿔 도기가 떠 보일 수 있어요.'] });
+    retry = true;
+  }
   if (check?.status === 'done') {
     const { reading } = check;
     const productLines = [
@@ -233,7 +266,16 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
         ],
       });
     retry = warnings.length > 0;
-    if (!productLines.length)
+    if (composite)
+      infos.push({
+        key: 'check',
+        text: !reading.extrasChecked
+          ? 'AI 확인에 추가된 물건 답이 없었어요.'
+          : reading.extras.length
+            ? 'AI 확인: 빈 방에 물건이 그려졌는지 봤어요.'
+            : 'AI 확인: 배치하지 않은 큰 물건이 보이지 않아요.',
+      });
+    else if (!productLines.length)
       infos.push({
         key: 'check',
         text: `AI 제품 확인: 배치한 제품 ${products.length}개가 모두 보여요.${
@@ -258,12 +300,21 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
                 .join(', ')} 바뀌어 원래 자재 색으로 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.`
             : '벽·바닥 색을 원래 자재 색에 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.',
       });
+    // In the composite the products are ours, not the model's.
+    if (composite && infos[0]?.key === 'color')
+      infos[0].text = infos[0].text.replace(
+        '명암·질감과 제품·유리는 AI 결과 그대로예요.',
+        '제품은 3D 렌더를 제자리에 그대로 올렸어요.',
+      );
   } else if (colors?.status === 'reframed')
     infos.unshift({
       key: 'color',
       text: 'AI가 구도를 바꿔 벽·바닥 색을 원본과 비교하지 못했어요. 자재 색은 원본과 직접 비교해 주세요.',
     });
   if (check?.status === 'failed')
-    infos.push({ key: 'check', text: `AI 제품 확인을 하지 못했어요. ${check.message}` });
+    infos.push({
+      key: 'check',
+      text: `${composite ? 'AI 확인을' : 'AI 제품 확인을'} 하지 못했어요. ${check.message}`,
+    });
   return { warnings, suggestRetry: retry, infos };
 }

@@ -579,11 +579,18 @@ export function reviewResultColors(input: {
   mask: RegionMask;
   layout: FluxInputLayout;
   result: Pixels;
+  /**
+   * The model's shift (result pixels) when it is known better than the whole-picture search, which
+   * is broad in a nearly featureless empty room: the composite export measures the floor line.
+   * Given, the faces are compared there (the search's score is still reported).
+   */
+  alignment?: { dx: number; dy: number };
 }): ColorReview {
   const size = { width: input.result.width, height: input.result.height };
   const reference = projectCapture(input.capture, input.layout, size);
   const referenceMask = projectMask(input.mask, input.layout, size);
-  const frame = framing(reference, input.result);
+  const searched = framing(reference, input.result);
+  const frame = input.alignment ? { ...searched, ...input.alignment, aligned: true } : searched;
   if (!frame.aligned) return { framing: frame, changes: [], warnings: [] };
   const resultMask = shiftMask(referenceMask, frame.dx, frame.dy);
   const changes = compareFaces(reference, input.result, referenceMask, resultMask);

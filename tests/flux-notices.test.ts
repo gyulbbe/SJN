@@ -254,3 +254,64 @@ describe('FLUX result notices', () => {
     expect(notices.warnings[0].lines).toEqual(['세면대가 왼쪽 벽에서 가운데로 옮겨졌을 수 있어요.']);
   });
 });
+
+describe('the composite export (fixtures composited on the model empty room)', () => {
+  it('reports large objects and sanitary ware the model drew, the rest with the answer only', () => {
+    const reading = readFluxCheck(
+      {
+        fixtures: [],
+        extras: [
+          { kind: 'showerHead', place: 'right' },
+          { kind: 'mirror', place: 'back' },
+          { kind: 'glassPartition', place: 'middle' },
+          { kind: 'toilet', place: 'floor' },
+        ],
+      },
+      placed,
+      { emptyRoom: true },
+    );
+    expect(reading.extras).toEqual([
+      { kind: 'glassPartition', place: 'middle' },
+      { kind: 'showerHead', place: 'right' },
+      { kind: 'toilet', place: 'floor' },
+    ]);
+    expect(reading.minor).toEqual([{ kind: 'mirror', place: 'back' }]);
+    expect(reading.missing).toEqual([]);
+    expect(reading.moved).toEqual([]);
+  });
+
+  it('warns first when the model moved the room, and words the check for an empty room', () => {
+    const shifted = fluxResultNotices({
+      products,
+      check: {
+        status: 'done',
+        reading: readFluxCheck({ fixtures: [], extras: [] }, placed, { emptyRoom: true }),
+      },
+      colors: { status: 'reframed' },
+      corrected: true,
+      showTiles: false,
+      composite: { shifted: true },
+    });
+    expect(shifted.warnings).toEqual([
+      { key: 'framing', lines: ['AI가 방 구도를 바꿔 도기가 떠 보일 수 있어요.'] },
+    ]);
+    expect(shifted.suggestRetry).toBe(true);
+    expect(shifted.infos.map((i) => i.text)).toEqual([
+      'AI가 구도를 바꿔 벽·바닥 색을 원본과 비교하지 못했어요. 자재 색은 원본과 직접 비교해 주세요.',
+      'AI 확인: 배치하지 않은 큰 물건이 보이지 않아요.',
+    ]);
+    const kept = fluxResultNotices({
+      products,
+      check: { status: 'failed', message: '한도' },
+      colors: { status: 'corrected', warnings: [] },
+      corrected: true,
+      showTiles: false,
+      composite: { shifted: false },
+    });
+    expect(kept.warnings).toEqual([]);
+    expect(kept.infos.map((i) => i.text)).toEqual([
+      '벽·바닥 색을 원래 자재 색에 맞췄어요. 제품은 3D 렌더를 제자리에 그대로 올렸어요.',
+      'AI 확인을 하지 못했어요. 한도',
+    ]);
+  });
+});

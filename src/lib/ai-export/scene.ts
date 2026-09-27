@@ -12,6 +12,7 @@ import { finishAppearance } from '../render/finish';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import { hexToLinear, linearToHex } from '../reconstruction/photo-lighting';
 import type { RegionMask } from './color';
+import type { RoomLayers } from './composite';
 import type { FluxInputLayout } from './contract';
 import { FLUX_KIND_PRIORITY } from './prompt';
 import {
@@ -269,6 +270,8 @@ export type FluxCaptureSource = {
   regions?: RegionMask;
   /** Paint colour of the ceiling an in-room view shows (with its one light panel); none otherwise. */
   ceiling?: string;
+  /** The composite export: the same frame split into room and fixture layers. */
+  layers?: RoomLayers;
 };
 
 /**
