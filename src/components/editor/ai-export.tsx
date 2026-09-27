@@ -159,13 +159,14 @@ export default function AiExport({
         try {
           const review = reviewResultColors({ ...color, result: await readPixels(blob) });
           if (!live.current) return;
-          if (review.corrected) {
+          if (!review.framing.aligned) setColors({ status: 'reframed' });
+          else if (review.corrected) {
             const correctedUrl = URL.createObjectURL(await pixelsToPng(review.corrected));
             state.current.urls.push(correctedUrl);
             if (!live.current) return;
             setResult((previous) => (previous.url === url ? { ...previous, correctedUrl } : previous));
             setColors({ status: 'corrected', warnings: review.warnings });
-          } else setColors({ status: 'reframed' });
+          }
         } catch {
           if (live.current) setColors({ status: 'failed' });
         }

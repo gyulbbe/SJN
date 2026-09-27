@@ -510,7 +510,7 @@ export type ColorReview = {
   changes: FaceChange[];
   /** Faces whose colour changed noticeably in the model's result (isColorWarning). */
   warnings: FaceChange[];
-  /** The result with the faces' colours moved back; absent when not applied (framing changed). */
+  /** The result with the faces' colours moved back; absent when the framing changed or no face was compared. */
   corrected?: Pixels;
   /** Face changes left after the correction. */
   residual?: FaceChange[];
@@ -532,6 +532,8 @@ export function reviewResultColors(input: {
   if (!frame.aligned) return { framing: frame, changes: [], warnings: [] };
   const resultMask = shiftMask(referenceMask, frame.dx, frame.dy);
   const changes = compareFaces(reference, input.result, referenceMask, resultMask);
+  // No tiled wall or floor large enough to compare (an empty room): nothing to say or change.
+  if (!changes.length) return { framing: frame, changes, warnings: [] };
   const warnings = changes.filter(isColorWarning);
   const corrected = correctFaces(input.result, resultMask, changes);
   const residual = compareFaces(reference, corrected, referenceMask, resultMask);
