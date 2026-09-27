@@ -72,8 +72,42 @@ describe('buildFluxPrompt', () => {
     expect(text).toContain('1. A white (#ffffff) glossy wall-hung washbasin at the left side of image 0.');
   });
 
+  it('puts the wall and floor colours first, held to image 0, and keeps them when shortening', () => {
+    const text = buildFluxPrompt(scene);
+    const wall = text.indexOf('Back wall and left wall and right wall:');
+    expect(wall).toBe(FLUX_PROMPT.length + 1);
+    expect(wall).toBeLessThan(text.indexOf('1. A white'));
+    expect(text).toContain(
+      'light grey (#cfd0cc) matte tiles, 600 × 600 mm, grid layout, light grey (#d9d8d2) grout 2 mm. Keep this exact light grey as it appears in image 0; do not warm, yellow or tint it.',
+    );
+    const beige = buildFluxPrompt({ ...scene, surfaces: [{ ...scene.surfaces[0], color: '#d8cbb5' }] });
+    expect(beige).toContain(
+      'light beige (#d8cbb5) matte tiles, 600 × 600 mm, grid layout, light grey (#d9d8d2) grout 2 mm. Keep this exact colour as it appears in image 0; do not change its hue or saturation.',
+    );
+    // A crowded scene drops fixture details and listings first; the colours stay to the end.
+    const crowded: FluxScene = {
+      version: 1,
+      fixtures: Array.from({ length: 12 }, (_, i) => ({ ...basin, box: [i / 13, 0.5, (i + 1) / 13, 0.6] })),
+      surfaces: (['floor', 'back', 'left', 'right'] as const).map((face, i) => ({
+        ...scene.surfaces[0],
+        faces: [face],
+        color: ['#ecebe6', '#8e8b85', '#d8cbb5', '#243a5a'][i],
+      })),
+    };
+    const short = buildFluxPrompt(crowded);
+    expect(short.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
+    for (const color of ['white (#ecebe6)', 'grey (#8e8b85)', 'light beige (#d8cbb5)', 'dark blue (#243a5a)'])
+      expect(short).toContain(color);
+    expect(short).toContain('Image 0 contains exactly these fixtures: 12 washbasins.');
+  });
+
   it('describes colours with a plain word and the exact hex', () => {
     expect(colorWords('#ffffff')).toBe('white (#ffffff)');
+    // Stage-3 white walls: "off-white" read as cream to the model and came back beige.
+    expect(colorWords('#ecebe6')).toBe('white (#ecebe6)');
+    expect(colorWords('#f2f1ec')).toBe('white (#f2f1ec)');
+    expect(colorWords('#d8d8d4')).toBe('light grey (#d8d8d4)');
+    expect(colorWords('#efe4cf')).not.toMatch(/^white/);
     expect(colorWords('#243a5a')).toBe('dark blue (#243a5a)');
     expect(colorWords('#d8cbb5')).toBe('light beige (#d8cbb5)');
     expect(colorWords('#3d3d3f')).toBe('dark grey (#3d3d3f)');

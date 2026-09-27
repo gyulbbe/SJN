@@ -37,8 +37,16 @@ import { fitOutput, homography, validateQuad } from './math';
 import { finishAppearance } from './finish';
 import { maskCanvas } from './mask';
 import { StandardModelRenderer, type StandardFixturePass } from './standard-model-render';
+import { labelsFromPixels } from '../room-viewer/region-mask';
 
 export type AssetReader = (id: string) => Promise<AssetRecord>;
+/** Labels per pixel for the FLUX colour check (see ai-export/color). */
+export type RegionMask = {
+  width: number;
+  height: number;
+  regions: { key: string; kind: 'wall' | 'floor' }[];
+  data: Uint8Array;
+};
 export type CompareMode = 'before' | 'after' | 'split';
 type SnapshotQuality = {
   quality: 'preview' | 'export';
@@ -194,6 +202,41 @@ void main(){
   float alpha=productColor.a*inside*visibility*(1.-shadowOnly);
   vec3 result=adjustColor(decodeSRGB(productColor.rgb),adjustment);
   gl_FragColor=vec4(mix(background,result,alpha),1.);
+}
+`;
+/** Region pass for the FLUX colour check: a surface's drawn area writes its region number. */
+const surfaceRegionShader = `
+varying vec2 vUv;uniform sampler2D areaMask;uniform float index;
+void main(){
+  if(texture2D(areaMask,vUv).a<.5) discard;
+  gl_FragColor=vec4(index/255.,0.,0.,1.);
+}
+`;
+/** The fixture shader's placement, writing 255 where the product (after occlusion) covers. */
+const fixtureRegionShader = `
+varying vec2 vUv;uniform sampler2D product;uniform sampler2D occlusion;
+uniform vec2 photoSize;uniform vec2 productPosition;uniform vec2 productSize;uniform vec2 anchor;
+uniform float angle;uniform float projective;uniform mat3 inverseProduct;
+void main(){
+  vec2 photo=vec2(vUv.x,1.-vUv.y);
+  float visibility=1.-texture2D(occlusion,vUv).a;
+  vec2 d=(photo-productPosition)*photoSize;
+  float c=cos(angle),s=sin(angle);
+  vec2 local=vec2(c*d.x+s*d.y,-s*d.x+c*d.y)/(productSize*photoSize)+anchor;
+  if(projective>.5){
+    vec3 projected=inverseProduct*vec3(photo,1.);
+    local=abs(projected.z)<.0000001?vec2(-1.):projected.xy/projected.z;
+  }
+  float inside=step(0.,local.x)*step(0.,local.y)*step(local.x,1.)*step(local.y,1.);
+  if(texture2D(product,vec2(local.x,1.-local.y)).a*inside*visibility<.5) discard;
+  gl_FragColor=vec4(1.,0.,0.,1.);
+}
+`;
+const standardRegionShader = `
+varying vec2 vUv;uniform sampler2D models;
+void main(){
+  if(texture2D(models,vUv).a<.5) discard;
+  gl_FragColor=vec4(1.,0.,0.,1.);
 }
 `;
 const standardCompositeShader = `
@@ -1023,6 +1066,8 @@ export class PhotoCompositor {
     height: number,
     format: 'image/png' | 'image/jpeg',
     compare: boolean,
+    /** After only: also receives which wall, floor or fixture covers each pixel of the image. */
+    onRegionMask?: (mask: RegionMask) => void,
   ): Promise<Blob> {
     if (this.exporting) await this.exporting;
     if (!this.reader) throw new Error('편집할 사진을 먼저 열어 주세요.');
@@ -1065,7 +1110,10 @@ export class PhotoCompositor {
           output.width - panelWidth,
           output.height,
         );
-      } else ctx.drawImage(this.render(output.width, output.height, 'after'), 0, 0);
+      } else {
+        ctx.drawImage(this.render(output.width, output.height, 'after'), 0, 0);
+        if (onRegionMask) onRegionMask(this.regionMask(output.width, output.height));
+      }
       return await new Promise<Blob>((resolve, reject) =>
         canvas.toBlob(
           (blob) => (blob ? resolve(blob) : reject(new Error('내보내기 이미지를 만들지 못했습니다.'))),
@@ -1084,6 +1132,81 @@ export class PhotoCompositor {
         this.exporting = undefined;
         release();
       }
+    }
+  }
+
+  /**
+   * Regions of the prepared After at this size, for checking a FLUX result's material colours:
+   * 0 nothing checked, n `regions[n - 1]` (one per tiled surface, in drawing order), 255 where a
+   * fixture covers it (cut-out product photos give their silhouette, standard models theirs).
+   * Drawn into its own target; nothing else changes.
+   */
+  private regionMask(width: number, height: number): RegionMask {
+    const scene = this.snapshot!.scene;
+    const target = new WebGLRenderTarget(width, height, { type: UnsignedByteType, depthBuffer: false });
+    const surface = shader(surfaceRegionShader),
+      product = shader(fixtureRegionShader),
+      standard = shader(standardRegionShader);
+    const regions: RegionMask['regions'] = [];
+    const clearColor = this.renderer.getClearColor(new Color()),
+      clearAlpha = this.renderer.getClearAlpha(),
+      autoClear = this.renderer.autoClear;
+    try {
+      this.renderer.setRenderTarget(target);
+      this.renderer.setClearColor(0x000000, 0);
+      this.renderer.clear();
+      // Each pass adds its pixels to the same target.
+      this.renderer.autoClear = false;
+      for (const pass of this.tilePasses) {
+        if (regions.length >= 254) break;
+        regions.push({ key: 'surface:' + pass.surface.id, kind: pass.surface.kind });
+        uniform(surface, 'areaMask', pass.mask);
+        uniform(surface, 'index', regions.length);
+        this.draw(surface, target);
+      }
+      for (const pass of this.fixturePasses) {
+        if (pass.standardKey && scene.room) {
+          // The model renderer clears its own target for each fixture.
+          this.renderer.autoClear = true;
+          const models = this.standardModels.render(
+            [pass as StandardFixturePass],
+            scene.room,
+            scene.imageWidth / scene.imageHeight,
+            width,
+            height,
+          );
+          this.renderer.autoClear = false;
+          uniform(standard, 'models', models);
+          this.draw(standard, target);
+          continue;
+        }
+        const { fixture, texture, occlusion, inverse } = pass;
+        if (!texture) continue;
+        const values: Record<string, unknown> = {
+          product: texture,
+          occlusion,
+          photoSize: new Vector2(scene.imageWidth / scene.imageHeight, 1),
+          productPosition: new Vector2(fixture.position.x, fixture.position.y),
+          productSize: new Vector2(Math.max(0.0001, fixture.width), Math.max(0.0001, fixture.height)),
+          anchor: new Vector2(fixture.anchor.x, fixture.anchor.y),
+          angle: (fixture.rotation * Math.PI) / 180,
+          projective: inverse ? 1 : 0,
+          inverseProduct: inverse ?? new Matrix3(),
+        };
+        Object.entries(values).forEach(([key, value]) => uniform(product, key, value));
+        this.draw(product, target);
+      }
+      const pixels = new Uint8Array(width * height * 4);
+      this.renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+      return { width, height, regions, data: labelsFromPixels(pixels, width, height) };
+    } finally {
+      this.renderer.autoClear = autoClear;
+      this.renderer.setClearColor(clearColor, clearAlpha);
+      this.renderer.setRenderTarget(null);
+      surface.dispose();
+      product.dispose();
+      standard.dispose();
+      target.dispose();
     }
   }
 

@@ -30,9 +30,16 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 타일 면 최대 8개: 면, 대표색, 타일 크기 mm, 배열(grid·brick), 줄눈 색·폭, 마감
 - **상자**: 2D 합성은 설비의 `position`·`width`·`height`·`anchor`·`rotation`(화면비 보정 회전) 또는 `projectedQuad`에서, 3D 렌더러는 같은 카메라로 `RoomViewerRenderer.fixtureBounds`가 설비 메시 경계 상자를 투영해 구한다. 화면 밖이거나 면적 0.02% 미만인 설비, 욕조 테두리 연결이 보류되어 그려지지 않는 유리는 뺀다.
 - **색·마감**: 표준 모형은 `reconstruction.color`, 사진 제품은 자재 색 hex 또는 제품 이미지의 불투명 픽셀 평균(브라우저에서 읽기만 하고 보내지 않는다), 그 밖에는 렌더의 설비 영역 평균, 타일은 텍스처 평균을 쓴다. 마감은 자재 마감 글을 분류하고, 글이 없으면 도기(변기·세면대·욕조)는 유광, 수전·샤워는 금속으로 본다.
+  - 사진 조명 맞춤 프로젝트는 입력 그림에 사진 조명이 곱해져 있으므로, 자재·텍스처에서 온 색에도 같은 조명을 곱해 "그림 0에 보이는 색"으로 쓴다(`litColor`). 렌더에서 잰 색은 이미 조명이 들어 있어 그대로다.
+  - 색 이름: 밝은 무채색(HSL 밝기 0.86 초과)은 "white"다. "off-white"는 크림·베이지로 읽혀 2026-09-27에 없앴다([결과](flux-material-color-results-20260927.md)).
 - **순서**: 변기 > 세면대·하부장 > 욕조 > 샤워 > 그 밖이고 같은 종류는 큰 것부터다. 작고 다른 물건으로 바뀌기 쉬운 설비가 앞에 온다. 프롬프트가 길어 줄일 때 앞쪽 설비의 설명이 남는다.
-- **프롬프트**: [프롬프트 빌더](../src/lib/ai-export/prompt.ts)가 서버에서 영어 문장을 결정적으로 만든다. 기존 보존 지시로 시작하고, 설비마다 "N. A white (#f2f1ec) glossy floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size." 형식의 한 문장을 쓰고, "Image 0 contains exactly these fixtures: 1 toilet, 1 washbasin." 요약과 타일 면 문장을 붙인다. 장면이 비어 있으면 기존 고정 지시문 그대로다.
-- **길이**: 2,400자 이하. 넘으면 뒤쪽 설비의 세부 설명 → 타일 면 문장 → 개별 설비 문장 순으로 줄인다. 설비 개수 요약은 끝까지 남긴다.
+- **프롬프트**: [프롬프트 빌더](../src/lib/ai-export/prompt.ts)가 서버에서 영어 문장을 결정적으로 만든다.
+  - 기존 보존 지시로 시작한다.
+  - 바로 뒤에 타일 면 문장을 쓴다. 예: "Left wall and back wall and right wall: white (#ecebe6) matte tiles, 300 × 600 mm, grid layout, light grey (#d9d8d2) grout 2 mm. Keep this exact white as it appears in image 0; do not warm, yellow or tint it." 유채색은 "…; do not change its hue or saturation."이다.
+  - 다음에 설비마다 "N. A white (#f2f1ec) glossy floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size." 형식의 한 문장을 쓴다.
+  - 끝에 "Image 0 contains exactly these fixtures: 1 toilet, 1 washbasin." 요약을 붙인다. 장면이 비어 있으면 기존 고정 지시문 그대로다.
+  - 2026-09-27 전에는 타일 면 문장이 맨 끝이었고 "off-white"를 썼다.
+- **길이**: 2,400자 이하. 넘으면 뒤쪽 설비의 세부 설명 → 개별 설비 문장 → 타일 면 문장을 색만 남긴 짧은 문장으로 순서로 줄인다. 설비 개수 요약과 타일 색은 끝까지 남긴다.
 - **화면**: 변환 창에 "변환에 전달한 제품"(한국어 종류·위치)을 보여 준다. 제품 정보를 만들지 못하면 이미지로만 변환하고 그렇다고 알린다.
 - **사용량**: 모델 입력 이미지는 그대로 1장이다. Workers AI klein 4B는 이미지 타일 단위로 과금되므로 호출당 사용량은 기존과 같다(약 110뉴런, 추정). 응답 시간도 기존과 비슷하다(실측 약 9초).
 - **한계**: 모델이 문장을 따를지는 보장되지 않는다. 결과 확인은 제품이 사라지거나 바뀐 것을 알릴 뿐, 다시 만들지는 않는다.
@@ -51,7 +58,7 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
 
 - B가 구도와 설비를 가장 잘 지켰다. C는 확대본을 받자 카메라를 당겨 구도를 다시 잡았다. 그래서 설비가 1.5배 넘게 커졌고 없던 문을 넣었다. 입력 타일 사용량도 늘었다. 그래서 B만 쓴다.
 - 이 장면에서는 쓰레기통 현상이 A에서도 재현되지 않았다. B가 그 문제를 고친다는 확인은 실제 프로젝트에서 해야 한다. 방식마다 2장이라 표본도 작다.
-- 현재 코드가 만드는 프롬프트는 비교에 쓴 B 프롬프트(1,889자)와 글자 하나까지 같다.
+- 비교 당시 코드가 만든 프롬프트는 B 프롬프트(1,889자)와 같았다. 2026-09-27에 색 이름·타일 문장 위치·색 문장이 바뀌었다.
 - 기본 방 렌더의 방 바깥 회색 영역을 A·B 모두 흰 벽으로 바꾸는 경향이 있었다(이번 범위 밖).
 
 ## 결과 확인(Gemma)
@@ -73,11 +80,31 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 다운로드는 FLUX 결과 그대로다.
 - **사용량(2026-09-27 실측 12회):** 설비 3~~4개 기준 입력 550~~567, 출력 44~~57 토큰, 약 6~~7뉴런이다(FLUX 1회 약 110뉴런의 약 6%). 응답은 1.0~3.4초, 중앙값 1.4초였다.
 - **판정(실측):** 조작 사례 2장(변기를 다른 물건으로 덮음, 세면대를 지움)을 모두 잡았다. 정상 결과 10장 중 거짓 경고는 1장이다(구도가 바뀌어 샤워가 상자 밖으로 옮겨진 결과).
-- **자재 색은 확인하지 않는다.** 2026-09-27 새 결과 4장은 모두 흰 벽 타일을 베이지로 바꿨지만 이 확인으로는 잡히지 않는다.
+- **자재 색은 이 확인이 보지 않는다.** 2026-09-27 결과 4장은 모두 흰 벽 타일을 베이지로 바꿨지만 이 확인으로는 잡히지 않았다. 자재 색은 아래 "결과 자재 색 검사·보정"이 다룬다.
 - **채택하지 않은 방식: 설비 되돌리기.** 결과의 설비 자리를 원래 렌더로 덮는 방식도 실제로 비교했다.
   - 붙인 렌더가 평평하고 밝았다(L* +2~15). 모델이 그린 윤곽이 겹쳐 보였다.
   - 모델이 바꾼 설비는 정렬이 맞지 않아 덮을 수도 없었다. 그래서 넣지 않았다(평가 코드는 커밋 `c98ef27`).
 - **입력의 겹쳐 찍기:** 한 장 렌더와 8장 평균의 결과가 같은 seed에서 거의 같아, 입력은 한 장 렌더 그대로다.
+
+## 결과 자재 색 검사·보정
+
+2026-09-27에 넣었다. AI 호출은 없다. 상세와 수치는 [결과](flux-material-color-results-20260927.md)에 있다.
+
+- **면 마스크:** 변환 원본을 캡처할 때 같은 카메라로 각 벽·바닥이 덮는 픽셀을 만든다. 설비(유리 포함)와 천장·배경은 따로 표시한다.
+  - 3D: `RoomViewerRenderer.regionMask`
+  - 2D: `PhotoCompositor.exportImage`의 `onRegionMask`
+  - 전용 타깃과 임시 재질을 쓰므로 기존 렌더는 그대로다.
+- **구도 정렬:** 렌더를 결과 크기로 옮겨 윤곽 상관으로 모델의 이동량을 찾는다. 0.4 미만이면 검사·보정을 하지 않고 "AI가 구도를 바꿔 … 비교하지 못했어요"로 알린다.
+- **보정:** 면마다 결과의 a\*·b\* 평균을 렌더의 평균으로 옮긴다.
+  - 렌더에서 밝은 타일(L\* 70 초과)을 모델이 어둡게 그렸으면 밝기 차의 절반을 되돌린다(최대 10).
+  - 명암·질감은 모델 그대로다. 렌더 픽셀을 붙이지 않는다.
+  - 설비·유리·면 밖 픽셀은 바꾸지 않는다. 설비 둘레 2px에서 서서히 시작한다.
+- **경고:** 명도를 뺀 ΔE2000이 6을 넘거나, 밝은 무채색 타일이 따뜻해지면(b\* +1.2, 채도 +1.2 이상) 경고한다. 예: "벽 타일 색이 원본보다 따뜻하게(노랗게) 바뀌었을 수 있어요."
+- **화면:**
+  - 보정한 결과를 기본으로 보인다. "AI 원본 색 보기/보정한 색 보기"로 바꿀 수 있고, 원본을 볼 때 경고가 있으면 보인다.
+  - "4B PNG 저장"은 보이는 결과를 저장한다(원본 색이면 이름에 `-AI원본색`).
+  - 타일 면이 없는 방은 아무 표시도 하지 않는다.
+- 한 클릭의 호출은 그대로 변환 1회와 제품 확인 1회다. 제품 확인에는 모델 결과(보정 전)를 보낸다.
 
 ## 대기 표시
 
@@ -90,7 +117,8 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
 
 ## 검증
 
-- `npx vitest run tests/flux-export.test.ts tests/flux-prompt.test.ts tests/flux-scene.test.ts tests/flux-check.test.ts tests/server-wait.test.ts tests/reconstruction-cloud-gemma.test.ts`
+- `npx vitest run tests/flux-export.test.ts tests/flux-prompt.test.ts tests/flux-scene.test.ts tests/flux-check.test.ts tests/flux-color.test.ts tests/server-wait.test.ts tests/reconstruction-cloud-gemma.test.ts`
+  - 색 검사·보정(`flux-color`): Lab·ΔE2000, 구도 정렬, 면별 보정, 설비 불변, 유채색 보존, 밝기 되돌리기, 경고 규칙
   - 프롬프트: 결정성, 길이 상한과 줄이는 순서, 종류·위치·크기 문구, image 0 외 이미지를 가리키지 않는지, 색 이름, 스키마가 enum·숫자 외 값과 `reference` 키를 거부하는지
   - 장면 추출: 2D 상자(anchor·회전·quad·화면 밖), 입력 여백 좌표 변환, 제품·표준 모형 설명, 설비 순서, 마감 분류
   - 서버: 모델 입력이 `input_image_0`·prompt·width·height·seed뿐인지, 장면 거부 5가지(형식 오류·자유 문자열·모르는 종류·참조 번호·제품 이미지 필드), `diagnostics`에 크기만 남는지, 클라이언트 필드 순서(`image`·`seed`·`scene`)
@@ -101,6 +129,10 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 결과 확인: 한 클릭에 변환 1·확인 1, 확인 요청 필드(JPEG·종류·상자뿐), 경고, 확인 실패 시 결과 유지
 - 서버 결과 확인 단위 테스트(`tests/flux-check.test.ts`): 한 번 호출·게이트웨이, 결정적 질문, 추론 전 400·403, 한도 오류의 진단(크기만), 엄격한 응답 파싱
 - 2026-09-27 사용자 승인으로 실제 FLUX 4회·Gemma 확인 12회를 로컬 임시 Worker로 비교했다. 결과는 [사실감 3단계 결과](export-realism-stage-3-results-20260927.md)에 있다.
+- 같은 날 사용자 승인으로 자재 색 비교(FLUX 8회·Gemma 8회)를 했다. 결과는 [자재 색 결과](flux-material-color-results-20260927.md)에 있다.
+  - 입력: `node tests/run-browser-test.mjs tests/flux-material-color-payload.ts --gpu`
+  - 오프라인 평가: `node tests/run-browser-test.mjs tests/flux-color-offline.ts`
+  - e2e는 모의 결과로 보정 표시·원본 색 전환·경고·다운로드 이름·390px·구도 변경 안내를 확인한다.
 - 실제 원격 모델 호출 및 화질 비교는 자동 검증에 포함하지 않는다. 2026-09-25 비교(위 표)의 결과 이미지·프롬프트는 `test-results/flux-compare-20260925/`에 로컬로만 남겼다(git 제외).
 - 2026-09-24 사용자 승인으로 실제 호출 2회(4B, 496×336 합성 이미지, 로컬 임시 Worker에서 운영 `AI` 바인딩)로 원인을 확인했다. 게이트웨이 포함 요청은 위 스트림 오류로 즉시 실패했고, 게이트웨이 없이 같은 요청은 200과 992×672 JPEG(base64 JSON)를 반환했다.
 

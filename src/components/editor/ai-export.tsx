@@ -1,7 +1,15 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { fluxCheckScene, prepareFluxImage, requestFluxCheck, requestFluxImage } from '@/lib/ai-export/client';
-import { fluxInputLayout } from '@/lib/ai-export/contract';
+import {
+  fluxCheckScene,
+  pixelsToPng,
+  prepareFluxImage,
+  readPixels,
+  requestFluxCheck,
+  requestFluxImage,
+} from '@/lib/ai-export/client';
+import { reviewResultColors, type FaceChange, type Pixels, type RegionMask } from '@/lib/ai-export/color';
+import { fluxInputLayout, type FluxInputLayout } from '@/lib/ai-export/contract';
 import { FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
 import { ServerWaitProgress, useServerWait } from '@/components/server-wait-progress';
 import {
@@ -12,7 +20,25 @@ import {
 } from '@/lib/ai-export/scene';
 import styles from './ai-export.module.css';
 
-type Result = { url?: string; elapsed?: number; error?: string };
+type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: string };
+/** The walls' and floor's colours of the latest result against the render (no AI call). */
+type Colors = { status: 'corrected'; warnings: FaceChange[] } | { status: 'reframed' } | { status: 'failed' };
+const SHIFT_WORDS: Record<FaceChange['shift'], string> = {
+  warmer: '따뜻하게(노랗게)',
+  cooler: '차갑게(푸르게)',
+  'more-saturated': '진하게',
+  'less-saturated': '옅게',
+  hue: '다른 색으로',
+};
+/** One line per surface kind: the face that changed most. */
+function colorChangeLines(warnings: FaceChange[]) {
+  return (['wall', 'floor'] as const).flatMap((kind) => {
+    const worst = warnings.filter((w) => w.kind === kind).sort((a, b) => b.colorDeltaE - a.colorDeltaE)[0];
+    return worst
+      ? [{ kind, text: `${kind === 'wall' ? '벽' : '바닥'} 타일 색이 원본보다 ${SHIFT_WORDS[worst.shift]}` }]
+      : [];
+  });
+}
 /** Gemma's look at the latest result: which placed products it could not find. */
 type Check =
   | { status: 'checking' }
@@ -42,10 +68,14 @@ export default function AiExport({
   const [busy, setBusy] = useState(false);
   const [placed, setPlaced] = useState<FluxPlacedProduct[]>();
   const [check, setCheck] = useState<Check>();
+  const [colors, setColors] = useState<Colors>();
+  const [showOriginal, setShowOriginal] = useState(false);
   const { wait, start: startWait, finish: finishWait } = useServerWait();
   const state = useRef<{
     image?: Blob;
     grounding?: FluxGrounding;
+    /** The render, its regions and the model input's padding, for the colour check. */
+    color?: { capture: Pixels; mask: RegionMask; layout: FluxInputLayout };
     urls: string[];
     controller?: AbortController;
   }>({ urls: [] });
@@ -66,6 +96,8 @@ export default function AiExport({
     onBusyChange(true);
     setResult((previous) => ({ ...previous, error: undefined }));
     setCheck(undefined);
+    setColors(undefined);
+    setShowOriginal(false);
     const started = performance.now();
     let timer = setTimeout(() => controller.abort(), 190_000);
     try {
@@ -73,6 +105,14 @@ export default function AiExport({
         startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
         const source = await capture();
         const input = await prepareFluxImage(source.blob);
+        if (source.regions) {
+          const pixels = await readPixels(source.blob);
+          state.current.color = {
+            capture: pixels,
+            mask: source.regions,
+            layout: fluxInputLayout(pixels.width, pixels.height),
+          };
+        }
         const bitmap = await createImageBitmap(source.blob);
         let grounding: FluxGrounding | undefined;
         try {
@@ -113,6 +153,24 @@ export default function AiExport({
       const url = URL.createObjectURL(blob);
       state.current.urls.push(url);
       setResult({ url, elapsed: (performance.now() - started) / 1000 });
+      // Walls and floor back to the render's colours where the model kept the framing (no AI call).
+      const color = state.current.color;
+      if (color) {
+        try {
+          const review = reviewResultColors({ ...color, result: await readPixels(blob) });
+          if (!live.current) return;
+          if (!review.framing.aligned) setColors({ status: 'reframed' });
+          else if (review.corrected) {
+            const correctedUrl = URL.createObjectURL(await pixelsToPng(review.corrected));
+            state.current.urls.push(correctedUrl);
+            if (!live.current) return;
+            setResult((previous) => (previous.url === url ? { ...previous, correctedUrl } : previous));
+            setColors({ status: 'corrected', warnings: review.warnings });
+          }
+        } catch {
+          if (live.current) setColors({ status: 'failed' });
+        }
+      }
       // Every result is checked once for the placed products; a missing one is only reported.
       const scene = fluxCheckScene(state.current.grounding?.scene);
       if (!scene) return;
@@ -162,14 +220,15 @@ export default function AiExport({
       }
     }
   }
+  const shown = showOriginal || !result.correctedUrl ? result.url : result.correctedUrl;
   return (
     <section className={styles.panel} aria-label="AI 현장 사진 변환">
       <h3>AI로 현장 사진처럼</h3>
       <p className={styles.note}>
         버튼을 누를 때 현재 After 이미지와 배치한 제품의 종류·위치·크기·색 정보를 Cloudflare로 보내 변환해요.
-        결과가 나오면 배치한 제품이 그대로 있는지 AI(Gemma)로 한 번 더 확인해요. 다시 만들 때마다 다른 결과가
-        나오고 두 요청의 사용량이 새로 발생해요. 그래도 AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해
-        주세요.
+        결과가 나오면 배치한 제품이 그대로 있는지 AI(Gemma)로 한 번 더 확인하고, 벽·바닥 색은 원래 자재 색에
+        맞춰 보여 줘요(추가 요청 없음). 다시 만들 때마다 다른 결과가 나오고 두 요청의 사용량이 새로 발생해요.
+        그래도 AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해 주세요.
       </p>
       <div className={styles.grid}>
         <div className={styles.card}>
@@ -216,8 +275,8 @@ export default function AiExport({
         <div className={styles.card}>
           <h4>FLUX.2 klein 4B</h4>
           <div className={styles.preview}>
-            {result.url ? (
-              <img src={result.url} alt="FLUX 4B 현장 사진 변환 결과" />
+            {shown ? (
+              <img src={shown} alt="FLUX 4B 현장 사진 변환 결과" />
             ) : wait ? (
               // The first conversion waits where its result will appear.
               <div className="w-full max-w-xs px-3">
@@ -233,10 +292,24 @@ export default function AiExport({
             <button type="button" className="btn" disabled={busy || disabled} onClick={() => void generate()}>
               {busy ? '4B 변환 중…' : `AI 변환 · flux-2-klein-4b${result.url ? ' 다시 만들기' : ''}`}
             </button>
-            {result.url && (
-              <a className="btn" href={result.url} download={`${filename}-flux-2-klein-4b.png`}>
+            {shown && (
+              <a
+                className="btn"
+                href={shown}
+                download={`${filename}-flux-2-klein-4b${shown === result.url && result.correctedUrl ? '-AI원본색' : ''}.png`}
+              >
                 4B PNG 저장
               </a>
+            )}
+            {result.correctedUrl && (
+              <button
+                type="button"
+                className="btn"
+                aria-pressed={showOriginal}
+                onClick={() => setShowOriginal((value) => !value)}
+              >
+                {showOriginal ? '보정한 색 보기' : 'AI 원본 색 보기'}
+              </button>
             )}
           </div>
           {wait && result.url && (
@@ -250,6 +323,41 @@ export default function AiExport({
           )}
           {result.elapsed !== undefined && (
             <p className={styles.note}>변환 시간 {result.elapsed.toFixed(1)}초</p>
+          )}
+          {colors?.status === 'corrected' &&
+            result.correctedUrl &&
+            (showOriginal && colors.warnings.length ? (
+              <div
+                role="alert"
+                className="mt-2 rounded-[var(--radius-sm,8px)] border border-[color:var(--danger)] bg-[color:var(--paper)] px-3 py-2 text-xs leading-relaxed text-[color:var(--ink)]"
+              >
+                {colorChangeLines(colors.warnings).map((line) => (
+                  <div key={line.kind}>{line.text} 바뀌었을 수 있어요.</div>
+                ))}
+              </div>
+            ) : (
+              <div
+                className="mt-2 text-xs leading-relaxed text-[color:var(--muted)]"
+                data-testid="flux-color-note"
+              >
+                {showOriginal
+                  ? 'AI 원본 색이에요. 벽·바닥 색이 원본과 크게 다르지 않아요.'
+                  : colors.warnings.length
+                    ? `${colorChangeLines(colors.warnings)
+                        .map((line) => line.text)
+                        .join(
+                          ', ',
+                        )} 바뀌어 원래 자재 색으로 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.`
+                    : '벽·바닥 색을 원래 자재 색에 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.'}
+              </div>
+            ))}
+          {colors?.status === 'reframed' && (
+            <div
+              className="mt-2 text-xs leading-relaxed text-[color:var(--muted)]"
+              data-testid="flux-color-note"
+            >
+              AI가 구도를 바꿔 벽·바닥 색을 원본과 비교하지 못했어요. 자재 색은 원본과 직접 비교해 주세요.
+            </div>
           )}
           {check?.status === 'done' &&
             (check.missing.length ? (

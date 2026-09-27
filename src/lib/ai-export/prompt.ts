@@ -42,28 +42,39 @@ export const FLUX_KIND_PRIORITY: Record<FluxFixtureKind, number> = {
 };
 const FACE_WORDS = { floor: 'floor', back: 'back wall', left: 'left wall', right: 'right wall' } as const;
 
-/** A plain colour word plus the exact hex; FLUX.2 follows hex values in prompts. */
-export function colorWords(hex: string): string {
+/** Whether a colour reads as grey/white/black (low saturation), the case the model tends to warm. */
+function achromatic(hex: string) {
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
   const max = Math.max(r, g, b),
     min = Math.min(r, g, b),
     light = (max + min) / 2,
     delta = max - min;
   const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * light - 1));
+  return saturation < 0.14 || delta < 0.06;
+}
+
+/**
+ * A plain colour word plus the exact hex; FLUX.2 follows hex values in prompts. Very light greys
+ * are "white": "off-white" read as cream or beige to the model (stage-3 white walls came back beige).
+ */
+export function colorWords(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b),
+    light = (max + min) / 2,
+    delta = max - min;
   let word: string;
-  if (saturation < 0.14 || delta < 0.06)
+  if (achromatic(hex))
     word =
-      light > 0.92
+      light > 0.86
         ? 'white'
-        : light > 0.86
-          ? 'off-white'
-          : light > 0.6
-            ? 'light grey'
-            : light > 0.36
-              ? 'grey'
-              : light > 0.16
-                ? 'dark grey'
-                : 'black';
+        : light > 0.6
+          ? 'light grey'
+          : light > 0.36
+            ? 'grey'
+            : light > 0.16
+              ? 'dark grey'
+              : 'black';
   else {
     const hue = max === r ? ((g - b) / delta + 6) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
     const degrees = hue * 60;
@@ -120,16 +131,29 @@ function fixtureSentence(fixture: FluxFixture, index: number, detailed: boolean)
   return `${index}. A ${colorWords(fixture.color)} ${fixture.finish} ${forms}${noun} ${where}${size}. It must remain a ${noun} in the same place and size.`;
 }
 
-function surfaceSentence(surface: FluxSurface): string {
+/**
+ * One tile surface, colour first and held to image 0. `compact` keeps only the colour, for long
+ * prompts: the colour sentence is the last thing to go.
+ */
+function surfaceSentence(surface: FluxSurface, compact = false): string {
   const faces = surface.faces.map((face) => FACE_WORDS[face]).join(' and ');
+  const name = `${faces[0].toUpperCase()}${faces.slice(1)}`;
+  const keep = achromatic(surface.color)
+    ? `Keep this exact ${colorWords(surface.color).replace(/ \(.*$/, '')} as it appears in image 0; do not warm, yellow or tint it.`
+    : 'Keep this exact colour as it appears in image 0; do not change its hue or saturation.';
+  if (compact) return `${name}: ${colorWords(surface.color)} tiles. ${keep}`;
   const grout =
     surface.groutMm > 0
       ? `, ${colorWords(surface.groutColor)} grout ${Math.round(surface.groutMm * 10) / 10} mm`
       : ', no visible grout';
-  return `${faces[0].toUpperCase()}${faces.slice(1)}: ${colorWords(surface.color)} ${surface.finish} tiles, ${surface.tileMm.map((value) => Math.round(value)).join(' × ')} mm, ${surface.pattern === 'brick' ? 'staggered' : 'grid'} layout${grout}.`;
+  return `${name}: ${colorWords(surface.color)} ${surface.finish} tiles, ${surface.tileMm.map((value) => Math.round(value)).join(' × ')} mm, ${surface.pattern === 'brick' ? 'staggered' : 'grid'} layout${grout}. ${keep}`;
 }
 
-/** Deterministic: the same scene always yields the same text. Fixtures keep the order given. */
+/**
+ * Deterministic: the same scene always yields the same text. The walls' and floor's colours come
+ * right after the fixed instruction (the model weighs early text more), then the fixtures in the
+ * order given, then the count summary.
+ */
 export function buildFluxPrompt(scene: FluxScene | undefined): string {
   if (!scene || (!scene.fixtures.length && !scene.surfaces.length)) return FLUX_PROMPT;
   const counts = new Map<string, number>();
@@ -138,26 +162,26 @@ export function buildFluxPrompt(scene: FluxScene | undefined): string {
   const summary = scene.fixtures.length
     ? `Image 0 contains exactly these fixtures: ${[...counts].map(([noun, count]) => `${count} ${noun}${count > 1 ? 's' : ''}`).join(', ')}. Each one keeps its type, position, size, shape and colour; no fixture turns into a different object and nothing is added.`
     : '';
-  const surfaces = scene.surfaces.map(surfaceSentence);
-  const compose = (listed: number, detailed: number, withSurfaces: boolean) =>
+  const compose = (listed: number, detailed: number, compact: boolean) =>
     [
       FLUX_PROMPT,
+      ...scene.surfaces.map((surface) => surfaceSentence(surface, compact)),
       ...scene.fixtures.slice(0, listed).map((fixture, i) => fixtureSentence(fixture, i + 1, i < detailed)),
       summary,
-      ...(withSurfaces ? surfaces : []),
     ]
       .filter(Boolean)
       .join(' ');
-  // Shorten the least important fixture's detail first, then the tile notes, then list fewer
-  // fixtures. The summary with every count always stays, so nothing is silently dropped.
+  // Shorten the least important fixture's detail first, then list fewer fixtures, then keep only
+  // the tile colours. The summary with every count and the colours always stay.
   const all = scene.fixtures.length;
   for (let detailed = all; detailed >= 0; detailed--) {
-    const text = compose(all, detailed, true);
+    const text = compose(all, detailed, false);
     if (text.length <= FLUX_PROMPT_MAX_CHARS) return text;
   }
   for (let listed = all; listed >= 0; listed--) {
     const text = compose(listed, 0, false);
     if (text.length <= FLUX_PROMPT_MAX_CHARS) return text;
   }
-  return compose(0, 0, false).slice(0, FLUX_PROMPT_MAX_CHARS);
+  const text = compose(0, 0, true);
+  return text.length <= FLUX_PROMPT_MAX_CHARS ? text : text.slice(0, FLUX_PROMPT_MAX_CHARS);
 }

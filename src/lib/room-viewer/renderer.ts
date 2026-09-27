@@ -5,6 +5,7 @@ import {
   LinearFilter,
   LinearSRGBColorSpace,
   Matrix4,
+  type Material,
   Mesh,
   NoBlending,
   NoToneMapping,
@@ -56,6 +57,7 @@ import { bindRoomShadows, MOVING_LIGHT_SHADOW_RADIUS } from './shadow';
 import { PhotoBloom, photoEffectUniforms, photoPostFragment, type PhotoEffects } from './photo-effects';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
+import { labelsFromPixels, regionMaskMaterial } from './region-mask';
 import { fitSourceDepthClip, visibleMeshBounds, type SourceDepthClip } from './depth-clip';
 import { buildViewerSurfaces, ViewerTileCache, type SurfaceNotice } from './surfaces';
 import { createRoomViewCamera, normalizeRoomView, roomViewViewport, type RoomViewState } from './view-state';
@@ -995,6 +997,106 @@ export class RoomViewerRenderer {
       if (box[2] > box[0] && box[3] > box[1]) result[id] = box;
     }
     return result;
+  }
+  /**
+   * Which wall or floor covers each pixel of an After frame of this size and view, for checking a
+   * FLUX result's material colours: 0 nothing checked (ceiling, background), n `regions[n - 1]`
+   * (one per scene surface, or per bare face), 255 a fixture (glass included). Same camera and
+   * photo rectangle as export(). It draws into its own target with temporary flat materials and
+   * puts every material and renderer setting back, so other frames are unchanged.
+   */
+  regionMask(
+    width: number,
+    height: number,
+    view: RoomViewState,
+  ): { width: number; height: number; regions: { key: string; kind: 'wall' | 'floor' }[]; data: Uint8Array } {
+    this.assertOpen();
+    if (!this.prepared || !this.snapshot) throw new Error('공간을 준비하는 중입니다.');
+    const size = fitOutput(width, height, this.maxOutputEdge);
+    const state = normalizeRoomView(view);
+    const camera = createRoomViewCamera(
+      this.snapshot.scene.room!,
+      size.width / size.height,
+      state,
+      this.prepared.bounds,
+      this.prepared.structureBounds,
+    );
+    const rect = roomViewViewport(size.width, size.height, state);
+    const after = this.prepared.after;
+    after.surfaces.updateView(camera);
+    after.fixtures.updateView(camera);
+    after.ceiling.setVisible(state.projection === 'room-eye');
+    const surfaces = new Map(after.source.surfaces.map((surface) => [surface.id, surface]));
+    const regions: { key: string; kind: 'wall' | 'floor' }[] = [];
+    const regionFor = (key: string, kind: 'wall' | 'floor') => {
+      let index = regions.findIndex((region) => region.key === key);
+      if (index < 0 && regions.length < 254) index = regions.push({ key, kind }) - 1;
+      return index < 0 ? 0 : index + 1;
+    };
+    const label = new Map<Mesh, number>();
+    after.surfaces.group.traverse((node) => {
+      if (!(node instanceof Mesh)) return;
+      const surface = surfaces.get(node.userData.surfaceId);
+      const face = /^room-face:(floor|left|back|right):/.exec(node.name)?.[1];
+      if (surface) label.set(node, regionFor('surface:' + surface.id, surface.kind));
+      else if (face) label.set(node, regionFor('face:' + face, face === 'floor' ? 'floor' : 'wall'));
+    });
+    after.fixtures.group.traverse((node) => {
+      if (node instanceof Mesh) label.set(node, 255);
+    });
+    const swapped: [Mesh, Material | Material[]][] = [];
+    const created: Material[] = [];
+    after.world.traverse((node) => {
+      if (!(node instanceof Mesh)) return;
+      const index = label.get(node) ?? 0;
+      const flat = (material: Material) => {
+        const replacement = regionMaskMaterial(material, index);
+        created.push(replacement);
+        return replacement;
+      };
+      swapped.push([node, node.material]);
+      node.material = Array.isArray(node.material) ? node.material.map(flat) : flat(node.material);
+    });
+    const target = new WebGLRenderTarget(size.width, size.height, { type: UnsignedByteType });
+    const background = after.world.background;
+    const clearColor = this.renderer.getClearColor(new Color());
+    const clearAlpha = this.renderer.getClearAlpha();
+    const autoUpdate = this.renderer.shadowMap.autoUpdate;
+    const previous = this.renderer.getRenderTarget();
+    try {
+      // Nothing here casts or needs a shadow; the live shadow map stays as it was.
+      this.renderer.shadowMap.autoUpdate = false;
+      after.world.background = null;
+      this.renderer.setClearColor(0x000000, 0);
+      this.renderer.setRenderTarget(target);
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, size.width, size.height);
+      this.renderer.clear();
+      target.viewport.set(rect.x, rect.y, rect.width, rect.height).round();
+      target.scissor.copy(target.viewport);
+      target.scissorTest = true;
+      this.renderer.setViewport(rect.x, rect.y, rect.width, rect.height);
+      this.renderer.setScissor(rect.x, rect.y, rect.width, rect.height);
+      this.renderer.setScissorTest(true);
+      this.renderer.render(after.world, camera);
+      const pixels = new Uint8Array(size.width * size.height * 4);
+      this.renderer.readRenderTargetPixels(target, 0, 0, size.width, size.height, pixels);
+      return {
+        width: size.width,
+        height: size.height,
+        regions,
+        data: labelsFromPixels(pixels, size.width, size.height),
+      };
+    } finally {
+      for (const [mesh, material] of swapped) mesh.material = material;
+      created.forEach((material) => material.dispose());
+      after.world.background = background;
+      this.renderer.setClearColor(clearColor, clearAlpha);
+      this.renderer.shadowMap.autoUpdate = autoUpdate;
+      this.renderer.setScissorTest(false);
+      this.renderer.setRenderTarget(previous);
+      target.dispose();
+    }
   }
   /** Normalized canvas coordinates, y down. Only the editable After panel is pickable. */
   private pointerRay(x: number, y: number): Raycaster | undefined {

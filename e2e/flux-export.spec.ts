@@ -4,6 +4,7 @@ import type { Page as AuthenticatedPage } from '@playwright/test';
 import { test, expect } from '@playwright/test';
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
+import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
 const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
 test.beforeEach(async ({ page }) => {
   authenticatedTests.set(page, await authenticatedApp(page));
@@ -315,4 +316,123 @@ test('every result is checked once for the placed products; a missing one is rep
   const downloaded = page.waitForEvent('download');
   await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
   expect((await sharp(await downloadedArtifact(await downloaded)).metadata()).format).toBe('png');
+});
+
+test('result walls get their tile colour back; the AI colours stay one click away with a warning', async ({
+  page,
+}, testInfo) => {
+  let reframe = false;
+  const conversions: string[] = [];
+  // The mock model answers with the input at result size, warmer and darker (the stage-3 "white
+  // walls turn beige" case), or zoomed in (a reframed result).
+  await page.route('**/api/export/photoreal', async (route) => {
+    const req = route.request();
+    const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
+      headers: { 'content-type': req.headers()['content-type'] },
+    }).formData();
+    const input = Buffer.from(await (form.get('image') as Blob).arrayBuffer());
+    const { width, height } = await sharp(input).metadata();
+    const size = { width: width! * 2, height: height! * 2 };
+    const answer = reframe
+      ? sharp(
+          await sharp(input)
+            .extract({
+              left: Math.round(width! * 0.15),
+              top: Math.round(height! * 0.15),
+              width: Math.round(width! * 0.7),
+              height: Math.round(height! * 0.7),
+            })
+            .toBuffer(),
+        ).resize(size.width, size.height, { fit: 'fill' })
+      : sharp(input)
+          .resize(size.width, size.height)
+          .recomb([
+            [0.95, 0.03, 0],
+            [0, 0.93, 0],
+            [0, 0, 0.8],
+          ]);
+    conversions.push(reframe ? 'reframed' : 'warm');
+    await route.fulfill({ status: 200, contentType: 'image/png', body: await answer.png().toBuffer() });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
+  await seedTestTiles(page);
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: '공간 크기 설정', exact: true })
+    .getByRole('button', { name: '공간 만들기', exact: true })
+    .click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  await page.getByRole('button', { name: '벽 타일', exact: true }).click();
+  await page.locator('button.material-tile').filter({ hasText: '클라우드 화이트' }).click();
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  const note = dialog.getByTestId('flux-color-note');
+  await expect(note).toContainText(
+    '벽 타일 색이 원본보다 따뜻하게(노랗게) 바뀌어 원래 자재 색으로 맞췄어요',
+    {
+      timeout: 30000,
+    },
+  );
+  // The back wall's centre in the shown image: blue comes back once the warm cast is removed.
+  const wall = () =>
+    result.evaluate(async (element) => {
+      const image = element as HTMLImageElement;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const [r, g, b] = context.getImageData(
+        Math.round(canvas.width * 0.5),
+        Math.round(canvas.height * 0.4),
+        1,
+        1,
+      ).data;
+      return { warmth: r - b, brightness: (r + g + b) / 3 };
+    });
+  const corrected = await wall();
+  const toggle = dialog.getByRole('button', { name: 'AI 원본 색 보기', exact: true });
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('flux-color-corrected.png') });
+  const correctedDownload = page.waitForEvent('download');
+  await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
+  const saved = await correctedDownload;
+  expect(saved.suggestedFilename()).toMatch(/flux-2-klein-4b\.png$/);
+  expect((await sharp(await downloadedArtifact(saved)).metadata()).format).toBe('png');
+  await toggle.click();
+  const original = dialog.getByRole('button', { name: '보정한 색 보기', exact: true });
+  await expect(original).toHaveAttribute('aria-pressed', 'true');
+  const raw = await wall();
+  expect(raw.warmth).toBeGreaterThan(corrected.warmth + 15);
+  expect(corrected.brightness).toBeGreaterThanOrEqual(raw.brightness);
+  const warning = dialog.getByRole('alert');
+  await expect(warning).toContainText('벽 타일 색이 원본보다 따뜻하게(노랗게) 바뀌었을 수 있어요.');
+  const rawDownload = page.waitForEvent('download');
+  await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
+  expect((await rawDownload).suggestedFilename()).toMatch(/flux-2-klein-4b-AI원본색\.png$/);
+  // A narrow screen keeps the new controls inside the dialog.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await original.scrollIntoViewIfNeeded();
+  const box = (await original.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(390.5);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('flux-color-original-390.png') });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // A reframed result is neither corrected nor compared, and says so.
+  reframe = true;
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b 다시 만들기', exact: true }).click();
+  await expect(note).toContainText('AI가 구도를 바꿔 벽·바닥 색을 원본과 비교하지 못했어요', {
+    timeout: 30000,
+  });
+  await expect(dialog.getByRole('button', { name: /색 보기$/ })).toHaveCount(0);
+  expect(conversions).toEqual(['warm', 'reframed']);
 });
