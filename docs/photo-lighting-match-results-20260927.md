@@ -62,3 +62,88 @@
 - **방식 선택: 섞음(d)**
   - 회색 세계(a)는 이번 사진에서는 차이가 작았다. 하지만 단위 테스트의 진한 베이지 방에서는 타일을 무채색으로 표백해 쓰지 않는다.
   - 무채색 면(b)은 흰 위생도기가 없을 때의 보조로만 쓴다. 강한 색 캐스트에서는 흰 타일도 유채색으로 보여 근거가 사라지고 중립이 된다(의도된 동작).
+
+## 3-3b 구현
+
+### 저장과 호환
+
+- `ComparisonState.photoLighting?`에 둔다: `{ version: 1, exposureEv, gains: [r,g,b], method: 'ceramic' | 'achromatic', enabled, strength }`. 사진 한 장의 빛이라 프로젝트 공유 값이다([types](../src/lib/types.ts)).
+- 저장 검증([validation](../src/lib/storage/validation.ts))에 선택 필드로 더했다. 노출 ±1.5EV, 이득 0.2~~3, 세기 0~~1을 벗어나거나 모르는 키가 있으면 거부한다.
+- 이전 문서는 값이 없어 그대로 읽는다. 저장 왕복·거부 테스트는 [comparison-storage](../tests/comparison-storage.test.ts)에 있다.
+- 추정이 중립(이득 1, 노출 0)이면 저장하지 않는다. 흰 위생도기도 무채색 면도 부족한 사진이 그렇다. 사진 5는 무채색 면 근거가 있어 저장된다.
+
+### 렌더 규칙 한 곳
+
+- 곱: `mix(1, gains × 2^EV, strength)`. 꺼져 있거나 세기 0이면 곱이 없다([photo-lighting](../src/lib/reconstruction/photo-lighting.ts) `photoLightingMultiplier`).
+- 선형 RGB에서 사용자 "밝기와 색감"(`adjustColor`) **앞에** 곱한다. Before·After 모두 같은 곱이다.
+  - 2D: 합성기 출력 셰이더([compositor](../src/lib/render/compositor.ts))
+  - 3D: 합성 셰이더와 사진 효과 빛 번짐([renderer](../src/lib/room-viewer/renderer.ts), [photo-effects](../src/lib/room-viewer/photo-effects.ts))
+- 값은 `RenderSnapshot.lighting`으로 간다. 편집 화면, 공간 둘러보기, 고화질 다운로드, 시안·요약 미리보기, FLUX 입력 캡처가 같은 값을 쓴다. 시안 미리보기 캐시 키에 조명을 넣어, 조명이 바뀌면 새로 그린다.
+- 렌더러 버전(`room-view-v7-photo-lighting`)과 시안 미리보기 버전(3)을 올렸다.
+
+### 화면
+
+- 편집기 "밝기와 색감" 아래 "사진 조명 맞춤"([photo-lighting-control](../src/components/editor/photo-lighting-control.tsx)): 켜기/끄기(기본 켬)와 "맞춤 세기" 0~100%(숫자 직접 입력 가능).
+  - 켬: "원본 사진의 밝기·색온도에 맞춘 화면이에요. 자재 본래 색은 끄고 확인하세요."
+  - 끔: "자재 본래 색을 중립 조명으로 보여 줘요."
+- 사진으로 만든 비교 공간에서만 보인다. 사진 없는 공간·이전 비교 공간에는 없다.
+- 속성 패널은 After 보기에서만 편집할 수 있어(기존 규칙) 이 설정도 After에서 바꾼다. 효과는 Before·After 모두에 난다.
+- 바꾼 값은 공유 Before 기록에 들어간다. 저장·새로고침에 유지되고, Before 보기의 실행 취소로 되돌릴 수 있다. After 보기의 실행 취소는 시안 기록만 되돌려 이 설정은 되돌리지 않는다.
+
+### 만들기·다시 분석·검토
+
+- 새 비교 공간([reconstruction/index](../src/lib/reconstruction/index.ts)): 원본 사진을 브라우저에서 640px 너비 이하로 디코딩해 추정한다. 사진은 밖으로 나가지 않고 캐시 규칙(`transient`)도 그대로다. 수동 초안(`manual`)은 추정하지 않는다.
+  - 사진에서 뽑은 면 타일·관측 줄눈·설비 색은 걷어낸 색으로 자재를 만든다. 기본 줄눈(#bcb9b1)은 그대로다.
+- "사진 다시 분석"([reconstruction-rebuild](../src/components/reconstruction/reconstruction-rebuild.tsx)): 새 Before와 새 조명을 함께 바꾼다(둘은 한 짝). 새 결과에 조명이 없으면 지운다. 실행 취소로 둘이 함께 돌아간다.
+- Before 검토에서 배치하는 설비([reconstruction-review](../src/components/reconstruction/reconstruction-review.tsx)): 사진에서 추정한 색(`inferred`)만 걷어낸다. 사용자가 고른 색은 그대로다.
+
+### 앱 경로 재측정
+
+캡처 spec으로 앱에서 다시 만든 5개 프로젝트(`projects-app`)를 하니스 `--app`으로 쟀다. 저장된 조명과 걷어낸 타일을 그대로 읽고, 렌더는 `snapshot.lighting` 셰이더 경로다.
+
+| 사진 | 저장된 조명(3-3a와 같음) | Before 면 ΔE (3-3a 새 Before → 앱) | After 흰 벽 ↔ 사진 흰 위생도기 ΔE (3-3a → 앱) |
+| ---- | ------------------------ | ---------------------------------- | --------------------------------------------- |
+| 1    | ceramic −0.25EV          | 2.03 → 2.16                        | 1.9 → 2.45                                    |
+| 2    | ceramic −0.96EV          | 3.37 → 3.37                        | 1.9 → 1.88                                    |
+| 3    | ceramic −0.25EV          | 1.77 → 1.77                        | 1.8 → 2.44                                    |
+| 4    | ceramic −0.65EV          | 2.35 → 2.35                        | 17.5 → 17.49                                  |
+| 5    | achromatic 0EV           | 2.59 → 2.59                        | 중립(끔=켬)                                   |
+
+- 저장된 조명은 5장 모두 3-3a와 같다. Before는 사진 2~5가 같고 사진 1만 0.13 높다. 흰 벽 차이는 셰이더가 부동소수로 곱하고 3-3a 하니스는 CPU 8비트로 곱한 차이로 본다(사진 1·3 +0.6). 사진 1의 차이 원인은 따로 가려내지 않았다. 모두 관문 기준(0.5, 분위기 판정) 안이라 판정은 그대로다.
+
+### 추천·견적 영향
+
+- 자재 추천·견적·수량은 색을 쓰지 않는다. 견적은 면적·수량·단가만 본다. 실험실의 벽 정렬 "추천"은 위치 추천이다.
+- 보이는 변화는 사진으로 만든 Before 타일 자재의 색 값(자재 목록 색 견본)이 걷어낸 색으로 바뀐 것뿐이다. 조명을 켠 렌더에서는 사진과 같은 색으로 보인다.
+- FLUX 프롬프트의 타일 색 이름도 걷어낸 색에서 나온다(렌더 입력은 조명이 켜진 그림).
+
+## 검증
+
+- **단위:** 전체 `npx vitest run` 3,283 통과, 건너뜀 1. 실패 6개는 알려진 환경 실패뿐이다(reconstruction-corpus 1, reconstruction-source-plane-mapping 5, 로컬에 없는 보관 자료).
+  - 새 테스트: [photo-lighting](../tests/photo-lighting.test.ts) 9개(추정·베이지 유지·중립·제한·왕복·곱·저장 도우미·표본), [comparison-storage](../tests/comparison-storage.test.ts) 조명 저장 왕복·거부.
+- **브라우저**
+  - [photo-lighting-render-browser](../tests/photo-lighting-render-browser.ts)(새로 추가): 2D 합성기와 3D 내보내기가 "조명 없는 렌더 × 곱"을 CPU로 계산한 값과 최대 0.9, 평균 0.25·0.30(8비트 단계) 차이다. 조명이 없으면 두 경로 모두 픽셀이 같다.
+  - render-realism 45장·room-viewer-render 9장이 3-3b 전과 픽셀 차 0이다(사진 없는 장면). flux-grounding 통과.
+  - 3-3a 하니스 `--app` 재측정은 위 "앱 경로 재측정"과 같다.
+- **e2e(관련 spec 10개, 53개, 35.9분):** 51 통과, 1 건너뜀(옵트인 실제 저장 보고서), 1 실패.
+  - photo-lighting 2개: 만들기(외부 요청 0) → 조명·걷어낸 타일 저장, 끄기·켜기로 픽셀 변화와 복귀, 세기 50% 입력 저장, 새로고침 유지, 390px 넘침 없음, 사진 없는 공간에는 설정 없음.
+  - reconstruction 7, reconstruction-cloud-browser 15, reconstruction-analysis-profile 7, flux-export 4, room-viewer 6, designs 3, design-failures 4, wall-features-ui, simple-editor.
+  - 실패 1개는 room-viewer "고화질 다운로드: 여러 장 진행률"이다. 진행률이 40%→37%로 한 번 내려갔다. 기존 진행률 추정(첫 장 뒤 장 수를 다시 정함)이 부하 중에 드러난 것으로, 조명 변경(셰이더 곱 하나)과 무관하다. 한가할 때(CPU 12%) 3회 반복 3/3 통과했다. 진행률이 내려가지 않게 고치는 일은 별도 과제로 남겼다.
+- **정적 검사:** `npm run typecheck`, `npm run lint` 통과(`next-env.d.ts` 되돌림), 변경 파일 Prettier 통과.
+
+## 한계
+
+- **빛의 고르지 않음은 못 걷는다.** 한 면 안의 밝기 기울기·그림자·반사광은 면 대표색에 섞인 채 남는다. 프로필은 사진 전체에 하나다.
+- **흰 기준의 오검출.** DeepLab 설비 후보가 틀리면(사진 2 변기 일부, 사진 4 세면대 아닌 영역) 노출이 어두운 쪽으로 간다. "가장 밝은 면" 하한이 이를 막지만 사진 4의 흰 벽은 여전히 사진 위생도기보다 밝게 남는다(ΔE 17.5).
+- **흰 위생도기가 없으면 노출은 0이다.** 사진 5처럼 시공 중이거나 설비가 가려진 사진은 색온도만 맞춘다.
+- **Ultra HDR JPEG 업로드 거부.** 요즘 Android 사진이 업로드 검사에서 막힌다(별도 과제로 남김). 이번 측정은 PNG로 바꿔 넣었다.
+- **설정 위치.** 속성 패널 규칙상 After 보기에서만 바꿀 수 있고, After의 실행 취소로는 되돌아가지 않는다(Before 보기의 실행 취소로 되돌림).
+- **사용자가 고른 Before 색.** 검토·편집에서 직접 고른 색은 자재 본래 색(걷어낸 색)으로 저장된다. 조명을 켜면 고른 색보다 사진 빛만큼 어둡거나 따뜻하게 보인다.
+- **2D 여백.** 2D 편집 화면은 방 이미지 전체에 곱해 방 밖 여백도 같이 어두워진다. 3D는 여백 색이 고정이다.
+- **이전 비교 공간.** 값이 없어 그대로다. 조명을 얻으려면 "사진 다시 분석"을 해야 하고, 그러면 Before도 새 초안으로 바뀐다.
+
+## 다음 후보
+
+- **"사진 조명 다시 계산"(제안):** 이전 비교 공간에서 Before를 바꾸지 않고 조명만 추정해 저장한다. 다만 기존 Before 색은 사진 색 그대로라, 조명을 켜면 이중으로 곱해진다. 기존 타일 색을 함께 걷어낼지 정해야 한다.
+- **FLUX 자재 색 변경 문제:** FLUX 결과에서 타일·설비 색이 입력과 달라지는 문제. 조명이 켜진 입력에서 색 유지가 나아지는지 비교하려면 FLUX 유료 호출이 필요해 사용자 승인 대상이다.
+- **면 안 밝기 기울기:** 면별 대표색 대신 사진의 면 밝기 분포를 음영으로 옮기는 방식(원본 명암 보존과 겹침 확인 필요).

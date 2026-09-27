@@ -3,8 +3,8 @@ import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated
 
 /**
  * Photo lighting match (stage 3-3b): a comparison made from a photo stores the photo's light and
- * delit Before colours; the editor switches the light on/off and sets its strength, saved and
- * undoable, on every render. Browser analysis only (DeepLab, no cloud AI).
+ * delit Before colours; the editor switches the light on/off and sets its strength, saved with the
+ * shared Before (its undo history), on every render. Browser analysis only (DeepLab, no cloud AI).
  */
 let app: AuthenticatedApp;
 test.beforeEach(async ({ page }) => {
