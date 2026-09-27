@@ -2,6 +2,20 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-09-27 — 휴대폰 사진(Ultra HDR·모션 포토) 업로드
+
+- 무엇: 요즘 Android·iPhone JPEG이 "손상된 이미지"로 거부되던 문제를 고쳤다. 상세는 [이미지 업로드 규칙](material-images.md#휴대폰-사진-ultra-hdr모션-포토heic-2026-09-27)에 있다.
+  - 원인: 서버 검사 `validateD1Image`가 APP2 MPF와 "끝이 FFD9가 아님"을 거부했다. 이미지 자산은 모두 이 검사를 거쳐 모든 사진 입력이 막혔다.
+  - 가져올 때(`importImage`) JPEG의 첫 이미지만 바이트 그대로 남긴다. 게인 맵 JPEG·영상 꼬리와 그것을 가리키는 MPF·ISO 21496-1 표지·컨테이너 XMP만 빼고, 재인코딩하지 않는다.
+  - 서버 검사는 모든 스캔을 지나 첫 EOI가 파일 끝인지 본다. 끝이 FFD9인 두 번째 JPEG이 MPF 없이 붙으면 통과하던 빈틈도 막았다.
+  - HEIC/HEIF는 JPG로 저장하라고 안내한다(변환 없음). 로컬 저장 모드는 없어 D1/R2 한 경로만 확인했다.
+- 검증
+  - 저장소의 실제 Ultra HDR 사진 5장: 정리 후 서버 검사 통과(960×1280), sharp와 실제 Chrome 디코딩 픽셀 차 0, 정리 전 원본은 여전히 거부. 23.2MB JPEG 서버 스캔 14.6ms.
+  - 합성 시험 파일(실물 없음): iPhone형 MPF+두 번째 JPEG, Google형 컨테이너 XMP+MP4, Samsung형 꼬리, 손으로 만든 RST·채움 바이트 구조.
+  - e2e(격리 D1/R2, 휴대폰 JPG 그대로) 4개: 비교 공간 만들기, 홈 직접 편집 끌어 놓기, 자재 폼 제품 사진 선택·끌어 놓기 등록, HEIC 안내. 서버에 저장된 원본이 첫 이미지와 해시·크기가 같고 새로고침 뒤에도 보인다.
+  - 회귀 e2e 42개 통과(26.7분): ultra-hdr-upload, file-drop, material-images, upload-read-error, reconstruction, reconstruction-cloud-browser, flux-export.
+  - 전체 vitest 3,304 통과, 건너뜀 1. 실패 7개는 알려진 환경 실패다(reconstruction-corpus 1, reconstruction-source-plane-mapping 5, 로컬 D1/R2 첫 연결 5초 초과 1). `npm run typecheck`·`npm run lint`·변경 파일 Prettier 통과.
+
 ## 2026-09-27 — 사실감 3-3: 사진 조명 맞춤(밝기·색온도)
 
 - 무엇: 사진으로 만든 비교 공간의 Before·After를 원본 사진의 노출과 화이트 밸런스에 맞춘다. AI 없이 사진 픽셀 통계로만, 브라우저 안에서 추정한다. 상세는 [결과](photo-lighting-match-results-20260927.md)에 있다.

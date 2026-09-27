@@ -27,7 +27,7 @@ const segment = (marker: number, payload: Uint8Array) =>
 /** SOI, then the given segments, then the rest of the JPEG. */
 const withSegments = (jpeg: Uint8Array, ...segments: Uint8Array[]) =>
   concat(jpeg.subarray(0, 2), ...segments, jpeg.subarray(2));
-const jpeg = async (options: sharp.JpegOptions = {}, color = '#667788') =>
+const jpeg = async (options: Parameters<ReturnType<typeof sharp>['jpeg']>[0] = {}, color = '#667788') =>
   new Uint8Array(
     await sharp({ create: { width: 40, height: 24, channels: 3, background: color } })
       .jpeg(options)
@@ -175,6 +175,7 @@ describe('first image of a phone JPEG', () => {
           width: 3300,
           height: 2500,
           channels: 3,
+          background: '#808080',
           noise: { type: 'gaussian', mean: 128, sigma: 90 },
         },
       })
