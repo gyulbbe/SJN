@@ -246,6 +246,53 @@ function edges(image: Pixels): EdgeImage {
     }
   return { width, height, data: grad };
 }
+/**
+ * Edges at quarter resolution after a 5×5 box blur there (about 20 result pixels): tile joints and
+ * speckles average out and the room's corners, the ceiling line and fixture outlines remain. For a
+ * busy tile the model re-laid (grey terrazzo drawn as smooth concrete), the fine edges are mostly
+ * texture that no longer matches, and only this scale sees the kept framing.
+ */
+function coarseEdges(image: Pixels): EdgeImage {
+  const width = Math.floor(image.width / 4),
+    height = Math.floor(image.height / 4);
+  const lum = new Float32Array(width * height);
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      let sum = 0;
+      for (let j = 0; j < 4; j++)
+        for (let i = 0; i < 4; i++) {
+          const o = ((4 * y + j) * image.width + 4 * x + i) * 4;
+          sum += 0.2126 * image.data[o] + 0.7152 * image.data[o + 1] + 0.0722 * image.data[o + 2];
+        }
+      lum[y * width + x] = sum / 16;
+    }
+  const R = 2;
+  const blurred = (source: Float32Array, horizontal: boolean) => {
+    const out = new Float32Array(width * height);
+    for (let y = 0; y < height; y++)
+      for (let x = 0; x < width; x++) {
+        let sum = 0,
+          n = 0;
+        for (let d = -R; d <= R; d++) {
+          const xx = horizontal ? x + d : x,
+            yy = horizontal ? y : y + d;
+          if (xx < 0 || yy < 0 || xx >= width || yy >= height) continue;
+          sum += source[yy * width + xx];
+          n++;
+        }
+        out[y * width + x] = sum / n;
+      }
+    return out;
+  };
+  const soft = blurred(blurred(lum, true), false);
+  const grad = new Float32Array(width * height);
+  for (let y = 1; y < height - 1; y++)
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      grad[i] = Math.hypot(soft[i + 1] - soft[i - 1], soft[i + width] - soft[i - width]);
+    }
+  return { width, height, data: grad };
+}
 function halve(image: EdgeImage): EdgeImage {
   const width = Math.floor(image.width / 2),
     height = Math.floor(image.height / 2);
@@ -292,13 +339,8 @@ function correlate(a: EdgeImage, b: EdgeImage, margin: number, dx: number, dy: n
   return va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : 0;
 }
 export type Framing = { dx: number; dy: number; score: number; aligned: boolean };
-/**
- * Whether the model kept the framing: one shift for the whole picture (the room's edges), searched
- * within ±MAX_SHIFT at quarter resolution. A reframed or zoomed result scores low here.
- */
-export function framing(reference: Pixels, result: Pixels): Framing {
-  const a = halve(edges(reference)),
-    b = halve(edges(result));
+/** The best whole-picture shift of `b` against `a` within ±MAX_SHIFT (both at quarter resolution). */
+function bestShift(a: EdgeImage, b: EdgeImage) {
   const reach = Math.max(1, Math.round(MAX_SHIFT * b.width));
   let best = { dx: 0, dy: 0, score: -1 };
   for (let dy = -reach; dy <= reach; dy++)
@@ -306,12 +348,25 @@ export function framing(reference: Pixels, result: Pixels): Framing {
       const score = correlate(a, b, reach, dx, dy);
       if (score > best.score) best = { dx, dy, score };
     }
-  const inside = Math.abs(best.dx) < reach && Math.abs(best.dy) < reach;
+  return { ...best, inside: Math.abs(best.dx) < reach && Math.abs(best.dy) < reach };
+}
+/**
+ * Whether the model kept the framing: one shift for the whole picture (the room's edges), searched
+ * within ±MAX_SHIFT at quarter resolution, on fine edges and on blurred (coarse) edges; the better
+ * scale counts. A reframed or zoomed result scores low on both. The coarse scale was added
+ * 2026-09-27 for in-room inputs with busy tiles: six results that kept the framing scored 0.21–0.32
+ * on fine edges and 0.59–0.63 coarse, while zoomed (0.22–0.37) and shrunken (0.28–0.35) copies
+ * stayed below MIN_FRAMING. Results aligned on fine edges stay aligned.
+ */
+export function framing(reference: Pixels, result: Pixels): Framing {
+  const fine = bestShift(halve(edges(reference)), halve(edges(result)));
+  const coarse = bestShift(coarseEdges(reference), coarseEdges(result));
+  const best = coarse.score > fine.score ? coarse : fine;
   return {
     dx: best.dx * 4,
     dy: best.dy * 4,
     score: best.score,
-    aligned: inside && best.score >= MIN_FRAMING,
+    aligned: best.inside && best.score >= MIN_FRAMING,
   };
 }
 
