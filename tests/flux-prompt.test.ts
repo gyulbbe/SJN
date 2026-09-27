@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { FLUX_PROMPT } from '../src/lib/ai-export/contract';
-import { buildFluxPrompt, colorWords, FLUX_PROMPT_MAX_CHARS } from '../src/lib/ai-export/prompt';
+import {
+  buildFluxPrompt,
+  ceilingSentence,
+  colorWords,
+  FLUX_PROMPT_MAX_CHARS,
+} from '../src/lib/ai-export/prompt';
 import { fluxSceneSchema, type FluxFixture, type FluxScene } from '../src/lib/ai-export/scene-contract';
 
 const toilet: FluxFixture = {
@@ -126,5 +131,50 @@ describe('fluxSceneSchema', () => {
       { ...scene, note: 'extra' },
     ])
       expect(fluxSceneSchema.safeParse(broken).success).toBe(false);
+  });
+});
+
+describe('in-room view: ceiling sentence', () => {
+  const inRoom: FluxScene = { ...scene, ceiling: { color: '#f3f2ee', light: 'flat-panel' } };
+
+  it('names the ceiling after the tiles and before the fixtures, deterministically', () => {
+    const text = buildFluxPrompt(inRoom);
+    expect(text).toBe(buildFluxPrompt(structuredClone(inRoom)));
+    const sentence = 'The ceiling is plain white (#f3f2ee) paint with one flat square light panel.';
+    expect(ceilingSentence(inRoom.ceiling!)).toBe(sentence);
+    expect(text.indexOf('Back wall and left wall and right wall:')).toBeLessThan(text.indexOf(sentence));
+    expect(text.indexOf(sentence)).toBeLessThan(text.indexOf('1. A white (#f2f1ec)'));
+    // The front composite (no ceiling) keeps the earlier prompt exactly.
+    expect(buildFluxPrompt(scene)).not.toContain('ceiling is');
+    expect(buildFluxPrompt(scene)).toBe(text.replace(` ${sentence}`, ''));
+    // A bare room with only its ceiling still says so.
+    expect(buildFluxPrompt({ version: 1, fixtures: [], surfaces: [], ceiling: inRoom.ceiling })).toBe(
+      `${FLUX_PROMPT} ${sentence}`,
+    );
+  });
+
+  it('keeps the ceiling sentence while shortening, within the length limit', () => {
+    const crowded: FluxScene = {
+      ...inRoom,
+      fixtures: Array.from({ length: 12 }, (_, i) => ({
+        ...basin,
+        box: [0.05 * i, 0.5, 0.05 * i + 0.04, 0.6],
+      })),
+    };
+    const text = buildFluxPrompt(crowded);
+    expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
+    expect(text).toContain('The ceiling is plain white (#f3f2ee)');
+  });
+
+  it('accepts the ceiling in the schema strictly and still takes the older shape', () => {
+    expect(fluxSceneSchema.safeParse(inRoom).success).toBe(true);
+    expect(fluxSceneSchema.safeParse(scene).success).toBe(true);
+    for (const ceiling of [
+      { color: 'white', light: 'flat-panel' },
+      { color: '#f3f2ee', light: 'chandelier' },
+      { color: '#f3f2ee', light: 'flat-panel', note: 'x' },
+      { color: '#f3f2ee' },
+    ])
+      expect(fluxSceneSchema.safeParse({ ...scene, ceiling }).success).toBe(false);
   });
 });

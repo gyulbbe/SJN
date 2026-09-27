@@ -74,7 +74,8 @@ import { useAccess } from '../app-provider';
 import CanvasWorkspace from './canvas-workspace';
 import Inspector from './inspector';
 import AiExport from './ai-export';
-import type { FluxCaptureSource } from '@/lib/ai-export/scene';
+import { visibleCeiling, type FluxCaptureSource } from '@/lib/ai-export/scene';
+import { fluxRoom, fluxView, fluxViewChoices, type FluxViewChoice } from '@/lib/ai-export/view';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
 import { accountLabel } from '@/lib/auth/credential-account';
@@ -1207,6 +1208,63 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         st.mode,
         st.split,
       );
+    }
+  }
+  /**
+   * The AI conversion's input: one plain After frame from an in-room eye, drawn by the 3D viewer for
+   * every project with room dimensions (the ceiling closes the top and the walls fill the frame, so
+   * the model has no empty margin to invent walls in), with the fixture boxes and face mask from the
+   * same camera. A scene without a room keeps the 2D front composite. The renderer lives only for
+   * this capture; the editor, previews and downloads are untouched.
+   */
+  async function captureAiInput(choice?: FluxViewChoice): Promise<FluxCaptureSource> {
+    if (isGuest) throw new Error('이미지 출력은 로그인 후 사용할 수 있어요.');
+    if (!st.project) throw new Error('내보낼 공간이 아직 준비되지 않았어요.');
+    const after = getActiveScene(st.project);
+    const room = fluxRoom(after, st.project.shared.comparison?.before ?? st.project.shared.baseline);
+    if (!room || !choice) {
+      let inspected: Omit<FluxCaptureSource, 'blob' | 'reader'> | undefined;
+      // The same render gives the scene facts (and 3D fixture boxes) sent with the image.
+      const blob = await captureExport('image/png', false, 1024, (capture) => {
+        inspected = capture;
+      });
+      if (!inspected) throw new Error('AI 변환에 쓸 장면 정보를 만들지 못했어요.');
+      return { blob, reader: assetReader, ...inspected };
+    }
+    const view = fluxView(room, choice, st.project);
+    const snapshot = {
+      scene: structuredClone(after),
+      beforeScene: structuredClone(st.project.shared.comparison?.before ?? st.project.shared.baseline),
+      materials: structuredClone(materials),
+      ...(photoLight ? { lighting: photoLight } : {}),
+    };
+    const { imageWidth: width, imageHeight: height } = snapshot.scene;
+    const edge = Math.min(1024, Math.max(width, height));
+    const [{ RoomViewerRenderer }, { VIEWER_CEILING_COLOR }] = await Promise.all([
+      import('@/lib/room-viewer/renderer'),
+      import('@/lib/room-viewer/ceiling'),
+    ]);
+    const roomRenderer = new RoomViewerRenderer();
+    try {
+      // An eye camera ignores the fit bounds, so the other designs need not be prepared.
+      await roomRenderer.setSnapshot(snapshot, assetReader);
+      // One frame, no photo look: stage 3 found averaged samples made no difference to FLUX.
+      const blob = await roomRenderer.export(view, { format: 'png', mode: 'after', longEdge: edge });
+      const regions = roomRenderer.regionMask(
+        Math.min(edge, (edge * width) / height),
+        Math.min(edge, (edge * height) / width),
+        view,
+      );
+      return {
+        blob,
+        reader: assetReader,
+        snapshot,
+        boxes: roomRenderer.fixtureBounds(width, height, view),
+        regions,
+        ...(visibleCeiling(regions) ? { ceiling: VIEWER_CEILING_COLOR } : {}),
+      };
+    } finally {
+      roomRenderer.dispose();
     }
   }
   async function exportImage() {
@@ -2521,15 +2579,16 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             )}
             <AiExport
               key={`${scopeKey}-${activeDesign?.id}`}
-              capture={async () => {
-                let inspected: Omit<FluxCaptureSource, 'blob' | 'reader'> | undefined;
-                // The same render gives the scene facts (and 3D fixture boxes) sent with the image.
-                const blob = await captureExport('image/png', false, 1024, (capture) => {
-                  inspected = capture;
-                });
-                if (!inspected) throw new Error('AI 변환에 쓸 장면 정보를 만들지 못했어요.');
-                return { blob, reader: assetReader, ...inspected };
-              }}
+              capture={captureAiInput}
+              views={
+                st.project &&
+                fluxRoom(
+                  getActiveScene(st.project),
+                  st.project.shared.comparison?.before ?? st.project.shared.baseline,
+                )
+                  ? fluxViewChoices(st.project)
+                  : undefined
+              }
               filename={`${st.project?.name ?? '공간'}-${activeDesign?.name ?? '시안'}`}
               userId={userId}
               disabled={exporting}

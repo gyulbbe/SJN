@@ -141,6 +141,46 @@ describe('framing', () => {
     }
     expect(framing(reference, { width: W, height: H, data: other }).aligned).toBe(false);
   });
+
+  it('keeps an in-room result whose busy tile the model re-laid, and still refuses it zoomed in', () => {
+    // 480×320: ceiling, left/back/right walls, floor and a white fixture. The render's walls are
+    // dense speckles (terrazzo); the model's are smooth, lighter and on another tile grid.
+    const w = 480,
+      h = 320;
+    const draw = (wall: (x: number, y: number, base: number) => number) => {
+      const data = new Uint8ClampedArray(w * h * 4);
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const fixture = x >= 300 && x < 345 && y >= 190 && y < 275;
+          const base =
+            y < 40
+              ? 245
+              : y >= 265
+                ? 190
+                : x < 110 + (y - 40) * 0.2
+                  ? 95
+                  : x > 370 - (y - 40) * 0.2
+                    ? 110
+                    : 120;
+          const v = fixture ? 250 : y < 40 || y >= 265 ? base : wall(x, y, base);
+          data.set([v, v, v - 3, 255], (y * w + x) * 4);
+        }
+      return { width: w, height: h, data };
+    };
+    const speckle = (x: number, y: number) =>
+      (((Math.floor(x / 3) * 73856093) ^ (Math.floor(y / 3) * 19349663)) >>> 0) % 7;
+    const render = draw((x, y, base) => (speckle(x, y) < 2 ? 225 : base));
+    const result = draw((x, y, base) => (x % 37 < 1 || y % 37 < 1 ? base + 25 : base + 40));
+    expect(framing(render, result)).toMatchObject({ aligned: true });
+    const zoomed = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const sx = Math.floor(w * 0.075 + x * 0.85),
+          sy = Math.floor(h * 0.075 + y * 0.85);
+        zoomed.set(result.data.subarray((sy * w + sx) * 4, (sy * w + sx) * 4 + 4), (y * w + x) * 4);
+      }
+    expect(framing(render, { width: w, height: h, data: zoomed }).aligned).toBe(false);
+  });
 });
 
 describe('face colours', () => {

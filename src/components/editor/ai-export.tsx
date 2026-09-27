@@ -8,12 +8,16 @@ import {
   requestFluxCheck,
   requestFluxImage,
 } from '@/lib/ai-export/client';
-import { reviewResultColors, type FaceChange, type Pixels, type RegionMask } from '@/lib/ai-export/color';
+import { reviewResultColors, type Pixels, type RegionMask } from '@/lib/ai-export/color';
 import { fluxInputLayout, type FluxInputLayout } from '@/lib/ai-export/contract';
+import type { FluxCheckWall } from '@/lib/ai-export/check-contract';
+import { fluxResultNotices, readFluxCheck, type FluxNoticeInput } from '@/lib/ai-export/notices';
+import { FLUX_VIEW_LABELS, type FluxViewChoice } from '@/lib/ai-export/view';
 import { FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
 import { ServerWaitProgress, useServerWait } from '@/components/server-wait-progress';
 import {
   buildFluxGrounding,
+  visibleWalls,
   type FluxCaptureSource,
   type FluxGrounding,
   type FluxPlacedProduct,
@@ -21,54 +25,37 @@ import {
 import styles from './ai-export.module.css';
 
 type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: string };
-/** The walls' and floor's colours of the latest result against the render (no AI call). */
-type Colors = { status: 'corrected'; warnings: FaceChange[] } | { status: 'reframed' } | { status: 'failed' };
-const SHIFT_WORDS: Record<FaceChange['shift'], string> = {
-  warmer: '따뜻하게(노랗게)',
-  cooler: '차갑게(푸르게)',
-  'more-saturated': '진하게',
-  'less-saturated': '옅게',
-  hue: '다른 색으로',
-};
-/** One line per surface kind: the face that changed most. */
-function colorChangeLines(warnings: FaceChange[]) {
-  return (['wall', 'floor'] as const).flatMap((kind) => {
-    const worst = warnings.filter((w) => w.kind === kind).sort((a, b) => b.colorDeltaE - a.colorDeltaE)[0];
-    return worst
-      ? [{ kind, text: `${kind === 'wall' ? '벽' : '바닥'} 타일 색이 원본보다 ${SHIFT_WORDS[worst.shift]}` }]
-      : [];
-  });
-}
-/** Gemma's look at the latest result: which placed products it could not find. */
-type Check =
-  | { status: 'checking' }
-  | { status: 'done'; count: number; missing: FluxPlacedProduct[] }
-  | { status: 'failed'; message: string };
-/** 이/가 after a Korean word, by its last syllable. */
-const subject = (word: string) => {
-  const code = word.charCodeAt(word.length - 1) - 0xac00;
-  return word + (code >= 0 && code < 11172 && code % 28 ? '이' : '가');
-};
+/**
+ * Whether the check's tile-layout answer is shown. Off: in the 2026-09-27 comparison it missed the
+ * one real layout change and said "no" only where old front-composite walls were partly replaced.
+ * The answer is still requested and kept in the check response for later evaluation.
+ */
+const FLUX_SHOW_TILE_NOTICE = false;
 export default function AiExport({
   capture,
+  views,
   filename,
   userId,
   disabled,
   onBusyChange,
 }: {
-  capture: () => Promise<FluxCaptureSource>;
+  /** Renders the After for the AI input from the chosen view (none: the legacy front composite). */
+  capture: (view?: FluxViewChoice) => Promise<FluxCaptureSource>;
+  /** In-room views to choose from; absent for a scene without room dimensions. */
+  views?: { choices: FluxViewChoice[]; initial: FluxViewChoice };
   filename: string;
   userId?: string | null;
   disabled: boolean;
   onBusyChange: (busy: boolean) => void;
 }) {
   const live = useRef(true);
+  const [view, setView] = useState<FluxViewChoice | undefined>(views?.initial);
   const [sourceUrl, setSourceUrl] = useState('');
   const [result, setResult] = useState<Result>({});
   const [busy, setBusy] = useState(false);
   const [placed, setPlaced] = useState<FluxPlacedProduct[]>();
-  const [check, setCheck] = useState<Check>();
-  const [colors, setColors] = useState<Colors>();
+  const [check, setCheck] = useState<FluxNoticeInput['check']>();
+  const [colors, setColors] = useState<FluxNoticeInput['colors']>();
   const [showOriginal, setShowOriginal] = useState(false);
   const { wait, start: startWait, finish: finishWait } = useServerWait();
   const state = useRef<{
@@ -76,6 +63,8 @@ export default function AiExport({
     grounding?: FluxGrounding;
     /** The render, its regions and the model input's padding, for the colour check. */
     color?: { capture: Pixels; mask: RegionMask; layout: FluxInputLayout };
+    /** Walls in the captured view, asked about in the result check. */
+    walls?: FluxCheckWall[];
     urls: string[];
     controller?: AbortController;
   }>({ urls: [] });
@@ -88,6 +77,21 @@ export default function AiExport({
       current.urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
+  /** A new view is a new comparison: the fixed source and everything made from it start over. */
+  function chooseView(next: FluxViewChoice) {
+    if (busy || next === view) return;
+    setView(next);
+    state.current.image = undefined;
+    state.current.grounding = undefined;
+    state.current.color = undefined;
+    state.current.walls = undefined;
+    setSourceUrl('');
+    setPlaced(undefined);
+    setResult({});
+    setCheck(undefined);
+    setColors(undefined);
+    setShowOriginal(false);
+  }
   async function generate() {
     if (state.current.controller || disabled) return;
     const controller = new AbortController();
@@ -103,7 +107,7 @@ export default function AiExport({
     try {
       if (!state.current.image) {
         startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
-        const source = await capture();
+        const source = await capture(view);
         const input = await prepareFluxImage(source.blob);
         if (source.regions) {
           const pixels = await readPixels(source.blob);
@@ -112,6 +116,7 @@ export default function AiExport({
             mask: source.regions,
             layout: fluxInputLayout(pixels.width, pixels.height),
           };
+          state.current.walls = visibleWalls(source.regions, source.snapshot.scene);
         }
         const bitmap = await createImageBitmap(source.blob);
         let grounding: FluxGrounding | undefined;
@@ -123,6 +128,7 @@ export default function AiExport({
             capture: bitmap,
             layout: fluxInputLayout(bitmap.width, bitmap.height),
             boxes: source.boxes,
+            ceiling: source.ceiling,
           });
         } catch {
           grounding = undefined;
@@ -171,8 +177,9 @@ export default function AiExport({
           if (live.current) setColors({ status: 'failed' });
         }
       }
-      // Every result is checked once for the placed products; a missing one is only reported.
-      const scene = fluxCheckScene(state.current.grounding?.scene);
+      // Every result is checked once: placed products, added objects and the walls' tile layout.
+      // Anything off is only reported.
+      const scene = fluxCheckScene(state.current.grounding?.scene, state.current.walls);
       if (!scene) return;
       clearTimeout(timer);
       timer = setTimeout(() => controller.abort(), 130_000);
@@ -182,14 +189,7 @@ export default function AiExport({
         const checked = await requestFluxCheck(blob, scene, controller.signal, userId);
         finishWait(true);
         if (!live.current) return;
-        const products = state.current.grounding?.placed ?? [];
-        setCheck({
-          status: 'done',
-          count: scene.fixtures.length,
-          missing: checked.fixtures.flatMap((entry, i) =>
-            entry.present === 'no' && products[i] ? [products[i]] : [],
-          ),
-        });
+        setCheck({ status: 'done', reading: readFluxCheck(checked, scene.fixtures) });
       } catch (error) {
         if (!live.current) return;
         setCheck({
@@ -221,15 +221,56 @@ export default function AiExport({
     }
   }
   const shown = showOriginal || !result.correctedUrl ? result.url : result.correctedUrl;
+  const notices = fluxResultNotices({
+    products: placed ?? [],
+    check,
+    colors: colors?.status === 'corrected' && !result.correctedUrl ? undefined : colors,
+    corrected: !showOriginal,
+    showTiles: FLUX_SHOW_TILE_NOTICE,
+  });
   return (
     <section className={styles.panel} aria-label="AI 현장 사진 변환">
       <h3>AI로 현장 사진처럼</h3>
       <p className={styles.note}>
-        버튼을 누를 때 현재 After 이미지와 배치한 제품의 종류·위치·크기·색 정보를 Cloudflare로 보내 변환해요.
-        결과가 나오면 배치한 제품이 그대로 있는지 AI(Gemma)로 한 번 더 확인하고, 벽·바닥 색은 원래 자재 색에
-        맞춰 보여 줘요(추가 요청 없음). 다시 만들 때마다 다른 결과가 나오고 두 요청의 사용량이 새로 발생해요.
-        그래도 AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해 주세요.
+        버튼을 누를 때 고른 시점의 현재 After 이미지와 배치한 제품의 종류·위치·크기·색 정보를 Cloudflare로
+        보내 변환해요. 결과가 나오면 배치한 제품이 그대로 있는지, 배치하지 않은 물건이 생겼는지 AI(Gemma)로 한
+        번 더 확인하고, 벽·바닥 색은 원래 자재 색에 맞춰 보여 줘요(추가 요청 없음). 다시 만들 때마다 다른
+        결과가 나오고 두 요청의 사용량이 새로 발생해요. 그래도 AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해
+        주세요.
       </p>
+      {views && view && (
+        <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
+          <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">AI 입력 시점</legend>
+          <div className="flex flex-wrap gap-1.5">
+            {views.choices.map((choice) => (
+              <label
+                key={choice}
+                className={`cursor-pointer rounded-full border px-3 py-1 text-xs has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 ${
+                  choice === view
+                    ? 'border-[color:var(--ink)] bg-[color:var(--ink)] font-semibold text-[color:var(--paper)]'
+                    : 'border-[color:var(--line)] bg-[color:var(--paper)] text-[color:var(--ink)]'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="flux-view"
+                  className="sr-only"
+                  value={choice}
+                  checked={choice === view}
+                  onChange={() => chooseView(choice)}
+                />
+                {FLUX_VIEW_LABELS[choice]}
+                {choice === 'center' ? '(기본)' : ''}
+              </label>
+            ))}
+          </div>
+          <div className="mt-1.5 text-xs leading-relaxed text-[color:var(--muted)]">
+            방 안에서 본 모습(천장 포함)으로 변환해요. 방 바깥의 빈 여백이 없어 AI가 없던 벽·물건을 덜
+            만들어요.
+            {result.url ? ' 시점을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.' : ''}
+          </div>
+        </fieldset>
+      )}
       <div className={styles.grid}>
         <div className={styles.card}>
           <h4>비교 기준 · 현재 After</h4>
@@ -324,70 +365,40 @@ export default function AiExport({
           {result.elapsed !== undefined && (
             <p className={styles.note}>변환 시간 {result.elapsed.toFixed(1)}초</p>
           )}
-          {colors?.status === 'corrected' &&
-            result.correctedUrl &&
-            (showOriginal && colors.warnings.length ? (
-              <div
-                role="alert"
-                className="mt-2 rounded-[var(--radius-sm,8px)] border border-[color:var(--danger)] bg-[color:var(--paper)] px-3 py-2 text-xs leading-relaxed text-[color:var(--ink)]"
-              >
-                {colorChangeLines(colors.warnings).map((line) => (
-                  <div key={line.kind}>{line.text} 바뀌었을 수 있어요.</div>
-                ))}
-              </div>
-            ) : (
-              <div
-                className="mt-2 text-xs leading-relaxed text-[color:var(--muted)]"
-                data-testid="flux-color-note"
-              >
-                {showOriginal
-                  ? 'AI 원본 색이에요. 벽·바닥 색이 원본과 크게 다르지 않아요.'
-                  : colors.warnings.length
-                    ? `${colorChangeLines(colors.warnings)
-                        .map((line) => line.text)
-                        .join(
-                          ', ',
-                        )} 바뀌어 원래 자재 색으로 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.`
-                    : '벽·바닥 색을 원래 자재 색에 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.'}
-              </div>
-            ))}
-          {colors?.status === 'reframed' && (
+          {notices.warnings.length > 0 && (
+            // One box, most important first: products, added objects, tile layout, then colour.
             <div
-              className="mt-2 text-xs leading-relaxed text-[color:var(--muted)]"
-              data-testid="flux-color-note"
+              role="alert"
+              className="mt-2 space-y-1.5 rounded-[var(--radius-sm,8px)] border border-[color:var(--danger)] bg-[color:var(--paper)] px-3 py-2 text-xs leading-relaxed text-[color:var(--ink)]"
             >
-              AI가 구도를 바꿔 벽·바닥 색을 원본과 비교하지 못했어요. 자재 색은 원본과 직접 비교해 주세요.
-            </div>
-          )}
-          {check?.status === 'done' &&
-            (check.missing.length ? (
-              <div
-                role="alert"
-                className="mt-2 rounded-[var(--radius-sm,8px)] border border-[color:var(--danger)] bg-[color:var(--paper)] px-3 py-2 text-xs leading-relaxed text-[color:var(--ink)]"
-              >
-                <div className="font-semibold text-[color:var(--danger)]">
-                  배치한 제품이 바뀌었을 수 있어요
+              {notices.warnings.map((section) => (
+                <div key={section.key} data-testid={`flux-${section.key}-warning`}>
+                  {section.title && (
+                    <div className="font-semibold text-[color:var(--danger)]">{section.title}</div>
+                  )}
+                  {section.lines.length > 1 || section.title ? (
+                    <ul className="space-y-0.5">
+                      {section.lines.map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div>{section.lines[0]}</div>
+                  )}
                 </div>
-                <ul className="mt-1 space-y-0.5">
-                  {check.missing.map((product) => (
-                    <li key={product.id}>
-                      {subject(product.label)} {product.where}에서 보이지 않거나 다른 물건으로 바뀌었을 수
-                      있어요.
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-1">다시 만들어 보세요. 자동으로 다시 만들지는 않아요.</div>
-              </div>
-            ) : (
-              <div className="mt-2 text-xs text-[color:var(--muted)]">
-                AI 제품 확인: 배치한 제품 {check.count}개가 모두 보여요.
-              </div>
-            ))}
-          {check?.status === 'failed' && (
-            <div className="mt-2 text-xs text-[color:var(--muted)]">
-              AI 제품 확인을 하지 못했어요. {check.message}
+              ))}
+              {notices.suggestRetry && <div>다시 만들어 보세요. 자동으로 다시 만들지는 않아요.</div>}
             </div>
           )}
+          {notices.infos.map((info) => (
+            <div
+              key={info.key}
+              className="mt-2 text-xs leading-relaxed text-[color:var(--muted)]"
+              data-testid={`flux-${info.key}-note`}
+            >
+              {info.text}
+            </div>
+          ))}
           {result.error && (
             <p role="alert" className={styles.error}>
               {result.error}

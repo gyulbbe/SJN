@@ -5,8 +5,12 @@ import { FLUX_FIXTURE_KINDS, type FluxScene } from './scene-contract';
 import {
   FLUX_CHECK_MAX_EDGE,
   FLUX_CHECK_SEEN,
+  FLUX_CHECK_WALLS,
+  FLUX_EXTRA_KINDS,
+  FLUX_EXTRA_PLACES,
   type FluxCheckResult,
   type FluxCheckScene,
+  type FluxCheckWall,
 } from './check-contract';
 
 function pngBlob(canvas: HTMLCanvasElement, message: string) {
@@ -99,10 +103,20 @@ export async function requestFluxImage(
   }
 }
 
-/** The fixtures to look for in a result: kind and box only. None when nothing was placed. */
-export function fluxCheckScene(scene: FluxScene | undefined): FluxCheckScene | undefined {
+/**
+ * The fixtures to look for in a result (kind, box and the face it is on) and the walls in view, for
+ * the tile question. None when nothing was placed: the check is not called then, as before.
+ */
+export function fluxCheckScene(
+  scene: FluxScene | undefined,
+  walls: readonly FluxCheckWall[] = [],
+): FluxCheckScene | undefined {
   if (!scene?.fixtures.length) return;
-  return { version: 1, fixtures: scene.fixtures.map(({ kind, box }) => ({ kind, box })) };
+  return {
+    version: 1,
+    fixtures: scene.fixtures.map(({ kind, box, face }) => ({ kind, box, face })),
+    ...(walls.length ? { walls: [...walls] } : {}),
+  };
 }
 const checkResponse = z.object({
   fixtures: z.array(
@@ -113,6 +127,11 @@ const checkResponse = z.object({
       seenAs: z.enum(FLUX_CHECK_SEEN),
     }),
   ),
+  // An older server answers without these; the result is then simply not checked for them.
+  extras: z.array(z.object({ kind: z.enum(FLUX_EXTRA_KINDS), place: z.enum(FLUX_EXTRA_PLACES) })).optional(),
+  walls: z
+    .array(z.object({ face: z.enum(FLUX_CHECK_WALLS), uniformTiles: z.enum(['yes', 'no', 'unsure']) }))
+    .optional(),
 });
 /**
  * Asks once whether each placed fixture still appears in a FLUX result (Gemma on the server). The
@@ -161,5 +180,10 @@ export async function requestFluxCheck(
   const body = checkResponse.safeParse(await response.json().catch(() => null));
   if (!body.success || body.data.fixtures.length !== scene.fixtures.length)
     throw new Error('설비 확인 응답이 올바르지 않아요.');
-  return { fixtures: body.data.fixtures };
+  const { fixtures, extras, walls } = body.data;
+  // Wall answers count only when they are exactly the walls asked about.
+  const asked = scene.walls ?? [];
+  const wallsMatch =
+    !!walls && walls.length === asked.length && asked.every((face) => walls.some((w) => w.face === face));
+  return { fixtures, ...(extras ? { extras } : {}), ...(wallsMatch && asked.length ? { walls } : {}) };
 }

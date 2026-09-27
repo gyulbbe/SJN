@@ -1,5 +1,5 @@
 import { FLUX_PROMPT } from './contract';
-import type { FluxFixture, FluxFixtureKind, FluxScene, FluxSurface } from './scene-contract';
+import type { FluxCeiling, FluxFixture, FluxFixtureKind, FluxScene, FluxSurface } from './scene-contract';
 
 /** Workers AI does not document a prompt limit; stay well inside typical text-encoder budgets. */
 export const FLUX_PROMPT_MAX_CHARS = 2400;
@@ -149,13 +149,18 @@ function surfaceSentence(surface: FluxSurface, compact = false): string {
   return `${name}: ${colorWords(surface.color)} ${surface.finish} tiles, ${surface.tileMm.map((value) => Math.round(value)).join(' × ')} mm, ${surface.pattern === 'brick' ? 'staggered' : 'grid'} layout${grout}. ${keep}`;
 }
 
+/** An in-room view shows the ceiling: said plainly, as it is, so the model has nothing to invent there. */
+export function ceilingSentence(ceiling: FluxCeiling): string {
+  return `The ceiling is plain ${colorWords(ceiling.color)} paint with one flat square light panel.`;
+}
+
 /**
  * Deterministic: the same scene always yields the same text. The walls' and floor's colours come
- * right after the fixed instruction (the model weighs early text more), then the fixtures in the
- * order given, then the count summary.
+ * right after the fixed instruction (the model weighs early text more), then the ceiling of an
+ * in-room view, the fixtures in the order given and the count summary.
  */
 export function buildFluxPrompt(scene: FluxScene | undefined): string {
-  if (!scene || (!scene.fixtures.length && !scene.surfaces.length)) return FLUX_PROMPT;
+  if (!scene || (!scene.fixtures.length && !scene.surfaces.length && !scene.ceiling)) return FLUX_PROMPT;
   const counts = new Map<string, number>();
   for (const fixture of scene.fixtures)
     counts.set(FLUX_KIND_NOUNS[fixture.kind], (counts.get(FLUX_KIND_NOUNS[fixture.kind]) ?? 0) + 1);
@@ -166,6 +171,7 @@ export function buildFluxPrompt(scene: FluxScene | undefined): string {
     [
       FLUX_PROMPT,
       ...scene.surfaces.map((surface) => surfaceSentence(surface, compact)),
+      scene.ceiling ? ceilingSentence(scene.ceiling) : '',
       ...scene.fixtures.slice(0, listed).map((fixture, i) => fixtureSentence(fixture, i + 1, i < detailed)),
       summary,
     ]
