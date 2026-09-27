@@ -1,11 +1,16 @@
 import type { ImageAssetRecord } from './types';
 import type { AssetRepository } from './repositories/contracts';
+import { validateD1Image } from './d1/images';
+import { extractPrimaryJpeg } from './jpeg-container';
 
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 export const MAX_IMAGE_PIXELS = 40_000_000;
 export const PREVIEW_EDGE = 2048;
 
 export type ImageHeader = { mime: 'image/jpeg' | 'image/png' | 'image/webp'; width: number; height: number };
+/** Browsers other than Safari cannot decode HEIC/HEIF, the default iPhone and some Android format. */
+export const HEIC_UNSUPPORTED =
+  "HEIC 사진은 아직 올릴 수 없어요. JPG로 저장해 다시 올려 주세요(아이폰은 카메라 설정의 '호환성 우선').";
 
 /** Read dimensions before decoding, so an oversized compressed image is rejected early. */
 export function readImageHeader(bytes: Uint8Array): ImageHeader {
@@ -66,6 +71,9 @@ export function readImageHeader(bytes: Uint8Array): ImageHeader {
       };
     }
   }
+  // A HEIC file renamed to .jpg still says so in its ISO-BMFF brand.
+  if (!header && text(4, 4) === 'ftyp' && /^(hei[cmsx]|hev[cmsx]|mif1|msf1)$/.test(text(8, 4)))
+    throw new Error(HEIC_UNSUPPORTED);
   if (!header || header.width < 1 || header.height < 1)
     throw new Error('올바른 JPG, PNG, WebP 이미지인지 확인해 주세요.');
   if (header.width * header.height > MAX_IMAGE_PIXELS)
@@ -112,6 +120,21 @@ export async function makeAsset(
   return asset;
 }
 
+/**
+ * Phone JPEGs carry more than one picture (Ultra HDR / Apple HDR gain map, motion photo video):
+ * keep the first image, byte for byte, and check it the way the server will before saving.
+ */
+function primaryJpeg(bytes: Uint8Array<ArrayBuffer>) {
+  let primary: Uint8Array<ArrayBuffer>;
+  try {
+    primary = extractPrimaryJpeg(bytes);
+  } catch {
+    throw new Error('이 JPG의 구조가 손상돼 열 수 없어요. 사진 앱에서 JPG로 다시 저장해 올려 주세요.');
+  }
+  validateD1Image(primary);
+  return primary;
+}
+
 export async function importImage(
   file: File,
   kind: ImageAssetRecord['kind'],
@@ -128,12 +151,14 @@ export async function importImage(
       { cause },
     );
   }
-  const header = readImageHeader(new Uint8Array(bytes));
+  let content = new Uint8Array(bytes);
+  const header = readImageHeader(content);
   if (file.type && file.type !== header.mime && file.type !== 'application/octet-stream')
     throw new Error('파일 내용과 확장자 형식이 달라요. JPG, PNG 또는 WebP로 다시 저장해 주세요.');
+  if (header.mime === 'image/jpeg') content = primaryJpeg(content);
   // Detach from the disk-backed File once. Wrapping the File itself in a Blob can
   // retain its filesystem reference and fail if another app changes/moves it later.
-  const source = new Blob([bytes], { type: header.mime });
+  const source = new Blob([content], { type: header.mime });
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(source);
@@ -148,7 +173,7 @@ export async function importImage(
       ownerId: 'local',
       name: file.name,
       mime: header.mime,
-      size: file.size,
+      size: source.size,
       width: bitmap.width,
       height: bitmap.height,
       kind: 'original',

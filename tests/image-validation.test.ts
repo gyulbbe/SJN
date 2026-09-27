@@ -30,6 +30,12 @@ describe('image validation before browser decode', () => {
     const bytes = new Uint8Array([255, 216, 255, 225, 0, 4, 0, 0, 255, 194, 0, 7, 8, 3, 32, 4, 176, 255, 217]);
     expect(readImageHeader(bytes)).toEqual({ mime: 'image/jpeg', width: 1200, height: 800 });
   });
+  it('names HEIC when a HEIC photo is renamed to .jpg', () => {
+    const heic = new Uint8Array(32);
+    heic.set([0, 0, 0, 24], 0);
+    heic.set(new TextEncoder().encode('ftypheicmif1heic'), 4);
+    expect(() => readImageHeader(heic)).toThrow('HEIC 사진은 아직 올릴 수 없어요');
+  });
   it('rejects JPEG with a truncated metadata segment rather than reading out of bounds', () => {
     expect(() => readImageHeader(new Uint8Array([255, 216, 255, 225, 255, 255, 0, 0, 255, 194, 0, 7]))).toThrow();
   });

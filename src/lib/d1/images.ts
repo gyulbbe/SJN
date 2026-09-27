@@ -1,3 +1,4 @@
+import { scanJpeg } from '../jpeg-container';
 import { invalid, MAX_ASSET_BYTES } from './http';
 
 /** Container validation, not full pixel decoding. No native Node/sharp dependency. */
@@ -118,21 +119,26 @@ export function validateD1Image(bytes: Uint8Array): { mime: string; width: numbe
       throw fail();
   } else if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
     mime = 'image/jpeg';
-    if (bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) throw fail();
-    let offset = 2,
-      scan = false;
-    while (offset + 4 <= bytes.length) {
-      if (bytes[offset++] !== 0xff) throw fail();
-      while (bytes[offset] === 0xff) offset++;
-      const marker = bytes[offset++];
-      if (marker === 0xd9 || marker === 0xd8 || marker === 0 || (marker >= 0xd0 && marker <= 0xd7))
-        throw fail();
-      if (offset + 2 > bytes.length) throw fail();
-      const length = u16(offset),
-        end = offset + length;
-      if (length < 2 || end > bytes.length - 2) throw fail();
+    let structure: ReturnType<typeof scanJpeg>;
+    try {
+      structure = scanJpeg(bytes);
+    } catch {
+      throw fail();
+    }
+    // One still image only: nothing after its EOI (HDR gain map, motion photo video) and no MPF
+    // list of further images. The browser import keeps just the first image before uploading.
+    if (
+      structure.eoi + 2 !== bytes.length ||
+      structure.segments.some(({ marker, start }) => marker === 0xe2 && text(start + 4, 4) === 'MPF\0')
+    )
+      throw invalid(
+        'JPEG 뒤에 HDR·움직이는 사진 같은 다른 자료가 붙어 있어요. 페이지를 새로고침한 뒤 다시 올려 주세요.',
+      );
+    let scan = false;
+    for (const { marker, start, end } of structure.segments) {
+      const offset = start + 2,
+        length = end - offset;
       if (marker === 0xe1) rotation = orientation(offset + 2, end);
-      if (marker === 0xe2 && text(offset + 2, 4) === 'MPF\0') throw fail();
       if ([0xc0, 0xc1, 0xc2].includes(marker)) {
         if (length < 8 || width || bytes[offset + 2] !== 8) throw fail();
         height = u16(offset + 3);
@@ -140,11 +146,10 @@ export function validateD1Image(bytes: Uint8Array): { mime: string; width: numbe
         if (length !== 8 + 3 * bytes[offset + 7]) throw fail();
       }
       if (marker === 0xda) {
-        if (!width || end >= bytes.length - 2) throw fail();
+        if (!width) throw fail();
         scan = true;
         break;
       }
-      offset = end;
     }
     if (!scan) throw fail();
   } else throw fail();

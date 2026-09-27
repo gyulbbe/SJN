@@ -1,9 +1,11 @@
-import { MAX_IMAGE_BYTES } from './images';
+import { HEIC_UNSUPPORTED, MAX_IMAGE_BYTES } from './images';
 
 /** The image types every upload in the app accepts; `importImage` still checks the actual bytes. */
 export const IMAGE_UPLOAD_ACCEPT = 'image/jpeg,image/png,image/webp';
 const IMAGE_TYPES = new Set(IMAGE_UPLOAD_ACCEPT.split(','));
 const IMAGE_EXTENSION = /\.(jpe?g|png|webp)$/i;
+const isHeic = (file: Pick<File, 'name' | 'type'>) =>
+  /^image\/hei[cf]/i.test(file.type) || /\.hei[cf]$/i.test(file.name);
 
 export interface ImagePick {
   files: File[];
@@ -38,14 +40,18 @@ export function pickImageFiles(
     if (all.length > 1)
       return { files: [], error: '사진은 한 장만 올릴 수 있어요. 한 장만 골라 끌어 놓아 주세요.' };
     const [file] = all;
-    if (!isUploadableImage(file)) return { files: [], error: 'JPG·PNG·WebP 이미지만 올릴 수 있어요.' };
+    if (!isUploadableImage(file))
+      return { files: [], error: isHeic(file) ? HEIC_UNSUPPORTED : 'JPG·PNG·WebP 이미지만 올릴 수 있어요.' };
     if (file.size > MAX_IMAGE_BYTES) return { files: [], error: '사진은 25MB 이하로 선택해 주세요.' };
     return { files: [file] };
   }
   const images = all.filter(isUploadableImage);
   const usable = images.filter((file) => file.size <= MAX_IMAGE_BYTES);
+  const heic = all.filter(isHeic).length,
+    other = all.length - images.length - heic;
   const skipped = [
-    all.length - images.length && `이미지가 아닌 파일 ${all.length - images.length}개`,
+    other && `이미지가 아닌 파일 ${other}개`,
+    heic && `HEIC 사진 ${heic}장`,
     images.length - usable.length && `25MB가 넘는 사진 ${images.length - usable.length}장`,
   ].filter(Boolean);
   if (!usable.length)
@@ -53,7 +59,9 @@ export function pickImageFiles(
       files: [],
       error: images.length
         ? '사진은 한 장에 25MB 이하로 올려 주세요.'
-        : 'JPG·PNG·WebP 이미지만 올릴 수 있어요.',
+        : heic
+          ? HEIC_UNSUPPORTED
+          : 'JPG·PNG·WebP 이미지만 올릴 수 있어요.',
     };
   if (current + usable.length > max)
     return {

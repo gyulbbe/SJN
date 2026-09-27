@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { importImage } from '../src/lib/images';
+import { extractPrimaryJpeg } from '../src/lib/jpeg-container';
 import type { AssetRepository } from '../src/lib/repositories/contracts';
 
 function png(width = 320, height = 200) {
@@ -116,6 +118,38 @@ describe('image import from a selected local file', () => {
       expect(assets.removeUnused).not.toHaveBeenCalled();
     },
   );
+
+  it('keeps only the first image of an Android Ultra HDR JPEG, for decoding and storage', async () => {
+    const photo = new Uint8Array(
+      readFileSync(
+        '.codex-remote-attachments/01a071fe-92b3-77b3-a261-8698b3d3f8e9/04c0e236-9188-46ed-9a61-a8ff283287f8/1-Photo-1.jpg',
+      ),
+    );
+    const primary = extractPrimaryJpeg(photo);
+    expect(primary.length).toBeLessThan(photo.length);
+    const assets = repository();
+
+    const { original } = await importImage(
+      new File([photo], '1-Photo-1.jpg', { type: 'image/jpeg' }),
+      'original',
+      assets,
+    );
+
+    expect(new Uint8Array(await (decode.mock.calls[0][0] as Blob).arrayBuffer())).toEqual(primary);
+    expect(new Uint8Array(await original.blob.arrayBuffer())).toEqual(primary);
+    expect(original).toMatchObject({ mime: 'image/jpeg', size: primary.length });
+  });
+
+  it('refuses a JPEG cut before its end, before decoding or saving', async () => {
+    const photo = readFileSync(
+      '.codex-remote-attachments/01a071fe-92b3-77b3-a261-8698b3d3f8e9/04c0e236-9188-46ed-9a61-a8ff283287f8/2-Photo-2.jpg',
+    );
+    const assets = repository();
+    const cut = new File([photo.subarray(0, 40000)], 'cut.jpg', { type: 'image/jpeg' });
+    await expect(importImage(cut, 'product', assets)).rejects.toThrow('구조가 손상돼');
+    expect(decode).not.toHaveBeenCalled();
+    expect(assets.put).not.toHaveBeenCalled();
+  });
 
   it('imports a newly selected copy after the original file becomes unreadable', async () => {
     const unreadable = selectedFile();

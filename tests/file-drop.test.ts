@@ -49,6 +49,21 @@ describe('file drop picking', () => {
     );
   });
 
+  it('explains HEIC photos, which browsers cannot open, instead of a generic format error', () => {
+    const single = pickImageFiles([image('IMG_0001.HEIC', 'image/heic')], { multiple: false });
+    expect(single.error).toContain('HEIC 사진은 아직 올릴 수 없어요');
+    expect(pickImageFiles([image('photo.heif', '')], { multiple: false }).error).toContain('JPG로 저장');
+    expect(pickImageFiles([image('a.heic', 'image/heic')], { multiple: true }).error).toContain('HEIC');
+    const mixed = pickImageFiles(
+      [image('a.png'), image('b.heic', 'image/heic'), image('c.txt', 'text/plain')],
+      {
+        multiple: true,
+      },
+    );
+    expect(mixed.files.map((f) => f.name)).toEqual(['a.png']);
+    expect(mixed.notice).toBe('이미지가 아닌 파일 1개, HEIC 사진 1장은 빼고 올렸어요.');
+  });
+
   it('refuses a multi drop that would pass the stored limit', () => {
     const over = pickImageFiles([image('a.png'), image('b.png')], { multiple: true, max: 100, current: 99 });
     expect(over.files).toEqual([]);
