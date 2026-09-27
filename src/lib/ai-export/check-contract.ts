@@ -26,31 +26,40 @@ export const FLUX_CHECK_WALLS = ['left', 'back', 'right'] as const;
 export type FluxCheckWall = (typeof FLUX_CHECK_WALLS)[number];
 
 const unit = z.number().finite().min(0).max(1);
-export const fluxCheckSceneSchema = z.strictObject({
-  version: z.literal(1),
-  fixtures: z
-    .array(
-      z.strictObject({
-        kind: z.enum(FLUX_FIXTURE_KINDS),
-        box: z
-          .tuple([unit, unit, unit, unit])
-          .refine(([left, top, right, bottom]) => right > left && bottom > top, '빈 영역이에요.'),
-        /**
-         * The wall or floor it is installed on, so the model can tell the placed shower from a
-         * second one on another wall. Absent in older requests.
-         */
-        face: z.enum(FLUX_FACES).optional(),
-      }),
-    )
-    .min(1)
-    .max(FLUX_MAX_FIXTURES),
-  /** The walls the input shows, each once; absent in older requests (no tile question then). */
-  walls: z
-    .array(z.enum(FLUX_CHECK_WALLS))
-    .max(FLUX_CHECK_WALLS.length)
-    .refine((walls) => new Set(walls).size === walls.length, '같은 벽이 겹쳐요.')
-    .optional(),
-});
+export const fluxCheckSceneSchema = z
+  .strictObject({
+    version: z.literal(1),
+    fixtures: z
+      .array(
+        z.strictObject({
+          kind: z.enum(FLUX_FIXTURE_KINDS),
+          box: z
+            .tuple([unit, unit, unit, unit])
+            .refine(([left, top, right, bottom]) => right > left && bottom > top, '빈 영역이에요.'),
+          /**
+           * The wall or floor it is installed on, so the model can tell the placed shower from a
+           * second one on another wall. Absent in older requests.
+           */
+          face: z.enum(FLUX_FACES).optional(),
+        }),
+      )
+      .max(FLUX_MAX_FIXTURES),
+    /** The walls the input shows, each once; absent in older requests (no tile question then). */
+    walls: z
+      .array(z.enum(FLUX_CHECK_WALLS))
+      .max(FLUX_CHECK_WALLS.length)
+      .refine((walls) => new Set(walls).size === walls.length, '같은 벽이 겹쳐요.')
+      .optional(),
+    /**
+     * The composite export sent the room empty (optionally with grey placeholders), so there are no
+     * fixtures to find: only added objects are asked about. Without it, at least one fixture is listed.
+     */
+    room: z.enum(['empty', 'placeholders']).optional(),
+  })
+  .refine(
+    (scene) => (scene.room ? scene.fixtures.length === 0 : scene.fixtures.length > 0),
+    '확인할 설비 목록이 올바르지 않아요.',
+  );
 export type FluxCheckScene = z.infer<typeof fluxCheckSceneSchema>;
 
 /** What the model says it sees in a fixture's box: a listed kind, another object, or nothing. */
@@ -130,6 +139,22 @@ export function fluxCheckPrompt(scene: FluxCheckScene) {
       `${i + 1}. ${FLUX_KIND_NOUNS[kind]}${face ? ` on the ${FACE_WORDS[face]}` : ''} at x ${percent(left)}–${percent(right)}%, y ${percent(top)}–${percent(bottom)}%`,
   );
   const walls = scene.walls ?? [];
+  const tiles = walls.length
+    ? [
+        `For each wall in walls (${walls.map((face) => WALL_WORDS[face]).join(', ')}), answer uniformTiles: "yes" if the whole wall shows one tile in one regular layout, "no" if a band, panel or area of a different tile, pattern or layout appears on it, "unsure" if you cannot tell.`,
+      ]
+    : [];
+  const wallsExample = walls.length ? `,"walls":[{"face":"${walls[0]}","uniformTiles":"yes"}]` : '';
+  if (scene.room)
+    return [
+      `Image 0 is an edited photograph of a bathroom that was given as an empty room${scene.room === 'placeholders' ? ', with plain grey shapes marking where fixtures will be added later' : ''}. Nothing should have been added to it.`,
+      'List in extras every object you can see anywhere in the image, at most 8:',
+      `- kind: ${FLUX_EXTRA_KINDS.map((kind) => `"${kind}" (${EXTRA_WORDS[kind]})`).join(', ')}.`,
+      '- place: "left", "back" or "right" for the wall it is on, "floor", "ceiling", or "middle" for something standing free in the room.',
+      `The room's own walls, floor and ceiling, one flat ceiling light panel, tile joints, reflections and shadows are not extras${scene.room === 'placeholders' ? ', and neither are the plain grey placeholder shapes' : ''}. An empty list is a normal answer.`,
+      ...tiles,
+      `Answer with JSON only: {"fixtures":[],"extras":[]${wallsExample}}`,
+    ].join('\n');
   return [
     'Image 0 is an edited photograph of a bathroom. Each numbered fixture below must still be in it, in the region given as percentages of the image width (x) and height (y) from the top-left corner.',
     'For each fixture, look inside its region and answer:',
@@ -141,12 +166,8 @@ export function fluxCheckPrompt(scene: FluxCheckScene) {
     `- kind: ${FLUX_EXTRA_KINDS.map((kind) => `"${kind}" (${EXTRA_WORDS[kind]})`).join(', ')}.`,
     '- place: "left", "back" or "right" for the wall it is on, "floor", "ceiling", or "middle" for something standing free in the room.',
     "Parts of a numbered fixture (its faucet, seat, drain, hose or mounting) are not extras. An object of a numbered kind somewhere else (for example a second shower on another wall) is an extra, with its own place. The room's own walls, floor and ceiling, one flat ceiling light panel, tile joints, reflections and shadows are not extras. An empty list is a normal answer.",
-    ...(walls.length
-      ? [
-          `For each wall in walls (${walls.map((face) => WALL_WORDS[face]).join(', ')}), answer uniformTiles: "yes" if the whole wall shows one tile in one regular layout, "no" if a band, panel or area of a different tile, pattern or layout appears on it, "unsure" if you cannot tell.`,
-        ]
-      : []),
-    `Answer with JSON only, one fixtures entry per fixture in order: {"fixtures":[{"index":1,"present":"yes","seenAs":"toilet"}],"extras":[]${walls.length ? `,"walls":[{"face":"${walls[0]}","uniformTiles":"yes"}]` : ''}}`,
+    ...tiles,
+    `Answer with JSON only, one fixtures entry per fixture in order: {"fixtures":[{"index":1,"present":"yes","seenAs":"toilet"}],"extras":[]${wallsExample}}`,
   ].join('\n');
 }
 
@@ -165,7 +186,7 @@ export function fluxCheckJsonSchema(count: number, walls: readonly FluxCheckWall
           additionalProperties: false,
           required: ['index', 'present', 'seenAs'],
           properties: {
-            index: { type: 'integer', minimum: 1, maximum: count },
+            index: { type: 'integer', minimum: 1, maximum: Math.max(1, count) },
             present: { type: 'string', enum: ['yes', 'no', 'unsure'] },
             seenAs: { type: 'string', enum: [...FLUX_CHECK_SEEN] },
           },

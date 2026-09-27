@@ -4,6 +4,8 @@ import {
   buildFluxPrompt,
   ceilingSentence,
   colorWords,
+  FLUX_EMPTY_ROOM_PROMPT,
+  FLUX_PLACEHOLDER_SENTENCE,
   FLUX_PROMPT_MAX_CHARS,
 } from '../src/lib/ai-export/prompt';
 import { fluxSceneSchema, type FluxFixture, type FluxScene } from '../src/lib/ai-export/scene-contract';
@@ -176,5 +178,37 @@ describe('in-room view: ceiling sentence', () => {
       { color: '#f3f2ee' },
     ])
       expect(fluxSceneSchema.safeParse({ ...scene, ceiling }).success).toBe(false);
+  });
+});
+
+describe('composite export: the empty-room prompt', () => {
+  const room = { ...scene, fixtures: [], ceiling: { color: '#f3f2ee', light: 'flat-panel' as const } };
+
+  it('describes no fixture, names what must not be added, keeps the tile and ceiling sentences', () => {
+    const text = buildFluxPrompt({ ...room, mode: 'empty-room' });
+    expect(text.startsWith(FLUX_EMPTY_ROOM_PROMPT)).toBe(true);
+    expect(text).toContain('The room has no fixtures and no furniture');
+    expect(text).toMatch(/do not add a shower, shower head, glass partition, faucet, shelf/);
+    expect(text).toContain('Back wall and left wall and right wall: light grey (#cfd0cc) matte tiles');
+    expect(text).toContain('The ceiling is plain white (#f3f2ee) paint with one flat square light panel.');
+    expect(text).not.toMatch(/It must remain|contains exactly these fixtures|at the lower right of image 0/);
+    expect(text).not.toContain(FLUX_PLACEHOLDER_SENTENCE);
+    expect(text).toBe(buildFluxPrompt(structuredClone({ ...room, mode: 'empty-room' })));
+    expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
+  });
+
+  it('asks the placeholders to stay plain grey shapes', () => {
+    const text = buildFluxPrompt({ ...room, mode: 'placeholders' });
+    expect(text).toContain(FLUX_PLACEHOLDER_SENTENCE);
+    expect(text.indexOf(FLUX_PLACEHOLDER_SENTENCE)).toBeLessThan(text.indexOf('Back wall'));
+  });
+
+  it('accepts the mode strictly and never with fixtures', () => {
+    expect(fluxSceneSchema.safeParse({ ...room, mode: 'empty-room' }).success).toBe(true);
+    expect(fluxSceneSchema.safeParse({ ...room, mode: 'placeholders' }).success).toBe(true);
+    expect(fluxSceneSchema.safeParse({ ...scene, mode: 'empty-room' }).success).toBe(false);
+    expect(fluxSceneSchema.safeParse({ ...room, mode: 'blank' }).success).toBe(false);
+    // The current request (no mode) keeps its prompt exactly.
+    expect(buildFluxPrompt(scene)).not.toContain('no fixtures');
   });
 });

@@ -595,3 +595,154 @@ test('the AI input is drawn inside the room from the chosen view; added, moved a
   await expect(views.getByRole('radio', { name: '저장한 방 안 시점', exact: true })).toBeChecked();
   expect(errors).toEqual([]);
 });
+
+test('composite export (chosen in the dialog): the room goes out empty, our products come back at their render pixels', async ({
+  page,
+}, testInfo) => {
+  const sent: { scene: { fixtures: unknown[]; mode?: string } }[] = [];
+  const checks: { fixtures: unknown[]; room?: string }[] = [];
+  let shift = 0;
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  // The mock model changes nothing (or moves the room down): its input scaled to twice the size.
+  await page.route('**/api/export/photoreal', async (route) => {
+    const req = route.request();
+    const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
+      headers: { 'content-type': req.headers()['content-type'] },
+    }).formData();
+    sent.push({ scene: JSON.parse(String(form.get('scene'))) });
+    const input = Buffer.from(await (form.get('image') as Blob).arrayBuffer());
+    const { width, height } = await sharp(input).metadata();
+    const scaled = await sharp(input)
+      .resize(width! * 2, height! * 2)
+      .png()
+      .toBuffer();
+    const body = await sharp({
+      create: { width: width! * 2, height: height! * 2, channels: 3, background: '#ffffff' },
+    })
+      .composite([{ input: scaled, left: 0, top: shift }])
+      .png()
+      .toBuffer();
+    await route.fulfill({ status: 200, contentType: 'image/png', body });
+  });
+  await page.route('**/api/export/photoreal/check', async (route) => {
+    const req = route.request();
+    const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
+      headers: { 'content-type': req.headers()['content-type'] },
+    }).formData();
+    checks.push(JSON.parse(String(form.get('scene'))));
+    await route.fulfill({ json: { fixtures: [], extras: [{ kind: 'glassPartition', place: 'middle' }] } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  const product = await sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="200"><rect x="30" y="15" width="100" height="170" rx="20" fill="#2f6fb0"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
+  await page.getByRole('button', { name: '신규 자재 등록', exact: true }).click();
+  const form = page.getByRole('dialog', { name: '신규 자재 등록', exact: true });
+  await form.getByLabel('상품명').fill('합성할 세면대');
+  await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
+  await form.getByLabel('가로 (mm)', { exact: true }).fill('600');
+  await form.getByLabel('높이 (mm)', { exact: true }).fill('800');
+  await form
+    .getByLabel('+ 제품 이미지 올리기', { exact: true })
+    .setInputFiles({ name: 'basin.png', mimeType: 'image/png', buffer: product });
+  await expect(
+    form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+  ).toBeVisible();
+  await form.getByRole('button', { name: '자재 등록', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await page.getByRole('button', { name: '위생도기', exact: true }).click();
+  await page.locator('button.material-tile').filter({ hasText: '합성할 세면대' }).click();
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  // The current method is the default; experiment A and B are one click away.
+  const methods = dialog.getByRole('group', { name: '변환 방식' });
+  await expect(methods.getByRole('radio')).toHaveCount(3);
+  await expect(methods.getByRole('radio', { name: '지금 방식', exact: true })).toBeChecked();
+  await expect(dialog.getByTestId('flux-composite-note')).toContainText('제품까지 AI가 다시 그려요');
+  await methods.getByText('실험 A · 빈 방 합성', { exact: true }).click();
+  await expect(methods.getByRole('radio', { name: '실험 A · 빈 방 합성', exact: true })).toBeChecked();
+  await expect(dialog.getByTestId('flux-composite-note')).toContainText('AI에는 제품을 뺀 빈 방');
+  const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
+  const source = dialog.getByAltText('AI 변환 기준 원본');
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  const warning = dialog.getByRole('alert');
+  await expect(warning).toContainText('배치하지 않은 물건이 생겼을 수 있어요: 유리 칸막이(가운데)', {
+    timeout: 30000,
+  });
+  await expect(warning).not.toContainText('떠 보일');
+  // The model got no fixture; the check asked about an empty room.
+  expect(sent[0].scene.fixtures).toEqual([]);
+  expect(sent[0].scene.mode).toBe('empty-room');
+  expect(checks[0]).toMatchObject({ fixtures: [], room: 'empty' });
+  // The shown result is on the capture grid and carries the product at the render's pixels (the
+  // reference is the full render), though the model's room had none.
+  const pixels = (locator: import('@playwright/test').Locator) =>
+    locator.evaluate(async (element) => {
+      const image = element as HTMLImageElement;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        data: [...context.getImageData(0, 0, canvas.width, canvas.height).data],
+      };
+    });
+  const [shown, reference] = await Promise.all([pixels(result), pixels(source)]);
+  expect([shown.width, shown.height]).toEqual([reference.width, reference.height]);
+  let blue = 0,
+    blueKept = 0;
+  for (let i = 0; i < reference.data.length; i += 4) {
+    if (reference.data[i + 2] <= reference.data[i] + 60) continue;
+    blue++;
+    const change =
+      Math.abs(shown.data[i] - reference.data[i]) + Math.abs(shown.data[i + 2] - reference.data[i + 2]);
+    if (change <= 12) blueKept++;
+  }
+  expect(blue).toBeGreaterThan(100);
+  expect(blueKept / blue).toBeGreaterThan(0.95);
+  await warning.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('flux-composite.png') });
+  const downloaded = page.waitForEvent('download');
+  await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
+  expect((await sharp(await downloadedArtifact(await downloaded)).metadata()).format).toBe('png');
+  // The model moved the room down: the product may look afloat, and the dialog says so.
+  shift = 24;
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b 다시 만들기', exact: true }).click();
+  await expect(warning).toContainText('AI가 방 구도를 바꿔 도기가 떠 보일 수 있어요.', { timeout: 30000 });
+  await expect(warning).toContainText('다시 만들어 보세요');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await warning.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('flux-composite-390.png') });
+  expect(sent).toHaveLength(2);
+  expect(checks).toHaveLength(2);
+  // This browser remembers the method; B sends grey stand-ins and says so.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  await expect(methods.getByRole('radio', { name: '실험 A · 빈 방 합성', exact: true })).toBeChecked();
+  await methods.getByText('실험 B · 회색 자리 합성', { exact: true }).click();
+  await expect(dialog.getByTestId('flux-composite-note')).toContainText('제품 자리는 회색 표시');
+  shift = 0;
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  await expect(result).toBeVisible({ timeout: 30000 });
+  expect(sent[2].scene).toMatchObject({ fixtures: [], mode: 'placeholders' });
+  await expect.poll(() => checks.length).toBe(3);
+  expect(checks[2]).toMatchObject({ fixtures: [], room: 'placeholders' });
+  expect(errors).toEqual([]);
+});

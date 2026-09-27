@@ -86,12 +86,22 @@ export const fluxCeilingSchema = z.strictObject({
   color: hex,
   light: z.enum(['flat-panel']),
 });
-export const fluxSceneSchema = z.strictObject({
-  version: z.literal(1),
-  fixtures: z.array(fluxFixtureSchema).max(FLUX_MAX_FIXTURES),
-  surfaces: z.array(fluxSurfaceSchema).max(FLUX_MAX_SURFACES),
-  ceiling: fluxCeilingSchema.optional(),
-});
+/**
+ * The composite export sends the room without its fixtures (they are put back on top afterwards):
+ * `empty-room` bare, `placeholders` with a flat grey stand-in where each fixture goes. Absent: the
+ * room is sent with its fixtures, as before. An empty-room request lists no fixtures.
+ */
+export const FLUX_ROOM_MODES = ['empty-room', 'placeholders'] as const;
+export type FluxRoomMode = (typeof FLUX_ROOM_MODES)[number];
+export const fluxSceneSchema = z
+  .strictObject({
+    version: z.literal(1),
+    fixtures: z.array(fluxFixtureSchema).max(FLUX_MAX_FIXTURES),
+    surfaces: z.array(fluxSurfaceSchema).max(FLUX_MAX_SURFACES),
+    ceiling: fluxCeilingSchema.optional(),
+    mode: z.enum(FLUX_ROOM_MODES).optional(),
+  })
+  .refine((scene) => !scene.mode || !scene.fixtures.length, '빈 방 요청에는 설비를 보내지 않아요.');
 
 export type FluxFixture = z.infer<typeof fluxFixtureSchema>;
 export type FluxSurface = z.infer<typeof fluxSurfaceSchema>;

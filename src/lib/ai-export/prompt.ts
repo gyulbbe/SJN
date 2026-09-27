@@ -155,11 +155,36 @@ export function ceilingSentence(ceiling: FluxCeiling): string {
 }
 
 /**
+ * The composite export's instruction: the room is sent without fixtures and they are put back on
+ * top afterwards, so nothing may be drawn in it. No fixture is described (a described fixture gets
+ * drawn); what must not be added is named instead. With placeholders, the grey stand-ins stay grey.
+ */
+export const FLUX_EMPTY_ROOM_PROMPT = `Edit image 0 into a photorealistic photograph of the same bathroom interior, photographed on site by an architectural photographer. Preserve exactly the camera viewpoint, framing, room geometry, walls, floor and ceiling. Preserve the selected materials, tile colors, tile dimensions, grout pattern and spacing. The room has no fixtures and no furniture: do not add a shower, shower head, glass partition, faucet, shelf, toilet, washbasin, bathtub, cabinet, mirror, towel rail, window, door or any furniture. Only improve photographic realism: physically plausible lighting, soft shadows and subtle material texture. Natural exposure and neutral white balance. Do not add people, text, labels or watermarks.`;
+export const FLUX_PLACEHOLDER_SENTENCE =
+  'The flat grey shapes are placeholders for fixtures that are added later: keep each one in the same place and size as a plain matte grey shape with a soft contact shadow, and do not turn it into an object.';
+function buildEmptyRoomPrompt(scene: FluxScene, mode: NonNullable<FluxScene['mode']>): string {
+  const compose = (compact: boolean) =>
+    [
+      FLUX_EMPTY_ROOM_PROMPT,
+      mode === 'placeholders' ? FLUX_PLACEHOLDER_SENTENCE : '',
+      ...scene.surfaces.map((surface) => surfaceSentence(surface, compact)),
+      scene.ceiling ? ceilingSentence(scene.ceiling) : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  const text = compose(false);
+  if (text.length <= FLUX_PROMPT_MAX_CHARS) return text;
+  const short = compose(true);
+  return short.length <= FLUX_PROMPT_MAX_CHARS ? short : short.slice(0, FLUX_PROMPT_MAX_CHARS);
+}
+
+/**
  * Deterministic: the same scene always yields the same text. The walls' and floor's colours come
  * right after the fixed instruction (the model weighs early text more), then the ceiling of an
  * in-room view, the fixtures in the order given and the count summary.
  */
 export function buildFluxPrompt(scene: FluxScene | undefined): string {
+  if (scene?.mode) return buildEmptyRoomPrompt(scene, scene.mode);
   if (!scene || (!scene.fixtures.length && !scene.surfaces.length && !scene.ceiling)) return FLUX_PROMPT;
   const counts = new Map<string, number>();
   for (const fixture of scene.fixtures)

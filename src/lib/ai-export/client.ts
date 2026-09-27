@@ -110,12 +110,15 @@ export async function requestFluxImage(
 export function fluxCheckScene(
   scene: FluxScene | undefined,
   walls: readonly FluxCheckWall[] = [],
+  /** The composite export sent the room empty: only added objects are asked about. */
+  room?: NonNullable<FluxCheckScene['room']>,
 ): FluxCheckScene | undefined {
   if (!scene?.fixtures.length) return;
   return {
     version: 1,
-    fixtures: scene.fixtures.map(({ kind, box, face }) => ({ kind, box, face })),
+    fixtures: room ? [] : scene.fixtures.map(({ kind, box, face }) => ({ kind, box, face })),
     ...(walls.length ? { walls: [...walls] } : {}),
+    ...(room ? { room } : {}),
   };
 }
 const checkResponse = z.object({

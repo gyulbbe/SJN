@@ -22,15 +22,53 @@ import {
   type FluxGrounding,
   type FluxPlacedProduct,
 } from '@/lib/ai-export/scene';
+import { composeFluxResult, placeholderRoom, type RoomLayers } from '@/lib/ai-export/composite';
+import type { FluxRoomMode } from '@/lib/ai-export/scene-contract';
 import styles from './ai-export.module.css';
 
 type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: string };
+/**
+ * The conversion method, chosen in the dialog while the composite export is being tested: the
+ * current one (the model repaints the whole render), or experiment A/B (the model repaints the room
+ * without fixtures, bare or with grey stand-ins, and ours go back on top). The current one is the
+ * default; this browser remembers the choice (a convenience only: unreadable storage means default).
+ */
+type FluxMethod = 'current' | FluxRoomMode;
+const FLUX_METHODS: { value: FluxMethod; label: string }[] = [
+  { value: 'current', label: '지금 방식' },
+  { value: 'empty-room', label: '실험 A · 빈 방 합성' },
+  { value: 'placeholders', label: '실험 B · 회색 자리 합성' },
+];
+export const FLUX_COMPOSITE_FLAG = 'sjn:flux-composite';
+function savedMethod(): FluxMethod {
+  try {
+    const value = window.localStorage.getItem(FLUX_COMPOSITE_FLAG);
+    return value === 'empty-room' || value === 'placeholders' ? value : 'current';
+  } catch {
+    return 'current';
+  }
+}
+function saveMethod(method: FluxMethod) {
+  try {
+    if (method === 'current') window.localStorage.removeItem(FLUX_COMPOSITE_FLAG);
+    else window.localStorage.setItem(FLUX_COMPOSITE_FLAG, method);
+  } catch {
+    // Not remembered; the choice still applies in this dialog.
+  }
+}
 /**
  * Whether the check's tile-layout answer is shown. Off: in the 2026-09-27 comparison it missed the
  * one real layout change and said "no" only where old front-composite walls were partly replaced.
  * The answer is still requested and kept in the check response for later evaluation.
  */
 const FLUX_SHOW_TILE_NOTICE = false;
+/** A radio shown as a pill (view and method choices). */
+const chipClass = (checked: boolean) =>
+  `cursor-pointer rounded-full border px-3 py-1 text-xs has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 ${
+    checked
+      ? 'border-[color:var(--ink)] bg-[color:var(--ink)] font-semibold text-[color:var(--paper)]'
+      : 'border-[color:var(--line)] bg-[color:var(--paper)] text-[color:var(--ink)]'
+  }`;
 export default function AiExport({
   capture,
   views,
@@ -39,8 +77,11 @@ export default function AiExport({
   disabled,
   onBusyChange,
 }: {
-  /** Renders the After for the AI input from the chosen view (none: the legacy front composite). */
-  capture: (view?: FluxViewChoice) => Promise<FluxCaptureSource>;
+  /**
+   * Renders the After for the AI input from the chosen view (none: the legacy front composite);
+   * `composite` also returns the room and fixture layers of the same frame.
+   */
+  capture: (view?: FluxViewChoice, composite?: boolean) => Promise<FluxCaptureSource>;
   /** In-room views to choose from; absent for a scene without room dimensions. */
   views?: { choices: FluxViewChoice[]; initial: FluxViewChoice };
   filename: string;
@@ -57,6 +98,10 @@ export default function AiExport({
   const [check, setCheck] = useState<FluxNoticeInput['check']>();
   const [colors, setColors] = useState<FluxNoticeInput['colors']>();
   const [showOriginal, setShowOriginal] = useState(false);
+  const [shifted, setShifted] = useState(false);
+  // Only scenes drawn in the room (views) can be composited.
+  const [method, setMethod] = useState<FluxMethod>(() => (views ? savedMethod() : 'current'));
+  const mode = views && method !== 'current' ? method : undefined;
   const { wait, start: startWait, finish: finishWait } = useServerWait();
   const state = useRef<{
     image?: Blob;
@@ -65,6 +110,8 @@ export default function AiExport({
     color?: { capture: Pixels; mask: RegionMask; layout: FluxInputLayout };
     /** Walls in the captured view, asked about in the result check. */
     walls?: FluxCheckWall[];
+    /** The composite export: the frame's layers and the fixtures' capture boxes. */
+    composite?: { layers: RoomLayers; boxes: [number, number, number, number][] };
     urls: string[];
     controller?: AbortController;
   }>({ urls: [] });
@@ -77,14 +124,25 @@ export default function AiExport({
       current.urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
-  /** A new view is a new comparison: the fixed source and everything made from it start over. */
+  /** A new view or method is a new comparison: the source and everything made from it start over. */
   function chooseView(next: FluxViewChoice) {
     if (busy || next === view) return;
     setView(next);
+    restart();
+  }
+  function chooseMethod(next: FluxMethod) {
+    if (busy || next === method) return;
+    setMethod(next);
+    saveMethod(next);
+    restart();
+  }
+  function restart() {
     state.current.image = undefined;
     state.current.grounding = undefined;
     state.current.color = undefined;
     state.current.walls = undefined;
+    state.current.composite = undefined;
+    setShifted(false);
     setSourceUrl('');
     setPlaced(undefined);
     setResult({});
@@ -102,15 +160,25 @@ export default function AiExport({
     setCheck(undefined);
     setColors(undefined);
     setShowOriginal(false);
+    setShifted(false);
     const started = performance.now();
     let timer = setTimeout(() => controller.abort(), 190_000);
     try {
       if (!state.current.image) {
         startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
-        const source = await capture(view);
-        const input = await prepareFluxImage(source.blob);
+        const source = await capture(view, !!mode);
+        const layers = mode ? source.layers : undefined;
+        if (mode && (!layers || !source.regions || !source.boxes))
+          throw new Error('제품을 따로 합성할 이미지 층을 만들지 못했어요.');
+        // The composite export sends the room without fixtures (with grey stand-ins for placeholders).
+        const sent: Pixels | undefined = layers
+          ? mode === 'placeholders'
+            ? placeholderRoom(layers)
+            : { width: layers.width, height: layers.height, data: layers.empty }
+          : undefined;
+        const input = await prepareFluxImage(sent ? await pixelsToPng(sent) : source.blob);
         if (source.regions) {
-          const pixels = await readPixels(source.blob);
+          const pixels = sent ?? (await readPixels(source.blob));
           state.current.color = {
             capture: pixels,
             mask: source.regions,
@@ -118,6 +186,7 @@ export default function AiExport({
           };
           state.current.walls = visibleWalls(source.regions, source.snapshot.scene);
         }
+        state.current.composite = layers ? { layers, boxes: Object.values(source.boxes ?? {}) } : undefined;
         const bitmap = await createImageBitmap(source.blob);
         let grounding: FluxGrounding | undefined;
         try {
@@ -139,29 +208,57 @@ export default function AiExport({
         state.current.image = input;
         state.current.grounding = grounding;
         setPlaced(grounding?.placed ?? []);
-        const url = URL.createObjectURL(input);
+        // The composite's reference is the full render: that is what the result should look like.
+        const url = URL.createObjectURL(mode ? source.blob : input);
         state.current.urls.push(url);
         setSourceUrl(url);
       }
       // Same source image, fresh seed: re-generating gives a different variation.
       const seed = crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff;
       startWait({ spec: FLUX_WAIT, message: '서버에서 현장 사진처럼 변환하는 중이에요.' });
-      const blob = await requestFluxImage(
-        state.current.image,
-        seed,
-        controller.signal,
-        userId,
-        state.current.grounding?.scene,
-      );
+      const grounded = state.current.grounding?.scene;
+      // An empty room is described without fixtures: a described fixture gets drawn.
+      const sentScene = mode && grounded ? { ...grounded, fixtures: [], mode } : mode ? undefined : grounded;
+      const blob = await requestFluxImage(state.current.image, seed, controller.signal, userId, sentScene);
       controller.signal.throwIfAborted();
       // Only a finished server conversion counts toward this browser's usual time.
       finishWait(true);
-      const url = URL.createObjectURL(blob);
-      state.current.urls.push(url);
-      setResult({ url, elapsed: (performance.now() - started) / 1000 });
-      // Walls and floor back to the render's colours where the model kept the framing (no AI call).
       const color = state.current.color;
-      if (color) {
+      const composite = state.current.composite;
+      if (composite && color) {
+        // Our fixtures back on the model's room, where the render put them (no AI call).
+        const composed = composeFluxResult({
+          result: await readPixels(blob),
+          input: color.capture,
+          layers: composite.layers,
+          mask: color.mask,
+          layout: color.layout,
+          boxes: composite.boxes,
+        });
+        if (!live.current) return;
+        const rawUrl = URL.createObjectURL(await pixelsToPng(composed.raw));
+        const correctedUrl = composed.corrected
+          ? URL.createObjectURL(await pixelsToPng(composed.corrected))
+          : undefined;
+        state.current.urls.push(rawUrl, ...(correctedUrl ? [correctedUrl] : []));
+        if (!live.current) return;
+        setResult({ url: rawUrl, correctedUrl, elapsed: (performance.now() - started) / 1000 });
+        setShifted(composed.shifted);
+        setColors(
+          !composed.review.framing.aligned
+            ? { status: 'reframed' }
+            : correctedUrl
+              ? { status: 'corrected', warnings: composed.review.warnings }
+              : undefined,
+        );
+      } else {
+        const url = URL.createObjectURL(blob);
+        state.current.urls.push(url);
+        setResult({ url, elapsed: (performance.now() - started) / 1000 });
+      }
+      // Walls and floor back to the render's colours where the model kept the framing (no AI call).
+      if (color && !composite) {
+        const url = state.current.urls.at(-1);
         try {
           const review = reviewResultColors({ ...color, result: await readPixels(blob) });
           if (!live.current) return;
@@ -179,17 +276,30 @@ export default function AiExport({
       }
       // Every result is checked once: placed products, added objects and the walls' tile layout.
       // Anything off is only reported.
-      const scene = fluxCheckScene(state.current.grounding?.scene, state.current.walls);
+      // The composite asks only about added objects, in the model's room before our fixtures go on.
+      const scene = fluxCheckScene(
+        state.current.grounding?.scene,
+        state.current.walls,
+        mode ? (mode === 'placeholders' ? 'placeholders' : 'empty') : undefined,
+      );
       if (!scene) return;
       clearTimeout(timer);
       timer = setTimeout(() => controller.abort(), 130_000);
       setCheck({ status: 'checking' });
-      startWait({ spec: FLUX_CHECK_WAIT, message: '결과에 배치한 제품이 그대로 있는지 확인하는 중이에요.' });
+      startWait({
+        spec: FLUX_CHECK_WAIT,
+        message: mode
+          ? '결과에 없던 물건이 생겼는지 확인하는 중이에요.'
+          : '결과에 배치한 제품이 그대로 있는지 확인하는 중이에요.',
+      });
       try {
         const checked = await requestFluxCheck(blob, scene, controller.signal, userId);
         finishWait(true);
         if (!live.current) return;
-        setCheck({ status: 'done', reading: readFluxCheck(checked, scene.fixtures) });
+        setCheck({
+          status: 'done',
+          reading: readFluxCheck(checked, scene.fixtures, { emptyRoom: !!mode }),
+        });
       } catch (error) {
         if (!live.current) return;
         setCheck({
@@ -227,6 +337,7 @@ export default function AiExport({
     colors: colors?.status === 'corrected' && !result.correctedUrl ? undefined : colors,
     corrected: !showOriginal,
     showTiles: FLUX_SHOW_TILE_NOTICE,
+    ...(mode ? { composite: { shifted } } : {}),
   });
   return (
     <section className={styles.panel} aria-label="AI 현장 사진 변환">
@@ -243,14 +354,7 @@ export default function AiExport({
           <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">AI 입력 시점</legend>
           <div className="flex flex-wrap gap-1.5">
             {views.choices.map((choice) => (
-              <label
-                key={choice}
-                className={`cursor-pointer rounded-full border px-3 py-1 text-xs has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 ${
-                  choice === view
-                    ? 'border-[color:var(--ink)] bg-[color:var(--ink)] font-semibold text-[color:var(--paper)]'
-                    : 'border-[color:var(--line)] bg-[color:var(--paper)] text-[color:var(--ink)]'
-                }`}
-              >
+              <label key={choice} className={chipClass(choice === view)}>
                 <input
                   type="radio"
                   name="flux-view"
@@ -268,6 +372,35 @@ export default function AiExport({
             방 안에서 본 모습(천장 포함)으로 변환해요. 방 바깥의 빈 여백이 없어 AI가 없던 벽·물건을 덜
             만들어요.
             {result.url ? ' 시점을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.' : ''}
+          </div>
+        </fieldset>
+      )}
+      {views && (
+        <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
+          <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">변환 방식</legend>
+          <div className="flex flex-wrap gap-1.5">
+            {FLUX_METHODS.map((choice) => (
+              <label key={choice.value} className={chipClass(choice.value === method)}>
+                <input
+                  type="radio"
+                  name="flux-method"
+                  className="sr-only"
+                  value={choice.value}
+                  checked={choice.value === method}
+                  onChange={() => chooseMethod(choice.value)}
+                />
+                {choice.label}
+              </label>
+            ))}
+          </div>
+          <div
+            className="mt-1.5 text-xs leading-relaxed text-[color:var(--muted)]"
+            data-testid="flux-composite-note"
+          >
+            {mode
+              ? `실험: AI에는 제품을 뺀 빈 방${mode === 'placeholders' ? '(제품 자리는 회색 표시)' : ''}을 보내고, 결과 위에 3D 렌더의 제품을 같은 자리·크기 그대로 올려요. 제품 모양은 그대로지만 매끈한 3D 질감으로 보일 수 있어요.`
+              : '제품까지 AI가 다시 그려요. 사진 같지만 제품 모양이 바뀌거나 없던 물건이 생길 수 있어요.'}
+            {result.url ? ' 방식을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.' : ''}
           </div>
         </fieldset>
       )}
