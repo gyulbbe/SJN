@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import sharp from 'sharp';
 import { runFluxCheck, fluxCheckPayload, readFluxCheckCompletion } from '../src/lib/ai-export/check-server';
 import {
+  fluxCheckJsonSchema,
   fluxCheckPrompt,
   fluxCheckWarnings,
   parseFluxCheck,
@@ -174,7 +175,9 @@ describe('FLUX result check (mock inference)', () => {
         { index: 1, present: 'yes', seenAs: 'toilet' },
       ],
     });
-    expect(parseFluxCheck('```json\n' + ok + '\n```', scene).map((f) => [f.kind, f.present])).toEqual([
+    expect(
+      parseFluxCheck('```json\n' + ok + '\n```', scene).fixtures.map((f) => [f.kind, f.present]),
+    ).toEqual([
       ['toilet', 'yes'],
       ['basin', 'unsure'],
     ]);
@@ -209,5 +212,164 @@ describe('FLUX result check (mock inference)', () => {
       readFluxCheckCompletion({ result: { ...completion('stop', ok).result, model: 'other-model' } }, scene),
     ).toThrow();
     expect(readFluxCheckCompletion(completion('stop', ok), scene).fixtures).toHaveLength(2);
+  });
+});
+
+describe('FLUX result check v2: added objects, moved fixtures and tile layout', () => {
+  const walled: FluxCheckScene = {
+    version: 1,
+    fixtures: [
+      { kind: 'basin', box: [0.05, 0.4, 0.3, 0.7], face: 'left' },
+      { kind: 'shower', box: [0.25, 0.2, 0.33, 0.6], face: 'left' },
+      { kind: 'toilet', box: [0.6, 0.55, 0.7, 0.8], face: 'floor' },
+    ],
+    walls: ['left', 'back', 'right'],
+  };
+  const text = (value: unknown) => JSON.stringify(value);
+  const fixtures = [
+    { index: 1, present: 'yes', seenAs: 'basin' },
+    { index: 2, present: 'no', seenAs: 'none' },
+    { index: 3, present: 'yes', seenAs: 'toilet' },
+  ];
+
+  it('asks about faces, extras and the walls in view, and schemas them strictly', () => {
+    const prompt = fluxCheckPrompt(walled);
+    expect(prompt).toContain('1. washbasin on the left wall at x 5–30%, y 40–70%');
+    expect(prompt).toContain('3. toilet on the floor at x 60–70%');
+    expect(prompt).toContain('list in extras every other object');
+    expect(prompt).toContain('a second shower on another wall');
+    expect(prompt).toContain('(left wall, back wall, right wall)');
+    expect(prompt).not.toMatch(/[가-힣]/);
+    // No walls asked: no tile question and no walls in the schema.
+    expect(fluxCheckPrompt(scene)).not.toContain('uniformTiles');
+    const schema = fluxCheckJsonSchema(3, walled.walls) as {
+      required: string[];
+      properties: Record<string, { maxItems?: number; minItems?: number }>;
+    };
+    expect(schema.required).toEqual(['fixtures', 'extras', 'walls']);
+    expect(schema.properties.extras.maxItems).toBe(8);
+    expect(schema.properties.walls).toMatchObject({ minItems: 3, maxItems: 3 });
+    expect((fluxCheckJsonSchema(2) as { required: string[] }).required).toEqual(['fixtures', 'extras']);
+  });
+
+  it('reads extras and walls in the asked order, once each; an answer without them still reads', () => {
+    const parsed = parseFluxCheck(
+      text({
+        fixtures,
+        extras: [
+          { kind: 'showerHead', place: 'right' },
+          { kind: 'glassPartition', place: 'middle' },
+          { kind: 'showerHead', place: 'right' },
+        ],
+        walls: [
+          { face: 'right', uniformTiles: 'yes' },
+          { face: 'left', uniformTiles: 'yes' },
+          { face: 'back', uniformTiles: 'no' },
+        ],
+      }),
+      walled,
+    );
+    expect(parsed.extras).toEqual([
+      { kind: 'showerHead', place: 'right' },
+      { kind: 'glassPartition', place: 'middle' },
+    ]);
+    expect(parsed.walls?.map((w) => w.face)).toEqual(['left', 'back', 'right']);
+    // The v1 shape: fixtures only.
+    const old = parseFluxCheck(text({ fixtures }), walled);
+    expect(old.extras).toBeUndefined();
+    expect(old.walls).toBeUndefined();
+    const bad = [
+      { fixtures, extras: [{ kind: 'towel', place: 'left' }] },
+      { fixtures, extras: [{ kind: 'window', place: 'outside' }] },
+      { fixtures, extras: Array.from({ length: 9 }, () => ({ kind: 'other', place: 'floor' })) },
+      { fixtures, extras: [], walls: [{ face: 'left', uniformTiles: 'yes' }] },
+      {
+        fixtures,
+        extras: [],
+        walls: [
+          { face: 'left', uniformTiles: 'yes' },
+          { face: 'left', uniformTiles: 'no' },
+          { face: 'back', uniformTiles: 'yes' },
+        ],
+      },
+      { fixtures, extras: [], note: 'looks fine' },
+    ];
+    for (const value of bad) expect(() => parseFluxCheck(text(value), walled)).toThrow();
+    // Walls not asked about must not be answered.
+    expect(() =>
+      parseFluxCheck(text({ fixtures: fixtures.slice(0, 2), extras: [], walls: [] }), scene),
+    ).not.toThrow();
+    expect(() =>
+      parseFluxCheck(
+        text({ fixtures: fixtures.slice(0, 2), extras: [], walls: [{ face: 'left', uniformTiles: 'no' }] }),
+        scene,
+      ),
+    ).toThrow();
+  });
+
+  it.each([
+    [
+      'a repeated wall',
+      (f: FormData) => f.set('scene', JSON.stringify({ ...walled, walls: ['left', 'left'] })),
+    ],
+    ['the floor as a wall', (f: FormData) => f.set('scene', JSON.stringify({ ...walled, walls: ['floor'] }))],
+    [
+      'a free-text face',
+      (f: FormData) =>
+        f.set(
+          'scene',
+          JSON.stringify({ ...walled, fixtures: [{ kind: 'toilet', box: [0, 0, 0.1, 0.1], face: '벽' }] }),
+        ),
+    ],
+  ] as const)('rejects %s before inference', async (_label, edit) => {
+    const env = environment();
+    await expect(runFluxCheck(request(await jpeg(), edit), env)).rejects.toMatchObject({ status: 400 });
+    expect(env.AI.run).not.toHaveBeenCalled();
+  });
+
+  it('returns extras and walls from one call and keeps diagnostics to counts', async () => {
+    const run = vi.fn(async () =>
+      Response.json({
+        result: {
+          model: CLOUD_GEMMA_MODEL,
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: text({
+                  fixtures,
+                  extras: [{ kind: 'glassPartition', place: 'middle' }],
+                  walls: [
+                    { face: 'left', uniformTiles: 'yes' },
+                    { face: 'back', uniformTiles: 'yes' },
+                    { face: 'right', uniformTiles: 'unsure' },
+                  ],
+                }),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 900, completion_tokens: 120 },
+        },
+      }),
+    );
+    const env = environment(run);
+    const response = await runFluxCheck(
+      request(await jpeg(), (f) => f.set('scene', JSON.stringify(walled))),
+      env,
+    );
+    const body = await response.json();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(body.promptRevision).toBe('flux-fixture-check-v2');
+    expect(body.extras).toEqual([{ kind: 'glassPartition', place: 'middle' }]);
+    expect(body.walls).toHaveLength(3);
+    const payload = (run.mock.calls as unknown as [string, ReturnType<typeof fluxCheckPayload>][])[0][1];
+    expect(JSON.stringify(payload.response_format)).toContain('uniformTiles');
+    const failing = vi.fn(async () => Response.json({ errors: [{ message: 'Quota' }] }, { status: 429 }));
+    const failure = await runFluxCheck(
+      request(await jpeg(), (f) => f.set('scene', JSON.stringify(walled))),
+      environment(failing),
+    ).catch((error) => error);
+    expect(failure.diagnostics).toMatchObject({ fixtures: 3, walls: 3 });
+    expect(JSON.stringify(failure.diagnostics)).not.toMatch(/left|shower|basin/);
   });
 });

@@ -48,7 +48,7 @@ const invalid = (message: string): never => {
   throw new CloudGemmaError(message, 'invalid_input', 400);
 };
 
-/** Reads and validates the check request before any model call: an image and the fixture list only. */
+/** Reads and validates the check request before any model call: an image, the fixtures and walls only. */
 export async function readFluxCheckRequest(request: Request) {
   const contentType = request.headers.get('content-type') ?? '';
   if (!contentType.startsWith('multipart/form-data;'))
@@ -122,7 +122,7 @@ export function fluxCheckPayload(
       json_schema: {
         name: 'flux_fixture_check',
         strict: true,
-        schema: prepareCloudGemmaSchema(fluxCheckJsonSchema(scene.fixtures.length)),
+        schema: prepareCloudGemmaSchema(fluxCheckJsonSchema(scene.fixtures.length, scene.walls)),
       },
     },
   };
@@ -140,14 +140,14 @@ export function readFluxCheckCompletion(body: unknown, scene: FluxCheckScene): F
   const choice = output.choices[0];
   if (choice.finish_reason !== 'stop' || !choice.message.content || choice.message.refusal)
     throw new CloudGemmaError('Gemma의 검사 결과를 확인하지 못했어요.', 'invalid_response', 502);
-  let fixtures: FluxCheckResult['fixtures'];
+  let answer: Omit<FluxCheckResult, 'usage'>;
   try {
-    fixtures = parseFluxCheck(choice.message.content, scene);
+    answer = parseFluxCheck(choice.message.content, scene);
   } catch {
     throw new CloudGemmaError('Gemma 검사 결과의 형식이 올바르지 않아요.', 'invalid_response', 502);
   }
   return {
-    fixtures,
+    ...answer,
     usage: { inputTokens: output.usage?.prompt_tokens, outputTokens: output.usage?.completion_tokens },
   };
 }
@@ -168,6 +168,7 @@ export async function runFluxCheck(request: Request, environment = getRuntimeEnv
     promptRevision: FLUX_CHECK_PROMPT_REVISION,
     phase: 'provider-request',
     fixtures: scene.fixtures.length,
+    walls: scene.walls?.length ?? 0,
     imageBytes: image.bytes.length,
     imageWidth: image.width,
     imageHeight: image.height,

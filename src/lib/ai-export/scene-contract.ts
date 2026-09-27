@@ -78,12 +78,22 @@ export const fluxSurfaceSchema = z.strictObject({
   groutMm: z.number().finite().min(0).max(50),
   finish: z.enum(FLUX_FINISHES),
 });
+/**
+ * The ceiling an in-room view shows: its paint colour and the one flat light panel. Absent for the
+ * front composite and older requests, which show no ceiling.
+ */
+export const fluxCeilingSchema = z.strictObject({
+  color: hex,
+  light: z.enum(['flat-panel']),
+});
 export const fluxSceneSchema = z.strictObject({
   version: z.literal(1),
   fixtures: z.array(fluxFixtureSchema).max(FLUX_MAX_FIXTURES),
   surfaces: z.array(fluxSurfaceSchema).max(FLUX_MAX_SURFACES),
+  ceiling: fluxCeilingSchema.optional(),
 });
 
 export type FluxFixture = z.infer<typeof fluxFixtureSchema>;
 export type FluxSurface = z.infer<typeof fluxSurfaceSchema>;
+export type FluxCeiling = z.infer<typeof fluxCeilingSchema>;
 export type FluxScene = z.infer<typeof fluxSceneSchema>;

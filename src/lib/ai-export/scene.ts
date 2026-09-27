@@ -6,6 +6,7 @@ import {
   type MaterialCategory,
   type MaterialVersion,
   type RenderSnapshot,
+  type Scene,
 } from '../types';
 import { finishAppearance } from '../render/finish';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
@@ -266,8 +267,46 @@ export type FluxCaptureSource = {
   boxes?: Record<string, Box>;
   /** Which wall, floor or fixture covers each capture pixel, for the result's colour check. */
   regions?: RegionMask;
+  /** Paint colour of the ceiling an in-room view shows (with its one light panel); none otherwise. */
+  ceiling?: string;
 };
-export type FluxPlacedProduct = { id: string; label: string; where: string };
+
+/**
+ * Whether an in-room capture shows its ceiling (at least 1% of the frame): there the ceiling and
+ * its light panel are the only pixels outside every face and fixture, since the open front is never
+ * in view. The ceiling sentence is sent only then, so the text never names what the image lacks.
+ */
+export function visibleCeiling(mask: RegionMask): boolean {
+  let unlabelled = 0;
+  for (const label of mask.data) if (label === 0) unlabelled++;
+  return unlabelled >= mask.data.length * 0.01;
+}
+
+/** A wall that covers at least this share of the capture is asked about in the result check. */
+const MIN_WALL_SHARE = 0.02;
+const WALL_ORDER = ['left', 'back', 'right'] as const;
+/**
+ * The walls the capture shows (left, back, right in that order), read from its region mask: a
+ * region is a scene surface (`surface:<id>`, its room face) or a bare face (`face:<face>`).
+ */
+export function visibleWalls(
+  mask: RegionMask,
+  scene: Pick<Scene, 'surfaces'>,
+): (typeof WALL_ORDER)[number][] {
+  const counts = new Uint32Array(256);
+  for (const label of mask.data) counts[label]++;
+  const cover = new Map<string, number>();
+  mask.regions.forEach((region, index) => {
+    if (region.kind !== 'wall') return;
+    const face = region.key.startsWith('face:')
+      ? region.key.slice(5)
+      : scene.surfaces.find((surface) => 'surface:' + surface.id === region.key)?.roomFace;
+    if (face) cover.set(face, (cover.get(face) ?? 0) + counts[index + 1]);
+  });
+  const total = mask.width * mask.height;
+  return WALL_ORDER.filter((face) => (cover.get(face) ?? 0) >= total * MIN_WALL_SHARE);
+}
+export type FluxPlacedProduct = { id: string; label: string; where: string; face: FluxFace };
 export type FluxGrounding = { scene: FluxScene; placed: FluxPlacedProduct[] };
 
 /**
@@ -281,6 +320,8 @@ export async function buildFluxGrounding(input: {
   layout: FluxInputLayout;
   /** Boxes from the 3D viewer, keyed by fixture id; the 2D path derives them from the scene. */
   boxes?: Record<string, Box>;
+  /** Ceiling paint of an in-room view; it is named under the photo's light, like the tiles. */
+  ceiling?: string;
 }): Promise<FluxGrounding> {
   const { snapshot, reader, capture, layout, boxes } = input;
   const scene = snapshot.scene;
@@ -325,6 +366,7 @@ export async function buildFluxGrounding(input: {
       id: draft.id,
       label: categoryLabels[draft.kind as MaterialCategory] ?? draft.kind,
       where: KOREAN_WHERE(draft.captureBox),
+      face: draft.face,
     });
   }
 
@@ -362,5 +404,9 @@ export async function buildFluxGrounding(input: {
       if (!same.faces.includes(face)) same.faces.push(face);
     } else if (surfaces.length < FLUX_MAX_SURFACES) surfaces.push({ faces: [face], ...entry });
   }
-  return { scene: { version: 1, fixtures, surfaces }, placed };
+  const ceiling =
+    input.ceiling && HEX.test(input.ceiling)
+      ? { color: litColor(input.ceiling.toLowerCase(), snapshot.lighting), light: 'flat-panel' as const }
+      : undefined;
+  return { scene: { version: 1, fixtures, surfaces, ...(ceiling ? { ceiling } : {}) }, placed };
 }

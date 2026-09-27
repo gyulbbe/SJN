@@ -85,8 +85,15 @@ test('export converts with klein 4B, downloads PNG, re-generates with a new seed
     ['image', 'scene', 'seed'],
     ['image', 'scene', 'seed'],
   ]);
-  // The placed-product description travels with every request; an empty base room has none.
-  expect(JSON.parse(calls[0].scene)).toEqual({ version: 1, fixtures: [], surfaces: [] });
+  // The placed-product description travels with every request; an empty base room has none. The
+  // input is drawn inside the room (default: centre), so its ceiling is described too.
+  expect(JSON.parse(calls[0].scene)).toEqual({
+    version: 1,
+    fixtures: [],
+    surfaces: [],
+    ceiling: { color: '#f3f2ee', light: 'flat-panel' },
+  });
+  await expect(dialog.getByRole('radio', { name: '방 안 · 가운데(기본)', exact: true })).toBeChecked();
   expect(calls[1].scene).toBe(calls[0].scene);
   await expect(dialog.getByLabel('변환에 전달한 제품')).toContainText('전달할 제품 정보가 없어');
   // Re-generating reuses the captured After image with a fresh seed.
@@ -210,7 +217,10 @@ test('every result is checked once for the placed products; a missing one is rep
     .png()
     .toBuffer();
   const converts: string[] = [];
-  const checks: { type: string; scene: { version: number; fixtures: Record<string, unknown>[] } }[] = [];
+  const checks: {
+    type: string;
+    scene: { version: number; fixtures: Record<string, unknown>[]; walls?: string[] };
+  }[] = [];
   let missing = false,
     checkFails = false;
   await page.route('**/api/export/photoreal', async (route) => {
@@ -287,7 +297,7 @@ test('every result is checked once for the placed products; a missing one is rep
   // The check gets a JPEG of the result and, per product, its kind and box only.
   expect(checks[0].type).toBe('image/jpeg');
   expect(checks[0].scene.version).toBe(1);
-  expect(checks[0].scene.fixtures.map((f) => Object.keys(f).sort())).toEqual([['box', 'kind']]);
+  expect(checks[0].scene.fixtures.map((f) => Object.keys(f).sort())).toEqual([['box', 'face', 'kind']]);
   expect(checks[0].scene.fixtures[0].kind).toBe('basin');
   const regenerate = dialog.getByRole('button', {
     name: 'AI 변환 · flux-2-klein-4b 다시 만들기',
@@ -374,8 +384,9 @@ test('result walls get their tile colour back; the AI colours stay one click awa
   const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
   await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
   const note = dialog.getByTestId('flux-color-note');
+  // The in-room input also shows the (untiled) floor, which is compared and corrected too.
   await expect(note).toContainText(
-    '벽 타일 색이 원본보다 따뜻하게(노랗게) 바뀌어 원래 자재 색으로 맞췄어요',
+    /^벽 타일 색이 원본보다 따뜻하게\(노랗게\).* 바뀌어 원래 자재 색으로 맞췄어요/,
     {
       timeout: 30000,
     },
@@ -435,4 +446,152 @@ test('result walls get their tile colour back; the AI colours stay one click awa
   });
   await expect(dialog.getByRole('button', { name: /색 보기$/ })).toHaveCount(0);
   expect(conversions).toEqual(['warm', 'reframed']);
+});
+
+test('the AI input is drawn inside the room from the chosen view; added, moved and re-tiled objects are reported once', async ({
+  page,
+}, testInfo) => {
+  const png = await sharp({ create: { width: 992, height: 672, channels: 3, background: '#c9c3b8' } })
+    .png()
+    .toBuffer();
+  const converts: { hash: string; scene: { ceiling?: unknown } }[] = [];
+  const checks: { walls?: string[]; fixtures: { kind: string; face?: string }[] }[] = [];
+  let answer: 'extras' | 'moved' = 'extras';
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.route('**/api/export/photoreal', async (route) => {
+    const req = route.request();
+    const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
+      headers: { 'content-type': req.headers()['content-type'] },
+    }).formData();
+    converts.push({
+      hash: createHash('sha256')
+        .update(Buffer.from(await (form.get('image') as Blob).arrayBuffer()))
+        .digest('hex'),
+      scene: JSON.parse(String(form.get('scene'))),
+    });
+    await route.fulfill({ status: 200, contentType: 'image/png', body: png });
+  });
+  await page.route('**/api/export/photoreal/check', async (route) => {
+    const req = route.request();
+    const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
+      headers: { 'content-type': req.headers()['content-type'] },
+    }).formData();
+    const scene = JSON.parse(String(form.get('scene')));
+    checks.push(scene);
+    const face: string = scene.fixtures[0].face;
+    await route.fulfill({
+      json: {
+        fixtures: scene.fixtures.map((f: { kind: string }, i: number) => ({
+          index: i + 1,
+          kind: f.kind,
+          present: answer === 'moved' ? 'no' : 'yes',
+          seenAs: answer === 'moved' ? 'none' : f.kind,
+        })),
+        // The user example: a window and a glass partition nobody placed, or the basin on another wall.
+        extras:
+          answer === 'moved'
+            ? [{ kind: 'basin', place: face === 'left' ? 'right' : 'left' }]
+            : [
+                { kind: 'window', place: 'right' },
+                { kind: 'glassPartition', place: 'middle' },
+              ],
+        walls: (scene.walls ?? []).map((wall: string) => ({
+          face: wall,
+          uniformTiles: wall === 'back' ? 'no' : 'yes',
+        })),
+      },
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  const product = await sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="200"><rect x="30" y="15" width="100" height="170" rx="20" fill="#f1f0ec"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
+  await page.getByRole('button', { name: '신규 자재 등록', exact: true }).click();
+  const form = page.getByRole('dialog', { name: '신규 자재 등록', exact: true });
+  await form.getByLabel('상품명').fill('확인할 세면대');
+  await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
+  await form.getByLabel('가로 (mm)', { exact: true }).fill('600');
+  await form.getByLabel('높이 (mm)', { exact: true }).fill('800');
+  await form
+    .getByLabel('+ 제품 이미지 올리기', { exact: true })
+    .setInputFiles({ name: 'basin.png', mimeType: 'image/png', buffer: product });
+  await expect(
+    form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
+  ).toBeVisible();
+  await form.getByRole('button', { name: '자재 등록', exact: true }).click();
+  await expect(form).toHaveCount(0);
+  await page.getByRole('button', { name: '위생도기', exact: true }).click();
+  await page.locator('button.material-tile').filter({ hasText: '확인할 세면대' }).click();
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  const views = dialog.getByRole('group', { name: 'AI 입력 시점' });
+  // Three in-room presets; no saved in-room view yet.
+  await expect(views.getByRole('radio')).toHaveCount(3);
+  await expect(views.getByRole('radio', { name: '방 안 · 가운데(기본)', exact: true })).toBeChecked();
+  const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
+  const source = dialog.getByAltText('AI 변환 기준 원본');
+  await views.getByText('방 안 · 오른쪽 모서리', { exact: true }).click();
+  await expect(views.getByRole('radio', { name: '방 안 · 오른쪽 모서리', exact: true })).toBeChecked();
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  const warning = dialog.getByRole('alert');
+  await expect(warning).toContainText(
+    '배치하지 않은 물건이 생겼을 수 있어요: 창문(오른쪽 벽), 유리 칸막이(가운데)',
+    { timeout: 30000 },
+  );
+  await expect(warning).toContainText('다시 만들어 보세요. 자동으로 다시 만들지는 않아요.');
+  expect(converts).toHaveLength(1);
+  expect(checks).toHaveLength(1);
+  expect(converts[0].scene.ceiling).toEqual({ color: '#f3f2ee', light: 'flat-panel' });
+  // The walls in view are asked about; the tile-layout answer is kept, not shown (it proved unreliable).
+  expect(checks[0].walls!.length).toBeGreaterThan(0);
+  await expect(warning).not.toContainText('타일 배열');
+  await expect(dialog.getByText('AI 제품 확인: 배치한 제품 1개가 모두 보여요.')).toBeVisible();
+  await warning.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('flux-extras-warning.png') });
+  // A narrow screen keeps every notice inside the dialog.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await warning.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('flux-extras-warning-390.png') });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const downloaded = page.waitForEvent('download');
+  await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
+  expect((await sharp(await downloadedArtifact(await downloaded)).metadata()).format).toBe('png');
+
+  // Another view is another comparison: the fixed source and the result start over.
+  await expect(dialog.getByText('시점을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.')).toBeVisible();
+  await views.getByText('방 안 · 가운데(기본)', { exact: true }).click();
+  await expect(result).toHaveCount(0);
+  await expect(source).toHaveCount(0);
+  answer = 'moved';
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  await expect(warning).toContainText('배치한 제품이 바뀌었을 수 있어요', { timeout: 30000 });
+  await expect(warning).toContainText(/세면대가 .+에서 .+ 옮겨졌을 수 있어요\./);
+  await expect(source).toBeVisible();
+  expect(converts).toHaveLength(2);
+  expect(checks).toHaveLength(2);
+  expect(converts[1].hash).not.toBe(converts[0].hash);
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+
+  // An in-room view saved in the space viewer becomes a choice, selected first.
+  await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
+  const eye = page.getByRole('group', { name: '방 안 시점', exact: true });
+  await eye.getByRole('button', { name: '방 안 · 왼쪽 모서리', exact: true }).click();
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  await page.getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  await expect(views.getByRole('radio')).toHaveCount(4);
+  await expect(views.getByRole('radio', { name: '저장한 방 안 시점', exact: true })).toBeChecked();
+  expect(errors).toEqual([]);
 });
