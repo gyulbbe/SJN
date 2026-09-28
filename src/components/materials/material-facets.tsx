@@ -18,7 +18,7 @@ export function MaterialFacets({
   value: FacetSelection;
   onChange: (value: FacetSelection) => void;
   className?: string;
-  /** The editor's 250px catalog panel: two columns and a scrolling panel. */
+  /** The editor's narrow catalog panel: small chips on one row, two columns and a scrolling panel. */
   compact?: boolean;
 }) {
   const id = useId();
@@ -47,7 +47,7 @@ export function MaterialFacets({
 
   return (
     <div className={className} onKeyDown={closeOnEscape}>
-      <div className="flex flex-wrap gap-2">
+      <div className={'flex flex-wrap ' + (compact ? 'gap-1.5' : 'gap-2')}>
         {groups.map((key) => {
           const count = selected(key).length;
           const expanded = open === key;
@@ -64,8 +64,8 @@ export function MaterialFacets({
               aria-label={count ? `${facetLabels[key]} ${count}개 선택` : undefined}
               onClick={() => setOpen(expanded ? null : key)}
               className={
-                'inline-flex items-center gap-1.5 rounded-full border border-[color:var(--line)] bg-[color:var(--paper)] text-[color:var(--ink)] hover:border-[color:var(--muted)] aria-expanded:border-[color:var(--ink)] max-[620px]:min-h-11 ' +
-                (compact ? 'min-h-8 px-3 text-xs' : 'min-h-10 px-4 text-sm')
+                'inline-flex items-center rounded-full border border-[color:var(--line)] bg-[color:var(--paper)] text-[color:var(--ink)] hover:border-[color:var(--muted)] aria-expanded:border-[color:var(--ink)] max-[620px]:min-h-11 ' +
+                (compact ? 'min-h-8 gap-1 px-2.5 text-xs' : 'min-h-10 gap-1.5 px-4 text-sm')
               }
             >
               {facetLabels[key]}

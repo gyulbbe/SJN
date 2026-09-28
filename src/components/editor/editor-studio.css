@@ -103,20 +103,33 @@
 .studio-editor .design-toolbar .muted {
   font-size: 12px;
 }
+/*
+ * Material library: the thumbnails come first. Every row keeps its full height and the list
+ * scrolls (a card's overflow: hidden would otherwise let the grid squeeze its rows to nothing);
+ * the controls above stay small. When the controls and two rows of thumbnails do not fit (a short
+ * window, an open filter), the whole panel scrolls instead of the list shrinking.
+ */
 .studio-editor .catalog-panel {
+  --catalog-pad: 10px;
+  --catalog-gap: 8px;
+  /* Name and size lines under a thumbnail, with the card's border (see .material-tile). */
+  --catalog-text: 41px;
+  container: catalog / inline-size;
   background: var(--paper);
-  width: 250px;
+  width: clamp(248px, 17vw, 440px);
+  overflow: hidden auto;
 }
 .studio-editor .panel-title {
-  padding: 20px var(--space-4) 15px;
-  font-size: 15px;
+  padding: 10px 12px 6px 14px;
+  font-size: 14px;
 }
 .studio-editor .catalog-tabs {
-  padding: 0 14px 14px;
-  gap: var(--space-1);
+  padding: 0 var(--catalog-pad) 8px;
+  gap: 4px;
 }
 .studio-editor .catalog-tabs button {
-  min-height: 38px;
+  min-height: 32px;
+  padding: 4px;
   font-size: 12px !important;
   background: var(--bg);
   color: var(--muted);
@@ -129,25 +142,82 @@
   background: var(--accent-light);
   box-shadow: inset 0 -2px var(--accent);
 }
+.studio-editor .catalog-hint {
+  margin: 8px var(--catalog-pad) 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.studio-editor .catalog-query {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px var(--catalog-pad);
+}
 .studio-editor .catalog-target {
+  margin: 0;
+  gap: 6px;
   font-size: 12px;
+  white-space: nowrap;
 }
 .studio-editor .catalog-target select {
-  font-size: 13px;
-  min-height: 36px;
+  min-height: 32px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.studio-editor .catalog-search {
+  margin: 0;
+  min-height: 32px;
+  padding: 4px 10px;
+  gap: 6px;
 }
 .studio-editor .catalog-search input {
-  font-size: 13px;
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+}
+.studio-editor .catalog-facets {
+  margin: 0 var(--catalog-pad) 8px;
 }
 .studio-editor .catalog-grid {
-  gap: var(--space-3);
+  --catalog-cols: 2;
+  /* One column's width, from the panel's (the container's) width. */
+  --catalog-col: calc(
+    (100cqi - 2 * var(--catalog-pad) - (var(--catalog-cols) - 1) * var(--catalog-gap)) / var(--catalog-cols)
+  );
+  flex: 1 1 0;
+  /* Two rows of thumbnails at least; below that the panel scrolls. */
+  min-height: calc(2 * (var(--catalog-col) * 3 / 4 + var(--catalog-text)) + var(--catalog-gap) + 12px);
+  grid-template-columns: repeat(var(--catalog-cols), minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  gap: var(--catalog-gap);
+  padding: 4px var(--catalog-pad) 8px;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+/* A wide panel (a wide screen, the drawer) has room for three columns. */
+@container catalog (min-width: 340px) {
+  .studio-editor .catalog-grid {
+    --catalog-cols: 3;
+  }
+  .studio-editor .catalog-query {
+    flex-direction: row;
+  }
+  .studio-editor .catalog-target {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .studio-editor .catalog-search {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }
 .studio-editor .material-tile {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--paper);
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 .studio-editor .material-tile:hover,
 .studio-editor .material-tile.selected {
@@ -155,42 +225,85 @@
   box-shadow: 0 0 0 1px var(--accent);
 }
 .studio-editor .material-tile .swatch {
+  height: auto;
+  aspect-ratio: 4 / 3;
+  min-height: 72px;
   border: 0;
   border-radius: 0;
   background: var(--bg);
 }
+.studio-editor .material-tile .swatch .product-image {
+  padding: 4px;
+}
+/* One line each; the card's title has the full name. */
 .studio-editor .material-tile strong {
-  font-size: 13px !important;
-  padding: 9px var(--space-2) 0;
-  line-height: 1.5;
+  font-size: 12px !important;
+  line-height: 16px;
+  padding: 4px 6px 0;
 }
 .studio-editor .material-tile small {
-  font-size: 12px !important;
+  font-size: 11px !important;
+  line-height: 14px;
   color: var(--muted);
-  padding: 3px var(--space-2);
-  overflow-wrap: anywhere;
+  padding: 1px 6px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .studio-editor .material-selection-mark {
   position: absolute;
   z-index: 1;
-  top: 6px;
-  right: 6px;
+  top: 5px;
+  right: 5px;
   display: grid;
   place-items: center;
-  width: 23px;
-  height: 23px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   color: #fff;
   background: var(--accent);
   box-shadow: 0 1px 5px #172e2922;
 }
 .studio-editor .catalog-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px var(--catalog-pad);
   color: var(--muted);
 }
-.studio-editor .catalog-footer .text-button,
-.studio-editor .catalog-panel p.muted {
+.studio-editor .catalog-footer .btn {
+  flex: 1 1 auto;
+  width: auto;
+  min-height: 32px;
+  margin: 0;
+  padding: 4px 10px;
+  gap: 4px;
+  font-size: 12px;
+}
+.studio-editor .catalog-footer .text-button {
+  min-height: 32px;
+  gap: 4px;
   font-size: 12px !important;
-  line-height: 1.65;
+  line-height: 1.4;
+}
+/* Phones and touch screens: every control at least 44px, two larger columns on a phone. */
+@media (max-width: 620px), (pointer: coarse) {
+  .studio-editor .catalog-tabs button,
+  .studio-editor .catalog-target select,
+  .studio-editor .catalog-search,
+  .studio-editor .catalog-footer :is(.btn, .text-button),
+  .studio-editor .catalog-panel .panel-title .icon-btn {
+    min-height: 44px;
+  }
+  .studio-editor .catalog-panel .panel-title .icon-btn {
+    min-width: 44px;
+  }
+}
+@media (max-width: 620px) {
+  .studio-editor .catalog-grid {
+    --catalog-cols: 2;
+  }
 }
 .studio-editor .workspace-toolbar {
   min-height: 50px;
@@ -432,8 +545,7 @@
     display: grid;
   }
   .studio-editor .workspace-toolbar :is(.icon-btn, .btn),
-  .studio-editor .top-actions .icon-btn,
-  .studio-editor .catalog-tabs button {
+  .studio-editor .top-actions .icon-btn {
     min-width: 44px;
     min-height: 44px;
   }

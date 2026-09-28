@@ -2007,53 +2007,54 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 </button>
               </div>
               {tab === 'fixtures' && (
-                <div style={{ margin: '0 16px 12px', display: 'grid', gap: 8 }}>
-                  <p className="muted" style={{ fontSize: 11, lineHeight: 1.6 }}>
-                    등록한 도기를 눌러 배치하고, 화면에서 선택해 이동·삭제할 수 있어요. 기본 벽과 바닥은
-                    유지돼요.
-                  </p>
-                </div>
+                <p className="catalog-hint">
+                  등록한 도기를 눌러 배치하고, 화면에서 선택해 이동·삭제할 수 있어요. 기본 벽과 바닥은
+                  유지돼요.
+                </p>
               )}
-              {tab !== 'fixtures' && (
-                <label className="catalog-target">
-                  적용 위치
-                  <select
-                    aria-label="타일 적용 위치"
-                    value={
-                      scene.surfaces.some((s) => s.id === st.selection && s.kind === tab)
-                        ? st.selection!
-                        : 'all'
-                    }
-                    onChange={(e) => {
-                      st.select(e.target.value === 'all' ? null : e.target.value);
-                      st.setTool('select');
-                      applyRequest.current++;
-                      setDetectionStatus('');
-                    }}
-                  >
-                    <option value="all">전체 {tab === 'wall' ? '벽' : '바닥'}</option>
-                    {scene.surfaces
-                      .filter((s) => s.kind === tab)
-                      .map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                  </select>
+              {/* One row in a wide panel (the drawer), two rows in the narrow desktop panel. */}
+              <div className="catalog-query">
+                {tab !== 'fixtures' && (
+                  <label className="catalog-target">
+                    적용 위치
+                    <select
+                      aria-label="타일 적용 위치"
+                      value={
+                        scene.surfaces.some((s) => s.id === st.selection && s.kind === tab)
+                          ? st.selection!
+                          : 'all'
+                      }
+                      onChange={(e) => {
+                        st.select(e.target.value === 'all' ? null : e.target.value);
+                        st.setTool('select');
+                        applyRequest.current++;
+                        setDetectionStatus('');
+                      }}
+                    >
+                      <option value="all">전체 {tab === 'wall' ? '벽' : '바닥'}</option>
+                      {scene.surfaces
+                        .filter((s) => s.kind === tab)
+                        .map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                )}
+                <label className="search-box catalog-search">
+                  <Search size={14} />
+                  <input
+                    aria-label="편집기 자재 검색"
+                    placeholder="자재명, 브랜드 검색"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
                 </label>
-              )}
-              <label className="search-box catalog-search">
-                <Search size={14} />
-                <input
-                  aria-label="편집기 자재 검색"
-                  placeholder="자재명, 브랜드 검색"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </label>
+              </div>
               <MaterialFacets
                 compact
-                className="mx-3.5 mb-3"
+                className="catalog-facets"
                 options={catalogFacets}
                 value={facets}
                 onChange={setFacets}

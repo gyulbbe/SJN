@@ -883,7 +883,8 @@ svg {
   border-color: #8dbeb1;
 }
 .material-tile .swatch {
-  height: 90px;
+  aspect-ratio: 4 / 3;
+  min-height: 72px;
   background: #f2f3f2;
   overflow: hidden;
   border-radius: 5px;
@@ -1256,9 +1257,6 @@ svg {
   }
   .inspector {
     width: 280px;
-  }
-  .material-tile .swatch {
-    height: 105px;
   }
 }
 @media (max-width: 1150px) {
