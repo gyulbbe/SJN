@@ -74,8 +74,10 @@ import { useAccess } from '../app-provider';
 import CanvasWorkspace from './canvas-workspace';
 import Inspector from './inspector';
 import AiExport from './ai-export';
+import type { AiPreview } from './ai-view-picker';
 import { visibleCeiling, type FluxCaptureSource } from '@/lib/ai-export/scene';
-import { fluxRoom, fluxView, fluxViewChoices, type FluxViewChoice } from '@/lib/ai-export/view';
+import { fluxRoom } from '@/lib/ai-export/view';
+import type { RoomViewState } from '@/lib/room-viewer/view-state';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
 import { accountLabel } from '@/lib/auth/credential-account';
@@ -1210,6 +1212,38 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       );
     }
   }
+  /** The After as the AI input draws it (also the live direction preview's snapshot). */
+  function aiSnapshot() {
+    const project = st.project!;
+    return {
+      scene: structuredClone(getActiveScene(project)),
+      beforeScene: structuredClone(project.shared.comparison?.before ?? project.shared.baseline),
+      materials: structuredClone(materials),
+      ...(photoLight ? { lighting: photoLight } : {}),
+    };
+  }
+  /**
+   * The live 3D view the user turns in the dialog: the same renderer class, snapshot and photo
+   * choice as the capture below, so its picture is the input's composition.
+   */
+  async function prepareAiPreview(composite: boolean): Promise<AiPreview> {
+    if (!st.project) throw new Error('내보낼 공간이 아직 준비되지 않았어요.');
+    const { RoomViewerRenderer } = await import('@/lib/room-viewer/renderer');
+    const renderer = new RoomViewerRenderer();
+    try {
+      await renderer.setSnapshot(aiSnapshot(), assetReader, composite ? { exportAngles: true } : undefined);
+    } catch (error) {
+      renderer.dispose();
+      throw error;
+    }
+    // The picker labels the view itself; the canvas is only its picture.
+    renderer.canvas.setAttribute('aria-hidden', 'true');
+    return {
+      canvas: renderer.canvas,
+      render: (width, height, view) => void renderer.render(width, height, view, 'after'),
+      dispose: () => renderer.dispose(),
+    };
+  }
   /**
    * The AI conversion's input: one plain After frame from an in-room eye, drawn by the 3D viewer for
    * every project with room dimensions (the ceiling closes the top and the walls fill the frame, so
@@ -1218,7 +1252,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
    * this capture; the editor, previews and downloads are untouched.
    */
   async function captureAiInput(
-    choice?: FluxViewChoice,
+    /** The dialog's camera (an in-room eye); none for a scene without a room. */
+    view?: RoomViewState,
     /** The composite export: also the room/fixture layers, with photos chosen by angle. */
     composite?: boolean,
   ): Promise<FluxCaptureSource> {
@@ -1226,7 +1261,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     if (!st.project) throw new Error('내보낼 공간이 아직 준비되지 않았어요.');
     const after = getActiveScene(st.project);
     const room = fluxRoom(after, st.project.shared.comparison?.before ?? st.project.shared.baseline);
-    if (!room || !choice) {
+    if (!room || !view) {
       let inspected: Omit<FluxCaptureSource, 'blob' | 'reader'> | undefined;
       // The same render gives the scene facts (and 3D fixture boxes) sent with the image.
       const blob = await captureExport('image/png', false, 1024, (capture) => {
@@ -1235,13 +1270,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       if (!inspected) throw new Error('AI 변환에 쓸 장면 정보를 만들지 못했어요.');
       return { blob, reader: assetReader, ...inspected };
     }
-    const view = fluxView(room, choice, st.project);
-    const snapshot = {
-      scene: structuredClone(after),
-      beforeScene: structuredClone(st.project.shared.comparison?.before ?? st.project.shared.baseline),
-      materials: structuredClone(materials),
-      ...(photoLight ? { lighting: photoLight } : {}),
-    };
+    const snapshot = aiSnapshot();
     const { imageWidth: width, imageHeight: height } = snapshot.scene;
     const edge = Math.min(1024, Math.max(width, height));
     const [{ RoomViewerRenderer }, { VIEWER_CEILING_COLOR }] = await Promise.all([
@@ -1274,6 +1303,16 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       roomRenderer.dispose();
     }
   }
+  // The AI dialog turns an in-room camera when the After has a room; the input keeps its aspect.
+  const aiAfter = st.project ? getActiveScene(st.project) : undefined;
+  const aiRoomDims =
+    st.project && aiAfter
+      ? fluxRoom(aiAfter, st.project.shared.comparison?.before ?? st.project.shared.baseline)
+      : undefined;
+  const aiRoom =
+    aiRoomDims && aiAfter
+      ? { dims: aiRoomDims, aspect: aiAfter.imageWidth / aiAfter.imageHeight, prepare: prepareAiPreview }
+      : undefined;
   async function exportImage() {
     if (requireLogin('이미지 출력')) return;
     if (exporting || aiExporting) return;
@@ -2587,15 +2626,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             <AiExport
               key={`${scopeKey}-${activeDesign?.id}`}
               capture={captureAiInput}
-              views={
-                st.project &&
-                fluxRoom(
-                  getActiveScene(st.project),
-                  st.project.shared.comparison?.before ?? st.project.shared.baseline,
-                )
-                  ? fluxViewChoices(st.project)
-                  : undefined
-              }
+              room={aiRoom}
               filename={`${st.project?.name ?? '공간'}-${activeDesign?.name ?? '시안'}`}
               userId={userId}
               disabled={exporting}

@@ -21,7 +21,7 @@ const output = 'test-results/flux-composite/payload';
 await mkdir(output, { recursive: true });
 const bundle = await build({
   stdin: {
-    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {VIEWER_CEILING_COLOR} from './src/lib/room-viewer/ceiling';export {buildFluxRoomScene} from './tests/helpers/flux-room-scene';export {buildFluxGrounding,visibleCeiling} from './src/lib/ai-export/scene';export {fluxInputLayout} from './src/lib/ai-export/contract';export {prepareFluxImage,pixelsToPng,readPixels} from './src/lib/ai-export/client';export {buildFluxPrompt} from './src/lib/ai-export/prompt';export {fluxSceneSchema} from './src/lib/ai-export/scene-contract';export {fluxView} from './src/lib/ai-export/view';export * from './src/lib/ai-export/composite';`,
+    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {VIEWER_CEILING_COLOR} from './src/lib/room-viewer/ceiling';export {buildFluxRoomScene} from './tests/helpers/flux-room-scene';export {buildFluxGrounding,visibleCeiling} from './src/lib/ai-export/scene';export {fluxInputLayout} from './src/lib/ai-export/contract';export {prepareFluxImage,pixelsToPng,readPixels} from './src/lib/ai-export/client';export {buildFluxPrompt} from './src/lib/ai-export/prompt';export {fluxSceneSchema} from './src/lib/ai-export/scene-contract';export {presetFluxView} from './tests/helpers/flux-room-scene';export * from './src/lib/ai-export/composite';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -115,7 +115,7 @@ try {
         walls: config.walls,
       });
       const reader = async (id: string) => assets[id];
-      const view = lib.fluxView(room, config.preset, {});
+      const view = lib.presetFluxView(room, config.preset);
       const edge = Math.min(1024, Math.max(imageWidth, imageHeight));
       const viewer = new lib.RoomViewerRenderer();
       try {
@@ -282,7 +282,7 @@ try {
         try {
           await viewer.setSnapshot(snapshot, reader, { exportAngles });
           for (const preset of ['center', 'right-corner'] as const) {
-            const view = lib.fluxView(room, preset, {});
+            const view = lib.presetFluxView(room, preset);
             // A plain frame of this view (an export would restore the previous live frame after).
             viewer.render(1024, 683, view, 'after');
             const prepared = (

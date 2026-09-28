@@ -14,6 +14,14 @@ import { createRoomSurfaces, DEFAULT_ROOM } from '../../src/lib/room-geometry';
 import { projectReconstructionFixture } from '../../src/lib/reconstruction/projection';
 import { projectRoomFixture } from '../../src/lib/room-fixtures';
 import type { AssetRecord, FixtureInstance, MaterialVersion, Scene } from '../../src/lib/types';
+import type { RoomDimensions } from '../../src/lib/room-types';
+import { FLUX_EYE_FOV, FLUX_EYE_HEIGHT_MM } from '../../src/lib/ai-export/view';
+import {
+  clampRoomEye,
+  roomEyeView,
+  type RoomEyePreset,
+  type RoomViewState,
+} from '../../src/lib/room-viewer/view-state';
 
 export type FluxRoomOptions = { walls?: 'terrazzo' | 'white'; product?: boolean };
 
@@ -293,4 +301,23 @@ export async function buildFluxRoomScene(options: FluxRoomOptions = {}) {
   });
   const snapshot = { scene: makeScene(), beforeScene: makeScene(), materials };
   return { room, assets, materials, snapshot, imageWidth, imageHeight, aspect };
+}
+
+/**
+ * The AI input's old fixed viewpoints (until 2026-09-28): a room-eye preset's place and heading at
+ * 1200 mm with a 90° lens and no shift. Kept here so the 2026-09-27/28 comparison inputs can be
+ * rebuilt pixel for pixel; the app now turns one front-centre eye freely (src/lib/ai-export/view.ts).
+ */
+export function presetFluxView(room: RoomDimensions, preset: RoomEyePreset): RoomViewState {
+  const view = roomEyeView(room, preset);
+  const eye = view.eye!;
+  return {
+    ...view,
+    eye: clampRoomEye(room, {
+      position: [eye.position[0], FLUX_EYE_HEIGHT_MM, eye.position[2]],
+      yaw: eye.yaw,
+      shift: 0,
+      fov: FLUX_EYE_FOV,
+    }),
+  };
 }

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fluxCheckScene,
   pixelsToPng,
@@ -12,7 +12,10 @@ import { reviewResultColors, type Pixels, type RegionMask } from '@/lib/ai-expor
 import { fluxInputLayout, type FluxInputLayout } from '@/lib/ai-export/contract';
 import type { FluxCheckWall } from '@/lib/ai-export/check-contract';
 import { fluxResultNotices, readFluxCheck, type FluxNoticeInput } from '@/lib/ai-export/notices';
-import { FLUX_VIEW_LABELS, type FluxViewChoice } from '@/lib/ai-export/view';
+import { FLUX_FRONT, fluxEyeView, type FluxDirection } from '@/lib/ai-export/view';
+import type { RoomDimensions } from '@/lib/room-types';
+import type { RoomViewState } from '@/lib/room-viewer/view-state';
+import AiViewPicker, { type AiPreview } from './ai-view-picker';
 import { FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
 import { ServerWaitProgress, useServerWait } from '@/components/server-wait-progress';
 import {
@@ -71,7 +74,7 @@ const chipClass = (checked: boolean) =>
   }`;
 export default function AiExport({
   capture,
-  views,
+  room,
   filename,
   userId,
   disabled,
@@ -81,16 +84,22 @@ export default function AiExport({
    * Renders the After for the AI input from the chosen view (none: the legacy front composite);
    * `composite` also returns the room and fixture layers of the same frame.
    */
-  capture: (view?: FluxViewChoice, composite?: boolean) => Promise<FluxCaptureSource>;
-  /** In-room views to choose from; absent for a scene without room dimensions. */
-  views?: { choices: FluxViewChoice[]; initial: FluxViewChoice };
+  capture: (view?: RoomViewState, composite?: boolean) => Promise<FluxCaptureSource>;
+  /**
+   * The room the input is drawn in, with the input's aspect and a live preview renderer; absent
+   * for a scene without room dimensions (the 2D front composite, no turning).
+   */
+  room?: { dims: RoomDimensions; aspect: number; prepare: (composite: boolean) => Promise<AiPreview> };
   filename: string;
   userId?: string | null;
   disabled: boolean;
   onBusyChange: (busy: boolean) => void;
 }) {
   const live = useRef(true);
-  const [view, setView] = useState<FluxViewChoice | undefined>(views?.initial);
+  // The direction lives only while the dialog is open: it starts facing the back wall every time.
+  const [direction, setDirection] = useState<FluxDirection>(FLUX_FRONT);
+  /** The direction the fixed source was captured in. */
+  const [sent, setSent] = useState<FluxDirection>();
   const [sourceUrl, setSourceUrl] = useState('');
   const [result, setResult] = useState<Result>({});
   const [busy, setBusy] = useState(false);
@@ -99,9 +108,13 @@ export default function AiExport({
   const [colors, setColors] = useState<FluxNoticeInput['colors']>();
   const [showOriginal, setShowOriginal] = useState(false);
   const [shifted, setShifted] = useState(false);
-  // Only scenes drawn in the room (views) can be composited.
-  const [method, setMethod] = useState<FluxMethod>(() => (views ? savedMethod() : 'current'));
-  const mode = views && method !== 'current' ? method : undefined;
+  // Only scenes drawn in the room can be composited.
+  const [method, setMethod] = useState<FluxMethod>(() => (room ? savedMethod() : 'current'));
+  const mode = room && method !== 'current' ? method : undefined;
+  // A stable handle for the picker, so a store update does not rebuild its renderer.
+  const prepareRef = useRef(room?.prepare);
+  prepareRef.current = room?.prepare;
+  const prepare = useCallback((composite: boolean) => prepareRef.current!(composite), []);
   const { wait, start: startWait, finish: finishWait } = useServerWait();
   const state = useRef<{
     image?: Blob;
@@ -124,24 +137,17 @@ export default function AiExport({
       current.urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
-  /** A new view or method is a new comparison: the source and everything made from it start over. */
-  function chooseView(next: FluxViewChoice) {
-    if (busy || next === view) return;
-    setView(next);
-    restart();
-  }
-  function chooseMethod(next: FluxMethod) {
-    if (busy || next === method) return;
-    setMethod(next);
-    saveMethod(next);
-    restart();
-  }
-  function restart() {
+  /**
+   * A new method, or converting after turning, is a new comparison: the source and everything made
+   * from it start over. Only turning keeps the result on screen until the next conversion.
+   */
+  const restart = useCallback(() => {
     state.current.image = undefined;
     state.current.grounding = undefined;
     state.current.color = undefined;
     state.current.walls = undefined;
     state.current.composite = undefined;
+    setSent(undefined);
     setShifted(false);
     setSourceUrl('');
     setPlaced(undefined);
@@ -149,9 +155,18 @@ export default function AiExport({
     setCheck(undefined);
     setColors(undefined);
     setShowOriginal(false);
+  }, []);
+  function chooseMethod(next: FluxMethod) {
+    if (busy || next === method) return;
+    setMethod(next);
+    saveMethod(next);
+    restart();
   }
+  const turned = !!sent && (sent.yaw !== direction.yaw || sent.pitch !== direction.pitch);
   async function generate() {
     if (state.current.controller || disabled) return;
+    // Turned since the fixed source was captured: this conversion starts a new comparison.
+    if (turned) restart();
     const controller = new AbortController();
     state.current.controller = controller;
     setBusy(true);
@@ -166,7 +181,10 @@ export default function AiExport({
     try {
       if (!state.current.image) {
         startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
-        const source = await capture(view, !!mode);
+        // Exactly the picker's camera: the same direction, eye and lens.
+        const captured = { ...direction };
+        const source = await capture(room ? fluxEyeView(room.dims, captured) : undefined, !!mode);
+        setSent(room ? captured : undefined);
         const layers = mode ? source.layers : undefined;
         if (mode && (!layers || !source.regions || !source.boxes))
           throw new Error('제품을 따로 합성할 이미지 층을 만들지 못했어요.');
@@ -343,39 +361,34 @@ export default function AiExport({
     <section className={styles.panel} aria-label="AI 현장 사진 변환">
       <h3>AI로 현장 사진처럼</h3>
       <p className={styles.note}>
-        버튼을 누를 때 고른 시점의 현재 After 이미지와 배치한 제품의 종류·위치·크기·색 정보를 Cloudflare로
-        보내 변환해요. 결과가 나오면 배치한 제품이 그대로 있는지, 배치하지 않은 물건이 생겼는지 AI(Gemma)로 한
-        번 더 확인하고, 벽·바닥 색은 원래 자재 색에 맞춰 보여 줘요(추가 요청 없음). 다시 만들 때마다 다른
-        결과가 나오고 두 요청의 사용량이 새로 발생해요. 그래도 AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해
-        주세요.
+        {room ? '버튼을 누를 때 아래 미리보기 방향 그대로의' : '버튼을 누를 때의'} 현재 After 이미지와 배치한
+        제품의 종류·위치·크기·색 정보를 Cloudflare로 보내 변환해요. 결과가 나오면 배치한 제품이 그대로 있는지,
+        배치하지 않은 물건이 생겼는지 AI(Gemma)로 한 번 더 확인하고, 벽·바닥 색은 원래 자재 색에 맞춰 보여
+        줘요(추가 요청 없음). 다시 만들 때마다 다른 결과가 나오고 두 요청의 사용량이 새로 발생해요. 그래도
+        AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해 주세요.
       </p>
-      {views && view && (
-        <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
-          <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">AI 입력 시점</legend>
-          <div className="flex flex-wrap gap-1.5">
-            {views.choices.map((choice) => (
-              <label key={choice} className={chipClass(choice === view)}>
-                <input
-                  type="radio"
-                  name="flux-view"
-                  className="sr-only"
-                  value={choice}
-                  checked={choice === view}
-                  onChange={() => chooseView(choice)}
-                />
-                {FLUX_VIEW_LABELS[choice]}
-                {choice === 'center' ? '(기본)' : ''}
-              </label>
-            ))}
-          </div>
-          <div className="mt-1.5 text-xs leading-relaxed text-[color:var(--muted)]">
-            방 안에서 본 모습(천장 포함)으로 변환해요. 방 바깥의 빈 여백이 없어 AI가 없던 벽·물건을 덜
-            만들어요.
-            {result.url ? ' 시점을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.' : ''}
-          </div>
-        </fieldset>
+      {room && (
+        <>
+          <AiViewPicker
+            room={room.dims}
+            aspect={room.aspect}
+            prepare={prepare}
+            composite={!!mode}
+            direction={direction}
+            onDirection={setDirection}
+            locked={busy || disabled}
+          />
+          {turned && result.url && (
+            <div
+              className="-mt-1.5 mb-3 text-xs leading-relaxed text-[color:var(--ink)]"
+              data-testid="flux-view-turned"
+            >
+              방향을 바꿨어요. 다시 변환하면 새 비교로 시작하니 지금 결과는 먼저 저장해 주세요.
+            </div>
+          )}
+        </>
       )}
-      {views && (
+      {room && (
         <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
           <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">변환 방식</legend>
           <div className="flex flex-wrap gap-1.5">
@@ -464,7 +477,9 @@ export default function AiExport({
           </div>
           <div className={styles.actions}>
             <button type="button" className="btn" disabled={busy || disabled} onClick={() => void generate()}>
-              {busy ? '4B 변환 중…' : `AI 변환 · flux-2-klein-4b${result.url ? ' 다시 만들기' : ''}`}
+              {busy
+                ? '4B 변환 중…'
+                : `AI 변환 · flux-2-klein-4b${result.url && !turned ? ' 다시 만들기' : ''}`}
             </button>
             {shown && (
               <a

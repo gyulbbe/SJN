@@ -5,6 +5,7 @@ import { test, expect } from '@playwright/test';
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
+import { fluxInputLayout } from '../src/lib/ai-export/contract';
 const authenticatedTests = new WeakMap<AuthenticatedPage, AuthenticatedApp>();
 test.beforeEach(async ({ page }) => {
   authenticatedTests.set(page, await authenticatedApp(page));
@@ -86,14 +87,15 @@ test('export converts with klein 4B, downloads PNG, re-generates with a new seed
     ['image', 'scene', 'seed'],
   ]);
   // The placed-product description travels with every request; an empty base room has none. The
-  // input is drawn inside the room (default: centre), so its ceiling is described too.
+  // input is drawn inside the room (facing the back wall), so its ceiling is described too.
   expect(JSON.parse(calls[0].scene)).toEqual({
     version: 1,
     fixtures: [],
     surfaces: [],
     ceiling: { color: '#f3f2ee', light: 'flat-panel' },
   });
-  await expect(dialog.getByRole('radio', { name: '방 안 · 가운데(기본)', exact: true })).toBeChecked();
+  // Converted from the front of the live direction preview.
+  await expect(dialog.getByTestId('flux-view-readout')).toHaveText('좌우 0° · 위아래 0°');
   expect(calls[1].scene).toBe(calls[0].scene);
   await expect(dialog.getByLabel('변환에 전달한 제품')).toContainText('전달할 제품 정보가 없어');
   // Re-generating reuses the captured After image with a fresh seed.
@@ -448,13 +450,13 @@ test('result walls get their tile colour back; the AI colours stay one click awa
   expect(conversions).toEqual(['warm', 'reframed']);
 });
 
-test('the AI input is drawn inside the room from the chosen view; added, moved and re-tiled objects are reported once', async ({
+test('the AI input is the direction turned in the live 3D preview; added, moved and re-tiled objects are reported once', async ({
   page,
 }, testInfo) => {
   const png = await sharp({ create: { width: 992, height: 672, channels: 3, background: '#c9c3b8' } })
     .png()
     .toBuffer();
-  const converts: { hash: string; scene: { ceiling?: unknown } }[] = [];
+  const converts: { hash: string; image: Buffer; scene: { ceiling?: unknown } }[] = [];
   const checks: { walls?: string[]; fixtures: { kind: string; face?: string }[] }[] = [];
   let answer: 'extras' | 'moved' = 'extras';
   const errors: string[] = [];
@@ -464,12 +466,14 @@ test('the AI input is drawn inside the room from the chosen view; added, moved a
     const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
       headers: { 'content-type': req.headers()['content-type'] },
     }).formData();
+    const image = Buffer.from(await (form.get('image') as Blob).arrayBuffer());
     converts.push({
-      hash: createHash('sha256')
-        .update(Buffer.from(await (form.get('image') as Blob).arrayBuffer()))
-        .digest('hex'),
+      hash: createHash('sha256').update(image).digest('hex'),
+      image,
       scene: JSON.parse(String(form.get('scene'))),
     });
+    // Long enough to see the second conversion start over and lock the turning.
+    if (answer === 'moved') await new Promise((resolve) => setTimeout(resolve, 1500));
     await route.fulfill({ status: 200, contentType: 'image/png', body: png });
   });
   await page.route('**/api/export/photoreal/check', async (route) => {
@@ -532,16 +536,87 @@ test('the AI input is drawn inside the room from the chosen view; added, moved a
   await page.getByRole('button', { name: '위생도기', exact: true }).click();
   await page.locator('button.material-tile').filter({ hasText: '확인할 세면대' }).click();
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  // An in-room view saved in the space viewer is not used: the AI direction starts at the front.
+  await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
+  await page
+    .getByRole('group', { name: '방 안 시점', exact: true })
+    .getByRole('button', { name: '방 안 · 왼쪽 모서리', exact: true })
+    .click();
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  await page.getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
-  const views = dialog.getByRole('group', { name: 'AI 입력 시점' });
-  // Three in-room presets; no saved in-room view yet.
-  await expect(views.getByRole('radio')).toHaveCount(3);
-  await expect(views.getByRole('radio', { name: '방 안 · 가운데(기본)', exact: true })).toBeChecked();
+  const picker = dialog.getByRole('group', { name: 'AI 입력 방향' });
+  const preview = picker.getByTestId('flux-view-preview');
+  const readout = picker.getByTestId('flux-view-readout');
+  const direction = async () => ({
+    yaw: Number(await preview.getAttribute('data-yaw')),
+    pitch: Number(await preview.getAttribute('data-pitch')),
+  });
+  const button = (name: string) => picker.getByRole('button', { name, exact: true });
+  // The fixed view chips are gone; one live 3D view, turned from the front.
+  await expect(dialog.getByRole('group', { name: 'AI 입력 시점' })).toHaveCount(0);
+  await expect(dialog.getByRole('radio', { name: /방 안 ·|저장한 방 안 시점/ })).toHaveCount(0);
+  await expect(preview.locator('canvas')).toHaveCount(1, { timeout: 30000 });
+  await expect(readout).toHaveText('좌우 0° · 위아래 0°');
+  for (const name of ['왼쪽으로 5° 돌리기', '위로 5° 돌리기', '아래로 5° 돌리기', '오른쪽으로 5° 돌리기'])
+    await expect(button(name)).toBeVisible();
+
+  // Buttons and keys turn 5° a press.
+  await button('오른쪽으로 5° 돌리기').click();
+  await button('위로 5° 돌리기').click();
+  expect(await direction()).toEqual({ yaw: 5, pitch: 5 });
+  await preview.focus();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  expect(await direction()).toEqual({ yaw: 10, pitch: -5 });
+  await page.keyboard.press('ArrowLeft');
+  await expect(readout).toHaveText('좌우 5° · 위아래 -5°');
+  // Dragging grabs the room: dragging left turns right, dragging up tilts down.
+  const box = (await preview.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 - box.width / 9, box.y + box.height / 2 - box.width / 18, {
+    steps: 6,
+  });
+  await page.mouse.up();
+  const dragged = await direction();
+  expect(dragged.yaw).toBeCloseTo(15, 0);
+  expect(dragged.pitch).toBeCloseTo(-10, 0);
+
+  // Past the open front it stops at the limit with the notice, the same place every press.
+  const notice = picker.getByRole('status');
+  for (let i = 0; i < 12; i++) await button('오른쪽으로 5° 돌리기').click();
+  await expect(notice).toHaveText('앞쪽은 벽이 없어서 이 방향까지만 볼 수 있어요.');
+  const right = await direction();
+  expect(right.yaw).toBeGreaterThan(30);
+  expect(right.yaw).toBeLessThan(60);
+  await button('오른쪽으로 5° 돌리기').click();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 5, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+  expect((await direction()).yaw).toBe(right.yaw);
+  await button('정면으로').click();
+  expect(await direction()).toEqual({ yaw: 0, pitch: 0 });
+  for (let i = 0; i < 20; i++) await button('아래로 5° 돌리기').click();
+  await expect(notice).toHaveText('앞쪽은 벽이 없어서 이 방향까지만 볼 수 있어요.');
+  const down = await direction();
+  expect(down).toEqual({ yaw: 0, pitch: down.pitch });
+  expect(down.pitch).toBeLessThan(-30);
+  await page.screenshot({ path: testInfo.outputPath('flux-view-limit-down.png') });
+  await button('정면으로').click();
+
+  // The chosen direction is exactly what the AI receives.
+  for (let i = 0; i < 4; i++) await button('오른쪽으로 5° 돌리기').click();
+  await button('위로 5° 돌리기').click();
+  expect(await direction()).toEqual({ yaw: 20, pitch: 5 });
+  // Wait for the preview frame of this direction before reading it.
+  await page.waitForTimeout(300);
+  const chosen = await preview.screenshot();
   const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
   const source = dialog.getByAltText('AI 변환 기준 원본');
-  await views.getByText('방 안 · 오른쪽 모서리', { exact: true }).click();
-  await expect(views.getByRole('radio', { name: '방 안 · 오른쪽 모서리', exact: true })).toBeChecked();
   await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
   const warning = dialog.getByRole('alert');
   await expect(warning).toContainText(
@@ -551,48 +626,106 @@ test('the AI input is drawn inside the room from the chosen view; added, moved a
   await expect(warning).toContainText('다시 만들어 보세요. 자동으로 다시 만들지는 않아요.');
   expect(converts).toHaveLength(1);
   expect(checks).toHaveLength(1);
+  // The 1024 px capture goes out scaled and padded to the model size; compare its picture area.
+  const layout = fluxInputLayout(1024, Math.round((1024 * box.height) / box.width));
+  const sent = await sharp(converts[0].image)
+    .extract({
+      left: Math.round(layout.x),
+      top: Math.round(layout.y),
+      width: Math.round(layout.contentWidth),
+      height: Math.round(layout.contentHeight),
+    })
+    .png()
+    .toBuffer();
   expect(converts[0].scene.ceiling).toEqual({ color: '#f3f2ee', light: 'flat-panel' });
   // The walls in view are asked about; the tile-layout answer is kept, not shown (it proved unreliable).
   expect(checks[0].walls!.length).toBeGreaterThan(0);
   await expect(warning).not.toContainText('타일 배열');
   await expect(dialog.getByText('AI 제품 확인: 배치한 제품 1개가 모두 보여요.')).toBeVisible();
+  // Composition: the request matches the preview it was sent from, not the front view.
+  await button('정면으로').click();
+  await page.waitForTimeout(300);
+  const front = await preview.screenshot();
+  const small = (image: Buffer) =>
+    sharp(image).resize(48, 32, { fit: 'fill' }).removeAlpha().raw().toBuffer();
+  const difference = async (a: Buffer, b: Buffer) => {
+    const [x, y] = await Promise.all([small(a), small(b)]);
+    let sum = 0;
+    for (let i = 0; i < x.length; i++) sum += Math.abs(x[i] - y[i]);
+    return sum / x.length;
+  };
+  const same = await difference(sent, chosen);
+  const other = await difference(sent, front);
+  testInfo.annotations.push({ type: 'preview-difference', description: `same ${same} · front ${other}` });
+  expect(same).toBeLessThan(3);
+  expect(other).toBeGreaterThan(same * 2);
+  // Just turning keeps the result, with a note; turning back to the sent direction clears it.
+  const turned = dialog.getByTestId('flux-view-turned');
+  await expect(turned).toHaveText(
+    '방향을 바꿨어요. 다시 변환하면 새 비교로 시작하니 지금 결과는 먼저 저장해 주세요.',
+  );
+  await expect(result).toBeVisible();
+  await expect(source).toBeVisible();
+  for (let i = 0; i < 4; i++) await button('오른쪽으로 5° 돌리기').click();
+  await button('위로 5° 돌리기').click();
+  await expect(turned).toHaveCount(0);
+  await button('왼쪽으로 5° 돌리기').click();
+  await expect(turned).toBeVisible();
   await warning.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('flux-extras-warning.png') });
-  // A narrow screen keeps every notice inside the dialog.
+  // A narrow screen keeps the preview, its controls and every notice inside the dialog, and a
+  // touch drag on the preview turns the view without scrolling the dialog.
   await page.setViewportSize({ width: 390, height: 844 });
-  await warning.scrollIntoViewIfNeeded();
+  await preview.scrollIntoViewIfNeeded();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  const card = dialog.locator('.modal-card');
+  const scrolled = await card.evaluate((el) => el.scrollTop);
+  const before = await direction();
+  const touch = (await preview.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+  const at = (dx: number, dy: number) => [
+    { x: touch.x + touch.width / 2 + dx, y: touch.y + touch.height / 2 + dy, id: 1 },
+  ];
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(0, 0) });
+  for (let i = 1; i <= 6; i++)
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at(-6 * i, -8 * i) });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  const after = await direction();
+  expect(after.yaw).toBeGreaterThan(before.yaw);
+  expect(after.pitch).toBeLessThan(before.pitch);
+  expect(await card.evaluate((el) => el.scrollTop)).toBe(scrolled);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await page.screenshot({ path: testInfo.outputPath('flux-view-390.png') });
+  await warning.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('flux-extras-warning-390.png') });
   await page.setViewportSize({ width: 1440, height: 1000 });
   const downloaded = page.waitForEvent('download');
   await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
   expect((await sharp(await downloadedArtifact(await downloaded)).metadata()).format).toBe('png');
 
-  // Another view is another comparison: the fixed source and the result start over.
-  await expect(dialog.getByText('시점을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.')).toBeVisible();
-  await views.getByText('방 안 · 가운데(기본)', { exact: true }).click();
-  await expect(result).toHaveCount(0);
-  await expect(source).toHaveCount(0);
+  // Converting in another direction (the front, where the basin is whole) is another comparison:
+  // the fixed source and the result start over.
+  await button('정면으로').click();
+  await expect(turned).toBeVisible();
   answer = 'moved';
   await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  await expect(result).toHaveCount(0);
+  // Turning is locked only while converting.
+  await expect(button('오른쪽으로 5° 돌리기')).toBeDisabled();
   await expect(warning).toContainText('배치한 제품이 바뀌었을 수 있어요', { timeout: 30000 });
   await expect(warning).toContainText(/세면대가 .+에서 .+ 옮겨졌을 수 있어요\./);
   await expect(source).toBeVisible();
+  await expect(button('오른쪽으로 5° 돌리기')).toBeEnabled();
+  await expect(turned).toHaveCount(0);
   expect(converts).toHaveLength(2);
   expect(checks).toHaveLength(2);
   expect(converts[1].hash).not.toBe(converts[0].hash);
+  // The direction lives only while the dialog is open.
   await dialog.getByRole('button', { name: '닫기', exact: true }).click();
-
-  // An in-room view saved in the space viewer becomes a choice, selected first.
-  await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
-  const eye = page.getByRole('group', { name: '방 안 시점', exact: true });
-  await eye.getByRole('button', { name: '방 안 · 왼쪽 모서리', exact: true }).click();
-  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
-  await page.getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
-  await expect(views.getByRole('radio')).toHaveCount(4);
-  await expect(views.getByRole('radio', { name: '저장한 방 안 시점', exact: true })).toBeChecked();
+  await expect(readout).toHaveText('좌우 0° · 위아래 0°');
   expect(errors).toEqual([]);
 });
 

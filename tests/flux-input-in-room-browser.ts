@@ -20,7 +20,7 @@ const output = 'test-results/flux-input-in-room/payload';
 await mkdir(output, { recursive: true });
 const bundle = await build({
   stdin: {
-    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {VIEWER_CEILING_COLOR} from './src/lib/room-viewer/ceiling';export {PhotoCompositor} from './src/lib/render/compositor';export {renderRoomBackground} from './src/lib/room-background';export {createRoomSurfaces,DEFAULT_ROOM} from './src/lib/room-geometry';export {projectReconstructionFixture} from './src/lib/reconstruction/projection';export {buildFluxGrounding,visibleCeiling,visibleWalls} from './src/lib/ai-export/scene';export {fluxInputLayout} from './src/lib/ai-export/contract';export {prepareFluxImage} from './src/lib/ai-export/client';export {buildFluxPrompt} from './src/lib/ai-export/prompt';export {fluxSceneSchema} from './src/lib/ai-export/scene-contract';export {fluxView} from './src/lib/ai-export/view';`,
+    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {VIEWER_CEILING_COLOR} from './src/lib/room-viewer/ceiling';export {PhotoCompositor} from './src/lib/render/compositor';export {renderRoomBackground} from './src/lib/room-background';export {createRoomSurfaces,DEFAULT_ROOM} from './src/lib/room-geometry';export {projectReconstructionFixture} from './src/lib/reconstruction/projection';export {buildFluxGrounding,visibleCeiling,visibleWalls} from './src/lib/ai-export/scene';export {fluxInputLayout} from './src/lib/ai-export/contract';export {prepareFluxImage} from './src/lib/ai-export/client';export {buildFluxPrompt} from './src/lib/ai-export/prompt';export {fluxSceneSchema} from './src/lib/ai-export/scene-contract';export {presetFluxView} from './tests/helpers/flux-room-scene';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -61,7 +61,8 @@ try {
       typeof import('../src/lib/ai-export/client') &
       typeof import('../src/lib/ai-export/prompt') &
       typeof import('../src/lib/ai-export/scene-contract') &
-      typeof import('../src/lib/ai-export/view');
+      typeof import('../src/lib/ai-export/view') &
+      Pick<typeof import('./helpers/flux-room-scene'), 'presetFluxView'>;
     type AssetRecord = import('../src/lib/types').AssetRecord;
     type MaterialVersion = import('../src/lib/types').MaterialVersion;
     type FixtureInstance = import('../src/lib/types').FixtureInstance;
@@ -387,7 +388,7 @@ try {
     // The new input: a fresh renderer per capture, as the editor does, timed from a cold start.
     const edge = Math.min(1024, Math.max(imageWidth, imageHeight));
     for (const preset of ['center', 'left-corner', 'right-corner'] as const) {
-      const view = lib.fluxView(room, preset, {});
+      const view = lib.presetFluxView(room, preset);
       const started = performance.now();
       const viewer = new lib.RoomViewerRenderer();
       const created = performance.now();
