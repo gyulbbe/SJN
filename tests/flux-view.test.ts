@@ -1,27 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import { Vector3 } from 'three';
 import {
-  clampFluxDirection,
-  FLUX_EYE_FOV,
-  FLUX_EYE_HEIGHT_MM,
+  clampFluxOrbit,
   FLUX_FRONT,
-  fluxDirectionLimits,
-  fluxDirectionOutside,
-  fluxEyeView,
+  fluxOrbitLabel,
+  fluxOrbitView,
   fluxRoom,
-  type FluxDirection,
+  turnFluxOrbit,
 } from '../src/lib/ai-export/view';
 import { visibleCeiling, visibleWalls } from '../src/lib/ai-export/scene';
 import type { RegionMask } from '../src/lib/ai-export/color';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
+import { viewerFaceIsVisible } from '../src/lib/room-viewer/surfaces';
 import {
   createRoomViewCamera,
   defaultRoomView,
   normalizeRoomView,
   roomEyeView,
-  validRoomEye,
+  validRoomOrbit,
+  type RoomOrbit,
   type RoomViewState,
 } from '../src/lib/room-viewer/view-state';
+import { roomViewSchema } from '../src/lib/storage/validation';
 import type { RoomDimensions } from '../src/lib/room-types';
 import type { Scene } from '../src/lib/types';
 
@@ -39,151 +39,176 @@ const scene = (patch: Partial<Scene> = {}): Scene => ({
   color: { exposure: 0, contrast: 1, saturation: 1, warmth: 0 },
   ...patch,
 });
-
-/**
- * An independent look at every pixel (not the sampled border the limit uses): does any pixel ray of
- * a 150 × 100 frame leave the room box through its open front?
- */
-function anyPixelSeesOut(dims: RoomDimensions, direction: FluxDirection) {
-  const camera = createRoomViewCamera(dims, ASPECT, fluxEyeView(dims, direction));
-  const origin = camera.position.clone();
-  const point = new Vector3();
-  for (let py = 0; py < 100; py++)
-    for (let px = 0; px < 150; px++) {
-      point.set(((px + 0.5) / 150) * 2 - 1, 1 - ((py + 0.5) / 100) * 2, 0.5).unproject(camera);
-      const d = point.sub(origin).normalize();
-      const t = (limit: number, from: number, speed: number) =>
-        speed === 0 ? Infinity : (limit - from) / speed;
-      const walls = Math.min(
-        ...[d.x > 0 ? t(dims.widthMm / 2, origin.x, d.x) : t(-dims.widthMm / 2, origin.x, d.x)],
-        d.y > 0 ? t(dims.heightMm, origin.y, d.y) : t(0, origin.y, d.y),
-        d.z < 0 ? t(0, origin.z, d.z) : Infinity,
-      );
-      const front = d.z > 0 ? t(dims.depthMm, origin.z, d.z) : Infinity;
-      if (front < walls) return true;
-    }
-  return false;
-}
-/** A seeded sequence, so the "random" directions are the same every run. */
-function sequence(seed: number) {
-  return () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-}
+const camera = (orbit: RoomOrbit, dims: RoomDimensions = room) =>
+  createRoomViewCamera(dims, ASPECT, fluxOrbitView(orbit));
+const corners = (dims: RoomDimensions) =>
+  [-dims.widthMm / 2, dims.widthMm / 2].flatMap((x) =>
+    [0, dims.heightMm].flatMap((y) => [0, dims.depthMm].map((z) => new Vector3(x, y, z))),
+  );
 const rooms: [string, RoomDimensions][] = [
   ['the default 2.4 m room', { widthMm: 2400, depthMm: 2400, heightMm: 2400 }],
   ['a narrow, long room', { widthMm: 1200, depthMm: 3200, heightMm: 2400 }],
   ['a wide, shallow room', { widthMm: 3600, depthMm: 1700, heightMm: 2600 }],
 ];
+const directions: RoomOrbit[] = [
+  { azimuth: 0, elevation: 0 },
+  { azimuth: 90, elevation: 0 },
+  { azimuth: 180, elevation: 0 },
+  { azimuth: -90, elevation: 0 },
+  { azimuth: 0, elevation: 90 },
+  { azimuth: 90, elevation: 90 },
+  { azimuth: 45, elevation: 30 },
+  { azimuth: -135, elevation: 60 },
+];
 
-describe('AI input camera', () => {
-  it('stands at the middle of the open front at 1.2 m with a fixed 90° lens, turned and tilted', () => {
-    const view = fluxEyeView(room, { yaw: 12, pitch: -7 });
-    expect(view.projection).toBe('room-eye');
-    expect(view.eye).toEqual({
-      position: [0, FLUX_EYE_HEIGHT_MM, room.depthMm - 150],
-      yaw: 12,
-      shift: 0,
-      fov: FLUX_EYE_FOV,
-      pitch: -7,
+describe('the AI orbit camera', () => {
+  it.each(directions)('has no roll and screen-up is the room up: %o', (orbit) => {
+    const c = camera(orbit);
+    const right = new Vector3(1, 0, 0).applyQuaternion(c.quaternion);
+    const up = new Vector3(0, 1, 0).applyQuaternion(c.quaternion);
+    const forward = new Vector3(0, 0, -1).applyQuaternion(c.quaternion);
+    // The screen's horizontal stays level; its up never points down (not upside down).
+    expect(right.y).toBeCloseTo(0, 9);
+    expect(up.y).toBeGreaterThanOrEqual(-1e-9);
+    // It looks down by exactly the elevation.
+    expect((Math.asin(-forward.y) * 180) / Math.PI).toBeCloseTo(orbit.elevation, 6);
+    // The room's vertical edge projects upright (top above bottom) whenever it is not end-on.
+    if (orbit.elevation < 90) {
+      const bottom = new Vector3(-room.widthMm / 2, 0, 0).project(c);
+      const top = new Vector3(-room.widthMm / 2, room.heightMm, 0).project(c);
+      expect(top.y).toBeGreaterThan(bottom.y);
+    }
+  });
+
+  it('stands on the side the azimuth names, outside the room, and above it at 90°', () => {
+    const at = (orbit: RoomOrbit) => camera(orbit).position;
+    expect(at({ azimuth: 0, elevation: 0 }).z).toBeGreaterThan(room.depthMm);
+    expect(at({ azimuth: 90, elevation: 0 }).x).toBeGreaterThan(room.widthMm / 2);
+    expect(at({ azimuth: 180, elevation: 0 }).z).toBeLessThan(0);
+    expect(at({ azimuth: -90, elevation: 0 }).x).toBeLessThan(-room.widthMm / 2);
+    const top = at({ azimuth: 0, elevation: 90 });
+    expect(top.y).toBeGreaterThan(room.heightMm);
+    expect(top.x).toBeCloseTo(0, 6);
+    expect(top.z).toBeCloseTo(room.depthMm / 2, 6);
+  });
+
+  it('from straight above, the room front is at the bottom of the frame (and the named side when turned)', () => {
+    const front = new Vector3(0, 0, room.depthMm),
+      back = new Vector3(0, 0, 0),
+      rightWall = new Vector3(room.widthMm / 2, 0, room.depthMm / 2),
+      leftWall = new Vector3(-room.widthMm / 2, 0, room.depthMm / 2);
+    const top = camera({ azimuth: 0, elevation: 90 });
+    expect(front.clone().project(top).y).toBeLessThan(back.clone().project(top).y);
+    expect(rightWall.clone().project(top).x).toBeGreaterThan(leftWall.clone().project(top).x);
+    const turned = camera({ azimuth: 90, elevation: 90 });
+    expect(rightWall.clone().project(turned).y).toBeLessThan(leftWall.clone().project(turned).y);
+  });
+
+  it.each(rooms)('fits the room outline tightly and centred: %s', (_label, dims) => {
+    for (const orbit of directions) {
+      const c = camera(orbit, dims);
+      const projected = corners(dims).map((point) => point.project(c));
+      const xs = projected.map((p) => p.x),
+        ys = projected.map((p) => p.y);
+      // Every corner in frame (in front of the camera too), none past 97% of the half-size.
+      for (const p of projected) {
+        expect(Math.abs(p.x)).toBeLessThanOrEqual(0.97 + 1e-6);
+        expect(Math.abs(p.y)).toBeLessThanOrEqual(0.97 + 1e-6);
+        expect(p.z).toBeLessThan(1);
+        expect(p.z).toBeGreaterThan(-1);
+      }
+      // Centred, and one side of the frame is filled.
+      expect(Math.min(...xs) + Math.max(...xs)).toBeCloseTo(0, 6);
+      expect(Math.min(...ys) + Math.max(...ys)).toBeCloseTo(0, 6);
+      expect(Math.max(Math.max(...xs), Math.max(...ys))).toBeCloseTo(0.97, 6);
+    }
+  });
+
+  it('cuts away the walls facing the camera and keeps the others, as the space viewer does', () => {
+    const shown = (orbit: RoomOrbit) =>
+      (['floor', 'back', 'left', 'right'] as const).filter((face) =>
+        viewerFaceIsVisible(room, face, camera(orbit).position),
+      );
+    expect(shown({ azimuth: 0, elevation: 0 })).toEqual(['floor', 'back', 'left', 'right']);
+    expect(shown({ azimuth: 90, elevation: 0 })).toEqual(['floor', 'back', 'left']);
+    expect(shown({ azimuth: 180, elevation: 0 })).toEqual(['floor', 'left', 'right']);
+    expect(shown({ azimuth: -90, elevation: 0 })).toEqual(['floor', 'back', 'right']);
+    expect(shown({ azimuth: 45, elevation: 30 })).toEqual(['floor', 'back', 'left']);
+    // From above every wall stands around the floor; the ceiling is never drawn for an orbit view.
+    expect(shown({ azimuth: 0, elevation: 90 })).toEqual(['floor', 'back', 'left', 'right']);
+    expect(fluxOrbitView({ azimuth: 0, elevation: 90 }).projection).toBe('room-orbit');
+  });
+});
+
+describe('turning a quarter at a time', () => {
+  it('goes front → right → back → left → front and back again; up is straight down, down is level', () => {
+    let orbit = FLUX_FRONT;
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      orbit = turnFluxOrbit(orbit, 'right');
+      seen.push(`${orbit.azimuth}/${fluxOrbitLabel(orbit)}`);
+    }
+    expect(seen).toEqual(['90/오른쪽', '180/뒤', '-90/왼쪽', '0/정면']);
+    expect(turnFluxOrbit(FLUX_FRONT, 'left')).toEqual({ azimuth: -90, elevation: 0 });
+    expect(turnFluxOrbit({ azimuth: -90, elevation: 0 }, 'left')).toEqual({ azimuth: 180, elevation: 0 });
+    // From between two quarters, to the next quarter that way.
+    expect(turnFluxOrbit({ azimuth: 30, elevation: 20 }, 'right')).toEqual({ azimuth: 90, elevation: 20 });
+    expect(turnFluxOrbit({ azimuth: 30, elevation: 20 }, 'left')).toEqual({ azimuth: 0, elevation: 20 });
+    expect(turnFluxOrbit({ azimuth: 90, elevation: 0 }, 'top')).toEqual({ azimuth: 90, elevation: 90 });
+    expect(turnFluxOrbit({ azimuth: 90, elevation: 90 }, 'side')).toEqual({ azimuth: 90, elevation: 0 });
+    expect(turnFluxOrbit({ azimuth: 135, elevation: 45 }, 'front')).toEqual({ azimuth: 0, elevation: 0 });
+  });
+
+  it('never looks from below the floor and wraps the heading', () => {
+    expect(clampFluxOrbit({ azimuth: 0, elevation: -30 })).toEqual({ azimuth: 0, elevation: 0 });
+    expect(clampFluxOrbit({ azimuth: 0, elevation: 120 })).toEqual({ azimuth: 0, elevation: 90 });
+    expect(clampFluxOrbit({ azimuth: 270, elevation: 0 })).toEqual({ azimuth: -90, elevation: 0 });
+    expect(clampFluxOrbit({ azimuth: -180, elevation: 0 })).toEqual({ azimuth: 180, elevation: 0 });
+    expect(clampFluxOrbit({ azimuth: 725.123, elevation: 12.345 })).toEqual({
+      azimuth: 5.12,
+      elevation: 12.35,
     });
-    // Below a low ceiling.
-    expect(fluxEyeView({ ...room, heightMm: 1000 }, FLUX_FRONT).eye!.position[1]).toBe(850);
+    expect(fluxOrbitView({ azimuth: 10, elevation: -5 }).orbit).toEqual({ azimuth: 10, elevation: 0 });
+    expect(validRoomOrbit({ azimuth: 0, elevation: -1 })).toBe(false);
+    expect(validRoomOrbit({ azimuth: 0, elevation: 91 })).toBe(false);
+    // A view from below cannot sneak in through normalisation either.
+    const below = { ...fluxOrbitView(FLUX_FRONT), orbit: { azimuth: 0, elevation: -20 } };
+    expect(normalizeRoomView(below).orbit).toBeUndefined();
   });
 
-  it('tilts for real: looking up raises the frame, the vertical of the room still projects from the camera', () => {
-    const level = createRoomViewCamera(room, ASPECT, fluxEyeView(room, FLUX_FRONT));
-    const up = createRoomViewCamera(room, ASPECT, fluxEyeView(room, { yaw: 0, pitch: 20 }));
-    const target = new Vector3(0, FLUX_EYE_HEIGHT_MM, 0);
-    // The back wall at eye height is centred when level and lower in the frame when looking up.
-    expect(target.clone().project(level).y).toBeCloseTo(0, 6);
-    expect(target.clone().project(up).y).toBeLessThan(-0.3);
-    // Looking up 20° is the same as the point sitting 20° below the view axis.
-    const axis = new Vector3(0, 0, -1).applyQuaternion(up.quaternion);
-    expect((Math.asin(axis.y) * 180) / Math.PI).toBeCloseTo(20, 6);
+  it('names the view: quarters by side, in between by side and angle', () => {
+    expect(fluxOrbitLabel({ azimuth: 0, elevation: 0 })).toBe('정면');
+    expect(fluxOrbitLabel({ azimuth: 0, elevation: 90 })).toBe('위에서');
+    expect(fluxOrbitLabel({ azimuth: 90, elevation: 90 })).toBe('위에서 · 오른쪽');
+    expect(fluxOrbitLabel({ azimuth: 45, elevation: 30 })).toBe('오른쪽 45° · 위 30°');
+    expect(fluxOrbitLabel({ azimuth: -30, elevation: 0 })).toBe('왼쪽 30°');
+    expect(fluxOrbitLabel({ azimuth: 0, elevation: 30 })).toBe('정면 · 위 30°');
+    expect(fluxOrbitLabel({ azimuth: 179.6, elevation: 0 })).toBe('뒤');
+    expect(fluxOrbitLabel({ azimuth: 89.7, elevation: 0.2 })).toBe('오른쪽');
   });
+});
 
+describe('scenes and saved views', () => {
   it('draws every scene with room dimensions in the room; legacy photo-only scenes keep the 2D path', () => {
     expect(fluxRoom(scene(), scene())).toEqual(room);
     expect(fluxRoom(scene({ room: undefined }), scene())).toBeUndefined();
     expect(fluxRoom(scene(), scene({ room: { ...room, widthMm: room.widthMm + 100 } }))).toBeUndefined();
   });
-});
 
-describe('turning stops where the open front would come into view', () => {
-  it.each(rooms)('keeps every pixel inside, at the limits and at random directions: %s', (_label, dims) => {
-    const limits = fluxDirectionLimits(dims, ASPECT);
-    for (const direction of [
-      FLUX_FRONT,
-      { yaw: limits.left, pitch: 0 },
-      { yaw: limits.right, pitch: 0 },
-      { yaw: 0, pitch: limits.up },
-      { yaw: 0, pitch: limits.down },
-    ]) {
-      expect(fluxDirectionOutside(dims, ASPECT, direction)).toBe(0);
-      expect(anyPixelSeesOut(dims, direction)).toBe(false);
-    }
-    // Just past each limit, the frame would see out: the limits are tight.
-    expect(fluxDirectionOutside(dims, ASPECT, { yaw: limits.right + 0.5, pitch: 0 })).toBeGreaterThan(0);
-    expect(fluxDirectionOutside(dims, ASPECT, { yaw: 0, pitch: limits.down - 0.5 })).toBeGreaterThan(0);
-    const random = sequence(20260928);
-    for (let i = 0; i < 40; i++) {
-      const wish = { yaw: (random() - 0.5) * 180, pitch: (random() - 0.5) * 160 };
-      const { direction } = clampFluxDirection(dims, ASPECT, FLUX_FRONT, wish);
-      expect(fluxDirectionOutside(dims, ASPECT, direction)).toBe(0);
-      expect(anyPixelSeesOut(dims, direction)).toBe(false);
-    }
-  });
-
-  it('cuts a direction past the limit back to the limit, the same way every time', () => {
-    const limits = fluxDirectionLimits(room, ASPECT);
-    const once = clampFluxDirection(room, ASPECT, FLUX_FRONT, { yaw: 80, pitch: 0 });
-    expect(once.blocked).toBe(true);
-    expect(once.direction).toEqual({ yaw: limits.right, pitch: 0 });
-    // Pushing again from the limit stays put: no jitter.
-    expect(clampFluxDirection(room, ASPECT, once.direction, { yaw: 85, pitch: 0 }).direction).toEqual(
-      once.direction,
-    );
-    // A slanted push past the up limit slides along it: the turn still follows, the tilt stops.
-    const slide = clampFluxDirection(room, ASPECT, FLUX_FRONT, { yaw: 20, pitch: 80 });
-    expect(slide.blocked).toBe(true);
-    expect(slide.direction.yaw).toBe(20);
-    expect(slide.direction.pitch).toBeGreaterThan(20);
-    expect(fluxDirectionOutside(room, ASPECT, slide.direction)).toBe(0);
-    // At the side limit, tilting would widen the frame's corners past the front: it stays put.
-    expect(clampFluxDirection(room, ASPECT, once.direction, { yaw: 85, pitch: 10 }).direction).toEqual(
-      once.direction,
-    );
-    // Inside the range nothing is cut.
-    expect(clampFluxDirection(room, ASPECT, FLUX_FRONT, { yaw: 10, pitch: -5 })).toEqual({
-      direction: { yaw: 10, pitch: -5 },
-      blocked: false,
-    });
-  });
-
-  it('reports the default room range (recorded in docs/flux-export.md)', () => {
-    const limits = fluxDirectionLimits(room, ASPECT);
-    expect(limits.left).toBeCloseTo(-limits.right, 1);
-    expect(limits.right).toBeGreaterThan(30);
-    expect(limits.up).toBeGreaterThan(20);
-    expect(limits.down).toBeLessThan(-20);
-    console.info('default room limits', limits);
-  });
-});
-
-describe('saved views are read as before', () => {
-  it('never adds a tilt to a saved view and rejects a bad one', () => {
+  it('reads saved views exactly as before; an AI orbit view can never be saved', () => {
     const orbit = defaultRoomView();
     expect(normalizeRoomView(orbit)).toEqual(orbit);
     const saved: RoomViewState = roomEyeView(room, 'left-corner');
     const normalised = normalizeRoomView(saved);
     expect(normalised).toEqual(saved);
-    expect('pitch' in normalised.eye!).toBe(false);
-    // The space viewer's yaw limit still applies to an untilted eye.
-    expect(createRoomViewCamera(room, ASPECT, { ...saved, eye: { ...saved.eye!, yaw: 80 } })).toBeDefined();
-    expect(validRoomEye({ ...saved.eye!, pitch: 10 })).toBe(true);
-    expect(validRoomEye({ ...saved.eye!, pitch: 95 })).toBe(false);
-    expect(validRoomEye({ ...saved.eye!, pitch: Number.NaN })).toBe(false);
-    // A tilted AI view keeps its tilt through normalisation.
-    expect(normalizeRoomView(fluxEyeView(room, { yaw: 5, pitch: 12 })).eye!.pitch).toBe(12);
+    expect(Object.keys(normalised.eye!).sort()).toEqual(['fov', 'position', 'shift', 'yaw']);
+    expect('orbit' in normalised).toBe(false);
+    expect(roomViewSchema.safeParse(saved).success).toBe(true);
+    expect(roomViewSchema.safeParse(orbit).success).toBe(true);
+    // The AI view keeps its orbit through normalisation, and the storage schema refuses it.
+    const ai = fluxOrbitView({ azimuth: 45, elevation: 30 });
+    expect(normalizeRoomView(ai)).toEqual(ai);
+    expect(roomViewSchema.safeParse(ai).success).toBe(false);
   });
 });
 
@@ -216,13 +241,22 @@ describe('visible walls and ceiling from the capture mask', () => {
     expect(visibleWalls(mask, { surfaces })).toEqual(['left', 'back']);
   });
 
-  it('names the ceiling only when at least 1% of an in-room capture is left unlabelled', () => {
-    const mask = (unlabelled: number): RegionMask => {
+  it('names the ceiling only when at least 1% of the room pixels are unlabelled; the backdrop is not ceiling', () => {
+    const mask = (unlabelled: number, outside = 0): RegionMask => {
       const data = new Uint8Array(1000).fill(1);
-      data.fill(0, 0, unlabelled);
-      return { width: 100, height: 10, data, regions: [{ key: 'face:back', kind: 'wall' }] };
+      data.fill(0, 0, unlabelled + outside);
+      return {
+        width: 100,
+        height: 10,
+        data,
+        regions: [{ key: 'face:back', kind: 'wall' }],
+        outside: new Uint8Array(1000).fill(1, unlabelled, unlabelled + outside),
+      };
     };
     expect(visibleCeiling(mask(9))).toBe(false);
     expect(visibleCeiling(mask(10))).toBe(true);
+    // An orbit capture: a wide white backdrop, no ceiling.
+    expect(visibleCeiling(mask(0, 400))).toBe(false);
+    expect(visibleCeiling(mask(10, 400))).toBe(true);
   });
 });

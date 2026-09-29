@@ -268,20 +268,25 @@ export type FluxCaptureSource = {
   boxes?: Record<string, Box>;
   /** Which wall, floor or fixture covers each capture pixel, for the result's colour check. */
   regions?: RegionMask;
-  /** Paint colour of the ceiling an in-room view shows (with its one light panel); none otherwise. */
+  /** Paint colour of the ceiling the view shows (with its one light panel); none otherwise. */
   ceiling?: string;
+  /** A view from outside with the near walls cut away and a plain backdrop (the orbit view). */
+  cutaway?: boolean;
   /** The composite export: the same frame split into room and fixture layers. */
   layers?: RoomLayers;
 };
 
 /**
- * Whether an in-room capture shows its ceiling (at least 1% of the frame): there the ceiling and
- * its light panel are the only pixels outside every face and fixture, since the open front is never
- * in view. The ceiling sentence is sent only then, so the text never names what the image lacks.
+ * Whether a capture shows its ceiling (at least 1% of the frame): the ceiling and its light panel
+ * are the only room pixels outside every face and fixture; the backdrop (`outside`) is not room.
+ * The ceiling sentence is sent only then, so the text never names what the image lacks. (An orbit
+ * view hides the ceiling, so it never has one.)
  */
 export function visibleCeiling(mask: RegionMask): boolean {
   let unlabelled = 0;
-  for (const label of mask.data) if (label === 0) unlabelled++;
+  mask.data.forEach((label, i) => {
+    if (label === 0 && !mask.outside?.[i]) unlabelled++;
+  });
   return unlabelled >= mask.data.length * 0.01;
 }
 
@@ -323,8 +328,10 @@ export async function buildFluxGrounding(input: {
   layout: FluxInputLayout;
   /** Boxes from the 3D viewer, keyed by fixture id; the 2D path derives them from the scene. */
   boxes?: Record<string, Box>;
-  /** Ceiling paint of an in-room view; it is named under the photo's light, like the tiles. */
+  /** Ceiling paint of a view that shows it; it is named under the photo's light, like the tiles. */
   ceiling?: string;
+  /** An outside view with the near walls cut away: the prompt says so (FLUX_CUTAWAY_SENTENCE). */
+  cutaway?: boolean;
 }): Promise<FluxGrounding> {
   const { snapshot, reader, capture, layout, boxes } = input;
   const scene = snapshot.scene;
@@ -411,5 +418,14 @@ export async function buildFluxGrounding(input: {
     input.ceiling && HEX.test(input.ceiling)
       ? { color: litColor(input.ceiling.toLowerCase(), snapshot.lighting), light: 'flat-panel' as const }
       : undefined;
-  return { scene: { version: 1, fixtures, surfaces, ...(ceiling ? { ceiling } : {}) }, placed };
+  return {
+    scene: {
+      version: 1,
+      fixtures,
+      surfaces,
+      ...(ceiling ? { ceiling } : {}),
+      ...(input.cutaway ? { view: 'cutaway' as const } : {}),
+    },
+    placed,
+  };
 }

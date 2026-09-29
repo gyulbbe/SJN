@@ -76,7 +76,7 @@ import Inspector from './inspector';
 import AiExport from './ai-export';
 import type { AiPreview } from './ai-view-picker';
 import { visibleCeiling, type FluxCaptureSource } from '@/lib/ai-export/scene';
-import { fluxRoom } from '@/lib/ai-export/view';
+import { FLUX_BACKDROP, fluxRoom } from '@/lib/ai-export/view';
 import type { RoomViewState } from '@/lib/room-viewer/view-state';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
@@ -1231,7 +1231,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     const { RoomViewerRenderer } = await import('@/lib/room-viewer/renderer');
     const renderer = new RoomViewerRenderer();
     try {
-      await renderer.setSnapshot(aiSnapshot(), assetReader, composite ? { exportAngles: true } : undefined);
+      await renderer.setSnapshot(aiSnapshot(), assetReader, {
+        background: FLUX_BACKDROP,
+        ...(composite ? { exportAngles: true } : {}),
+      });
     } catch (error) {
       renderer.dispose();
       throw error;
@@ -1245,14 +1248,14 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     };
   }
   /**
-   * The AI conversion's input: one plain After frame from an in-room eye, drawn by the 3D viewer for
-   * every project with room dimensions (the ceiling closes the top and the walls fill the frame, so
-   * the model has no empty margin to invent walls in), with the fixture boxes and face mask from the
-   * same camera. A scene without a room keeps the 2D front composite. The renderer lives only for
-   * this capture; the editor, previews and downloads are untouched.
+   * The AI conversion's input: one plain After frame from the dialog's outside orbit camera, drawn
+   * by the 3D viewer for every project with room dimensions (near walls cut away, a plain white
+   * backdrop the result gets back afterwards), with the fixture boxes and face mask from the same
+   * camera. A scene without a room keeps the 2D front composite. The renderer lives only for this
+   * capture; the editor, previews and downloads are untouched.
    */
   async function captureAiInput(
-    /** The dialog's camera (an in-room eye); none for a scene without a room. */
+    /** The dialog's camera (the AI orbit); none for a scene without a room. */
     view?: RoomViewState,
     /** The composite export: also the room/fixture layers, with photos chosen by angle. */
     composite?: boolean,
@@ -1279,9 +1282,13 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     ]);
     const roomRenderer = new RoomViewerRenderer();
     try {
-      // An eye camera ignores the fit bounds, so the other designs need not be prepared. The
-      // composite export shows each product photo nearest the camera's angle (this capture only).
-      await roomRenderer.setSnapshot(snapshot, assetReader, composite ? { exportAngles: true } : undefined);
+      // The orbit fits this design's Before and After (as the dialog's preview does), so the other
+      // designs need not be prepared. The composite export shows each product photo nearest the
+      // camera's angle (this capture only).
+      await roomRenderer.setSnapshot(snapshot, assetReader, {
+        background: FLUX_BACKDROP,
+        ...(composite ? { exportAngles: true } : {}),
+      });
       // One frame, no photo look: stage 3 found averaged samples made no difference to FLUX.
       const blob = await roomRenderer.export(view, { format: 'png', mode: 'after', longEdge: edge });
       const regions = roomRenderer.regionMask(
@@ -1296,6 +1303,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         boxes: roomRenderer.fixtureBounds(width, height, view),
         regions,
         ...(visibleCeiling(regions) ? { ceiling: VIEWER_CEILING_COLOR } : {}),
+        ...(view.projection === 'room-orbit' ? { cutaway: true } : {}),
         // Same renderer, camera and pixel grid as the frame above.
         ...(composite ? { layers: roomRenderer.exportLayers(view, { longEdge: edge }) } : {}),
       };
@@ -1303,7 +1311,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       roomRenderer.dispose();
     }
   }
-  // The AI dialog turns an in-room camera when the After has a room; the input keeps its aspect.
+  // The AI dialog circles the room from outside when the After has one; the input keeps its aspect.
   const aiAfter = st.project ? getActiveScene(st.project) : undefined;
   const aiRoomDims =
     st.project && aiAfter
@@ -1311,7 +1319,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       : undefined;
   const aiRoom =
     aiRoomDims && aiAfter
-      ? { dims: aiRoomDims, aspect: aiAfter.imageWidth / aiAfter.imageHeight, prepare: prepareAiPreview }
+      ? { aspect: aiAfter.imageWidth / aiAfter.imageHeight, prepare: prepareAiPreview }
       : undefined;
   async function exportImage() {
     if (requireLogin('이미지 출력')) return;

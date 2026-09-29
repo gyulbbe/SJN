@@ -206,6 +206,11 @@ export type FluxNoticeInput = {
   /** Tile-layout answers are shown only when they proved reliable enough. */
   showTiles: boolean;
   /**
+   * The outside view's white margin could not be put back: the model reframed the room, so the
+   * capture's outline would not fit (what it drew around the room stays).
+   */
+  backdrop?: 'reframed';
+  /**
    * The composite export: our fixtures were put on the model's empty room. "shifted" when the
    * model moved the room's floor line (or reframed), so fixtures standing on it may look afloat.
    */
@@ -309,7 +314,11 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
   } else if (colors?.status === 'reframed')
     infos.unshift({
       key: 'color',
-      text: 'AI가 구도를 바꿔 벽·바닥 색을 원본과 비교하지 못했어요. 자재 색은 원본과 직접 비교해 주세요.',
+      text:
+        'AI가 구도를 바꿔 벽·바닥 색을 원본과 비교하지 못했어요. 자재 색은 원본과 직접 비교해 주세요.' +
+        (input.backdrop === 'reframed'
+          ? ' 방 둘레 흰 여백도 되돌리지 못했으니, 여백에 생긴 벽·물건은 무시해 주세요.'
+          : ''),
     });
   if (check?.status === 'failed')
     infos.push({

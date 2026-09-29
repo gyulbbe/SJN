@@ -8,13 +8,19 @@ import {
   requestFluxCheck,
   requestFluxImage,
 } from '@/lib/ai-export/client';
-import { reviewResultColors, type Pixels, type RegionMask } from '@/lib/ai-export/color';
+import {
+  framing,
+  projectCapture,
+  reviewResultColors,
+  type Pixels,
+  type RegionMask,
+} from '@/lib/ai-export/color';
 import { fluxInputLayout, type FluxInputLayout } from '@/lib/ai-export/contract';
 import type { FluxCheckWall } from '@/lib/ai-export/check-contract';
 import { fluxResultNotices, readFluxCheck, type FluxNoticeInput } from '@/lib/ai-export/notices';
-import { FLUX_FRONT, fluxEyeView, type FluxDirection } from '@/lib/ai-export/view';
-import type { RoomDimensions } from '@/lib/room-types';
-import type { RoomViewState } from '@/lib/room-viewer/view-state';
+import { FLUX_FRONT, fluxOrbitView } from '@/lib/ai-export/view';
+import { restoreBackdrop } from '@/lib/ai-export/backdrop';
+import type { RoomOrbit, RoomViewState } from '@/lib/room-viewer/view-state';
 import AiViewPicker, { type AiPreview } from './ai-view-picker';
 import { FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
 import { ServerWaitProgress, useServerWait } from '@/components/server-wait-progress';
@@ -89,17 +95,17 @@ export default function AiExport({
    * The room the input is drawn in, with the input's aspect and a live preview renderer; absent
    * for a scene without room dimensions (the 2D front composite, no turning).
    */
-  room?: { dims: RoomDimensions; aspect: number; prepare: (composite: boolean) => Promise<AiPreview> };
+  room?: { aspect: number; prepare: (composite: boolean) => Promise<AiPreview> };
   filename: string;
   userId?: string | null;
   disabled: boolean;
   onBusyChange: (busy: boolean) => void;
 }) {
   const live = useRef(true);
-  // The direction lives only while the dialog is open: it starts facing the back wall every time.
-  const [direction, setDirection] = useState<FluxDirection>(FLUX_FRONT);
-  /** The direction the fixed source was captured in. */
-  const [sent, setSent] = useState<FluxDirection>();
+  // The view lives only while the dialog is open: it starts in front of the room every time.
+  const [orbit, setOrbit] = useState<RoomOrbit>(FLUX_FRONT);
+  /** The view the fixed source was captured from. */
+  const [sent, setSent] = useState<RoomOrbit>();
   const [sourceUrl, setSourceUrl] = useState('');
   const [result, setResult] = useState<Result>({});
   const [busy, setBusy] = useState(false);
@@ -108,6 +114,8 @@ export default function AiExport({
   const [colors, setColors] = useState<FluxNoticeInput['colors']>();
   const [showOriginal, setShowOriginal] = useState(false);
   const [shifted, setShifted] = useState(false);
+  /** The model reframed an outside view, so its white margin could not be put back. */
+  const [marginKept, setMarginKept] = useState(false);
   // Only scenes drawn in the room can be composited.
   const [method, setMethod] = useState<FluxMethod>(() => (room ? savedMethod() : 'current'));
   const mode = room && method !== 'current' ? method : undefined;
@@ -149,6 +157,7 @@ export default function AiExport({
     state.current.composite = undefined;
     setSent(undefined);
     setShifted(false);
+    setMarginKept(false);
     setSourceUrl('');
     setPlaced(undefined);
     setResult({});
@@ -162,7 +171,7 @@ export default function AiExport({
     saveMethod(next);
     restart();
   }
-  const turned = !!sent && (sent.yaw !== direction.yaw || sent.pitch !== direction.pitch);
+  const turned = !!sent && (sent.azimuth !== orbit.azimuth || sent.elevation !== orbit.elevation);
   async function generate() {
     if (state.current.controller || disabled) return;
     // Turned since the fixed source was captured: this conversion starts a new comparison.
@@ -181,9 +190,9 @@ export default function AiExport({
     try {
       if (!state.current.image) {
         startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
-        // Exactly the picker's camera: the same direction, eye and lens.
-        const captured = { ...direction };
-        const source = await capture(room ? fluxEyeView(room.dims, captured) : undefined, !!mode);
+        // Exactly the picker's camera: the same view, fit and lens.
+        const captured = { ...orbit };
+        const source = await capture(room ? fluxOrbitView(captured) : undefined, !!mode);
         setSent(room ? captured : undefined);
         const layers = mode ? source.layers : undefined;
         if (mode && (!layers || !source.regions || !source.boxes))
@@ -216,6 +225,7 @@ export default function AiExport({
             layout: fluxInputLayout(bitmap.width, bitmap.height),
             boxes: source.boxes,
             ceiling: source.ceiling,
+            cutaway: source.cutaway,
           });
         } catch {
           grounding = undefined;
@@ -237,11 +247,33 @@ export default function AiExport({
       const grounded = state.current.grounding?.scene;
       // An empty room is described without fixtures: a described fixture gets drawn.
       const sentScene = mode && grounded ? { ...grounded, fixtures: [], mode } : mode ? undefined : grounded;
-      const blob = await requestFluxImage(state.current.image, seed, controller.signal, userId, sentScene);
+      let blob = await requestFluxImage(state.current.image, seed, controller.signal, userId, sentScene);
       controller.signal.throwIfAborted();
       // Only a finished server conversion counts toward this browser's usual time.
       finishWait(true);
       const color = state.current.color;
+      // The white backdrop around an outside view goes back in before anything else reads the
+      // result (the colour check, the composite, the AI check, the download): walls, glass or
+      // windows the model drew there are gone. Only where the model kept the framing, judged on its
+      // own picture (restored first, a reframed result would look aligned).
+      let marginKept = false;
+      if (color?.mask.outside) {
+        const raw = await readPixels(blob);
+        const frame = framing(projectCapture(color.capture, color.layout, raw), raw);
+        const restored = frame.aligned
+          ? restoreBackdrop({
+              result: raw,
+              capture: color.capture,
+              mask: color.mask,
+              layout: color.layout,
+              shift: frame,
+            })
+          : undefined;
+        if (restored) blob = await pixelsToPng(restored);
+        marginKept = !frame.aligned;
+        controller.signal.throwIfAborted();
+      }
+      setMarginKept(marginKept);
       const composite = state.current.composite;
       if (composite && color) {
         // Our fixtures back on the model's room, where the render put them (no AI call).
@@ -356,12 +388,13 @@ export default function AiExport({
     corrected: !showOriginal,
     showTiles: FLUX_SHOW_TILE_NOTICE,
     ...(mode ? { composite: { shifted } } : {}),
+    ...(marginKept ? { backdrop: 'reframed' as const } : {}),
   });
   return (
     <section className={styles.panel} aria-label="AI 현장 사진 변환">
       <h3>AI로 현장 사진처럼</h3>
       <p className={styles.note}>
-        {room ? '버튼을 누를 때 아래 미리보기 방향 그대로의' : '버튼을 누를 때의'} 현재 After 이미지와 배치한
+        {room ? '버튼을 누를 때 아래 미리보기 시점 그대로의' : '버튼을 누를 때의'} 현재 After 이미지와 배치한
         제품의 종류·위치·크기·색 정보를 Cloudflare로 보내 변환해요. 결과가 나오면 배치한 제품이 그대로 있는지,
         배치하지 않은 물건이 생겼는지 AI(Gemma)로 한 번 더 확인하고, 벽·바닥 색은 원래 자재 색에 맞춰 보여
         줘요(추가 요청 없음). 다시 만들 때마다 다른 결과가 나오고 두 요청의 사용량이 새로 발생해요. 그래도
@@ -370,12 +403,11 @@ export default function AiExport({
       {room && (
         <>
           <AiViewPicker
-            room={room.dims}
             aspect={room.aspect}
             prepare={prepare}
             composite={!!mode}
-            direction={direction}
-            onDirection={setDirection}
+            orbit={orbit}
+            onOrbit={setOrbit}
             locked={busy || disabled}
           />
           {turned && result.url && (
@@ -383,7 +415,7 @@ export default function AiExport({
               className="-mt-1.5 mb-3 text-xs leading-relaxed text-[color:var(--ink)]"
               data-testid="flux-view-turned"
             >
-              방향을 바꿨어요. 다시 변환하면 새 비교로 시작하니 지금 결과는 먼저 저장해 주세요.
+              시점을 바꿨어요. 다시 변환하면 새 비교로 시작하니 지금 결과는 먼저 저장해 주세요.
             </div>
           )}
         </>

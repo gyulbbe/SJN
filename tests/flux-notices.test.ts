@@ -222,6 +222,17 @@ describe('FLUX result notices', () => {
     });
     expect(failed.warnings).toEqual([]);
     expect(failed.infos.map((i) => i.key)).toEqual(['color', 'check']);
+    // An outside view the model reframed: its white margin was not put back either.
+    const margin = fluxResultNotices({
+      products,
+      colors: { status: 'reframed' },
+      corrected: true,
+      showTiles: true,
+      backdrop: 'reframed',
+    });
+    expect(margin.infos[0].text).toBe(
+      'AI가 구도를 바꿔 벽·바닥 색을 원본과 비교하지 못했어요. 자재 색은 원본과 직접 비교해 주세요. 방 둘레 흰 여백도 되돌리지 못했으니, 여백에 생긴 벽·물건은 무시해 주세요.',
+    );
     expect(failed.infos[1].text).toBe(
       'AI 제품 확인을 하지 못했어요. Cloudflare AI 사용 한도를 모두 사용했어요.',
     );

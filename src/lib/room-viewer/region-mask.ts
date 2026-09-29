@@ -90,6 +90,17 @@ export function coverageMaterial(original: Material, fixture: boolean): ShaderMa
 }
 
 /** GL rows run bottom-up; labels come back top-down, one byte per pixel. */
+/**
+ * 1 where no mesh drew (the background around the room and through its open side), from the alpha
+ * a region pass leaves: every mesh writes 1, the clear is 0. Top-down like labelsFromPixels.
+ */
+export function backgroundFromPixels(pixels: Uint8Array, width: number, height: number) {
+  const data = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      data[y * width + x] = pixels[((height - 1 - y) * width + x) * 4 + 3] < 128 ? 1 : 0;
+  return data;
+}
 export function labelsFromPixels(pixels: Uint8Array, width: number, height: number) {
   const data = new Uint8Array(width * height);
   for (let y = 0; y < height; y++)

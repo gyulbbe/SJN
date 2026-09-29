@@ -57,7 +57,7 @@ import { bindRoomShadows, MOVING_LIGHT_SHADOW_RADIUS } from './shadow';
 import { PhotoBloom, photoEffectUniforms, photoPostFragment, type PhotoEffects } from './photo-effects';
 import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
-import { coverageMaterial, labelsFromPixels, regionMaskMaterial } from './region-mask';
+import { backgroundFromPixels, coverageMaterial, labelsFromPixels, regionMaskMaterial } from './region-mask';
 import { fitSourceDepthClip, visibleMeshBounds, type SourceDepthClip } from './depth-clip';
 import { buildViewerSurfaces, ViewerTileCache, type SurfaceNotice } from './surfaces';
 import { createRoomViewCamera, normalizeRoomView, roomViewViewport, type RoomViewState } from './view-state';
@@ -81,6 +81,8 @@ type Prepared = {
   dispose(): void;
 };
 const POLICY = 'room-quarter-turn-world-v1';
+/** The space viewer's backdrop around the room. */
+const VIEWER_BACKGROUND = '#e8e8e4';
 /**
  * Multi-sample export settings; absent means the single-frame export used by previews. With
  * `budgetMs`, a slow device times its first (unjittered) sample and lowers the count so the export
@@ -145,7 +147,7 @@ const postVertex = `varying vec2 vUv; void main(){vUv=uv;gl_Position=vec4(positi
 const postFragment = `
 varying vec2 vUv;
 uniform sampler2D sjnBefore; uniform sampler2D sjnAfter;
-uniform vec4 sjnBeforeColor;uniform vec4 sjnAfterColor;uniform float sjnMode;uniform float sjnSplit;uniform vec4 sjnPhotoRect;uniform vec3 sjnLighting;
+uniform vec4 sjnBeforeColor;uniform vec4 sjnAfterColor;uniform float sjnMode;uniform float sjnSplit;uniform vec4 sjnPhotoRect;uniform vec3 sjnLighting;uniform vec4 sjnBackdrop;
 vec3 adjustColor(vec3 c,vec4 a){
  c*=exp2(a.x);c=(c-.18)*a.y+.18;c=mix(vec3(dot(c,vec3(.2126,.7152,.0722))),c,a.z);
  return max(vec3(0.),c*vec3(1.+a.w*.18,1.,1.-a.w*.18));
@@ -156,7 +158,12 @@ void main(){
  vec2 uv=vUv;if(sjnMode>2.5)uv.x=isBefore?uv.x*2.:(uv.x-.5)*2.;
  if(uv.x<sjnPhotoRect.x||uv.y<sjnPhotoRect.y||uv.x>sjnPhotoRect.x+sjnPhotoRect.z||uv.y>sjnPhotoRect.y+sjnPhotoRect.w){gl_FragColor=vec4(.909804,.909804,.894118,1.);return;}
  // The photo's light (a comparison's PhotoLighting) under the user's colour adjustment, as in 2D.
- vec3 c=isBefore?adjustColor(texture2D(sjnBefore,uv).rgb*sjnLighting,sjnBeforeColor):adjustColor(texture2D(sjnAfter,uv).rgb*sjnLighting,sjnAfterColor);
+ vec4 s=isBefore?texture2D(sjnBefore,uv):texture2D(sjnAfter,uv);
+ // A plain backdrop (sjnBackdrop.w): the room was drawn over a clear target, so unpremultiply it and
+ // lay it on the backdrop colour, which neither the light nor the colour adjustment touches.
+ bool backdrop=sjnBackdrop.w>.5;vec3 rgb=backdrop?s.rgb/max(s.a,1e-4):s.rgb;
+ vec3 c=isBefore?adjustColor(rgb*sjnLighting,sjnBeforeColor):adjustColor(rgb*sjnLighting,sjnAfterColor);
+ if(backdrop)c=mix(sjnBackdrop.rgb,c,clamp(s.a,0.,1.));
  gl_FragColor=vec4(encodeSRGB(c),1.);
 }
 `;
@@ -221,6 +228,8 @@ export class RoomViewerRenderer {
   private prepared?: { before: Prepared; after: Prepared; bounds: Box3; structureBounds: Box3 };
   private _notices: RoomViewerNotice[] = [];
   private request = 0;
+  /** A plain colour around the room (the AI export's white), set with the snapshot. */
+  private backdrop?: Color;
   private disposed = false;
   private lost = false;
   private renders = 0;
@@ -308,6 +317,7 @@ export class RoomViewerRenderer {
         sjnSplit: { value: 0.5 },
         sjnPhotoRect: { value: new Vector4(0, 0, 1, 1) },
         sjnLighting: { value: new Vector3(1, 1, 1) },
+        sjnBackdrop: { value: new Vector4(0, 0, 0, 0) },
       },
     });
     this.postMesh = new Mesh(this.postGeometry, this.postMaterial);
@@ -345,7 +355,7 @@ export class RoomViewerRenderer {
       fixtures = fixturesResult.value,
       room = scene.room!;
     const world = new ThreeScene();
-    world.background = new Color('#e8e8e4');
+    world.background = new Color(VIEWER_BACKGROUND);
     world.environment = this.environment?.texture ?? null;
     world.environmentIntensity = this.environment?.intensity ?? 1;
     const lights = createRoomLightRig(room, { environment: !!this.environment });
@@ -440,6 +450,12 @@ export class RoomViewerRenderer {
       fitScenes?: readonly Scene[];
       /** The AI export: product photos follow the camera by angle (chooseExportPhoto). */
       exportAngles?: boolean;
+      /**
+       * A plain colour around the room (CSS), untouched by the photo light and colour adjustment;
+       * absent, the viewer's grey backdrop as before. The AI export uses white, the same as the
+       * model input's padding.
+       */
+      background?: string;
     },
   ): Promise<void> {
     this.assertOpen();
@@ -521,6 +537,7 @@ export class RoomViewerRenderer {
     this.assertOpen();
     this.snapshot = snapshot;
     this.prepared = { before, after, bounds, structureBounds };
+    this.backdrop = options?.background ? new Color(options.background) : undefined;
     this._notices = [
       ...before.notices.map((n) => ({ ...n, side: 'before' as const })),
       ...after.notices.map((n) => ({ ...n, side: 'after' as const })),
@@ -581,6 +598,14 @@ export class RoomViewerRenderer {
     prepared.surfaces.updateView(camera);
     prepared.fixtures.updateView(camera);
     prepared.ceiling.setVisible(state.projection === 'room-eye');
+    // With a backdrop the room is drawn over a clear target; the output pass lays it on the colour.
+    const background = prepared.world.background;
+    const clearColor = this.backdrop ? this.renderer.getClearColor(new Color()) : undefined;
+    const clearAlpha = this.renderer.getClearAlpha();
+    if (this.backdrop) {
+      prepared.world.background = null;
+      this.renderer.setClearColor(0x000000, 0);
+    }
     this.renderer.setRenderTarget(target);
     this.renderer.setScissorTest(false);
     const viewport = tile
@@ -603,6 +628,10 @@ export class RoomViewerRenderer {
     if (tile) this.renderer.clear();
     this.renderer.render(prepared.world, camera);
     this.renderer.setScissorTest(false);
+    if (clearColor) {
+      prepared.world.background = background;
+      this.renderer.setClearColor(clearColor, clearAlpha);
+    }
   }
   /** Colour adjustment, split/compare layout and sRGB output of the two side textures. */
   private composite(
@@ -642,6 +671,8 @@ export class RoomViewerRenderer {
     uniforms.sjnBeforeColor.value = colorVector(this.prepared!.before.source.color);
     uniforms.sjnAfterColor.value = colorVector(this.prepared!.after.source.color);
     uniforms.sjnLighting.value.set(...(this.snapshot?.lighting ?? [1, 1, 1]));
+    const backdrop = this.backdrop;
+    uniforms.sjnBackdrop.value.set(backdrop?.r ?? 0, backdrop?.g ?? 0, backdrop?.b ?? 0, backdrop ? 1 : 0);
     uniforms.sjnMode.value = mode === 'before' ? 0 : mode === 'after' ? 1 : mode === 'split' ? 2 : 3;
     uniforms.sjnSplit.value = Number.isFinite(split) ? Math.max(0, Math.min(1, split)) : 0.5;
     let bloom: PhotoBloom | undefined;
@@ -1024,15 +1055,22 @@ export class RoomViewerRenderer {
   /**
    * Which wall or floor covers each pixel of an After frame of this size and view, for checking a
    * FLUX result's material colours: 0 nothing checked (ceiling, background), n `regions[n - 1]`
-   * (one per scene surface, or per bare face), 255 a fixture (glass included). Same camera and
-   * photo rectangle as export(). It draws into its own target with temporary flat materials and
+   * (one per scene surface, or per bare face), 255 a fixture (glass included). `outside` marks
+   * the pixels where nothing of the room drew (the background, also through a hidden wall's open
+   * side). Same camera and photo rectangle as export(). It draws into its own target with temporary flat materials and
    * puts every material and renderer setting back, so other frames are unchanged.
    */
   regionMask(
     width: number,
     height: number,
     view: RoomViewState,
-  ): { width: number; height: number; regions: { key: string; kind: 'wall' | 'floor' }[]; data: Uint8Array } {
+  ): {
+    width: number;
+    height: number;
+    regions: { key: string; kind: 'wall' | 'floor' }[];
+    data: Uint8Array;
+    outside: Uint8Array;
+  } {
     this.assertOpen();
     if (!this.prepared || !this.snapshot) throw new Error('공간을 준비하는 중입니다.');
     const size = fitOutput(width, height, this.maxOutputEdge);
@@ -1109,6 +1147,7 @@ export class RoomViewerRenderer {
         height: size.height,
         regions,
         data: labelsFromPixels(pixels, size.width, size.height),
+        outside: backgroundFromPixels(pixels, size.width, size.height),
       };
     } finally {
       for (const [mesh, material] of swapped) mesh.material = material;

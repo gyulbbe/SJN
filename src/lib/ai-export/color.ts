@@ -12,7 +12,14 @@ import type { FluxInputLayout } from './contract';
 export type Pixels = { width: number; height: number; data: Uint8ClampedArray | Uint8Array };
 export type FaceRegion = { key: string; kind: 'wall' | 'floor' };
 /** What covers each pixel: 0 nothing checked, n `regions[n - 1]`, FIXTURE_REGION a fixture or glass. */
-export type RegionMask = { width: number; height: number; regions: FaceRegion[]; data: Uint8Array };
+export type RegionMask = {
+  width: number;
+  height: number;
+  regions: FaceRegion[];
+  data: Uint8Array;
+  /** 1 where nothing of the room drew (the backdrop, also through a cut-away wall's open side). */
+  outside?: Uint8Array;
+};
 export const FIXTURE_REGION = 255;
 
 /** Search reach for the model's shift, as a share of the image width. */

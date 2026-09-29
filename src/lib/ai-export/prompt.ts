@@ -149,10 +149,18 @@ function surfaceSentence(surface: FluxSurface, compact = false): string {
   return `${name}: ${colorWords(surface.color)} ${surface.finish} tiles, ${surface.tileMm.map((value) => Math.round(value)).join(' × ')} mm, ${surface.pattern === 'brick' ? 'staggered' : 'grid'} layout${grout}. ${keep}`;
 }
 
-/** An in-room view shows the ceiling: said plainly, as it is, so the model has nothing to invent there. */
+/** A view that shows the ceiling: said plainly, as it is, so the model has nothing to invent there. */
 export function ceilingSentence(ceiling: FluxCeiling): string {
   return `The ceiling is plain ${colorWords(ceiling.color)} paint with one flat square light panel.`;
 }
+
+/**
+ * A view from outside with the near walls cut away (the AI export's orbit view). Said right after
+ * the fixed instruction so the model weighs it early, and never dropped when the prompt is long:
+ * given a bare margin before, the model built walls, glass partitions and windows in it.
+ */
+export const FLUX_CUTAWAY_SENTENCE =
+  'Image 0 is a cutaway view of the room seen from outside: the walls facing the camera were removed on purpose. Do not add any wall, glass, door, window or object on the open side or in the plain white background around the room; keep the background plain white.';
 
 /**
  * The composite export's instruction: the room is sent without fixtures and they are put back on
@@ -166,6 +174,7 @@ function buildEmptyRoomPrompt(scene: FluxScene, mode: NonNullable<FluxScene['mod
   const compose = (compact: boolean) =>
     [
       FLUX_EMPTY_ROOM_PROMPT,
+      scene.view === 'cutaway' ? FLUX_CUTAWAY_SENTENCE : '',
       mode === 'placeholders' ? FLUX_PLACEHOLDER_SENTENCE : '',
       ...scene.surfaces.map((surface) => surfaceSentence(surface, compact)),
       scene.ceiling ? ceilingSentence(scene.ceiling) : '',
@@ -180,12 +189,14 @@ function buildEmptyRoomPrompt(scene: FluxScene, mode: NonNullable<FluxScene['mod
 
 /**
  * Deterministic: the same scene always yields the same text. The walls' and floor's colours come
- * right after the fixed instruction (the model weighs early text more), then the ceiling of an
- * in-room view, the fixtures in the order given and the count summary.
+ * right after the fixed instruction (the model weighs early text more; a cutaway view's sentence
+ * before them), then the ceiling when shown, the fixtures in the order given and the count summary.
  */
 export function buildFluxPrompt(scene: FluxScene | undefined): string {
   if (scene?.mode) return buildEmptyRoomPrompt(scene, scene.mode);
-  if (!scene || (!scene.fixtures.length && !scene.surfaces.length && !scene.ceiling)) return FLUX_PROMPT;
+  const cutaway = scene?.view === 'cutaway' ? FLUX_CUTAWAY_SENTENCE : '';
+  if (!scene || (!scene.fixtures.length && !scene.surfaces.length && !scene.ceiling))
+    return [FLUX_PROMPT, cutaway].filter(Boolean).join(' ');
   const counts = new Map<string, number>();
   for (const fixture of scene.fixtures)
     counts.set(FLUX_KIND_NOUNS[fixture.kind], (counts.get(FLUX_KIND_NOUNS[fixture.kind]) ?? 0) + 1);
@@ -195,6 +206,7 @@ export function buildFluxPrompt(scene: FluxScene | undefined): string {
   const compose = (listed: number, detailed: number, compact: boolean) =>
     [
       FLUX_PROMPT,
+      cutaway,
       ...scene.surfaces.map((surface) => surfaceSentence(surface, compact)),
       scene.ceiling ? ceilingSentence(scene.ceiling) : '',
       ...scene.fixtures.slice(0, listed).map((fixture, i) => fixtureSentence(fixture, i + 1, i < detailed)),

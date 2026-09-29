@@ -2,14 +2,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, RotateCcw } from 'lucide-react';
 import {
-  clampFluxDirection,
-  FLUX_FRONT,
-  FLUX_TURN_STEP,
-  fluxEyeView,
-  type FluxDirection,
+  clampFluxOrbit,
+  fluxOrbitLabel,
+  fluxOrbitView,
+  turnFluxOrbit,
+  type FluxTurn,
 } from '@/lib/ai-export/view';
-import type { RoomDimensions } from '@/lib/room-types';
-import type { RoomViewState } from '@/lib/room-viewer/view-state';
+import type { RoomOrbit, RoomViewState } from '@/lib/room-viewer/view-state';
 
 /** A live 3D view of the After, drawn by the same renderer class and camera as the AI input. */
 export type AiPreview = {
@@ -18,40 +17,36 @@ export type AiPreview = {
   dispose: () => void;
 };
 /** Dragging across the whole view turns this many degrees (grabbing the room). */
-const DRAG_DEGREES = 90;
-const LIMIT_NOTICE = '앞쪽은 벽이 없어서 이 방향까지만 볼 수 있어요.';
+const DRAG_DEGREES = 180;
 
 /**
- * Turns the AI input's camera: drag (mouse or touch), the arrow buttons or the arrow keys, 5° a
- * press; "정면으로" goes back to the back wall. A direction that would show the open front stops at
- * the limit with a short notice. Locked while a conversion runs. The picture has the input's aspect.
+ * Turns the AI input's camera around the room: drag (mouse or touch; across for the heading, up and
+ * down for the height), the buttons or the arrow keys a quarter at a time, "위에서" straight down,
+ * "옆에서" level, "정면으로" back to the start. Locked while a conversion runs. The picture has the
+ * input's aspect and white backdrop.
  */
 export default function AiViewPicker({
-  room,
   aspect,
   prepare,
   composite,
-  direction,
-  onDirection,
+  orbit,
+  onOrbit,
   locked,
 }: {
-  room: RoomDimensions;
   /** The AI input's width ÷ height. */
   aspect: number;
   /** A prepared renderer of this After (photo angles as the chosen method captures them). */
   prepare: (composite: boolean) => Promise<AiPreview>;
   composite: boolean;
-  direction: FluxDirection;
-  onDirection: (direction: FluxDirection) => void;
+  orbit: RoomOrbit;
+  onOrbit: (orbit: RoomOrbit) => void;
   locked: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const [preview, setPreview] = useState<AiPreview>();
   const [error, setError] = useState('');
   const [width, setWidth] = useState(0);
-  const [notice, setNotice] = useState('');
-  const drag = useRef<{ x: number; y: number; from: FluxDirection } | null>(null);
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const drag = useRef<{ x: number; y: number; from: RoomOrbit } | null>(null);
 
   useEffect(() => {
     const job: { alive: boolean; made?: AiPreview } = { alive: true };
@@ -91,41 +86,35 @@ export default function AiViewPicker({
       try {
         const scale = Math.min(window.devicePixelRatio || 1, 2);
         const w = Math.max(1, Math.min(960, Math.round(width * scale)));
-        preview.render(w, Math.max(1, Math.round(w / aspect)), fluxEyeView(room, direction));
+        preview.render(w, Math.max(1, Math.round(w / aspect)), fluxOrbitView(orbit));
         setError('');
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [preview, width, aspect, room, direction]);
-  useEffect(() => () => clearTimeout(noticeTimer.current), []);
+  }, [preview, width, aspect, orbit]);
 
-  function turn(from: FluxDirection, to: FluxDirection) {
+  function go(next: RoomOrbit) {
     if (locked) return;
-    const { direction: next, blocked } = clampFluxDirection(room, aspect, from, to);
-    clearTimeout(noticeTimer.current);
-    if (blocked) {
-      setNotice(LIMIT_NOTICE);
-      noticeTimer.current = setTimeout(() => setNotice(''), 2500);
-    } else setNotice('');
-    if (next.yaw !== direction.yaw || next.pitch !== direction.pitch) onDirection(next);
+    const clamped = clampFluxOrbit(next);
+    if (clamped.azimuth !== orbit.azimuth || clamped.elevation !== orbit.elevation) onOrbit(clamped);
   }
-  const step = (yaw: number, pitch: number) =>
-    turn(direction, { yaw: direction.yaw + yaw, pitch: direction.pitch + pitch });
+  const turn = (to: FluxTurn) => go(turnFluxOrbit(orbit, to));
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
     if (locked || !event.isPrimary) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { x: event.clientX, y: event.clientY, from: direction };
+    drag.current = { x: event.clientX, y: event.clientY, from: orbit };
   }
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
     const start = drag.current;
     if (!start || locked) return;
     const perPixel = DRAG_DEGREES / Math.max(1, event.currentTarget.clientWidth);
-    // Grabbing the room: dragging right turns the camera left, dragging down tilts it up.
-    turn(direction, {
-      yaw: start.from.yaw - (event.clientX - start.x) * perPixel,
-      pitch: start.from.pitch + (event.clientY - start.y) * perPixel,
+    // Grabbing the room: dragging right turns it right (the camera goes left), dragging down tips
+    // its top towards you (the camera rises).
+    go({
+      azimuth: start.from.azimuth - (event.clientX - start.x) * perPixel,
+      elevation: start.from.elevation + (event.clientY - start.y) * perPixel,
     });
   }
   function onPointerUp(event: PointerEvent<HTMLDivElement>) {
@@ -134,36 +123,33 @@ export default function AiViewPicker({
     drag.current = null;
   }
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const move = {
-      ArrowLeft: [-FLUX_TURN_STEP, 0],
-      ArrowRight: [FLUX_TURN_STEP, 0],
-      ArrowUp: [0, FLUX_TURN_STEP],
-      ArrowDown: [0, -FLUX_TURN_STEP],
-    }[event.key];
-    if (!move) return;
+    const to = ({ ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'top', ArrowDown: 'side' } as const)[
+      event.key as 'ArrowLeft'
+    ];
+    if (!to) return;
     event.preventDefault();
-    step(move[0], move[1]);
+    turn(to);
   }
+  const label = fluxOrbitLabel(orbit);
   const buttons = [
-    ['왼쪽으로 5° 돌리기', ArrowLeft, -FLUX_TURN_STEP, 0],
-    ['위로 5° 돌리기', ArrowUp, 0, FLUX_TURN_STEP],
-    ['아래로 5° 돌리기', ArrowDown, 0, -FLUX_TURN_STEP],
-    ['오른쪽으로 5° 돌리기', ArrowRight, FLUX_TURN_STEP, 0],
+    { turn: 'left', label: '왼쪽으로 90° 돌리기', Icon: ArrowLeft },
+    { turn: 'right', label: '오른쪽으로 90° 돌리기', Icon: ArrowRight },
+    { turn: 'top', label: '위에서 보기', Icon: ArrowUp, text: '위에서' },
+    { turn: 'side', label: '옆에서 보기', Icon: ArrowDown, text: '옆에서' },
   ] as const;
-  const round = (value: number) => Math.round(value);
   return (
-    <div className="mb-3 min-w-0" role="group" aria-label="AI 입력 방향">
-      <div className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">AI 입력 방향</div>
+    <div className="mb-3 min-w-0" role="group" aria-label="AI 입력 시점">
+      <div className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">AI 입력 시점</div>
       <div
         ref={host}
         tabIndex={locked ? -1 : 0}
         role="application"
-        aria-roledescription="3D 방향 미리보기"
-        aria-label={`AI 입력 미리보기 · 좌우 ${round(direction.yaw)}°, 위아래 ${round(direction.pitch)}°. 방향키로 돌려요.`}
+        aria-roledescription="3D 시점 미리보기"
+        aria-label={`AI 입력 미리보기 · ${label}. 방향키로 돌려요.`}
         data-testid="flux-view-preview"
-        data-yaw={direction.yaw}
-        data-pitch={direction.pitch}
-        className={`relative w-full max-w-[600px] touch-none [&>canvas]:block [&>canvas]:h-full [&>canvas]:w-full select-none overflow-hidden rounded-[var(--radius-sm,8px)] bg-[#e8e8e4] outline-offset-2 focus-visible:outline focus-visible:outline-2 ${locked ? 'cursor-not-allowed opacity-70' : 'cursor-grab active:cursor-grabbing'}`}
+        data-azimuth={orbit.azimuth}
+        data-elevation={orbit.elevation}
+        className={`relative w-full max-w-[600px] touch-none select-none overflow-hidden rounded-[var(--radius-sm,8px)] border border-[color:var(--line)] bg-white outline-offset-2 focus-visible:outline focus-visible:outline-2 [&>canvas]:block [&>canvas]:h-full [&>canvas]:w-full ${locked ? 'cursor-not-allowed opacity-70' : 'cursor-grab active:cursor-grabbing'}`}
         style={{ aspectRatio: String(aspect) }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -178,38 +164,38 @@ export default function AiViewPicker({
         )}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {buttons.map(([label, Icon, yaw, pitch]) => (
+        {buttons.map(({ turn: to, label: name, Icon, ...rest }) => (
           <button
-            key={label}
+            key={to}
             type="button"
             className="btn"
-            aria-label={label}
-            title={label}
+            aria-label={name}
+            title={name}
             disabled={locked}
-            onClick={() => step(yaw, pitch)}
+            onClick={() => turn(to)}
           >
             <Icon size={15} />
+            {'text' in rest ? rest.text : null}
           </button>
         ))}
         <button
           type="button"
           className="btn"
           disabled={locked}
-          onClick={() => turn(direction, FLUX_FRONT)}
+          onClick={() => turn('front')}
           aria-label="정면으로"
         >
           <RotateCcw size={15} />
           정면으로
         </button>
-        <span className="text-xs text-[color:var(--muted)]" data-testid="flux-view-readout">
-          좌우 {round(direction.yaw)}° · 위아래 {round(direction.pitch)}°
+        <span className="text-xs font-semibold text-[color:var(--ink)]" data-testid="flux-view-readout">
+          {label}
         </span>
       </div>
-      <div className="mt-1.5 min-h-[1.25rem] text-xs leading-relaxed text-[color:var(--muted)]" role="status">
-        {notice ||
-          (preview && !error
-            ? '끌거나 화살표로 돌려 원하는 방향을 잡은 뒤 변환하세요. 이 화면 그대로 AI에 보내요.'
-            : '')}
+      <div className="mt-1.5 text-xs leading-relaxed text-[color:var(--muted)]">
+        {preview && !error
+          ? '끌어서 돌리거나 버튼으로 90°씩 돌린 뒤 변환하세요. 이 화면 그대로 AI에 보내고, 방 둘레 흰 여백은 결과에서도 흰색으로 되돌려요.'
+          : ''}
       </div>
     </div>
   );

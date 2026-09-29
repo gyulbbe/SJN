@@ -19,20 +19,25 @@ export type RoomEye = {
   shift: number;
   /** Horizontal field of view in degrees. */
   fov: number;
-  /**
-   * Degrees of real tilt, positive looking up. Only the AI export's free camera sets it (its own
-   * geometric check keeps the open front out of frame, so the pitch-0 yaw limit does not apply);
-   * the space viewer never does, and saved views never carry it (the storage schema is strict).
-   */
-  pitch?: number;
 };
+/**
+ * The AI export's camera outside the room, circling its centre. Degrees. Azimuth: 0 in front of the
+ * open front, 90 at the right wall, 180 behind the back wall, 270 (or −90) at the left wall.
+ * Elevation: 0 level, 90 straight down; never from below the floor. There is no roll: screen-up is
+ * the room's up, and straight down the side the azimuth names is at the bottom of the frame (the
+ * front, at azimuth 0). Only the AI export sets it; the space viewer never does, and a saved view
+ * cannot carry it (the storage schema is strict).
+ */
+export type RoomOrbit = { azimuth: number; elevation: number };
 /** A shared camera rig, not an edit to any wall, product or design. Pan uses viewport fractions. */
 export type RoomViewState = {
   version: 1;
   sourceCamera?: RoomSourceCamera;
-  projection?: 'source-photo' | 'room-fit' | 'room-eye';
+  projection?: 'source-photo' | 'room-fit' | 'room-eye' | 'room-orbit';
   /** Present exactly when projection is 'room-eye'; quaternion/zoom/pan are then unused. */
   eye?: RoomEye;
+  /** Present exactly when projection is 'room-orbit'; quaternion/zoom/pan are then unused. */
+  orbit?: RoomOrbit;
   quaternion: [number, number, number, number];
   zoom: number;
   pan: { x: number; y: number };
@@ -43,6 +48,34 @@ export const ROOM_VIEW_MAX_ZOOM = 8;
 export const ROOM_VIEW_MAX_PAN = 4;
 const FOV = 50;
 const FIT_AVAILABLE = 0.88;
+/** The AI orbit: a longer lens than the space viewer (less wide-angle stretch) and a tight fit. */
+const ORBIT_FOV = 40;
+/** Share of the frame's half-size the room's outline may fill; the rest is a thin white margin. */
+const ORBIT_FILL = 0.97;
+
+export function validRoomOrbit(value: unknown): value is RoomOrbit {
+  if (!value || typeof value !== 'object') return false;
+  const orbit = value as RoomOrbit;
+  return (
+    typeof orbit.azimuth === 'number' &&
+    Number.isFinite(orbit.azimuth) &&
+    Math.abs(orbit.azimuth) <= 360 &&
+    typeof orbit.elevation === 'number' &&
+    Number.isFinite(orbit.elevation) &&
+    orbit.elevation >= 0 &&
+    orbit.elevation <= 90
+  );
+}
+/**
+ * The camera's turn for an orbit: about the room's vertical by the azimuth, after tilting down by
+ * the elevation. Built from the two angles (never from screen-axis turns), so it has no roll.
+ */
+export function roomOrbitRotation(orbit: RoomOrbit): Quaternion {
+  const degrees = Math.PI / 180;
+  return new Quaternion()
+    .setFromAxisAngle(new Vector3(0, 1, 0), orbit.azimuth * degrees)
+    .multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -orbit.elevation * degrees));
+}
 
 /** Eye height of a standing photographer. */
 export const ROOM_EYE_HEIGHT_MM = 1500;
@@ -78,15 +111,9 @@ export function validRoomEye(value: unknown): value is RoomEye {
     typeof eye.fov === 'number' &&
     Number.isFinite(eye.fov) &&
     eye.fov >= 40 &&
-    eye.fov <= 100 &&
-    (eye.pitch === undefined ||
-      (typeof eye.pitch === 'number' &&
-        Number.isFinite(eye.pitch) &&
-        Math.abs(eye.pitch) <= ROOM_EYE_MAX_PITCH))
+    eye.fov <= 100
   );
 }
-/** The AI camera's tilt never passes this (looking nearly straight up or down). */
-export const ROOM_EYE_MAX_PITCH = 80;
 
 /**
  * Largest |yaw| whose frustum stays away from the open front. A frustum edge ray has heading
@@ -100,9 +127,7 @@ export function roomEyeYawLimit(fov: number) {
 /** The eye as rendered: inside the room, a supported lens, and a yaw that never sees the front. */
 export function clampRoomEye(room: RoomDimensions, eye: RoomEye): RoomEye {
   const fov = Math.max(ROOM_EYE_MIN_FOV, Math.min(ROOM_EYE_MAX_FOV, eye.fov));
-  // A tilted AI camera is kept inside by its own ray check; the pitch-0 formula would misjudge it.
-  const tilted = eye.pitch !== undefined;
-  const limit = tilted ? 180 : roomEyeYawLimit(fov);
+  const limit = roomEyeYawLimit(fov);
   const within = (value: number, low: number, high: number) =>
     low > high ? (low + high) / 2 : Math.max(low, Math.min(high, value));
   const margin = ROOM_EYE_WALL_MARGIN_MM;
@@ -115,7 +140,6 @@ export function clampRoomEye(room: RoomDimensions, eye: RoomEye): RoomEye {
     yaw: Math.max(-limit, Math.min(limit, eye.yaw)),
     shift: Math.max(-ROOM_EYE_MAX_SHIFT, Math.min(ROOM_EYE_MAX_SHIFT, eye.shift)),
     fov,
-    ...(tilted ? { pitch: Math.max(-ROOM_EYE_MAX_PITCH, Math.min(ROOM_EYE_MAX_PITCH, eye.pitch!)) } : {}),
   };
 }
 
@@ -300,6 +324,8 @@ export function normalizeRoomView(input: unknown): RoomViewState {
     return defaultRoomView();
   // An in-room eye needs its own valid parameters; otherwise the view falls back as before.
   const eye = value.projection === 'room-eye' && validRoomEye(value.eye) ? value.eye : undefined;
+  // Likewise the AI export's orbit (never in a saved view).
+  const orbit = value.projection === 'room-orbit' && validRoomOrbit(value.orbit) ? value.orbit : undefined;
   return {
     version: 1,
     quaternion: canonicalQuaternion(new Quaternion(...q)),
@@ -319,10 +345,11 @@ export function normalizeRoomView(input: unknown): RoomViewState {
             yaw: eye.yaw,
             shift: eye.shift,
             fov: eye.fov,
-            // Only the AI camera has one; a saved view normalises exactly as before.
-            ...(eye.pitch !== undefined ? { pitch: eye.pitch } : {}),
           },
         }
+      : {}),
+    ...(orbit
+      ? { projection: 'room-orbit' as const, orbit: { azimuth: orbit.azimuth, elevation: orbit.elevation } }
       : {}),
   };
 }
@@ -443,13 +470,8 @@ export function createRoomViewCamera(
       Math.hypot(room.widthMm, room.heightMm, room.depthMm) * 1.2,
     );
     camera.position.set(...eye.position);
-    // Pitch and roll stay 0 in the space viewer: vertical edges project as vertical lines. The AI
-    // camera may tilt (turn about its own x after the yaw).
+    // Pitch and roll stay 0: vertical edges project as vertical lines.
     camera.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), (-eye.yaw * Math.PI) / 180);
-    if (eye.pitch)
-      camera.quaternion.multiply(
-        new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), (eye.pitch * Math.PI) / 180),
-      );
     camera.up.set(0, 1, 0);
     // A shift lens: move the frame up/down without tilting the camera.
     if (eye.shift) camera.setViewOffset(aspect * 1000, 1000, 0, -eye.shift * 1000, aspect * 1000, 1000);
@@ -457,6 +479,8 @@ export function createRoomViewCamera(
     camera.updateMatrixWorld(true);
     return camera;
   }
+  if (view.projection === 'room-orbit' && view.orbit)
+    return orbitCamera(room, aspect, view.orbit, bounds, structureBounds);
   if (view.sourceCamera && view.projection === 'source-photo') {
     if (!sourceRoomViewAvailable(room, view))
       throw new Error(
@@ -522,6 +546,70 @@ export function createRoomViewCamera(
   camera.quaternion.copy(rotation);
   camera.up.copy(up);
   camera.zoom = view.zoom;
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  return camera;
+}
+
+/**
+ * The AI export's orbit camera: looking at the room's centre from outside, turned by
+ * roomOrbitRotation, far enough that every corner of the room (and of anything built into its
+ * walls) is in front of it. The outline is then fitted tightly and centred with a zoom and a
+ * principal-point shift, a flat 2D move that keeps the perspective: the room fills the frame's
+ * longer side up to ORBIT_FILL.
+ */
+function orbitCamera(
+  room: RoomDimensions,
+  aspect: number,
+  orbit: RoomOrbit,
+  bounds?: Box3,
+  structureBounds?: Box3,
+): PerspectiveCamera {
+  const box = roomViewBounds(room, bounds, structureBounds);
+  const rotation = roomOrbitRotation(orbit);
+  const center = new Vector3(0, room.heightMm / 2, room.depthMm / 2);
+  const right = new Vector3(1, 0, 0).applyQuaternion(rotation);
+  const up = new Vector3(0, 1, 0).applyQuaternion(rotation);
+  const backward = new Vector3(0, 0, 1).applyQuaternion(rotation);
+  const tanY = Math.tan((ORBIT_FOV * Math.PI) / 360),
+    tanX = tanY * aspect;
+  const relative = corners(box).map((point) => point.sub(center));
+  // Every corner inside the unzoomed frustum around the centre, so all of them are in front.
+  const distance = Math.max(
+    ...relative.flatMap((point) => [
+      point.dot(backward) + Math.abs(point.dot(right)) / tanX,
+      point.dot(backward) + Math.abs(point.dot(up)) / tanY,
+    ]),
+  );
+  const depths = relative.map((point) => distance - point.dot(backward));
+  const camera = new PerspectiveCamera(
+    ORBIT_FOV,
+    aspect,
+    Math.max(0.1, Math.min(...depths) * 0.5),
+    Math.max(...depths) * 1.5,
+  );
+  camera.position.copy(center).addScaledVector(backward, distance);
+  camera.quaternion.copy(rotation);
+  camera.up.copy(up);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  // The outline's extent on screen (normalised device coordinates), then zoom and centre on it.
+  const projected = corners(box).map((point) => point.project(camera));
+  const xs = projected.map((p) => p.x),
+    ys = projected.map((p) => p.y);
+  const [left, rightEdge, bottom, top] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const zoom = ORBIT_FILL / Math.max((rightEdge - left) / 2, (top - bottom) / 2);
+  const cx = (left + rightEdge) / 2,
+    cy = (bottom + top) / 2;
+  camera.zoom = zoom;
+  camera.setViewOffset(
+    aspect * 1000,
+    1000,
+    (cx * zoom * aspect * 1000) / 2,
+    (-cy * zoom * 1000) / 2,
+    aspect * 1000,
+    1000,
+  );
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
   return camera;

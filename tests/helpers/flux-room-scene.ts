@@ -15,7 +15,6 @@ import { projectReconstructionFixture } from '../../src/lib/reconstruction/proje
 import { projectRoomFixture } from '../../src/lib/room-fixtures';
 import type { AssetRecord, FixtureInstance, MaterialVersion, Scene } from '../../src/lib/types';
 import type { RoomDimensions } from '../../src/lib/room-types';
-import { FLUX_EYE_FOV, FLUX_EYE_HEIGHT_MM } from '../../src/lib/ai-export/view';
 import {
   clampRoomEye,
   roomEyeView,
@@ -303,10 +302,13 @@ export async function buildFluxRoomScene(options: FluxRoomOptions = {}) {
   return { room, assets, materials, snapshot, imageWidth, imageHeight, aspect };
 }
 
+/** The old AI in-room eye: 1200 mm high, a 90° lens (the app no longer uses it). */
+const PRESET_EYE_HEIGHT_MM = 1200;
+const PRESET_EYE_FOV = 90;
 /**
  * The AI input's old fixed viewpoints (until 2026-09-28): a room-eye preset's place and heading at
  * 1200 mm with a 90° lens and no shift. Kept here so the 2026-09-27/28 comparison inputs can be
- * rebuilt pixel for pixel; the app now turns one front-centre eye freely (src/lib/ai-export/view.ts).
+ * rebuilt pixel for pixel; the app now circles the room from outside (src/lib/ai-export/view.ts).
  */
 export function presetFluxView(room: RoomDimensions, preset: RoomEyePreset): RoomViewState {
   const view = roomEyeView(room, preset);
@@ -314,10 +316,10 @@ export function presetFluxView(room: RoomDimensions, preset: RoomEyePreset): Roo
   return {
     ...view,
     eye: clampRoomEye(room, {
-      position: [eye.position[0], FLUX_EYE_HEIGHT_MM, eye.position[2]],
+      position: [eye.position[0], PRESET_EYE_HEIGHT_MM, eye.position[2]],
       yaw: eye.yaw,
       shift: 0,
-      fov: FLUX_EYE_FOV,
+      fov: PRESET_EYE_FOV,
     }),
   };
 }

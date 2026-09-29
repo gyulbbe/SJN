@@ -4,6 +4,7 @@ import {
   buildFluxPrompt,
   ceilingSentence,
   colorWords,
+  FLUX_CUTAWAY_SENTENCE,
   FLUX_EMPTY_ROOM_PROMPT,
   FLUX_PLACEHOLDER_SENTENCE,
   FLUX_PROMPT_MAX_CHARS,
@@ -210,5 +211,37 @@ describe('composite export: the empty-room prompt', () => {
     expect(fluxSceneSchema.safeParse({ ...room, mode: 'blank' }).success).toBe(false);
     // The current request (no mode) keeps its prompt exactly.
     expect(buildFluxPrompt(scene)).not.toContain('no fixtures');
+  });
+});
+
+describe('outside view: the cutaway sentence', () => {
+  const cutaway: FluxScene = { ...scene, view: 'cutaway' };
+
+  it('says the near walls were cut away on purpose, right after the instruction, only for an outside view', () => {
+    const text = buildFluxPrompt(cutaway);
+    expect(text.startsWith(`${FLUX_PROMPT} ${FLUX_CUTAWAY_SENTENCE} `)).toBe(true);
+    expect(FLUX_CUTAWAY_SENTENCE).toMatch(/walls facing the camera were removed on purpose/);
+    expect(FLUX_CUTAWAY_SENTENCE).toMatch(/Do not add any wall, glass, door, window or object/);
+    expect(text).toBe(buildFluxPrompt(structuredClone(cutaway)));
+    expect(buildFluxPrompt(scene)).not.toContain(FLUX_CUTAWAY_SENTENCE);
+    expect(buildFluxPrompt(undefined)).not.toContain(FLUX_CUTAWAY_SENTENCE);
+    // Even an empty room with nothing else to say gets it.
+    expect(buildFluxPrompt({ version: 1, fixtures: [], surfaces: [], view: 'cutaway' })).toBe(
+      `${FLUX_PROMPT} ${FLUX_CUTAWAY_SENTENCE}`,
+    );
+  });
+
+  it('goes into the empty-room prompt too, and is kept when a long prompt is shortened', () => {
+    const empty = buildFluxPrompt({ ...cutaway, fixtures: [], mode: 'empty-room' });
+    expect(empty.startsWith(`${FLUX_EMPTY_ROOM_PROMPT} ${FLUX_CUTAWAY_SENTENCE} `)).toBe(true);
+    const crowded: FluxScene = { ...cutaway, fixtures: Array.from({ length: 12 }, () => toilet) };
+    const text = buildFluxPrompt(crowded);
+    expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
+    expect(text).toContain(FLUX_CUTAWAY_SENTENCE);
+  });
+
+  it('accepts the view strictly', () => {
+    expect(fluxSceneSchema.safeParse(cutaway).success).toBe(true);
+    expect(fluxSceneSchema.safeParse({ ...scene, view: 'outside' }).success).toBe(false);
   });
 });

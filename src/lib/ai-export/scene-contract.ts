@@ -93,6 +93,11 @@ export const fluxCeilingSchema = z.strictObject({
  */
 export const FLUX_ROOM_MODES = ['empty-room', 'placeholders'] as const;
 export type FluxRoomMode = (typeof FLUX_ROOM_MODES)[number];
+/**
+ * How image 0 shows the room. `cutaway`: from outside, the walls facing the camera removed on
+ * purpose, a plain white backdrop around it. Absent: an older request (the front composite).
+ */
+export const FLUX_VIEWS = ['cutaway'] as const;
 export const fluxSceneSchema = z
   .strictObject({
     version: z.literal(1),
@@ -100,6 +105,7 @@ export const fluxSceneSchema = z
     surfaces: z.array(fluxSurfaceSchema).max(FLUX_MAX_SURFACES),
     ceiling: fluxCeilingSchema.optional(),
     mode: z.enum(FLUX_ROOM_MODES).optional(),
+    view: z.enum(FLUX_VIEWS).optional(),
   })
   .refine((scene) => !scene.mode || !scene.fixtures.length, '빈 방 요청에는 설비를 보내지 않아요.');
 
