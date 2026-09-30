@@ -614,6 +614,39 @@ export default function Inspector({
                             <option value="right">오른쪽 벽</option>
                           </select>
                         </label>
+                        {!fixture.reconstruction && (
+                          <>
+                            <label className="field">
+                              보는 방향
+                              <select
+                                className="input"
+                                aria-label="제품 보는 방향"
+                                value={fixture.roomPlacement.facing === 'front' ? 'front' : 'wall'}
+                                disabled={
+                                  fixture.locked ||
+                                  (fixture.roomPlacement.face !== 'left' &&
+                                    fixture.roomPlacement.face !== 'right')
+                                }
+                                onChange={(e) =>
+                                  changeFixture((v) => {
+                                    if (!v.roomPlacement) return;
+                                    // Written only when it differs from the default (into the room).
+                                    if (e.target.value === 'front') v.roomPlacement.facing = 'front';
+                                    else delete v.roomPlacement.facing;
+                                  })
+                                }
+                              >
+                                <option value="wall">벽 안쪽</option>
+                                <option value="front">앞쪽(정면)</option>
+                              </select>
+                            </label>
+                            <p className="muted" style={{ fontSize: 11 }} data-testid="facing-note">
+                              {fixture.roomPlacement.face === 'left' || fixture.roomPlacement.face === 'right'
+                                ? '3D 방·AI 변환에서 이 제품이 보는 방향이에요. 2D 화면 모양은 바뀌지 않아요.'
+                                : '바닥·정면 벽의 제품은 어느 쪽이든 같아서, 왼쪽·오른쪽 벽에서만 고를 수 있어요.'}
+                            </p>
+                          </>
+                        )}
                         <Range
                           label="제품 배율"
                           value={fixture.roomPlacement.scale * 100}

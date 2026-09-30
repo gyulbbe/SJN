@@ -17,6 +17,7 @@ export const roomPlacementSchema = z.object({
   widthMm: z.number().finite().positive().max(100000),
   heightMm: z.number().finite().positive().max(100000),
   imageAspect: z.number().finite().positive().max(100000),
+  facing: z.enum(['wall', 'front']).optional(),
   contentBounds: z
     .object({ left: unit, top: unit, right: unit, bottom: unit })
     .refine((b) => b.right > b.left && b.bottom > b.top, '제품 이미지 영역을 확인해 주세요.'),

@@ -551,6 +551,87 @@ it('durably keeps raised-glass support through Before history, independent copyi
   expect(projectV3Schema.safeParse(invalid).success).toBe(false);
 });
 
+it('keeps which way a wall product faces through undo, design copies, saving, loading and schema validation', async () => {
+  const { repo, project, material } = await pricedProject();
+  const source = getActiveDesign(project)!;
+  source.scene.fixtures.push({
+    id: crypto.randomUUID(),
+    name: '측면 세면대',
+    materialVersionId: material.id,
+    viewIndex: 0,
+    position: { x: 0.3, y: 0.5 },
+    width: 0.2,
+    height: 0.3,
+    rotation: 0,
+    anchor: { x: 0.5, y: 1 },
+    locked: false,
+    occlusion: EMPTY_MASK(),
+    color: { ...DEFAULT_COLOR },
+    shadow: { x: 0, y: 0, opacity: 0, blur: 0, scale: 1 },
+    roomPlacement: {
+      face: 'left',
+      u: 0.5,
+      v: 0.5,
+      scale: 1,
+      widthMm: 500,
+      heightMm: 400,
+      imageAspect: 1,
+      contentBounds: { left: 0, top: 0, right: 1, bottom: 1 },
+    },
+  });
+  const st = useEditor.getState();
+  st.load(project);
+  const placement = () => getActiveDesign(useEditor.getState().project!)!.scene.fixtures[0].roomPlacement!;
+  // An old product has no such field.
+  expect('facing' in placement()).toBe(false);
+  st.change((scene) => {
+    scene.fixtures[0].roomPlacement!.facing = 'front';
+  });
+  expect(placement().facing).toBe('front');
+  // Moving the product to another wall keeps it (the face is the only thing that changes).
+  st.change((scene) => {
+    scene.fixtures[0].roomPlacement!.face = 'right';
+  });
+  expect(placement()).toMatchObject({ face: 'right', facing: 'front' });
+  st.undo();
+  expect(placement()).toMatchObject({ face: 'left', facing: 'front' });
+  st.undo();
+  expect('facing' in placement()).toBe(false);
+  st.redo();
+  expect(placement().facing).toBe('front');
+  // Back to the default removes the field instead of writing "wall".
+  st.change((scene) => {
+    delete scene.fixtures[0].roomPlacement!.facing;
+  });
+  expect('facing' in placement()).toBe(false);
+  st.undo();
+  const copiedId = st.copyDesign()!;
+  st.change((scene) => {
+    delete scene.fixtures[0].roomPlacement!.facing;
+  });
+  const current = () => useEditor.getState().project!;
+  const facingOf = (id: string) =>
+    current().designs.find((d) => d.id === id)!.scene.fixtures[0].roomPlacement!.facing;
+  // The edit went to the copy; the source design keeps its own.
+  expect(facingOf(source.id)).toBe('front');
+  expect(facingOf(copiedId)).toBeUndefined();
+  st.undo();
+  const saved = await repo.projects.create(current()),
+    loaded = await repo.projects.load(saved.id);
+  expect(loaded).toEqual(saved);
+  const validated = projectV3Schema.parse(loaded);
+  // After the last undo both designs have it again.
+  expect(validated.designs.find((d) => d.id === source.id)!.scene.fixtures[0].roomPlacement!.facing).toBe(
+    'front',
+  );
+  expect(validated.designs.find((d) => d.id === copiedId)!.scene.fixtures[0].roomPlacement!.facing).toBe(
+    'front',
+  );
+  const invalid = structuredClone(loaded);
+  (getActiveDesign(invalid)!.scene.fixtures[0].roomPlacement as { facing?: string }).facing = 'sideways';
+  expect(projectV3Schema.safeParse(invalid).success).toBe(false);
+});
+
 it('retains independent pedestal shape through Before history, design copies and local reload', async () => {
   const { repo, project, material } = await pricedProject();
   const source = getActiveDesign(project)!;

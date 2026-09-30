@@ -1075,6 +1075,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             u: previous.roomPlacement.u,
             v: previous.roomPlacement.v,
             scale: previous.roomPlacement.scale,
+            // The way it faces in the 3D room stays with the place when the product is swapped.
+            ...(previous.roomPlacement.facing ? { facing: previous.roomPlacement.facing } : {}),
           });
         if (s.room) projectRoomFixture(s.room, fixture, s.imageWidth / s.imageHeight);
         if (previous) s.fixtures = s.fixtures.map((item) => (item.id === previous.id ? fixture : item));

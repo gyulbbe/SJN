@@ -524,3 +524,201 @@ describe('previously saved actual TripoSR geometry (no new inference)', () => {
     },
   );
 });
+
+describe('facing of a product on a side wall (room placement `facing`)', () => {
+  const wallFixture = (face: 'left' | 'right' | 'back' | 'floor', facing?: 'wall' | 'front', u = 0.5) => {
+    const f = fixture();
+    f.roomPlacement!.face = face;
+    f.roomPlacement!.u = u;
+    f.roomPlacement!.v = 0.5;
+    f.anchor.y = 0.5;
+    if (facing) f.roomPlacement!.facing = facing;
+    return f;
+  };
+  const meshBuild = async (f: FixtureInstance) => {
+    const m = material();
+    m.views[0].product3d = reference();
+    const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
+    return buildViewerFixtures(scene([f]), { m }, async () => mesh);
+  };
+  const photoBuild = async (f: FixtureInstance) => {
+    const m = material();
+    const cache = new ProductAssetCache(async () => undefined);
+    fakeImage(cache);
+    return buildViewerFixtures(scene([f]), { m }, async () => undefined, cache);
+  };
+  const half = DEFAULT_ROOM.widthMm / 2;
+  const snapshot = (group: { children: { position: Vector3; rotation: { y: number } }[] }) =>
+    group.children.map((c) => ({ position: c.position.toArray(), y: c.rotation.y }));
+
+  it.each(['mesh', 'photo'] as const)(
+    'without `facing` (or "wall") a %s product turns into the room exactly as before',
+    async (kind) => {
+      const build = kind === 'mesh' ? meshBuild : photoBuild;
+      const left = await build(wallFixture('left'));
+      const right = await build(wallFixture('right'));
+      expect(left.group.children[0].rotation.y).toBeCloseTo(Math.PI / 2, 12);
+      expect(right.group.children[0].rotation.y).toBeCloseTo(-Math.PI / 2, 12);
+      expect(left.group.children[0].position.x).toBe(-half);
+      expect(right.group.children[0].position.x).toBe(half);
+      // "wall" is the same as nothing, to the matrix.
+      for (const face of ['left', 'right'] as const) {
+        const a = await build(wallFixture(face)),
+          b = await build(wallFixture(face, 'wall'));
+        expect(b.group.children[0].matrixWorld.toArray()).toEqual(a.group.children[0].matrixWorld.toArray());
+        expect(b.notices.map((n) => n.message)).toEqual(a.notices.map((n) => n.message));
+        a.dispose();
+        b.dispose();
+      }
+      left.dispose();
+      right.dispose();
+    },
+  );
+
+  it('faces the front from the left wall with its side touching the wall, not in it, not floating', async () => {
+    const before = await meshBuild(wallFixture('left'));
+    const into = new Box3().setFromObject(before.group, true);
+    const result = await meshBuild(wallFixture('left', 'front'));
+    expect(result.group.children[0].rotation.y).toBe(0);
+    const b = new Box3().setFromObject(result.group, true);
+    expect(b.min.x).toBeCloseTo(-half, 6);
+    expect(
+      b
+        .getSize(new Vector3())
+        .toArray()
+        .map((n) => Math.round(n)),
+    ).toEqual([400, 800, 200]);
+    // Same height and same place along the wall; the wall's side now shows the width (400 mm).
+    expect((b.min.y + b.max.y) / 2).toBeCloseTo((into.min.y + into.max.y) / 2, 6);
+    // It stands at the same place along the wall: its anchor stays at the spot (z 1200), depth to the front.
+    expect(into.getCenter(new Vector3()).z).toBeCloseTo(1200, 6);
+    expect(b.min.z).toBeCloseTo(1200, 6);
+    expect(into.getSize(new Vector3()).x).toBeCloseTo(200, 6);
+    expect(result.notices.some((n) => n.message.includes('방 밖'))).toBe(false);
+    expect(result.notices.some((n) => n.message.includes('앞쪽(정면)'))).toBe(true);
+    result.dispose();
+    before.dispose();
+  });
+
+  it('faces the front from the right wall the same way, mirrored', async () => {
+    const result = await meshBuild(wallFixture('right', 'front'));
+    expect(result.group.children[0].rotation.y).toBe(0);
+    const b = new Box3().setFromObject(result.group, true);
+    expect(b.max.x).toBeCloseTo(half, 6);
+    expect(b.min.x).toBeCloseTo(half - 400, 6);
+    result.dispose();
+  });
+
+  it('stands a photo product upright to the front against the wall', async () => {
+    const result = await photoBuild(wallFixture('left', 'front'));
+    expect(result.group.children[0].rotation.y).toBe(0);
+    const b = new Box3().setFromObject(result.group.children[0], true);
+    expect(b.min.x).toBeCloseTo(-half, 6);
+    // A flat plane 400 mm wide, facing +z (the open front).
+    expect(b.getSize(new Vector3()).x).toBeCloseTo(400, 6);
+    expect(b.getSize(new Vector3()).z).toBeCloseTo(0, 6);
+    result.dispose();
+  });
+
+  it.each([
+    ['floor', 'mesh'],
+    ['back', 'mesh'],
+    ['floor', 'photo'],
+    ['back', 'photo'],
+  ] as const)('changes nothing for a product on the %s (%s)', async (face, kind) => {
+    const build = kind === 'mesh' ? meshBuild : photoBuild;
+    const plain = await build(wallFixture(face)),
+      front = await build(wallFixture(face, 'front'));
+    expect(snapshot(front.group)).toEqual(snapshot(plain.group));
+    expect(front.group.children[0].matrixWorld.toArray()).toEqual(
+      plain.group.children[0].matrixWorld.toArray(),
+    );
+    expect(front.notices.map((n) => n.message)).toEqual(plain.notices.map((n) => n.message));
+    plain.dispose();
+    front.dispose();
+  });
+
+  it('says so when turning it to the front sends it out of the room, and leaves the source alone', async () => {
+    // At the very front of the left wall the 200 mm depth reaches past the open front.
+    const f = wallFixture('left', 'front', 0);
+    const value = scene([f]),
+      original = structuredClone(value);
+    const m = material();
+    m.views[0].product3d = reference();
+    const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
+    const result = await buildViewerFixtures(value, { m }, async () => mesh);
+    expect(result.notices.some((n) => n.message.includes('방 밖'))).toBe(true);
+    expect(value).toEqual(original);
+    result.dispose();
+  });
+
+  it('a default-pose 3D product faces the front exactly (no yaw); a pose the user turned keeps its turn', () => {
+    // The footprint's smallest bounding rectangle, as the angle from the front–back axis.
+    const yawOf = (pose: Product3dReference['pose']) => {
+      const g = createSavedProductGeometry(cube(), { ...reference(), pose }, wallFixture('left', 'front'));
+      const p = g.getAttribute('position');
+      let best = { a: 0, area: Infinity };
+      for (let a = -45; a <= 45; a += 0.25) {
+        const c = Math.cos((a * Math.PI) / 180),
+          s = Math.sin((a * Math.PI) / 180);
+        let x0 = Infinity,
+          x1 = -Infinity,
+          z0 = Infinity,
+          z1 = -Infinity;
+        for (let i = 0; i < p.count; i++) {
+          const x = p.getX(i) * c - p.getZ(i) * s,
+            z = p.getX(i) * s + p.getZ(i) * c;
+          x0 = Math.min(x0, x);
+          x1 = Math.max(x1, x);
+          z0 = Math.min(z0, z);
+          z1 = Math.max(z1, z);
+        }
+        if ((x1 - x0) * (z1 - z0) < best.area - 1e-9) best = { a, area: (x1 - x0) * (z1 - z0) };
+      }
+      g.dispose();
+      return best.a;
+    };
+    const pose = createDefaultPose();
+    expect(yawOf(pose)).toBe(0);
+    // The front vector of the default pose: straight at the viewer, only the 10° the camera looked down.
+    const orientation = new Quaternion(...pose.cameraQuaternion)
+      .invert()
+      .multiply(new Quaternion(...pose.objectQuaternion));
+    const front = new Vector3(1, 0, 0).applyQuaternion(orientation);
+    expect(front.x).toBeCloseTo(0, 9);
+    expect(front.z).toBeGreaterThan(0.98);
+    // A turn the user made in the 3D editor (about the model's up axis, z) shows up as that yaw.
+    const turned = {
+      ...pose,
+      objectQuaternion: new Quaternion()
+        .setFromAxisAngle(new Vector3(0, 0, 1), (20 * Math.PI) / 180)
+        .toArray() as [number, number, number, number],
+    };
+    expect(Math.abs(yawOf(turned))).toBeCloseTo(20, 0);
+  });
+
+  it('keeps choosing the side photo from where the camera stands relative to the room, not the wall', async () => {
+    const f = wallFixture('left', 'front');
+    const m = material();
+    m.views = [
+      { assetId: 'front', direction: '정면', anchor: { x: 0.5, y: 1 } },
+      { assetId: 'right', direction: '우측면', anchor: { x: 0.5, y: 1 } },
+    ];
+    const cache = new ProductAssetCache(async () => undefined);
+    fakeImage(cache);
+    const result = await buildViewerFixtures(scene([f]), { m }, async () => undefined, cache);
+    const visible = () => {
+      const planes: number[] = [];
+      result.group.traverse((node) => {
+        if (node instanceof Mesh && node.visible) planes.push(node.userData.viewIndex);
+      });
+      return planes;
+    };
+    const camera = new PerspectiveCamera();
+    // In front of the room: the front photo. The product does not turn with the wall.
+    camera.position.set(0, 1200, 6000);
+    result.updateView(camera);
+    expect(visible()).toEqual([0]);
+    result.dispose();
+  });
+});

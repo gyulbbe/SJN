@@ -1,4 +1,5 @@
 import {
+  Box3,
   BufferAttribute,
   BufferGeometry,
   Camera,
@@ -9,6 +10,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  Object3D,
   PlaneGeometry,
   Quaternion,
   SRGBColorSpace,
@@ -18,6 +20,7 @@ import {
   type Texture,
 } from 'three';
 import { roomFacePoint } from '../room-geometry';
+import type { RoomDimensions } from '../room-types';
 import { TONE_MAPPING_GLSL } from '../render/realistic-lighting';
 import type { RoomPlacement, ProductBounds } from '../room-types';
 import type { AssetRecord, ColorAdjust, FixtureInstance, MaterialVersion, Scene } from '../types';
@@ -292,6 +295,40 @@ export function chooseExportPhoto(
   return index;
 }
 
+/** Whether a photo or 3D product faces the open front instead of into the room (left/right wall only). */
+export function facesFront(p: Pick<RoomPlacement, 'face' | 'facing'>): boolean {
+  return p.facing === 'front' && (p.face === 'left' || p.face === 'right');
+}
+/** World bounds of what shows of a product (the visible meshes only), from their vertices. */
+function visibleBounds(root: Object3D): Box3 {
+  root.updateMatrixWorld(true);
+  const box = new Box3();
+  root.traverseVisible((node) => {
+    if (node instanceof Mesh) box.union(new Box3().setFromObject(node, true));
+  });
+  return box;
+}
+/**
+ * A product turned to face the open front stands on its wall's side: it is moved along x until its
+ * side touches the wall's inner face (no part inside the wall, none floating off it), keeping its
+ * height and its place along the wall. Returns whether it then reaches beyond the room.
+ */
+function seatOnWall(product: Group, room: RoomDimensions, face: 'left' | 'right'): boolean {
+  const box = visibleBounds(product);
+  if (box.isEmpty()) return false;
+  const wall = room.widthMm / 2;
+  product.position.x += face === 'left' ? -wall - box.min.x : wall - box.max.x;
+  const seated = visibleBounds(product);
+  const slack = 1;
+  return (
+    seated.min.z < -slack ||
+    seated.max.z > room.depthMm + slack ||
+    seated.min.x < -wall - slack ||
+    seated.max.x > wall + slack ||
+    seated.max.y > room.heightMm + slack
+  );
+}
+
 function checkPlacement(fixture: FixtureInstance): RoomPlacement {
   const p = fixture.roomPlacement;
   if (!p) throw new Error('공간 설치 위치가 없어요. 기존 정면 보기에서 확인해 주세요.');
@@ -521,7 +558,8 @@ export async function buildViewerFixtures(
         if (!selected) throw new Error('선택했던 제품 사진을 찾을 수 없어요.');
         product = new Group();
         product.position.copy(roomFacePoint(room, p.face, p.u, p.v));
-        product.rotation.y = p.face === 'floor' ? 0 : orientationAngle(p.face);
+        // Into the room from its wall, or (facing 'front') towards the open front like the 2D editor.
+        product.rotation.y = p.face === 'floor' || facesFront(p) ? 0 : orientationAngle(p.face);
         const content = new Group();
         content.rotation.z = (-fixture.rotation * Math.PI) / 180;
         product.add(content);
@@ -630,6 +668,15 @@ export async function buildViewerFixtures(
               : '2D 제품·각도 표현 제한: 선택 사진을 설치 위치의 고정 평면으로 표시해요. 옆에서는 얇게 보이고 뒷면은 같은 사진이라 실제 제품 뒷면이 아니에요.',
           );
         }
+      }
+      if (!fixture.reconstruction && facesFront(p)) {
+        if (seatOnWall(product, room, p.face as 'left' | 'right'))
+          notice(fixture, '앞쪽을 보게 돌린 제품이 방 밖으로 나가요. 위치나 크기를 확인해 주세요.');
+        else
+          notice(
+            fixture,
+            '앞쪽(정면)을 보게 설정한 제품이에요. 방 기준으로 고정돼 카메라를 따라 돌지 않고, 옆에서 보면 측면이 보여요.',
+          );
       }
       prepareModel(product, fixture);
       group.add(product);
