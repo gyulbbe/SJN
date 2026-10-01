@@ -295,8 +295,9 @@ function visibleBounds(root: Object3D): Box3 {
   return box;
 }
 /**
- * A product floating or sinking by less than this (mm) because of where its anchor sits is put on
- * the floor; a bigger gap is taken to be what the anchor was set to.
+ * A flat photo floating or sinking by less than this (mm) because of where its anchor sits is put
+ * on the floor; a bigger gap is taken to be what the anchor was set to. (A saved 3D product is
+ * always put on the floor: see `grounded` below.)
  */
 const FLOOR_SNAP_MM = 20;
 const FLOOR_SNAP_SHARE = 0.05;
@@ -305,10 +306,19 @@ const FLOOR_SNAP_SHARE = 0.05;
  * meets a wall touches the wall's inner face (nothing inside the wall, nothing floating off it), a
  * product on a side wall stands centred on its place along the wall, one on the floor centred on
  * its place and on the floor. Its height on a wall and its place across the back wall are the
- * anchor's, as in the 2D editor. `gap` keeps a flat photo a hair off the back wall. Returns whether
- * it then reaches beyond the room.
+ * anchor's, as in the 2D editor. `gap` keeps a flat photo a hair off the back wall. `grounded` (a
+ * saved 3D product on the floor): its lowest point is on the floor whatever the anchor says. The
+ * anchor is a place in the 2D picture; it must not float a toilet or sink half a basin, and a
+ * product turned or tilted a little by its pose rests on its lowest corner. Returns whether it then
+ * reaches beyond the room.
  */
-function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: number): boolean {
+function seatProduct(
+  product: Group,
+  room: RoomDimensions,
+  face: RoomFace,
+  gap: number,
+  grounded = false,
+): boolean {
   const box = visibleBounds(product);
   if (box.isEmpty()) return false;
   const wall = room.widthMm / 2;
@@ -320,7 +330,7 @@ function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: 
     move.z = product.position.z - (box.min.z + box.max.z) / 2;
   if (face === 'floor') {
     const snap = Math.max(FLOOR_SNAP_MM, (box.max.y - box.min.y) * FLOOR_SNAP_SHARE);
-    if (Math.abs(box.min.y) <= snap) move.y = -box.min.y;
+    if (grounded || Math.abs(box.min.y) <= snap) move.y = -box.min.y;
   }
   // Tiny moves are rounding only: leave the anchor's exact place alone.
   for (const axis of ['x', 'y', 'z'] as const)
@@ -680,7 +690,7 @@ export async function buildViewerFixtures(
       }
       if (!fixture.reconstruction) {
         const flat = product.userData.representation !== 'saved-product-mesh';
-        if (seatProduct(product, room, p.face, flat && p.face === 'back' ? 1 : 0))
+        if (seatProduct(product, room, p.face, flat && p.face === 'back' ? 1 : 0, !flat))
           notice(fixture, '제품이 방 밖으로 나가요. 위치나 크기, 각도 방향을 확인해 주세요.');
         else {
           const direction = readProductDirection(

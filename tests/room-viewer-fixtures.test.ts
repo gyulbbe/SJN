@@ -730,22 +730,67 @@ describe('angle names decide the way a product stands on its face', () => {
     }
   });
 
-  it("a mesh stands on the floor: a small float or sink from its anchor is settled, a big one is the anchor's", async () => {
+  it('a saved 3D product on the floor touches it, whatever its anchor says', async () => {
     const onFloor = await meshBuild(placed('floor'));
     const b = bounds(onFloor.group);
     expect(b.min.y).toBeCloseTo(0, 6);
     expect((b.min.z + b.max.z) / 2).toBeCloseTo(1200, 4);
     onFloor.dispose();
-    // The anchor 10 mm above the product's foot (y 0.9875 of 800): floating 10 mm → on the floor.
+    // The anchor is a place in the 2D picture: at the foot (1), a little above it, in the middle of
+    // the product, at its top. The lowest point is on the floor in every case (within 0.5 mm).
+    for (const y of [1, 0.9875, 0.95, 0.9, 0.5, 0]) {
+      const f = placed('floor');
+      f.anchor.y = y;
+      const built = await meshBuild(f);
+      expect(bounds(built.group).min.y, `anchor y ${y}`).toBeCloseTo(0, 3);
+      built.dispose();
+    }
+  });
+
+  it('a tilted or turned 3D product rests on its lowest point, not on its anchor', async () => {
+    for (const roll of [-14, 9, 22]) {
+      for (const turn of [0, 30]) {
+        const f = placed('floor');
+        f.anchor.y = 0.95;
+        f.rotation = turn;
+        const m = material();
+        m.views[0].product3d = {
+          ...reference(),
+          pose: {
+            ...reference().pose,
+            objectQuaternion: new Quaternion()
+              .setFromAxisAngle(new Vector3(1, 0, 0), (roll * Math.PI) / 180)
+              .toArray() as [number, number, number, number],
+          },
+        };
+        const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
+        const built = await buildViewerFixtures(scene([f]), { m }, async () => mesh);
+        expect(bounds(built.group).min.y, `roll ${roll}° turn ${turn}°`).toBeCloseTo(0, 3);
+        built.dispose();
+      }
+    }
+  });
+
+  it("a flat photo keeps the old rule: a small float or sink is settled, a big one is the anchor's", async () => {
     const slightly = placed('floor');
     slightly.anchor.y = 0.9875;
-    const a = bounds((await meshBuild(slightly)).group);
-    expect(a.min.y).toBeCloseTo(0, 6);
-    // The anchor at the middle of the photo: half the product under the floor is what was asked.
+    const near = await photoBuild(slightly);
+    expect(bounds(near.group).min.y).toBeCloseTo(0, 6);
+    near.dispose();
     const middle = placed('floor');
     middle.anchor.y = 0.5;
-    const c = bounds((await meshBuild(middle)).group);
-    expect(c.min.y).toBeCloseTo(-400, 4);
+    const sunk = await photoBuild(middle);
+    expect(bounds(sunk.group).min.y).toBeLessThan(-100);
+    sunk.dispose();
+  });
+
+  it("a 3D product on a wall is not grounded: its height is the anchor's", async () => {
+    const f = placed('left');
+    f.anchor.y = 0.5;
+    const built = await meshBuild(f);
+    const b = bounds(built.group);
+    expect(b.min.y).toBeGreaterThan(100);
+    built.dispose();
   });
 
   it('says so when the product reaches beyond the room, and leaves the source alone', async () => {
