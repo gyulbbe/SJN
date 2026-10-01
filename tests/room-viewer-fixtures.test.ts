@@ -18,6 +18,10 @@ import {
 } from '../src/lib/room-viewer/fixtures';
 import { encodeProductMesh, makeProductMeshAsset } from '../src/lib/product3d/codec';
 import { createDefaultPose } from '../src/lib/product3d/pose';
+import { MIXED } from '../src/lib/product3d/mixed-color';
+import { icosphere } from './helpers/product3d-meshes';
+import { shadingNormals } from '../src/lib/product3d/mesh-cleanup';
+import { productSurface } from '../src/lib/product3d/shading';
 import { poseDirection, poseForDirection } from '../src/lib/product3d/direction-pose';
 import type { ProductDirection } from '../src/lib/product-direction';
 import { roomPlacementSchema } from '../src/lib/room-validation';
@@ -476,6 +480,56 @@ describe('room viewer immutable physical fixtures', () => {
       if (node instanceof Mesh) kinds.add((node.material as { type: string }).type);
     });
     expect(kinds).toEqual(new Set(['MeshStandardMaterial']));
+  });
+  it('shows a view saved as mixed with the same colours and normals as the editor, lit by the room', async () => {
+    // A closed mesh with a shape (an ellipsoid as big as the box of cube()), turned by a pose that is
+    // not the identity. (The box's faces are not wound alike, so its smoothed normals are noise.)
+    const ball = icosphere(2);
+    const mesh: ProductMesh = {
+      positions: ball.positions.map((n, i) => n * [0.5, 1, 2][i % 3]),
+      indices: ball.indices,
+      colors: new Float32Array(ball.positions.length).map((_, i) => 0.3 + (Math.floor(i / 3) % 5) * 0.12),
+    };
+    const turned = {
+      ...reference(),
+      shading: 'mixed' as const,
+      pose: {
+        ...reference().pose,
+        objectQuaternion: [0.1, 0.2, 0.3, Math.sqrt(1 - 0.14)] as [number, number, number, number],
+      },
+    };
+    const g = createSavedProductGeometry(mesh, turned, fixture());
+    // One colour calculation (productSurface) for every consumer: the geometry's colours are the
+    // surface's, converted to the linear buffer the room draws.
+    const surface = productSurface('mixed', mesh);
+    const colors = g.getAttribute('color').array as Float32Array;
+    const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    for (let i = 0; i < colors.length; i++) expect(colors[i]).toBeCloseTo(linear(surface.colors[i]), 4);
+    // Its normals are the smoothed ones, turned with the mesh: the same as smoothing the turned mesh.
+    const normals = g.getAttribute('normal').array as Float32Array;
+    const again = shadingNormals(g.getAttribute('position').array as Float32Array, mesh.indices, {
+      iterations: MIXED.normalIterations,
+    });
+    for (let i = 0; i < normals.length; i++) expect(normals[i]).toBeCloseTo(again[i], 4);
+    g.dispose();
+    // The lit saves keep their own normals (40 rounds), turned the same way.
+    const lit = createSavedProductGeometry(mesh, { ...turned, shading: 'lit' }, fixture());
+    const litNormals = lit.getAttribute('normal').array as Float32Array;
+    const litAgain = shadingNormals(lit.getAttribute('position').array as Float32Array, mesh.indices);
+    for (let i = 0; i < litNormals.length; i++) expect(litNormals[i]).toBeCloseTo(litAgain[i], 4);
+    lit.dispose();
+    // In the room it is drawn lit.
+    const f = fixture();
+    const m = material();
+    m.views[0].product3d = { ...reference(), shading: 'mixed' };
+    const asset = await makeProductMeshAsset(mesh, 'mesh', 'input');
+    const result = await buildViewerFixtures(scene([f]), { m }, async () => asset);
+    const kinds = new Set<string>();
+    result.group.traverse((node) => {
+      if (node instanceof Mesh) kinds.add((node.material as { type: string }).type);
+    });
+    expect(kinds).toEqual(new Set(['MeshStandardMaterial']));
+    result.dispose();
   });
   it('stands a saved mesh on its wall by the way its pose faces: side against the wall for 정면, back against it for 오른쪽', async () => {
     const build = async (face: 'left' | 'right' | 'back', name: ProductDirection) => {

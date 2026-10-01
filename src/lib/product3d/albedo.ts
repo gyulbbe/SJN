@@ -11,15 +11,20 @@
  * photograph near-black). "원본 색" remains for such products.
  */
 type Lab = [number, number, number];
+/** A vertex counts as photographed for the material grouping from this visibility on. */
+const SHOWN = 0.3;
+/** The picture a vertex is looked up in: cells of this share of its size, searched this many cells out. */
+const PICTURE_CELL = 0.015;
+const PICTURE_RINGS = 4;
 
-const toLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-const toSrgb = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
+export const srgbToLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+export const linearToSrgb = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
 const labF = (t: number) => (t > 216 / 24389 ? Math.cbrt(t) : (t * 24389) / 27 / 116 + 16 / 116);
 const labInverse = (t: number) => (t ** 3 > 216 / 24389 ? t ** 3 : ((116 * t - 16) * 27) / 24389);
 const WHITE = [0.95047, 1, 1.08883];
 
 export function srgbToLab(r: number, g: number, b: number): Lab {
-  const [lr, lg, lb] = [toLinear(r), toLinear(g), toLinear(b)];
+  const [lr, lg, lb] = [srgbToLinear(r), srgbToLinear(g), srgbToLinear(b)];
   const x = (0.4124 * lr + 0.3576 * lg + 0.1805 * lb) / WHITE[0];
   const y = (0.2126 * lr + 0.7152 * lg + 0.0722 * lb) / WHITE[1];
   const z = (0.0193 * lr + 0.1192 * lg + 0.9505 * lb) / WHITE[2];
@@ -37,7 +42,11 @@ export function labToSrgb([l, a, b]: Lab): [number, number, number] {
     -0.9689 * x + 1.8758 * y + 0.0415 * z,
     0.0557 * x - 0.204 * y + 1.057 * z,
   ];
-  return linear.map((c) => Math.min(1, Math.max(0, toSrgb(Math.max(0, c))))) as [number, number, number];
+  return linear.map((c) => Math.min(1, Math.max(0, linearToSrgb(Math.max(0, c))))) as [
+    number,
+    number,
+    number,
+  ];
 }
 
 /** Area-weighted vertex normals. */
@@ -125,20 +134,46 @@ export function estimateAlbedo(
   positions: Float32Array,
   indices: Uint32Array,
   colors: Float32Array,
-  { sourceDirection = [1, 0, 0] as [number, number, number], maxMaterials = 3, sample = 20000 } = {},
+  {
+    sourceDirection = [1, 0, 0] as [number, number, number],
+    maxMaterials = 3,
+    sample = 20000,
+    /**
+     * How much of each vertex the photo shows (0–1). Vertices it hardly shows carry the model's
+     * guess, not the product's colour, so they neither pick the materials nor join one by their
+     * own hue. They take the material of what the photo shows at the same place in the picture
+     * (the back of a bottle is the bottle's), and the main material where it shows nothing close
+     * (the underside of a shelf is not the colour of what stands on it). Left out, every vertex
+     * counts and the nearest one along the surface decides, as before.
+     */
+    visibility: shownBy,
+  }: {
+    sourceDirection?: [number, number, number];
+    maxMaterials?: number;
+    sample?: number;
+    visibility?: Float32Array;
+  } = {},
 ): Float32Array {
+  // A photo that shows (almost) nothing of the mesh cannot decide anything: every vertex counts.
+  const visibility =
+    shownBy && shownBy.filter((w) => w >= SHOWN).length >= colors.length / 3 / 50 ? shownBy : undefined;
   const vertices = colors.length / 3;
   if (!vertices) return new Float32Array(0);
   const normals = vertexNormals(positions, indices);
   // Linear-RGB chromaticity is unchanged by a shading multiplier. Dark areas are left out: in
   // real TripoSR output their hue is a colour cast of the shadow (often warm), not the material.
   const chromaticity: (Point2 | undefined)[] = [];
+  const shown = (v: number) => !visibility || visibility[v] >= SHOWN;
   const facing = new Float32Array(vertices);
   for (let v = 0; v < vertices; v++) {
-    const [r, g, b] = [toLinear(colors[v * 3]), toLinear(colors[v * 3 + 1]), toLinear(colors[v * 3 + 2])];
+    const [r, g, b] = [
+      srgbToLinear(colors[v * 3]),
+      srgbToLinear(colors[v * 3 + 1]),
+      srgbToLinear(colors[v * 3 + 2]),
+    ];
     const sum = r + g + b;
     const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    chromaticity.push(luminance >= 0.03 ? [r / sum, g / sum] : undefined);
+    chromaticity.push(luminance >= 0.03 && shown(v) ? [r / sum, g / sum] : undefined);
     facing[v] = Math.max(
       0,
       normals[v * 3] * sourceDirection[0] +
@@ -182,7 +217,12 @@ export function estimateAlbedo(
       assignment[v] = nearest(groups, hue);
       continue;
     }
-    const [r, g, b] = [toLinear(colors[v * 3]), toLinear(colors[v * 3 + 1]), toLinear(colors[v * 3 + 2])];
+    if (!shown(v)) continue;
+    const [r, g, b] = [
+      srgbToLinear(colors[v * 3]),
+      srgbToLinear(colors[v * 3 + 1]),
+      srgbToLinear(colors[v * 3 + 2]),
+    ];
     const sum = r + g + b;
     if (sum > 0.01) {
       const own: Point2 = [r / sum, g / sum];
@@ -228,17 +268,83 @@ export function estimateAlbedo(
     }
   };
   vote(3);
-  const queue: number[] = [];
-  for (let v = 0; v < vertices; v++) if (assignment[v] >= 0) queue.push(v);
-  for (let head = 0; head < queue.length; head++) {
-    const v = queue[head];
-    for (let n = degree[v]; n < degree[v + 1]; n++) {
-      const u = adjacent[n];
-      if (assignment[u] >= 0) continue;
-      assignment[u] = assignment[v];
-      queue.push(u);
+  const follow = (reach: (v: number) => boolean) => {
+    const queue: number[] = [];
+    for (let v = 0; v < vertices; v++) if (assignment[v] >= 0) queue.push(v);
+    for (let head = 0; head < queue.length; head++) {
+      const v = queue[head];
+      for (let n = degree[v]; n < degree[v + 1]; n++) {
+        const u = adjacent[n];
+        if (assignment[u] >= 0 || !reach(u)) continue;
+        assignment[u] = assignment[v];
+        queue.push(u);
+      }
     }
-  }
+  };
+  if (visibility) {
+    // A photographed vertex too dark to read follows its nearest photographed neighbour. The others
+    // are not in the photo: they take the material the photographed vertices have where they
+    // appear in the picture, that is, projected along the photo's direction.
+    follow(shown);
+    const axis = (sourceDirection as number[]).map((c) => c / (Math.hypot(...sourceDirection) || 1));
+    const helper = Math.abs(axis[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const cross = (a: number[], b: number[]) => [
+      a[1] * b[2] - a[2] * b[1],
+      a[2] * b[0] - a[0] * b[2],
+      a[0] * b[1] - a[1] * b[0],
+    ];
+    const right = cross(axis, helper),
+      rightLength = Math.hypot(...right);
+    const u = right.map((c) => c / rightLength),
+      w = cross(axis, u);
+    const screen = new Float32Array(vertices * 2);
+    const low = [Infinity, Infinity],
+      high = [-Infinity, -Infinity];
+    for (let v = 0; v < vertices; v++)
+      for (let k = 0; k < 2; k++) {
+        const dir = k ? w : u;
+        const value =
+          positions[v * 3] * dir[0] + positions[v * 3 + 1] * dir[1] + positions[v * 3 + 2] * dir[2];
+        screen[v * 2 + k] = value;
+        low[k] = Math.min(low[k], value);
+        high[k] = Math.max(high[k], value);
+      }
+    const cell = Math.max(high[0] - low[0], high[1] - low[1], 1e-9) * PICTURE_CELL;
+    const columns = Math.ceil((high[0] - low[0]) / cell) + 1,
+      rows = Math.ceil((high[1] - low[1]) / cell) + 1;
+    const at = (v: number) => [
+      Math.floor((screen[v * 2] - low[0]) / cell),
+      Math.floor((screen[v * 2 + 1] - low[1]) / cell),
+    ];
+    const tally = new Float32Array(columns * rows * materials);
+    const total = new Float64Array(materials);
+    for (let v = 0; v < vertices; v++)
+      if (assignment[v] >= 0 && shown(v)) {
+        const [x, y] = at(v);
+        tally[(y * columns + x) * materials + assignment[v]] += visibility[v];
+        total[assignment[v]] += visibility[v];
+      }
+    const main = Math.max(0, total.indexOf(Math.max(...total)));
+    const found = new Float32Array(materials);
+    for (let v = 0; v < vertices; v++) {
+      if (assignment[v] >= 0) continue;
+      const [x, y] = at(v);
+      assignment[v] = main;
+      // The nearest ring of cells that holds a photographed vertex decides.
+      for (let ring = 0; ring <= PICTURE_RINGS; ring++) {
+        found.fill(0);
+        for (let cy = Math.max(0, y - ring); cy <= Math.min(rows - 1, y + ring); cy++)
+          for (let cx = Math.max(0, x - ring); cx <= Math.min(columns - 1, x + ring); cx++)
+            if (Math.max(Math.abs(cx - x), Math.abs(cy - y)) === ring)
+              for (let m = 0; m < materials; m++) found[m] += tally[(cy * columns + cx) * materials + m];
+        const best = found.indexOf(Math.max(...found));
+        if (found[best] > 0) {
+          assignment[v] = best;
+          break;
+        }
+      }
+    }
+  } else follow(() => true);
   // Pieces with no bright vertex at all (e.g. a black product) use the main material.
   const counts = new Array(materials).fill(0);
   for (let v = 0; v < vertices; v++) if (assignment[v] >= 0) counts[assignment[v]]++;

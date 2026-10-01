@@ -15,7 +15,10 @@ export interface Product3dReference {
   pose: ProductPose;
   modelId: string;
   modelRevision: string;
-  /** 'lit': base colours with viewer lighting. Absent (older saves) or 'baked': the model's own RGB. */
+  /**
+   * 'mixed': photographed side keeps the photo's detail, the rest is clean base colour (2026-10).
+   * 'lit': base colours with viewer lighting. Absent (older saves) or 'baked': the model's own RGB.
+   */
   shading?: ProductShading;
 }
-export type ProductShading = 'lit' | 'baked';
+export type ProductShading = 'mixed' | 'lit' | 'baked';

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   removeSmallPieces,
   meshVolume,
+  shadingNormals,
+  shadingNormalSteps,
   surfaceRoughness,
   taubinSmooth,
 } from '../src/lib/product3d/mesh-cleanup';
@@ -69,5 +71,30 @@ describe('product3d mesh cleanup', () => {
     // Plain Laplacian (μ = 0) visibly shrinks the same surface.
     const shrunk = taubinSmooth(bumpy, sphere.indices, { iterations: 6, mu: 0 });
     expect(meshVolume(shrunk, sphere.indices)).toBeLessThan(volume * 0.98);
+  });
+
+  it('gives the normals after several numbers of smoothing rounds from one run', () => {
+    const sphere = icosphere(3);
+    // The surface is bumpy so that the rounds change the normals.
+    const bumpy = sphere.positions.map((n, i) => n * (1 + 0.04 * Math.sin(i * 7.3)));
+    const steps = [12, 0, 40, 12];
+    const results = shadingNormalSteps(bumpy, sphere.indices, steps);
+    expect(results).toHaveLength(steps.length);
+    steps.forEach((step, i) => {
+      const single = shadingNormals(bumpy, sphere.indices, { iterations: step });
+      for (let k = 0; k < single.length; k++) expect(results[i][k]).toBeCloseTo(single[k], 6);
+    });
+    // More rounds, smoother: neighbours' normals differ less after 12 and 40 rounds than the raw ones.
+    const spread = (normals: Float32Array) => {
+      let sum = 0;
+      for (let t = 0; t < sphere.indices.length; t += 3) {
+        const [a, b] = [sphere.indices[t] * 3, sphere.indices[t + 1] * 3];
+        sum +=
+          1 - (normals[a] * normals[b] + normals[a + 1] * normals[b + 1] + normals[a + 2] * normals[b + 2]);
+      }
+      return sum;
+    };
+    expect(spread(results[0])).toBeLessThan(spread(results[1]) * 0.5);
+    expect(spread(results[2])).toBeLessThan(spread(results[1]) * 0.5);
   });
 });

@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import type { ProductMesh, ProductPose, ProductShading } from './state-types';
 import { validatePose } from './pose';
-import { estimateAlbedo } from './albedo';
-import { shadingNormals } from './mesh-cleanup';
+import { productSurface } from './shading';
 
 export interface ProductCapture {
   blob: Blob;
@@ -62,7 +61,8 @@ function linearColors(source: Float32Array) {
 /**
  * Shared live/export scene. 'baked' draws the model's RGB unlit, exactly as saved before.
  * 'lit' draws per-material base colours under a light that follows the camera, so every angle
- * is shaded consistently instead of carrying the photo's shadows around.
+ * is shaded consistently instead of carrying the photo's shadows around. 'mixed' does the same
+ * and puts the photo's detail back where the photo shows the product (see mixed-color).
  */
 export class ProductRenderer {
   readonly renderer: THREE.WebGLRenderer;
@@ -87,7 +87,7 @@ export class ProductRenderer {
   private readonly sky = new THREE.HemisphereLight(0xffffff, 0xcfcfca, 1.9);
   private readonly source: ProductMesh;
   private readonly bakedColors: Float32Array;
-  private litColors?: Float32Array;
+  private readonly litColors: Partial<Record<ProductShading, Float32Array>> = {};
   private shading: ProductShading = 'baked';
   private readonly raycaster = new THREE.Raycaster();
   private readonly boxCorners: THREE.Vector3[] = [];
@@ -167,21 +167,14 @@ export class ProductRenderer {
     }
   }
 
-  /** Switch between the saved RGB and lit base colours; base colours are computed once. */
+  /** Switch between the saved RGB and the lit modes; each mode's colours are computed once. */
   setShading(mode: ProductShading) {
     if (mode === this.shading) return;
     const attribute = this.geometry.getAttribute('color') as THREE.BufferAttribute;
-    if (mode === 'lit') {
-      if (!this.litColors) {
-        this.litColors = linearColors(
-          estimateAlbedo(this.source.positions, this.source.indices, this.source.colors),
-        );
-        this.geometry.setAttribute(
-          'normal',
-          new THREE.BufferAttribute(shadingNormals(this.source.positions, this.source.indices), 3),
-        );
-      }
-      (attribute.array as Float32Array).set(this.litColors);
+    if (mode !== 'baked') {
+      const surface = productSurface(mode, this.source);
+      (attribute.array as Float32Array).set((this.litColors[mode] ??= linearColors(surface.colors)));
+      this.geometry.setAttribute('normal', new THREE.BufferAttribute(surface.normals!, 3));
       this.object.material = this.litMaterial;
     } else {
       (attribute.array as Float32Array).set(this.bakedColors);

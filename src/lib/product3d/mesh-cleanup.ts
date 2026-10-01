@@ -76,7 +76,7 @@ export function removeSmallPieces(mesh: DensityMesh, { minShare = 0.05 } = {}): 
 }
 
 /** Vertex neighbours (compressed rows), counted once per triangle side. */
-function neighbours(vertices: number, indices: Uint32Array) {
+export function neighbours(vertices: number, indices: Uint32Array) {
   const degree = new Uint32Array(vertices + 1);
   for (let t = 0; t < indices.length; t += 3) for (let k = 0; k < 3; k++) degree[indices[t + k] + 1] += 2;
   for (let v = 0; v < vertices; v++) degree[v + 1] += degree[v];
@@ -100,11 +100,19 @@ function neighbours(vertices: number, indices: Uint32Array) {
  * the surface instead. The drawn outline and the saved geometry stay exactly as they are.
  */
 export function shadingNormals(positions: Float32Array, indices: Uint32Array, { iterations = 40 } = {}) {
+  return shadingNormalSteps(positions, indices, [iterations])[0];
+}
+
+/** `shadingNormals` after each of several numbers of rounds, in one smoothing run (same order as `steps`). */
+export function shadingNormalSteps(positions: Float32Array, indices: Uint32Array, steps: number[]) {
   const vertices = positions.length / 3;
   const { offsets, list } = neighbours(vertices, indices);
   let current = vertexNormals(positions, indices),
     next = new Float32Array(current.length);
-  for (let round = 0; round < iterations; round++) {
+  const kept = new Map<number, Float32Array>();
+  const last = Math.max(...steps);
+  if (steps.includes(0)) kept.set(0, current.slice());
+  for (let round = 0; round < last; round++) {
     for (let v = 0; v < vertices; v++) {
       let x = current[v * 3],
         y = current[v * 3 + 1],
@@ -121,8 +129,9 @@ export function shadingNormals(positions: Float32Array, indices: Uint32Array, { 
       next[v * 3 + 2] = z / length;
     }
     [current, next] = [next, current];
+    if (steps.includes(round + 1)) kept.set(round + 1, round + 1 === last ? current : current.slice());
   }
-  return current;
+  return steps.map((step) => kept.get(step)!);
 }
 
 /**

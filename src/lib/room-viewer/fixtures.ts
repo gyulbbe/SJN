@@ -7,6 +7,8 @@ import {
   Color,
   DoubleSide,
   Group,
+  Matrix3,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -26,8 +28,8 @@ import type { RoomFace, RoomPlacement, ProductBounds } from '../room-types';
 import type { AssetRecord, ColorAdjust, FixtureInstance, MaterialVersion, Scene } from '../types';
 import { decodeProductMesh } from '../product3d/codec';
 import { levelCameraQuaternion, validatePose } from '../product3d/pose';
-import { estimateAlbedo } from '../product3d/albedo';
-import { shadingNormals } from '../product3d/mesh-cleanup';
+import { isLitShading, productSurface } from '../product3d/shading';
+import { prepareProductSurface } from '../product3d/surface';
 import type { Product3dReference, ProductMesh } from '../product3d/state-types';
 import { createTemplateModel, disposeTemplateModel } from '../reconstruction/templates';
 import { reconstructionModelTransform } from '../reconstruction/projection';
@@ -452,9 +454,10 @@ export function createSavedProductGeometry(
     p.face === 'floor' ? -(box.min.z + box.max.z) / 2 : -box.min.z,
   );
   geometry.scale(scale, scale, scale);
-  // A view saved with lighting correction shows base colours lit by the room, like the editor.
-  const source =
-    reference.shading === 'lit' ? estimateAlbedo(mesh.positions, mesh.indices, mesh.colors) : mesh.colors;
+  // A view saved with lighting correction ('lit', 'mixed') shows its colours lit by the room, like
+  // the editor: the same colour calculation (productSurface), here with the mesh turned as saved.
+  const surface = isLitShading(reference.shading) ? productSurface(reference.shading!, mesh) : undefined;
+  const source = surface?.colors ?? mesh.colors;
   const colors = new Float32Array(source.length),
     color = new Color();
   for (let i = 0; i < colors.length; i += 3) {
@@ -464,15 +467,14 @@ export function createSavedProductGeometry(
     colors[i + 2] = color.b;
   }
   geometry.setAttribute('color', new BufferAttribute(colors, 3));
-  if (reference.shading === 'lit')
-    geometry.setAttribute(
-      'normal',
-      new BufferAttribute(
-        shadingNormals(geometry.getAttribute('position').array as Float32Array, mesh.indices),
-        3,
-      ),
+  if (surface?.normals) {
+    // Turning the mesh turns its smoothed normals the same way (the scaling does not change them).
+    const normals = new BufferAttribute(new Float32Array(surface.normals), 3);
+    normals.applyNormalMatrix(
+      new Matrix3().getNormalMatrix(new Matrix4().makeRotationFromQuaternion(orientation)),
     );
-  else geometry.computeVertexNormals();
+    geometry.setAttribute('normal', normals);
+  } else geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   return geometry;
 }
@@ -585,11 +587,15 @@ export async function buildViewerFixtures(
         if (selected.product3d) {
           if (selected.product3d.version !== 1) throw new Error('지원하지 않는 제품 입체 데이터 버전이에요.');
           const mesh = await cache.mesh(selected.product3d.meshAssetId);
+          // The colours of a lit view are worked out off the main thread first (and kept per mesh),
+          // so the room does not stop for them.
+          if (isLitShading(selected.product3d.shading))
+            await prepareProductSurface(selected.product3d.shading!, mesh);
           const geometry = createSavedProductGeometry(mesh, selected.product3d, fixture);
           content.add(
             new Mesh(
               geometry,
-              selected.product3d.shading === 'lit'
+              isLitShading(selected.product3d.shading)
                 ? new MeshStandardMaterial({
                     vertexColors: true,
                     side: DoubleSide,
