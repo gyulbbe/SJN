@@ -275,6 +275,80 @@ export class ProductRenderer {
     return { left, top, right, bottom, centerX: this.width / 2, centerY: this.height / 2 };
   }
 
+  /**
+   * Fits a clone of the view camera square around the whole product (8% of its size on each edge,
+   * every vertex counted) and centres it. Shared by the PNG capture and the outline read.
+   */
+  private frame(camera: THREE.OrthographicCamera) {
+    camera.zoom = 1;
+    camera.updateMatrixWorld();
+    this.object.updateMatrixWorld();
+    const transform = new THREE.Matrix4().multiplyMatrices(
+      camera.matrixWorldInverse,
+      this.object.matrixWorld,
+    );
+    const position = this.geometry.getAttribute('position');
+    const point = new THREE.Vector3();
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (let i = 0; i < position.count; i++) {
+      point.fromBufferAttribute(position, i).applyMatrix4(transform);
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+      minY = Math.min(minY, point.y);
+      maxY = Math.max(maxY, point.y);
+    }
+    const half = (Math.max(maxX - minX, maxY - minY) / 2) * 1.16;
+    camera.position.add(
+      new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, 0).applyQuaternion(camera.quaternion),
+    );
+    camera.left = -half;
+    camera.right = half;
+    camera.top = half;
+    camera.bottom = -half;
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    return { half, minY, maxY };
+  }
+
+  /**
+   * The product's outline as a camera at `input` sees it: the alpha channel (0 or 255, top row
+   * first) of a square picture, drawn off screen. The live view and its pose are left as they were.
+   * It reads the outline for the automatic level (see levelByOutline), so the pose passed in is
+   * usually the saved one with a level camera.
+   */
+  silhouette(input: ProductPose, size = 512): { alpha: Uint8Array; width: number; height: number } {
+    if (this.disposed) throw new Error('입체 편집기가 닫혔습니다.');
+    if (this.capturing) throw new Error('이미지를 만드는 중입니다. 잠시 기다려 주세요.');
+    const pose = validatePose(input);
+    const saved = this.getPose();
+    const target = new THREE.WebGLRenderTarget(size, size, { samples: 4 });
+    const previousTarget = this.renderer.getRenderTarget();
+    try {
+      this.setPose(pose);
+      const camera = this.camera.clone();
+      this.frame(camera);
+      this.aim(camera);
+      this.renderer.setRenderTarget(target);
+      this.renderer.setClearColor(0, 0);
+      this.renderer.clear();
+      this.renderer.render(this.scene, camera);
+      const pixels = new Uint8Array(size * size * 4);
+      this.renderer.readRenderTargetPixels(target, 0, 0, size, size, pixels);
+      // The buffer starts at the bottom row: store the picture top row first.
+      const alpha = new Uint8Array(size * size);
+      for (let y = 0; y < size; y++)
+        for (let x = 0; x < size; x++) alpha[(size - 1 - y) * size + x] = pixels[(y * size + x) * 4 + 3];
+      return { alpha, width: size, height: size };
+    } finally {
+      this.renderer.setRenderTarget(previousTarget);
+      target.dispose();
+      this.setPose(saved);
+    }
+  }
+
   async capture(): Promise<ProductCapture> {
     if (this.disposed) throw new Error('입체 편집기가 닫혔습니다.');
     if (this.capturing) throw new Error('이미지를 만드는 중입니다. 잠시 기다려 주세요.');
@@ -283,36 +357,7 @@ export class ProductRenderer {
     this.capturing = true;
     try {
       const camera = this.camera.clone();
-      camera.zoom = 1;
-      camera.updateMatrixWorld();
-      this.object.updateMatrixWorld();
-      const transform = new THREE.Matrix4().multiplyMatrices(
-        camera.matrixWorldInverse,
-        this.object.matrixWorld,
-      );
-      const position = this.geometry.getAttribute('position');
-      const point = new THREE.Vector3();
-      let minX = Infinity,
-        minY = Infinity,
-        maxX = -Infinity,
-        maxY = -Infinity;
-      for (let i = 0; i < position.count; i++) {
-        point.fromBufferAttribute(position, i).applyMatrix4(transform);
-        minX = Math.min(minX, point.x);
-        maxX = Math.max(maxX, point.x);
-        minY = Math.min(minY, point.y);
-        maxY = Math.max(maxY, point.y);
-      }
-      const half = (Math.max(maxX - minX, maxY - minY) / 2) * 1.16; // 8% of object size on each edge.
-      camera.position.add(
-        new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, 0).applyQuaternion(camera.quaternion),
-      );
-      camera.left = -half;
-      camera.right = half;
-      camera.top = half;
-      camera.bottom = -half;
-      camera.updateProjectionMatrix();
-      camera.updateMatrixWorld();
+      const { half, minY, maxY } = this.frame(camera);
       this.renderer.setPixelRatio(1);
       this.renderer.setSize(1024, 1024, false);
       let png: Promise<Blob>;

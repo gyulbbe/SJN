@@ -117,6 +117,28 @@ export function screenDragAngle(
   return Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
 }
 
+/**
+ * The roll that makes a line dragged across the picture level (`wanted` 'level') or upright
+ * ('upright'): clockwise degrees to turn the product on the screen (negative is counter-clockwise).
+ * `start` and `end` are screen coordinates (y grows downwards). A line has no direction, so the
+ * turn is the smaller one. Nothing for a drag shorter than `minLength` px, or for a line farther
+ * than `maxDegrees` from the wanted direction (it is more likely the other kind of line).
+ */
+export function lineRollAngle(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  wanted: 'level' | 'upright',
+  { minLength = 24, maxDegrees = 45 } = {},
+): number | undefined {
+  const dx = end.x - start.x,
+    dy = end.y - start.y;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < minLength) return undefined;
+  const clockwise = (Math.atan2(dy, dx) * 180) / Math.PI; // from the +x axis, clockwise on the screen
+  const away = (((((wanted === 'level' ? clockwise : clockwise - 90) + 90) % 180) + 180) % 180) - 90;
+  if (Math.abs(away) > maxDegrees) return undefined;
+  return away === 0 ? 0 : -away;
+}
+
 export class ProductPoseHistory {
   private current: ProductPose;
   private past: ProductPose[] = [];

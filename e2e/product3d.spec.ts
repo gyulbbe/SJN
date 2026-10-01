@@ -1108,3 +1108,175 @@ test('여러 각도 자재: 공간에서 썸네일 변경 시 제품 ID·위치�
   expect(restored.viewIndex).toBe(0);
   expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
 });
+
+/** Degrees the product itself turned between two poses (the camera is left out). */
+function turned(a: Pose, b: Pose) {
+  const dot = a.objectQuaternion.reduce((sum, n, i) => sum + n * b.objectQuaternion[i], 0);
+  return (2 * Math.acos(Math.min(1, Math.abs(dot))) * 180) / Math.PI;
+}
+/** Draws a line across a layer the way a mouse does: from the middle, `dx` right and `dy` down in all. */
+async function drawLine(page: Page, layer: Locator, dx: number, dy: number) {
+  const box = (await layer.boundingBox())!;
+  const x = box.x + box.width / 2 - dx / 2,
+    y = box.y + box.height / 2 - dy / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx, y + dy, { steps: 12 });
+  await page.mouse.up();
+}
+const degreesToRadians = (degrees: number) => (degrees * Math.PI) / 180;
+
+test('실제 메시 재생: 수평선·수직선 맞추기(끌어서 맞춤·잘못된 선·실행 취소·키보드)', async ({ page }) => {
+  const { form } = await openForm(page);
+  const dialog = await openViewer(form);
+  await reconstruct(page, dialog);
+  const note = dialog.getByTestId('product3d-level-note');
+  // A new model comes level by its outline when it opens (or says it could not tell), and the
+  // hint says saved angles need the automatic level pressed again.
+  await expect(note).toContainText('새 입체 형상');
+  await expect(dialog).toContainText(
+    '이전에 저장한 각도는 자동 수평 맞춤을 다시 누르고 저장해야 3D 방에 반영돼요',
+  );
+  const initial = await pose(dialog);
+  await selectProduct(dialog);
+  const handle = dialog.getByTestId('product3d-handle-top');
+  await handle.focus();
+  for (let i = 0; i < 12; i++) await handle.press('ArrowRight'); // 12° clockwise, as a hand would tilt it
+  const rolled = await pose(dialog);
+  expect(turned(initial, rolled)).toBeCloseTo(12, 3);
+
+  const level = dialog.getByTestId('product3d-line-level');
+  const upright = dialog.getByTestId('product3d-line-upright');
+  const layer = dialog.getByTestId('product3d-line-layer');
+  await expect(layer).toHaveCount(0);
+  await level.click();
+  await expect(level).toHaveAttribute('aria-pressed', 'true');
+  await expect(layer).toBeVisible();
+  await expect(layer).toBeFocused();
+  // The tilt handles give way to the tool.
+  await expect(handle).toBeHidden();
+  // A drag that is too short, or along the wrong kind of line, changes nothing and keeps the tool.
+  await drawLine(page, layer, 10, 2);
+  expect(turned(rolled, await pose(dialog))).toBeLessThan(1e-6);
+  await expect(note).toContainText('너무 짧거나');
+  await drawLine(page, layer, 20, 200);
+  expect(turned(rolled, await pose(dialog))).toBeLessThan(1e-6);
+  await expect(note).toContainText('너무 벗어났어요');
+  await expect(layer).toBeVisible();
+  // A line along the tilted edge: 240 px right and 51 px down is 12° clockwise. It is levelled, so
+  // the product turns back by 12° to where it was, and the tool is done.
+  await drawLine(page, layer, 240, 240 * Math.tan(degreesToRadians(12)));
+  await expect(layer).toHaveCount(0);
+  await expect(level).toHaveAttribute('aria-pressed', 'false');
+  expect(turned(initial, await pose(dialog))).toBeLessThan(0.05);
+  await expect(note).toContainText('선을 수평으로 맞췄어요(12.0° 왼쪽으로 돌림)');
+  // One undo is one drawn line.
+  await dialog.getByRole('button', { name: '실행 취소', exact: true }).click();
+  expect(turned(rolled, await pose(dialog))).toBeLessThan(1e-6);
+  await dialog.getByRole('button', { name: '다시 실행', exact: true }).click();
+  expect(turned(initial, await pose(dialog))).toBeLessThan(0.05);
+  await dialog.getByRole('button', { name: '실행 취소', exact: true }).click();
+
+  // The upright tool: a line leaning 7° clockwise from vertical (drawn from the top down) is made
+  // upright, so the product turns 7° counter-clockwise.
+  await upright.click();
+  await expect(layer).toBeVisible();
+  await drawLine(page, layer, -120 * Math.tan(degreesToRadians(7)), 120);
+  await expect(layer).toHaveCount(0);
+  await expect(note).toContainText('선을 수직으로 맞췄어요(7.0° 왼쪽으로 돌림)');
+  const afterUpright = await pose(dialog);
+  expect(turned(rolled, afterUpright)).toBeCloseTo(7, 1);
+  await dialog.getByRole('button', { name: '실행 취소', exact: true }).click();
+  expect(turned(rolled, await pose(dialog))).toBeLessThan(1e-6);
+
+  // The keyboard: the button opens the tool with the keyboard in it, the arrows turn the guide
+  // line, Enter applies it (5° here), Escape leaves without touching the product.
+  await level.focus();
+  await page.keyboard.press('Enter');
+  await expect(layer).toBeFocused();
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+  await expect(layer).toContainText('(5°)');
+  await page.keyboard.press('Enter');
+  await expect(layer).toHaveCount(0);
+  expect(turned(rolled, await pose(dialog))).toBeCloseTo(5, 1);
+  await dialog.getByRole('button', { name: '실행 취소', exact: true }).click();
+  await upright.focus();
+  await page.keyboard.press('Space');
+  await expect(layer).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Escape');
+  await expect(layer).toHaveCount(0);
+  expect(turned(rolled, await pose(dialog))).toBeLessThan(1e-6);
+  await dialog.screenshot({ path: path.join(output, 'level-tools.png') });
+});
+
+test('실제 메시 재생: 자동 수평 맞춤은 윤곽까지 읽고 안내하며 실행 취소·기울기 초기화가 그대로 작동한다', async ({
+  page,
+}) => {
+  const { form } = await openForm(page);
+  const dialog = await openViewer(form);
+  await reconstruct(page, dialog);
+  const note = dialog.getByTestId('product3d-level-note');
+  const initial = await pose(dialog);
+  await selectProduct(dialog);
+  const handle = dialog.getByTestId('product3d-handle-top');
+  await handle.focus();
+  for (let i = 0; i < 20; i++) await handle.press('ArrowRight');
+  const tilted = await pose(dialog);
+  expect(turned(initial, tilted)).toBeCloseTo(20, 3);
+  await dialog.getByRole('button', { name: '자동 수평 맞춤', exact: true }).click();
+  // It says what it did with the outline: turned, already level, or could not tell.
+  await expect(note).toContainText(/윤곽/);
+  const levelled = await pose(dialog);
+  expect(turned(tilted, levelled)).toBeGreaterThan(5);
+  // The editor's camera stays where it was.
+  levelled.cameraQuaternion.forEach((n, i) => expect(n).toBeCloseTo(tilted.cameraQuaternion[i], 10));
+  await dialog.getByRole('button', { name: '실행 취소', exact: true }).click();
+  expect(turned(tilted, await pose(dialog))).toBeLessThan(1e-6);
+  await dialog.getByRole('button', { name: '다시 실행', exact: true }).click();
+  expect(turned(levelled, await pose(dialog))).toBeLessThan(1e-6);
+  // The same button twice gives the same pose.
+  await dialog.getByRole('button', { name: '자동 수평 맞춤', exact: true }).click();
+  expect(turned(levelled, await pose(dialog))).toBeLessThan(1e-6);
+  await dialog.getByRole('button', { name: '기울기 초기화', exact: true }).click();
+  expect((await pose(dialog)).objectQuaternion).toEqual([0, 0, 0, 1]);
+  await expect(note).toHaveCount(0);
+});
+
+test('실제 메시 재생: 모바일에서 손가락으로 선을 그어 수평 맞추기', async ({ page }) => {
+  const { form } = await openForm(page);
+  const dialog = await openViewer(form);
+  await reconstruct(page, dialog);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const canvas = dialog.getByTestId('product3d-canvas');
+  await selectProduct(dialog);
+  const handle = dialog.getByTestId('product3d-handle-top');
+  await handle.focus();
+  for (let i = 0; i < 10; i++) await handle.press('ArrowRight'); // 10° clockwise
+  const rolled = await pose(dialog);
+  await dialog.getByTestId('product3d-line-level').scrollIntoViewIfNeeded();
+  await dialog.getByTestId('product3d-line-level').click();
+  const layer = dialog.getByTestId('product3d-line-layer');
+  await expect(layer).toBeVisible();
+  await canvas.scrollIntoViewIfNeeded();
+  const box = (await layer.boundingBox())!;
+  // The sticky save bar covers the bottom of the tall mobile picture: draw in its visible part.
+  const barTop = await dialog.locator('footer').evaluate((footer) => footer.getBoundingClientRect().top);
+  const x = box.x + box.width * 0.2,
+    y = Math.min(box.y + box.height * 0.45, (box.y + barTop) / 2);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+  for (let i = 1; i <= 10; i++)
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: x + i * 12, y: y + i * 12 * Math.tan(degreesToRadians(10)), id: 1 }],
+    });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.detach();
+  await expect(layer).toHaveCount(0);
+  // A 120 px line 10° clockwise levelled: the product is turned back 10°, to where it started.
+  expect(turned(rolled, await pose(dialog))).toBeCloseTo(10, 0);
+  await dialog.screenshot({ path: path.join(output, 'mobile-level-tool.png') });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});

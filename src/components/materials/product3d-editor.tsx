@@ -107,6 +107,8 @@ export function Product3dEditor({
       : undefined;
   const [attempt, setAttempt] = useState(0),
     [viewerKey, setViewerKey] = useState(0),
+    // A model just made opens level by its outline; a saved one and a retried viewer open as they were.
+    [freshModel, setFreshModel] = useState(false),
     [stored, setStored] = useState(false);
   useEffect(() => {
     alive.current = true;
@@ -159,6 +161,7 @@ export function Product3dEditor({
           if (!active) return;
           trackPose(structuredClone(product3d.pose));
           setInitialPose(structuredClone(product3d.pose));
+          setFreshModel(false);
           setViewAngle(sourceViewAngle(product3d.pose));
           setMeshAssetId(asset.id);
           setStored(true);
@@ -233,6 +236,7 @@ export function Product3dEditor({
       setViewAngle(sourceViewAngle(pose));
       setShading('lit');
       setStored(false);
+      setFreshModel(true);
       setViewerKey((k) => k + 1);
       setResult(next);
     } catch (reason) {
@@ -486,6 +490,7 @@ export function Product3dEditor({
                 ref={viewport}
                 mesh={result.mesh}
                 initialPose={initialPose}
+                levelOnOpen={freshModel}
                 shading={shading}
                 onShadingChange={setShading}
                 onPoseChange={(pose) => {
@@ -504,6 +509,7 @@ export function Product3dEditor({
                   onClick={() => {
                     setViewerError('');
                     setInitialPose(structuredClone(latestPose.current));
+                    setFreshModel(false);
                     setViewerKey((v) => v + 1);
                   }}
                 >
