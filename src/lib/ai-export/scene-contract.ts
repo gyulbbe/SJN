@@ -42,6 +42,8 @@ export const FLUX_FIXTURE_FORMS = [
 ] as const;
 export const FLUX_FACES = ['floor', 'back', 'left', 'right'] as const;
 export const FLUX_FINISHES = ['matte', 'semi-gloss', 'glossy', 'polished', 'metal'] as const;
+/** Where a product faces in the room, from its photo's angle name (see product-direction.ts). */
+export const FLUX_FACINGS = ['front', 'right', 'left', 'back'] as const;
 export const FLUX_MAX_FIXTURES = 12;
 export const FLUX_MAX_SURFACES = 8;
 export const FLUX_MAX_SCENE_BYTES = 16 * 1024;
@@ -50,6 +52,7 @@ export type FluxFixtureKind = (typeof FLUX_FIXTURE_KINDS)[number];
 export type FluxFixtureForm = (typeof FLUX_FIXTURE_FORMS)[number];
 export type FluxFace = (typeof FLUX_FACES)[number];
 export type FluxFinish = (typeof FLUX_FINISHES)[number];
+export type FluxFacing = (typeof FLUX_FACINGS)[number];
 
 const hex = z.string().regex(/^#[0-9a-f]{6}$/);
 const mm = z.number().finite().min(1).max(20000);
@@ -65,6 +68,8 @@ export const fluxFixtureSchema = z.strictObject({
   face: z.enum(FLUX_FACES),
   color: hex,
   finish: z.enum(FLUX_FINISHES),
+  /** Absent for a standard model, or a photo that names no horizontal direction (위, 아래). */
+  facing: z.enum(FLUX_FACINGS).optional(),
   /** Width × height × depth. */
   sizeMm: z.tuple([mm, mm, mm]),
   box,

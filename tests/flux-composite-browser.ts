@@ -21,7 +21,7 @@ const output = 'test-results/flux-composite/payload';
 await mkdir(output, { recursive: true });
 const bundle = await build({
   stdin: {
-    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {VIEWER_CEILING_COLOR} from './src/lib/room-viewer/ceiling';export {buildFluxRoomScene} from './tests/helpers/flux-room-scene';export {buildFluxGrounding,visibleCeiling} from './src/lib/ai-export/scene';export {fluxInputLayout} from './src/lib/ai-export/contract';export {prepareFluxImage,pixelsToPng,readPixels} from './src/lib/ai-export/client';export {buildFluxPrompt} from './src/lib/ai-export/prompt';export {fluxSceneSchema} from './src/lib/ai-export/scene-contract';export {presetFluxView} from './tests/helpers/flux-room-scene';export * from './src/lib/ai-export/composite';`,
+    contents: `export * from './src/lib/room-viewer/renderer';export * from './src/lib/room-viewer/view-state';export {VIEWER_CEILING_COLOR} from './src/lib/room-viewer/ceiling';export {buildFluxRoomScene} from './tests/helpers/flux-room-scene';export {buildFluxGrounding,visibleCeiling} from './src/lib/ai-export/scene';export {fluxInputLayout} from './src/lib/ai-export/contract';export {prepareFluxImage,pixelsToPng,readPixels} from './src/lib/ai-export/client';export {buildFluxPrompt} from './src/lib/ai-export/prompt';export {fluxSceneSchema} from './src/lib/ai-export/scene-contract';export {presetFluxView} from './tests/helpers/flux-room-scene';export {fluxOrbitView} from './src/lib/ai-export/view';export * from './src/lib/ai-export/composite';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -270,7 +270,7 @@ try {
         viewer.dispose();
       }
     }
-    // 6. The export-only photo choice: a cabinet with front, right-diagonal and right-side photos.
+    // 6. The export-only photo choice: a cabinet with a front photo, a left-facing photo of the same outline and a narrow right-facing photo.
     const angles: Record<string, unknown> = {};
     {
       const { room, assets, snapshot, imageWidth, imageHeight } = await lib.buildFluxRoomScene({
@@ -281,8 +281,11 @@ try {
         const viewer = new lib.RoomViewerRenderer();
         try {
           await viewer.setSnapshot(snapshot, reader, { exportAngles });
-          for (const preset of ['center', 'right-corner'] as const) {
-            const view = lib.presetFluxView(room, preset);
+          for (const preset of ['center', 'right-corner', 'orbit-right'] as const) {
+            const view =
+              preset === 'orbit-right'
+                ? lib.fluxOrbitView({ azimuth: 90, elevation: 0 })
+                : lib.presetFluxView(room, preset);
             // A plain frame of this view (an export would restore the previous live frame after).
             viewer.render(1024, 683, view, 'after');
             const prepared = (
@@ -391,12 +394,17 @@ try {
   const report = { gpu, gpuName: run.gpuName, sameAsEarlier, summary, angles: run.angles };
   await writeFile(`${output}/summary${gpu ? '-gpu' : ''}.json`, JSON.stringify(report, null, 2));
   const angles = run.angles as Record<string, { planes: number[]; shown: number; box: number[] }>;
-  // Live views switch only between exact sides; the export picks the diagonal from the corner and
-  // never builds the narrow side photo; the footprint and the saved choice stay.
+  // A camera sees a product that faces the front as facing away from where the camera stands: from
+  // the right it shows the left-facing photo ('왼쪽', the same outline as the front photo here),
+  // but only once the camera is within 25 degrees of that name; the corner view (less than 45 degrees
+  // round) stays on the front photo. The export never builds the narrow right photo (another
+  // footprint); the footprint and the saved choice stay.
   assert.equal(angles['live-right-corner'].shown, 0);
   assert.equal(angles['export-center'].shown, 0);
-  assert.equal(angles['export-right-corner'].shown, 1);
-  assert.deepEqual(angles['export-right-corner'].planes.sort(), [0, 1]);
+  assert.equal(angles['export-right-corner'].shown, 0);
+  assert.equal(angles['live-orbit-right'].shown, 1);
+  assert.equal(angles['export-orbit-right'].shown, 1);
+  assert.deepEqual(angles['export-orbit-right'].planes.sort(), [0, 1]);
   assert.deepEqual(angles['export-right-corner'].box, angles['live-right-corner'].box);
   assert.equal(run.angles.savedViewIndex, 0);
   console.log(JSON.stringify(report, null, 2));

@@ -68,7 +68,7 @@ function completed() {
     usage: 'both',
     installation: 'floor',
     textureAssetIds: [],
-    views: [{ assetId: product.id, direction: 'front', anchor: { x: 0.5, y: 1 } }],
+    views: [{ assetId: product.id, direction: '정면', anchor: { x: 0.5, y: 1 } }],
     defaultGroutWidth: 2,
     defaultGroutColor: '#dddddd',
     defaultPattern: 'grid',

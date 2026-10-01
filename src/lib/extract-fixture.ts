@@ -209,7 +209,7 @@ export async function registerExtractedFixture(
     installation: 'floor',
 
     textureAssetIds: [],
-    views: [{ assetId: asset.id, direction: '원본 사진 방향', anchor: { ...extracted.anchor } }],
+    views: [{ assetId: asset.id, direction: '정면', anchor: { ...extracted.anchor } }],
     defaultGroutWidth: 2,
     defaultGroutColor: '#d5d1c9',
     defaultPattern: 'grid',

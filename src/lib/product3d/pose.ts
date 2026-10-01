@@ -36,6 +36,31 @@ export function validatePose(value: unknown): ProductPose {
   };
 }
 
+/**
+ * The saved camera looking level: the same side of the product and the same roll, without its
+ * up/down look angle. The 360° editor looks down on the product (10° by default) to show a little
+ * of its top, and that angle belongs to the picture, not to the product. A room stands the product
+ * on its floor (or against its wall), so taking the camera's frame as the room's horizontal one
+ * leaned every product by that angle with its base off the floor. TripoSR coordinates: +z is up.
+ */
+export function levelCameraQuaternion(camera: Quaternion): Quaternion {
+  const back = new Vector3(0, 0, 1).applyQuaternion(camera); // from the product towards the camera
+  const up = new Vector3(0, 1, 0).applyQuaternion(camera);
+  const right = new Vector3(1, 0, 0).applyQuaternion(camera);
+  // Which side the camera stands on. From straight above or below the camera has no side of its
+  // own, so its picture's up direction (pointing away from that side) tells.
+  const pole = back.z < 0 ? -1 : 1;
+  const azimuth =
+    Math.hypot(back.x, back.y) > 1e-6 ? Math.atan2(back.y, back.x) : Math.atan2(-pole * up.y, -pole * up.x);
+  const levelBack = new Vector3(Math.cos(azimuth), Math.sin(azimuth), 0);
+  // Right is horizontal for a camera without roll, at any up/down angle.
+  const flatRight = new Vector3(-Math.sin(azimuth), Math.cos(azimuth), 0);
+  const roll = Math.atan2(back.dot(new Vector3().crossVectors(flatRight, right)), flatRight.dot(right));
+  const levelRight = flatRight.applyAxisAngle(levelBack, roll);
+  const levelUp = new Vector3().crossVectors(levelBack, levelRight);
+  return new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(levelRight, levelUp, levelBack));
+}
+
 /** TripoSR coordinates: +z is up, the source-facing camera is near +x. */
 export function createDefaultPose(): ProductPose {
   const elevation = (10 * Math.PI) / 180;

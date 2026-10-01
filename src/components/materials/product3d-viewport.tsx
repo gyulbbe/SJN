@@ -18,6 +18,8 @@ import styles from './product3d-viewport.module.css';
 export interface ProductViewportHandle {
   capture(): Promise<ProductCapture>;
   getPose(): ProductPose;
+  /** Turns the view to a pose (one undo step), e.g. to face the direction a name gives. */
+  setPose(pose: ProductPose): void;
 }
 export interface ProductViewportProps {
   mesh: ProductMesh;
@@ -35,6 +37,7 @@ interface Runtime {
   commit: () => void;
   draw: () => void;
   action: (action: Action) => void;
+  setPose: (pose: ProductPose) => void;
   beginTilt: (event: PointerEvent, element: HTMLButtonElement) => void;
   keyTilt: (clockwise: number) => void;
   cancelTilt: () => void;
@@ -82,6 +85,9 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
           const active = runtime.current;
           if (!active) throw new Error('입체 미리보기가 준비되지 않았습니다.');
           return active.capture();
+        },
+        setPose(pose) {
+          runtime.current?.setPose(pose);
         },
       }),
       [],
@@ -357,6 +363,16 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
             engine.setPose(next);
             undo.record(next);
           }
+          interactionStart = undefined;
+          publish();
+          draw();
+        },
+        setPose(next) {
+          if (stopped || capturing) return;
+          flushWheel();
+          controls.update();
+          engine.setPose(next);
+          undo.record(next);
           interactionStart = undefined;
           publish();
           draw();

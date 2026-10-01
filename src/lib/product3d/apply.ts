@@ -4,13 +4,19 @@ import { makeAsset } from '../images';
 import { makeProductMeshAsset } from './codec';
 import type { Product3dApplication } from './types';
 import type { ProductMesh } from './state-types';
-export const MAX_PRODUCT_VIEWS = 100;
-export const MAX_PRODUCT_VIEW_NAME = 200;
+import { MAX_PRODUCT_VIEWS, PRODUCT_DIRECTIONS, isProductDirection } from '../product-direction';
+export { MAX_PRODUCT_VIEWS };
+/** An angle name is one of the closed list, never typed. */
 export function productViewName(name: string) {
   const value = name.trim();
-  if (!value || value.length > MAX_PRODUCT_VIEW_NAME)
-    throw new Error(`각도 이름을 1~${MAX_PRODUCT_VIEW_NAME}자로 입력해 주세요.`);
+  if (!isProductDirection(value))
+    throw new Error(`각도 이름은 목록에서 골라 주세요(${PRODUCT_DIRECTIONS.join(' · ')}).`);
   return value;
+}
+/** One photo per direction: another photo already has this name. */
+function assertFreeDirection(views: { direction: string }[], name: string, except?: number) {
+  if (views.some((view, index) => index !== except && view.direction === name))
+    throw new Error(`‘${name}’ 방향 사진이 이미 있어요. 다른 방향을 고르거나 그 사진을 수정해 주세요.`);
 }
 const staged = new WeakMap<ProductMesh, { input: Blob; inputId?: string; meshId?: string }>();
 export async function prepareProductReplacement(
@@ -103,17 +109,31 @@ export function addProductPhoto(
   if (form.views[sourceIndex]?.assetId !== expectedAssetId)
     throw new Error('선택한 제품 사진이 바뀌었어요. 다시 열어 주세요.');
   if (form.views.length >= MAX_PRODUCT_VIEWS)
-    throw new Error(`자재 하나에 각도 사진은 최대 ${MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요.`);
+    throw new Error(
+      `자재 하나에 각도 사진은 방향마다 한 장, 최대 ${MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요.`,
+    );
+  const direction = productViewName(name);
+  assertFreeDirection(form.views, direction);
   return {
     ...form,
-    views: [...form.views, { ...structuredClone(replacement), direction: productViewName(name) }],
+    views: [...form.views, { ...structuredClone(replacement), direction }],
   };
 }
 
 export function renameProductPhoto(form: MaterialInput, index: number, name: string): MaterialInput {
   if (!form.views[index]) throw new Error('이름을 바꿀 각도 사진을 찾을 수 없어요.');
   const direction = productViewName(name);
-  return { ...form, views: form.views.map((view, i) => (i === index ? { ...view, direction } : view)) };
+  assertFreeDirection(form.views, direction, index);
+  return {
+    ...form,
+    views: form.views.map((view, i) => {
+      if (i !== index) return view;
+      // The stored name that could not be read is settled once a name is picked.
+      const next = { ...view, direction };
+      delete next.directionWas;
+      return next;
+    }),
+  };
 }
 
 export function removeProductPhoto(form: MaterialInput, index: number): MaterialInput {

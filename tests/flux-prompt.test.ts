@@ -7,6 +7,7 @@ import {
   FLUX_CUTAWAY_SENTENCE,
   FLUX_EMPTY_ROOM_PROMPT,
   FLUX_PLACEHOLDER_SENTENCE,
+  facingPhrase,
   FLUX_PROMPT_MAX_CHARS,
 } from '../src/lib/ai-export/prompt';
 import { fluxSceneSchema, type FluxFixture, type FluxScene } from '../src/lib/ai-export/scene-contract';
@@ -243,5 +244,51 @@ describe('outside view: the cutaway sentence', () => {
   it('accepts the view strictly', () => {
     expect(fluxSceneSchema.safeParse(cutaway).success).toBe(true);
     expect(fluxSceneSchema.safeParse({ ...scene, view: 'outside' }).success).toBe(false);
+  });
+});
+
+describe('where a fixture faces (from the angle name of its photo)', () => {
+  it('adds the direction to the sentence of a fixture only when it has one', () => {
+    const plain = buildFluxPrompt({ ...scene, fixtures: [basin] });
+    expect(plain).toContain('It must remain a washbasin in the same place and size.');
+    expect(plain).not.toContain('facing');
+    const faced = buildFluxPrompt({ ...scene, fixtures: [{ ...basin, facing: 'right' }] });
+    expect(faced).toContain(
+      'It must remain a washbasin in the same place, size and direction, facing into the room, towards the right wall.',
+    );
+    expect(faced).toBe(
+      buildFluxPrompt(structuredClone({ ...scene, fixtures: [{ ...basin, facing: 'right' }] })),
+    );
+  });
+
+  it('says into the room for a side wall product that faces the opposite wall, else the plain direction', () => {
+    expect(facingPhrase('left', 'right')).toBe('into the room, towards the right wall');
+    expect(facingPhrase('right', 'left')).toBe('into the room, towards the left wall');
+    expect(facingPhrase('left', 'front')).toBe('the camera, the open front of the room');
+    expect(facingPhrase('back', 'front')).toBe('the camera, the open front of the room');
+    expect(facingPhrase('floor', 'back')).toBe('the back wall');
+    expect(facingPhrase('floor', 'left')).toBe('the left wall');
+  });
+
+  it('accepts the four directions in the schema, strictly, and still takes a fixture without one', () => {
+    for (const facing of ['front', 'right', 'left', 'back'])
+      expect(fluxSceneSchema.safeParse({ ...scene, fixtures: [{ ...basin, facing }] }).success).toBe(true);
+    expect(fluxSceneSchema.safeParse({ ...scene, fixtures: [{ ...basin, facing: 'up' }] }).success).toBe(
+      false,
+    );
+    expect(fluxSceneSchema.safeParse({ ...scene, fixtures: [basin] }).success).toBe(true);
+  });
+
+  it('keeps every direction while a crowded prompt is shortened, within the limit', () => {
+    const crowded = {
+      ...scene,
+      fixtures: Array.from({ length: 12 }, (_, i) => ({
+        ...(i % 2 ? basin : toilet),
+        facing: 'front' as const,
+      })),
+    };
+    const text = buildFluxPrompt(crowded);
+    expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
+    expect(text).toBe(buildFluxPrompt(structuredClone(crowded)));
   });
 });

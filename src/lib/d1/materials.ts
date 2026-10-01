@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { stripLegacyMaterialImages } from '../material-images';
 import { materialReferences } from '../repositories/references';
 import { identifierSchema, materialInputSchema } from '../storage/validation';
+import { readMaterialViews } from '../product-direction';
 import type { AssetRecord, Material, MaterialInput, MaterialVersion } from '../types';
 import {
   assetAssertion,
@@ -128,13 +129,16 @@ export async function materials(
             scope: row.scope,
             updatedAt: row.updated_at,
           },
-          version: JSON.parse(row.payload_json) as MaterialVersion,
+          // Older angle names are read as the current list's names; saving writes the strict list.
+          version: readMaterialViews(JSON.parse(row.payload_json) as MaterialVersion),
         });
       }
       return result;
     }
     case 'getVersion':
-      return JSON.parse((await versionFor(ctx, identifierSchema.parse(body.id))).payload_json);
+      return readMaterialViews(
+        JSON.parse((await versionFor(ctx, identifierSchema.parse(body.id))).payload_json) as MaterialVersion,
+      );
     case 'create':
     case 'update': {
       if (!projectResource && !ctx.actor.isAdmin) throw forbidden();

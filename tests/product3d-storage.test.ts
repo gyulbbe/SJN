@@ -43,7 +43,7 @@ function material(photo: string, reference?: Product3dReference): MaterialInput 
     coverAssetId: photo,
     imageAssetIds: [photo],
     textureAssetIds: [],
-    views: [{ assetId: photo, direction: '원본 방향', anchor: { x: 0.5, y: 1 }, product3d: reference }],
+    views: [{ assetId: photo, direction: '정면', anchor: { x: 0.5, y: 1 }, product3d: reference }],
     defaultGroutWidth: 2,
     defaultGroutColor: '#ffffff',
     defaultPattern: 'grid',
@@ -160,7 +160,7 @@ describe('shared geometry angle versions', () => {
     const draft = material(png.id, reference);
     draft.views.push({
       assetId: secondPhoto.id,
-      direction: '왼쪽 사선',
+      direction: '왼쪽',
       anchor: { x: 0.5, y: 0.8 },
       product3d: { ...structuredClone(reference), pose: { ...structuredClone(reference.pose), zoom: 2 } },
     });

@@ -2,6 +2,7 @@ import { fixtureVariantErrors } from '../reconstruction/fixture-variants';
 import { validateWallFeatures, WALL_FEATURE_MAX_COUNT, WALL_FEATURE_MAX_DEPTH_MM } from '../wall-features';
 import { raisedGlassSupportErrors } from '../reconstruction/raised-glass-support';
 import { getMaterialImageAssetId } from '../material-images';
+import { MAX_PRODUCT_VIEWS, PRODUCT_DIRECTIONS } from '../product-direction';
 import { materialUsageSchema } from '../material-usage-validation';
 import {
   comparisonFrameError,
@@ -857,16 +858,22 @@ export const materialInputSchema = z
     coverAssetId: id.optional(),
     imageAssetIds: z.array(id).max(100).optional(),
     textureAssetIds: z.array(id).max(100),
+    // Writing is strict: an angle name is on the closed list, one photo per direction. Reading an
+    // older material is lenient (readMaterialViews).
     views: z
       .array(
         z.object({
           assetId: id,
-          direction: z.string().max(200),
+          direction: z.enum(PRODUCT_DIRECTIONS),
           anchor: normalizedPoint,
           product3d: product3dReferenceSchema.optional(),
         }),
       )
-      .max(100),
+      .max(MAX_PRODUCT_VIEWS)
+      .refine(
+        (views) => new Set(views.map((view) => view.direction)).size === views.length,
+        '같은 방향의 사진이 둘 이상이에요. 방향마다 한 장만 저장할 수 있어요.',
+      ),
     defaultGroutWidth: number.min(0).max(100),
     defaultGroutColor: z.string().regex(/^#[0-9a-f]{6}$/i),
     defaultPattern: z.enum(['grid', 'brick']),

@@ -232,8 +232,8 @@ export async function buildFluxRoomScene(options: FluxRoomOptions = {}) {
       textureAssetIds: [],
       views: [
         { assetId: 'cabinet-front', direction: '정면', anchor: { x: 0.5, y: 1 } },
-        { assetId: 'cabinet-diagonal', direction: '오른쪽 사선', anchor: { x: 0.5, y: 1 } },
-        { assetId: 'cabinet-side', direction: '오른쪽 측면', anchor: { x: 0.5, y: 1 } },
+        { assetId: 'cabinet-diagonal', direction: '왼쪽', anchor: { x: 0.5, y: 1 } },
+        { assetId: 'cabinet-side', direction: '오른쪽', anchor: { x: 0.5, y: 1 } },
       ],
     });
     const cabinet: FixtureInstance = {

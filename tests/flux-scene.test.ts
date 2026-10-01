@@ -155,6 +155,52 @@ describe('describeFixture', () => {
     });
     expect(draft?.photoAssetId).toBeUndefined();
   });
+  it('says where a photo product faces from its angle name, the rule the 3D room uses', () => {
+    const placed = (face: 'left' | 'right' | 'back' | 'floor'): FixtureInstance => ({
+      ...base,
+      roomPlacement: {
+        face,
+        u: 0.5,
+        v: 0.5,
+        scale: 1,
+        widthMm: 380,
+        heightMm: 720,
+        imageAspect: 0.5,
+        contentBounds: { left: 0, right: 1, top: 0, bottom: 1 },
+      },
+    });
+    const view = (direction: string) => ({ assetId: 'photo', direction, anchor: { x: 0.5, y: 1 } });
+    const facing = (direction: string, face: 'left' | 'right' | 'back' | 'floor' = 'left') =>
+      describeFixture(placed(face), product({ views: [view(direction)] }), [0.3, 0.3, 0.4, 0.6])?.facing;
+    expect(facing('오른쪽')).toBe('right');
+    expect(facing('왼쪽', 'right')).toBe('left');
+    expect(facing('정면', 'back')).toBe('front');
+    expect(facing('뒤', 'floor')).toBe('back');
+    // 위 and 아래 name no horizontal direction; older names read through the list.
+    expect(facing('위')).toBeUndefined();
+    expect(facing('아래')).toBeUndefined();
+    expect(facing('오른쪽 측면')).toBe('right');
+    // A standard model has its own orientation: nothing is said about it.
+    expect(
+      describeFixture(
+        {
+          ...placed('back'),
+          reconstruction: {
+            version: 2,
+            kind: 'basin',
+            color: '#ffffff',
+            widthMm: 600,
+            heightMm: 220,
+            depthMm: 430,
+            basinVariant: 'wall',
+            basinShape: 'rectangular',
+          },
+        },
+        undefined,
+        [0.2, 0.5, 0.3, 0.6],
+      )?.facing,
+    ).toBeUndefined();
+  });
   it('ignores tiles and unknown categories', () => {
     expect(describeFixture(base, product({ category: 'tile' }), [0, 0, 0.1, 0.1])).toBeUndefined();
   });

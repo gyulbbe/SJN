@@ -4,6 +4,7 @@ import { json, D1StorageError } from '@/lib/d1/http';
 import type { D1Bindings } from '@/lib/d1/types';
 import type { MaterialVersion } from '@/lib/types';
 import { getMaterialImageAssetId } from '@/lib/material-images';
+import { readMaterialViews } from '@/lib/product-direction';
 import { identifierSchema } from '@/lib/storage/validation';
 export type PublicMaterial = {
   id: string;
@@ -47,7 +48,7 @@ export async function publicMaterials(env: D1Bindings): Promise<Response> {
   ).all<{ id: string; payload_json: string }>();
   const versions = rows.results.map((row) => ({
     id: row.id,
-    v: JSON.parse(row.payload_json) as MaterialVersion,
+    v: readMaterialViews(JSON.parse(row.payload_json) as MaterialVersion),
   }));
   const ids = [...new Set(versions.flatMap(({ v }) => displayImages(v).map((image) => image.id)))];
   const imageRows = await env.DB.prepare(
@@ -121,7 +122,10 @@ export async function publicPlacement(env: D1Bindings, request: Request): Promis
      WHERE ${visible}${requested ? ' AND m.id=?' : ''} ORDER BY m.updated_at DESC`,
   );
   const rows = await (requested ? statement.bind(parsed.data) : statement).all<PublicVersionRow>();
-  const versions = rows.results.map((row) => ({ row, v: JSON.parse(row.payload_json) as MaterialVersion }));
+  const versions = rows.results.map((row) => ({
+    row,
+    v: readMaterialViews(JSON.parse(row.payload_json) as MaterialVersion),
+  }));
   const ids = [...new Set(versions.flatMap(({ v }) => displayImages(v).map((ref) => ref.id)))];
   const imageRows = await env.DB.prepare(
     `SELECT a.id,a.metadata_json FROM d1_assets a WHERE a.deleting=0

@@ -170,7 +170,7 @@ async function resumeViewMetadata(page: Page) {
   pausedMetadata.delete(page);
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 }
-async function registerMaterial(page: Page, category: 'tile' | 'basin') {
+async function registerMaterial(page: Page, category: 'tile' | 'basin', secondDirection = '왼쪽') {
   const name = category === 'tile' ? '직접 등록한 블루 타일' : '직접 등록한 세면대';
   const buffer = category === 'tile' ? await blueTile() : await redFixture();
   await page.getByRole('button', { name: '신규 자재 등록', exact: true }).click();
@@ -195,7 +195,7 @@ async function registerMaterial(page: Page, category: 'tile' | 'basin') {
     await expect(
       dialog.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
     ).toHaveCount(2);
-    await dialog.getByLabel('촬영 방향 2', { exact: true }).fill('왼쪽 측면');
+    await dialog.getByLabel('촬영 방향 2', { exact: true }).selectOption(secondDirection);
     await dialog.getByLabel('기준점 X').nth(1).fill('25');
     await dialog.getByRole('spinbutton', { name: /^Y/ }).nth(1).fill('80');
   }
@@ -234,7 +234,7 @@ test('기존 사진의 제품 방향·읽기 실패·지연 취소·배치·잠�
   await expect(page.getByTestId('fixture-view-1')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('fixture-view-0')).toHaveAttribute('aria-pressed', 'false');
   await expect(
-    page.getByTestId('fixture-view-1').getByRole('img', { name: '왼쪽 측면 제품 사진', exact: true }),
+    page.getByTestId('fixture-view-1').getByRole('img', { name: '왼쪽 제품 사진', exact: true }),
   ).toBeVisible();
   expect(getActiveDesign(side)!.scene.fixtures[0].width).toBe(fixture.width);
   expect(getActiveDesign(side)!.scene.fixtures[0].height).toBeCloseTo(
@@ -409,4 +409,55 @@ test('자동 저장 확정 전 뒤로 이동해도 복귀하면 마지막 편집
   await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
   const returned = await savedProject(page);
   expect(returned.name).toBe(expectedName);
+});
+
+test('각도 이름이 방향을 정한다: 벽과 안 맞으면 알리고 맞는 각도로 바꿔 준다', async ({ page }) => {
+  test.setTimeout(240000);
+  await page.goto('/');
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page).toHaveURL(/\/projects\/[\w-]+/, { timeout: 30000 });
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  // Photos: 정면 (first) and 오른쪽 (second).
+  const name = await registerMaterial(page, 'basin', '오른쪽');
+  await page.getByRole('button', { name: new RegExp(`${name}.*600`) }).click();
+  const face = page.getByLabel('제품 설치 면', { exact: true });
+  const info = page.getByTestId('facing-info');
+  const warning = page.getByTestId('facing-warning');
+  const fit = page.getByRole('button', { name: '맞는 각도로 바꾸기', exact: true });
+  const fixture = async () => getActiveDesign(await savedProject(page))!.scene.fixtures[0];
+  // The direction is no longer chosen by hand.
+  await expect(page.getByLabel('제품 보는 방향', { exact: true })).toHaveCount(0);
+  // The floor takes any name.
+  await face.selectOption('floor');
+  await expect(info).toContainText('각도 ‘정면’');
+  await expect(warning).toHaveCount(0);
+  // Left wall with the 정면 photo: warned, never blocked; the button switches to the 오른쪽 photo.
+  await face.selectOption('left');
+  await expect(warning).toContainText('왼쪽 벽에는 ‘오른쪽’ 각도가 어울려요');
+  await page.screenshot({ path: test.info().outputPath('left-wall-front-angle.png'), fullPage: true });
+  await fit.click();
+  await expect(page.getByTestId('fixture-view-1')).toHaveAttribute('aria-pressed', 'true');
+  await expect(info).toContainText('각도 ‘오른쪽’ · 방 안쪽을 봐요');
+  await expect(warning).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('left-wall-right-angle.png'), fullPage: true });
+  expect((await fixture()).viewIndex).toBe(1);
+  // Right wall: 오른쪽 does not suit, and this product has no 왼쪽 photo to switch to.
+  await face.selectOption('right');
+  await expect(warning).toContainText('오른쪽 벽에는 ‘왼쪽’ 각도가 어울려요');
+  await expect(warning).toContainText('이 제품에는 ‘왼쪽’ 각도 사진이 없어요');
+  await expect(fit).toHaveCount(0);
+  // Back wall: 정면 suits it, and there is such a photo.
+  await face.selectOption('back');
+  await expect(warning).toContainText('정면 벽에는 ‘정면’ 각도가 어울려요');
+  await fit.click();
+  await expect(page.getByTestId('fixture-view-0')).toHaveAttribute('aria-pressed', 'true');
+  await expect(warning).toHaveCount(0);
+  await expect(info).toContainText('각도 ‘정면’ · 정면(방 안쪽)을 봐요');
+  const placement = (await fixture()).roomPlacement!;
+  expect(placement.face).toBe('back');
+  expect((await fixture()).viewIndex).toBe(0);
+  // The direction is the photo's name alone: nothing else is saved for it.
+  expect('facing' in placement).toBe(false);
 });

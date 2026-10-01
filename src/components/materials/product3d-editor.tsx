@@ -2,9 +2,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { getRepositories } from '@/lib/repositories';
 import type { MaterialVersion } from '@/lib/types';
-import { MAX_PRODUCT_VIEWS, MAX_PRODUCT_VIEW_NAME } from '@/lib/product3d/apply';
+import { MAX_PRODUCT_VIEWS, productViewName } from '@/lib/product3d/apply';
+import { isProductDirection, nextProductDirection, type ProductDirection } from '@/lib/product-direction';
+import { directionMismatch, poseForDirection } from '@/lib/product3d/direction-pose';
 import { AssetImage } from './asset-image';
-import { AngleNameInput } from './angle-name-input';
+import { AngleNameSelect } from './angle-name-input';
 import type { Product3dReference, ProductPose, ProductShading } from '@/lib/product3d/state-types';
 import type {
   Product3dApplication,
@@ -24,18 +26,9 @@ import { ModelLoadingProgress, useModelLoadingProgress } from '@/components/mode
 const seconds = (value: number) => `${(value / 1000).toFixed(2)}초`;
 /** Beyond this, most of what the viewer shows was not in the photo. */
 const GUESSED_VIEW_DEGREES = 40;
-function nextAngleName(names: string[]) {
-  const taken = new Set(names);
-  let index = 1;
-  while (taken.has(`각도 ${index}`)) index++;
-  return `각도 ${index}`;
-}
-function validateAngleName(name: string) {
-  const value = name.trim();
-  if (!value) throw new Error('각도 이름을 입력해 주세요.');
-  if (value.length > MAX_PRODUCT_VIEW_NAME)
-    throw new Error(`각도 이름은 ${MAX_PRODUCT_VIEW_NAME}자까지 입력할 수 있어요.`);
-  return value;
+/** The next photo's name: the first direction not used yet. */
+function nextAngleName(names: string[]): ProductDirection {
+  return nextProductDirection(names) ?? '정면';
 }
 export function Product3dEditor({
   assetId,
@@ -86,7 +79,9 @@ export function Product3dEditor({
   const [error, setError] = useState(''),
     [sourceError, setSourceError] = useState(''),
     [viewerError, setViewerError] = useState('');
-  const [newAngleName, setNewAngleName] = useState(() => nextAngleName(views.map((view) => view.direction)));
+  const [newAngleName, setNewAngleName] = useState<string>(() =>
+    nextAngleName(views.map((view) => view.direction)),
+  );
   const [nameError, setNameError] = useState('');
   const [renaming, setRenaming] = useState(false),
     [renameName, setRenameName] = useState('');
@@ -97,6 +92,19 @@ export function Product3dEditor({
   const selectedView = views[selectedViewIndex];
   const locked = loading || busy || applying || capturing;
   const latestPose = useRef<ProductPose>(createDefaultPose());
+  // The live pose, to compare with the names while the product is turned.
+  const [livePose, setLivePose] = useState<ProductPose>(() => createDefaultPose());
+  const trackPose = (pose: ProductPose) => {
+    latestPose.current = pose;
+    setLivePose(pose);
+  };
+  // A name and the way the product faces right now, for the warnings (more than 25° apart).
+  const addMismatch =
+    result && isProductDirection(newAngleName) ? directionMismatch(livePose, newAngleName) : undefined;
+  const replaceMismatch =
+    result && selectedView && isProductDirection(selectedView.direction)
+      ? directionMismatch(livePose, selectedView.direction)
+      : undefined;
   const [attempt, setAttempt] = useState(0),
     [viewerKey, setViewerKey] = useState(0),
     [stored, setStored] = useState(false);
@@ -149,7 +157,7 @@ export function Product3dEditor({
             throw new Error('저장된 입체 형상 종류가 올바르지 않아요.');
           const mesh = await decodeProductMesh(asset.blob);
           if (!active) return;
-          latestPose.current = structuredClone(product3d.pose);
+          trackPose(structuredClone(product3d.pose));
           setInitialPose(structuredClone(product3d.pose));
           setViewAngle(sourceViewAngle(product3d.pose));
           setMeshAssetId(asset.id);
@@ -220,7 +228,7 @@ export function Product3dEditor({
         ...createDefaultPose(),
         objectQuaternion: estimateUprightQuaternion(next.mesh.positions),
       };
-      latestPose.current = pose;
+      trackPose(pose);
       setInitialPose(pose);
       setViewAngle(sourceViewAngle(pose));
       setShading('lit');
@@ -262,7 +270,7 @@ export function Product3dEditor({
     if (mode === 'replace' && !selectedView) return;
     let name: string;
     try {
-      name = validateAngleName(mode === 'add' ? newAngleName : selectedView.direction);
+      name = productViewName(mode === 'add' ? newAngleName : selectedView.direction);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : '각도 이름을 확인해 주세요.';
       if (mode === 'add') setNameError(message);
@@ -297,7 +305,12 @@ export function Product3dEditor({
             ? `“${name}” 각도를 추가했어요. 이어서 다른 각도를 만들 수 있어요.`
             : `“${name}” 각도를 수정했어요.`,
         );
-        if (mode === 'add') setNewAngleName(nextAngleName([...views.map((view) => view.direction), name]));
+        if (mode === 'add') {
+          // Ready for the next direction, turned to face it.
+          const next = nextAngleName([...views.map((view) => view.direction), name]);
+          setNewAngleName(next);
+          turnTo(next);
+        }
       }
     } catch (reason) {
       if (alive.current)
@@ -316,10 +329,19 @@ export function Product3dEditor({
     setRenaming(false);
     onSelectView(index);
   };
+  /** Turns the product to face a name's direction (the new angle's name is picked → it follows). */
+  const turnTo = (name: string) => {
+    if (!isProductDirection(name) || !viewport.current || !result || viewerError) return;
+    try {
+      viewport.current.setPose(poseForDirection(viewport.current.getPose(), name));
+    } catch {
+      // The viewer is not ready: the warning below tells if the pose and name disagree.
+    }
+  };
   const saveName = () => {
     if (locked || !canApply || !selectedView) return;
     try {
-      const value = validateAngleName(renameName);
+      const value = productViewName(renameName);
       onRenameView(selectedViewIndex, value);
       setRenaming(false);
       setNameError('');
@@ -467,7 +489,7 @@ export function Product3dEditor({
                 shading={shading}
                 onShadingChange={setShading}
                 onPoseChange={(pose) => {
-                  latestPose.current = pose;
+                  trackPose(pose);
                   setViewAngle(sourceViewAngle(pose));
                 }}
                 onError={setViewerError}
@@ -584,23 +606,14 @@ export function Product3dEditor({
           {renaming && (
             <div className={styles.rename}>
               <div className={styles.renameEditor}>
-                <AngleNameInput
+                <AngleNameSelect
                   label="각도 이름 변경"
                   value={renameName}
                   disabled={locked || !canApply}
+                  taken={views.filter((_, i) => i !== selectedViewIndex).map((view) => view.direction)}
                   onChange={(value) => {
                     setRenameName(value);
                     setNameError('');
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      saveName();
-                    }
-                    if (event.key === 'Escape') {
-                      event.preventDefault();
-                      setRenaming(false);
-                    }
                   }}
                 />
               </div>
@@ -630,19 +643,16 @@ export function Product3dEditor({
       <footer className={styles.footer}>
         <div className={styles.saveOptions}>
           <div className={styles.angleName}>
-            <AngleNameInput
+            <AngleNameSelect
               label="새 각도 이름"
               value={newAngleName}
               disabled={locked || !canApply}
+              taken={views.map((view) => view.direction)}
               onChange={(value) => {
                 setNewAngleName(value);
                 setNameError('');
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  void apply('add');
-                }
+                // Picking a name turns the product to face that direction.
+                turnTo(value);
               }}
             />
           </div>
@@ -655,6 +665,45 @@ export function Product3dEditor({
             추가는 새 사진을 만들고, 수정은 선택한 “{selectedView?.direction ?? '각도'}” 사진을 바꿔요. 자재
             저장 시 함께 반영돼요.
           </p>
+          {result && addMismatch && (
+            <div
+              data-testid="product3d-direction-warning"
+              role="status"
+              className="text-[13px] text-amber-800"
+            >
+              <p>
+                ‘{newAngleName}’ 이름과 제품이 바라보는 방향이 달라요
+                {addMismatch.degrees > 0 ? ` (약 ${Math.round(addMismatch.degrees)}° 차이)` : ''}. 지금 모습은
+                ‘{addMismatch.nearest}’에 가까워요. 이대로 저장하면 방에서 이름의 방향대로 놓여 제품이 어긋나
+                보일 수 있어요.
+              </p>
+              <button
+                type="button"
+                className="btn"
+                disabled={locked || !canApply || views.some((view) => view.direction === addMismatch.nearest)}
+                onClick={() => {
+                  setNewAngleName(addMismatch.nearest);
+                  setNameError('');
+                }}
+              >
+                가장 가까운 이름으로 바꾸기
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={locked || !canApply}
+                onClick={() => turnTo(newAngleName)}
+              >
+                ‘{newAngleName}’ 방향으로 돌리기
+              </button>
+            </div>
+          )}
+          {result && replaceMismatch && (
+            <p data-testid="product3d-replace-warning" role="status" className="text-[13px] text-amber-800">
+              선택한 ‘{selectedView?.direction}’ 각도를 지금 모습으로 수정하면 이름과 방향이 달라요(지금은 ‘
+              {replaceMismatch.nearest}’에 가까워요).
+            </p>
+          )}
           {result && viewAngle > GUESSED_VIEW_DEGREES && (
             <p
               data-testid="product3d-angle-warning"
@@ -667,8 +716,8 @@ export function Product3dEditor({
           )}
           {views.length >= MAX_PRODUCT_VIEWS && (
             <p className={styles.nameError}>
-              각도 사진은 자재당 최대 {MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요. 새 각도를 추가하려면 기존
-              사진을 삭제해 주세요.
+              각도 사진은 방향마다 한 장, 자재당 최대 {MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요. 새 각도를
+              추가하려면 기존 사진을 삭제하거나 ‘선택한 각도 수정’을 써 주세요.
             </p>
           )}
         </div>
@@ -692,7 +741,14 @@ export function Product3dEditor({
           <button
             type="button"
             className="btn primary"
-            disabled={!result || locked || !canApply || !!viewerError || views.length >= MAX_PRODUCT_VIEWS}
+            disabled={
+              !result ||
+              locked ||
+              !canApply ||
+              !!viewerError ||
+              views.length >= MAX_PRODUCT_VIEWS ||
+              views.some((view) => view.direction === newAngleName)
+            }
             onClick={() => void apply('add')}
           >
             {applying ? '각도 저장 중…' : '이 각도 추가'}

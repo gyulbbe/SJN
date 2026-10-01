@@ -379,9 +379,7 @@ export async function createReconstructionFixture(
       installation:
         params.kind === 'showerCurtain' ? 'suspended' : params.face === 'floor' ? 'floor' : 'wall',
 
-      views: [
-        { assetId: asset.id, direction: '공간 공통 카메라', anchor: rendered?.anchor ?? { x: 0.5, y: 0.5 } },
-      ],
+      views: [{ assetId: asset.id, direction: '정면', anchor: rendered?.anchor ?? { x: 0.5, y: 0.5 } }],
       reconstruction: { version: versionNumber, kind: params.kind },
     });
   }

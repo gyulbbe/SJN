@@ -109,7 +109,7 @@ describe('ceiling light shadow', () => {
   });
 
   it('gives saved previews a new cache key', async () => {
-    expect(ROOM_VIEWER_RENDERER_REVISION).toBe('room-view-v7-photo-lighting');
+    expect(ROOM_VIEWER_RENDERER_REVISION).toBe('room-view-v8-angle-direction');
     const context = { beforeScene: {} as never, view: {} as never, fitScenes: [] };
     const key = await designPreviewRoomContextKey(context as never);
     expect(key).toMatch(/^[0-9a-f]{64}$/);

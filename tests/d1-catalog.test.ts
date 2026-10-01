@@ -893,6 +893,62 @@ describe('anonymous placement projections', () => {
   async function data(materialId: string) {
     return (await (await placement(materialId)).json()) as PublicPlacement;
   }
+  it('refuses an old or duplicate angle name on the way in and reads old names as the list on the way out', async () => {
+    const one = await upload(admin, 'product');
+    const two = await upload(admin, 'product');
+    const view = (assetId: string, direction: string) => ({ assetId, direction, anchor: { x: 0.5, y: 1 } });
+    const write = (views: ReturnType<typeof view>[]) =>
+      call('materials', { operation: 'create', input: { ...material(one.id), views } });
+    // Writing is strict: the closed list, one photo per direction, at most six.
+    for (const bad of ['사선', '오른쪽 측면', 'front', '각도 1', '']) {
+      const refused = await write([view(one.id, bad)]);
+      expect(refused.status, bad).toBeGreaterThanOrEqual(400);
+    }
+    expect((await write([view(one.id, '정면'), view(two.id, '정면')])).status).toBeGreaterThanOrEqual(400);
+    const seven = Array.from({ length: 7 }, (_, i) => view(i % 2 ? one.id : two.id, '정면'));
+    expect((await write(seven)).status).toBeGreaterThanOrEqual(400);
+    const saved = await create({ ...material(one.id), views: [view(one.id, '정면'), view(two.id, '왼쪽')] });
+    expect(saved.views.map((v) => v.direction)).toEqual(['정면', '왼쪽']);
+    // What earlier versions stored: a side name and a name nobody can read.
+    const stored = { ...saved, views: [view(one.id, '오른쪽 측면'), view(two.id, '사선')] };
+    await env.DB.prepare('UPDATE d1_material_versions SET payload_json=? WHERE id=?')
+      .bind(JSON.stringify(stored), saved.id)
+      .run();
+    const expected = [
+      { assetId: one.id, direction: '오른쪽', anchor: { x: 0.5, y: 1 } },
+      { assetId: two.id, direction: '정면', anchor: { x: 0.5, y: 1 }, directionWas: '사선' },
+    ];
+    const listed = (await (await call('materials', { operation: 'list' })).json()) as {
+      version: MaterialVersion;
+    }[];
+    expect(listed.find((row) => row.version.id === saved.id)!.version.views).toEqual(expected);
+    const got = await call('materials', { operation: 'getVersion', id: saved.id });
+    expect(((await got.json()) as MaterialVersion).views).toEqual(expected);
+    // The public placement (a guest's copy) carries the readable names only.
+    const publicData = (await (
+      await publicPlacement(
+        env,
+        new Request('https://sjn.test/api/catalog/placement?materialId=' + saved.materialId),
+      )
+    ).json()) as PublicPlacement;
+    expect(publicData.views.map((v) => v.direction)).toEqual(['오른쪽', '정면']);
+    expect(publicData.views.every((v) => !('directionWas' in v))).toBe(true);
+    // Saving the material again writes the strict list (the flag is not stored).
+    const again = await call('materials', {
+      operation: 'update',
+      id: saved.materialId,
+      expectedVersionId: saved.id,
+      input: {
+        ...material(one.id),
+        views: [view(one.id, '오른쪽'), { ...view(two.id, '정면'), directionWas: '사선' }],
+      },
+    });
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as MaterialVersion).views.map((v) => 'directionWas' in v)).toEqual([
+      false,
+      false,
+    ]);
+  });
   it('projects current placement dimensions, anchors and safe display metadata without nested private data', async () => {
     const original = await upload(admin, 'original');
     const shown = await upload(admin, 'product', original.id);
@@ -1037,7 +1093,7 @@ describe('anonymous placement projections', () => {
       ...material(legacyImage.id),
       views: [
         { assetId: original.id, direction: '정면', anchor: { x: 0.5, y: 1 } },
-        { assetId: legacyImage.id, direction: '옆면', anchor: { x: 0.3, y: 1 } },
+        { assetId: legacyImage.id, direction: '오른쪽', anchor: { x: 0.3, y: 1 } },
       ],
     });
     // Omitting the private first view would silently turn guest viewIndex 0 into another view.

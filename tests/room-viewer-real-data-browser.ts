@@ -328,7 +328,7 @@ try {
             ...materials['saved-mesh'],
             id: 'flat-photo',
             materialId: 'flat-photo',
-            views: [{ assetId: 'product-photo', direction: '직접 촬영', anchor: flatAnchor }],
+            views: [{ assetId: 'product-photo', direction: '정면', anchor: flatAnchor }],
           };
           after.fixtures.splice(1, 0, saved, flat);
         }

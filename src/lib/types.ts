@@ -109,7 +109,18 @@ export type MaterialVersion = {
   /** @deprecated Old introduction images remain referenced until their material version is removed. */
   imageAssetIds?: string[];
   textureAssetIds: string[];
-  views: { assetId: string; direction: string; anchor: Point; product3d?: Product3dReference }[];
+  /**
+   * One photo per direction (see product-direction.ts). `direction` is on the closed list once read
+   * (readMaterialViews); `directionWas` carries a stored name that could not be read until the
+   * material is edited and saved again.
+   */
+  views: {
+    assetId: string;
+    direction: string;
+    anchor: Point;
+    product3d?: Product3dReference;
+    directionWas?: string;
+  }[];
   defaultGroutWidth: number;
   defaultGroutColor: string;
   defaultPattern: 'grid' | 'brick';

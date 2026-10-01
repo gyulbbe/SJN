@@ -9,6 +9,7 @@ import {
   type Scene,
 } from '../types';
 import { finishAppearance } from '../render/finish';
+import { facingOfDirection, readProductDirection } from '../product-direction';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import { hexToLinear, linearToHex } from '../reconstruction/photo-lighting';
 import type { RegionMask } from './color';
@@ -160,6 +161,10 @@ export function describeFixture(
       undefined;
   const color =
     r && HEX.test(r.color) ? r.color : material && HEX.test(material.color) ? material.color : undefined;
+  // A photo product faces where its angle name says (the same rule the 3D room uses).
+  const facing = r
+    ? undefined
+    : facingOfDirection(readProductDirection(material?.views?.[fixture.viewIndex]?.direction).name);
   return {
     id: fixture.id,
     kind,
@@ -167,6 +172,7 @@ export function describeFixture(
     face,
     ...(color ? { color: color.toLowerCase() } : {}),
     finish: finishCategory(material?.finish, kind),
+    ...(facing ? { facing } : {}),
     sizeMm: [
       size(r?.widthMm ?? fixture.roomPlacement?.widthMm ?? material?.widthMm),
       size(r?.heightMm ?? fixture.roomPlacement?.heightMm ?? material?.heightMm),
@@ -369,6 +375,7 @@ export async function buildFluxGrounding(input: {
       face: draft.face,
       color: (color ?? '#ffffff').toLowerCase(),
       finish: draft.finish,
+      ...(draft.facing ? { facing: draft.facing } : {}),
       sizeMm: draft.sizeMm,
       box: toInputBox(draft.captureBox, layout),
     });

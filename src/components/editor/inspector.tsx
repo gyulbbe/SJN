@@ -2,6 +2,12 @@
 import { roomSurfaceAreaM2 } from '@/lib/room-surface-areas';
 import { productContentBounds } from '@/lib/room-fixtures';
 import type { RoomFace } from '@/lib/room-types';
+import {
+  describeProductFacing,
+  mismatchMessage,
+  readProductDirection,
+  suitingDirection,
+} from '@/lib/product-direction';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, CopyCheck, Trash2, Lock, Unlock, ArrowUp, ArrowDown, RotateCcw, X } from 'lucide-react';
 import { useEditor } from '@/lib/editor-store';
@@ -142,6 +148,21 @@ export default function Inspector({
   const surface = s.surfaces.find((x) => x.id === st.selection);
   const fixture = s.fixtures.find((x) => x.id === st.selection);
   const material = materials[surface?.materialVersionId || fixture?.materialVersionId || ''];
+  // The photo's angle name is the direction the product faces; say where that is on this face, and
+  // warn (never block) when the name does not suit the face.
+  const facing = (() => {
+    const placement = fixture?.roomPlacement;
+    const view = fixture && !fixture.reconstruction ? material?.views[fixture.viewIndex] : undefined;
+    if (!placement || !view) return undefined;
+    const name = readProductDirection(view.direction).name;
+    const warning = mismatchMessage(placement.face, name);
+    const fitName = suitingDirection(placement.face);
+    const fitIndex =
+      warning && fitName
+        ? material.views.findIndex((other) => readProductDirection(other.direction).name === fitName)
+        : -1;
+    return { name, text: describeProductFacing(placement.face, name), warning, fitName, fitIndex };
+  })();
   async function changeFixtureView(index: number) {
     const request = ++viewRequest.current;
     setViewError('');
@@ -614,38 +635,39 @@ export default function Inspector({
                             <option value="right">오른쪽 벽</option>
                           </select>
                         </label>
-                        {!fixture.reconstruction && (
-                          <>
-                            <label className="field">
-                              보는 방향
-                              <select
-                                className="input"
-                                aria-label="제품 보는 방향"
-                                value={fixture.roomPlacement.facing === 'front' ? 'front' : 'wall'}
-                                disabled={
-                                  fixture.locked ||
-                                  (fixture.roomPlacement.face !== 'left' &&
-                                    fixture.roomPlacement.face !== 'right')
-                                }
-                                onChange={(e) =>
-                                  changeFixture((v) => {
-                                    if (!v.roomPlacement) return;
-                                    // Written only when it differs from the default (into the room).
-                                    if (e.target.value === 'front') v.roomPlacement.facing = 'front';
-                                    else delete v.roomPlacement.facing;
-                                  })
-                                }
-                              >
-                                <option value="wall">벽 안쪽</option>
-                                <option value="front">앞쪽(정면)</option>
-                              </select>
-                            </label>
-                            <p className="muted" style={{ fontSize: 11 }} data-testid="facing-note">
-                              {fixture.roomPlacement.face === 'left' || fixture.roomPlacement.face === 'right'
-                                ? '3D 방·AI 변환에서 이 제품이 보는 방향이에요. 2D 화면 모양은 바뀌지 않아요.'
-                                : '바닥·정면 벽의 제품은 어느 쪽이든 같아서, 왼쪽·오른쪽 벽에서만 고를 수 있어요.'}
+                        {facing && (
+                          <div data-testid="facing-info" style={{ marginBottom: 12 }}>
+                            <p className="muted" style={{ fontSize: 11 }}>
+                              각도 ‘{facing.name}’ · {facing.text}
                             </p>
-                          </>
+                            {facing.warning && (
+                              <div
+                                role="status"
+                                data-testid="facing-warning"
+                                style={{ fontSize: 12, color: '#8a5a00', marginTop: 6 }}
+                              >
+                                <p>{facing.warning}</p>
+                                {facing.fitIndex >= 0 ? (
+                                  <button
+                                    type="button"
+                                    className="btn"
+                                    style={{ marginTop: 6 }}
+                                    disabled={fixture.locked || !!st.draft || pendingView !== null}
+                                    onClick={() => void changeFixtureView(facing.fitIndex)}
+                                  >
+                                    맞는 각도로 바꾸기
+                                  </button>
+                                ) : (
+                                  facing.fitName && (
+                                    <p style={{ marginTop: 4 }}>
+                                      이 제품에는 ‘{facing.fitName}’ 각도 사진이 없어요. 자재 편집에서 360°
+                                      각도를 추가하면 바꿀 수 있어요.
+                                    </p>
+                                  )
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
                         <Range
                           label="제품 배율"

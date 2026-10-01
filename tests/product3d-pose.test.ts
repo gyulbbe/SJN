@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { Quaternion, Vector3 } from 'three';
+import { Matrix4, Quaternion, Vector3 } from 'three';
 import {
   createDefaultPose,
+  levelCameraQuaternion,
   ProductPoseHistory,
   rotateInScreen,
   samePose,
@@ -119,5 +120,72 @@ describe('사진 시점과의 각도', () => {
     expect(
       sourceViewAngle({ ...cameraTurned, objectQuaternion: productTurned.objectQuaternion }),
     ).toBeCloseTo(10, 4);
+  });
+});
+
+describe('수평으로 세운 카메라', () => {
+  // The 360° editor's camera around a product (TripoSR: +z up): side, height above the horizon, roll.
+  const cameraAt = (azimuth: number, elevation: number, roll = 0) => {
+    const rad = (degrees: number) => (degrees * Math.PI) / 180;
+    const eye = new Vector3(
+      Math.cos(rad(elevation)) * Math.cos(rad(azimuth)),
+      Math.cos(rad(elevation)) * Math.sin(rad(azimuth)),
+      Math.sin(rad(elevation)),
+    );
+    return new Quaternion()
+      .setFromRotationMatrix(new Matrix4().lookAt(eye, new Vector3(), new Vector3(0, 0, 1)))
+      .multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), rad(roll)));
+  };
+  const axes = (q: Quaternion) => ({
+    right: new Vector3(1, 0, 0).applyQuaternion(q),
+    up: new Vector3(0, 1, 0).applyQuaternion(q),
+    back: new Vector3(0, 0, 1).applyQuaternion(q),
+  });
+  const close = (a: Vector3, b: Vector3) => expect(a.distanceTo(b)).toBeLessThan(1e-6);
+
+  it('기본 시점(10° 내려다봄)은 같은 쪽에서 수평으로 본다', () => {
+    const { right, up, back } = axes(
+      levelCameraQuaternion(new Quaternion(...createDefaultPose().cameraQuaternion)),
+    );
+    close(back, new Vector3(1, 0, 0));
+    close(up, new Vector3(0, 0, 1));
+    close(right, new Vector3(0, 1, 0));
+  });
+  it('보는 높이와 상관없이 같은 쪽·같은 기울기의 수평 카메라를 준다', () => {
+    for (const azimuth of [0, 37, 90, 180, -120])
+      for (const elevation of [-40, 0, 10, 55, 85]) {
+        const level = axes(levelCameraQuaternion(cameraAt(azimuth, elevation)));
+        const rad = (azimuth * Math.PI) / 180;
+        close(level.back, new Vector3(Math.cos(rad), Math.sin(rad), 0));
+        close(level.up, new Vector3(0, 0, 1));
+      }
+  });
+  it('카메라 기울기(roll)는 그대로 둔다', () => {
+    for (const roll of [-25, 10, 90, 180]) {
+      const level = axes(levelCameraQuaternion(cameraAt(30, 20, roll)));
+      const flat = axes(levelCameraQuaternion(cameraAt(30, 20, 0)));
+      const angle = Math.atan2(
+        level.back.dot(new Vector3().crossVectors(flat.right, level.right)),
+        flat.right.dot(level.right),
+      );
+      // Compare as angles on a circle (−180° and 180° are the same roll).
+      expect((((((angle * 180) / Math.PI - roll) % 360) + 540) % 360) - 180).toBeCloseTo(0, 4);
+    }
+    // Upside down stays upside down.
+    expect(axes(levelCameraQuaternion(cameraAt(0, 10, 180))).up.z).toBeCloseTo(-1, 6);
+  });
+  it('바로 위나 아래에서 본 카메라도 화면 위쪽 방향으로 쪽을 정한다', () => {
+    for (const elevation of [90, -90]) {
+      const level = axes(levelCameraQuaternion(cameraAt(50, elevation)));
+      const rad = (50 * Math.PI) / 180;
+      close(level.back, new Vector3(Math.cos(rad), Math.sin(rad), 0));
+      close(level.up, new Vector3(0, 0, 1));
+    }
+  });
+  it('이미 수평인 카메라는 바꾸지 않고, 결과는 정규화된 회전이다', () => {
+    const level = cameraAt(70, 0, 5);
+    const again = levelCameraQuaternion(level);
+    expect(Math.abs(again.dot(level))).toBeCloseTo(1, 9);
+    expect(again.length()).toBeCloseTo(1, 9);
   });
 });

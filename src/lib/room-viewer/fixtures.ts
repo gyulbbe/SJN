@@ -22,15 +22,22 @@ import {
 import { roomFacePoint } from '../room-geometry';
 import type { RoomDimensions } from '../room-types';
 import { TONE_MAPPING_GLSL } from '../render/realistic-lighting';
-import type { RoomPlacement, ProductBounds } from '../room-types';
+import type { RoomFace, RoomPlacement, ProductBounds } from '../room-types';
 import type { AssetRecord, ColorAdjust, FixtureInstance, MaterialVersion, Scene } from '../types';
 import { decodeProductMesh } from '../product3d/codec';
-import { validatePose } from '../product3d/pose';
+import { levelCameraQuaternion, validatePose } from '../product3d/pose';
 import { estimateAlbedo } from '../product3d/albedo';
 import { shadingNormals } from '../product3d/mesh-cleanup';
-import type { Product3dReference, ProductMesh, ProductPose } from '../product3d/state-types';
+import type { Product3dReference, ProductMesh } from '../product3d/state-types';
 import { createTemplateModel, disposeTemplateModel } from '../reconstruction/templates';
-import { orientationAngle, reconstructionModelTransform } from '../reconstruction/projection';
+import { reconstructionModelTransform } from '../reconstruction/projection';
+import {
+  describeProductFacing,
+  directionAngle,
+  directionSuitsFace,
+  readProductDirection,
+  type ProductDirection,
+} from '../product-direction';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import type { ReconstructionKind } from '../reconstruction/types';
 
@@ -169,33 +176,31 @@ export class ProductAssetCache {
   }
 }
 
-/** Only exact, explicit horizontal direction labels are supported. Arbitrary angle names stay fixed. */
+/** The name of a photo's angle, as the closed list reads it. */
+const nameOf = (view: { direction: string }) => readProductDirection(view.direction).name;
+/** The horizontal direction (degrees) a photo shows its product facing; none for 위 and 아래. */
 export function declaredProductDirection(direction: string): number | undefined {
-  return (
-    {
-      정면: 0,
-      front: 0,
-      '왼쪽 측면': -90,
-      left: -90,
-      '오른쪽 측면': 90,
-      right: 90,
-      뒤에서: 180,
-      후면: 180,
-      back: 180,
-    } as Record<string, number>
-  )[direction.trim()];
+  return directionAngle(readProductDirection(direction).name);
 }
 const degrees = (radians: number) => (radians * 180) / Math.PI;
 const angularDistance = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180);
+/** Seen from steeper than this above or below, the camera looks at a product's top or underside. */
+const STEEP_DEGREES = 35;
+/**
+ * The photo to show a fixed product for a camera: a photo shows its product facing its name's
+ * direction (seen from the room's front), so a camera standing at azimuth θ around the product sees
+ * a product that faces `base` facing `base − θ` relative to itself; the photo nearest that, within
+ * 25°. From steeply above or below, or without a horizontal name, the selected photo stays.
+ */
 export function chooseDirectionalPhoto(
   views: MaterialVersion['views'],
   selected: number,
   localAzimuth: number,
   elevation: number,
 ): number {
-  const base = declaredProductDirection(views[selected]?.direction ?? '');
-  if (base === undefined || Math.abs(elevation) > 35) return selected;
-  const target = base + localAzimuth;
+  const base = views[selected] ? declaredProductDirection(views[selected].direction) : undefined;
+  if (base === undefined || Math.abs(elevation) > STEEP_DEGREES) return selected;
+  const target = base - localAzimuth;
   let index = selected,
     distance = Infinity;
   views.forEach((view, i) => {
@@ -210,31 +215,9 @@ export function chooseDirectionalPhoto(
   return index;
 }
 
-/** The angle-name presets' diagonals, for the AI export's photo choice only. */
-const DIAGONALS: Record<string, number> = { '왼쪽 사선': -45, '오른쪽 사선': 45 };
-/**
- * Horizontal angle (degrees) of a product3d pose's camera around the product, 0 at the photographed
- * side (TripoSR +x, +z up), positive towards +y, the product's right side as seen from the front,
- * like "오른쪽 측면" (90). Undefined for a bad pose or a view from more than 35° above or below.
- */
-export function poseAzimuth(pose: ProductPose): number | undefined {
-  let valid: ProductPose;
-  try {
-    valid = validatePose(pose);
-  } catch {
-    return;
-  }
-  const toCamera = new Vector3(0, 0, 1)
-    .applyQuaternion(new Quaternion(...valid.cameraQuaternion))
-    .applyQuaternion(new Quaternion(...valid.objectQuaternion).invert());
-  if (Math.abs(degrees(Math.asin(Math.max(-1, Math.min(1, toCamera.z))))) > 35) return;
-  return degrees(Math.atan2(toCamera.y, toCamera.x));
-}
-/** A photo's horizontal angle for the AI export: its name (front, sides, back, diagonals) or pose. */
+/** A photo's horizontal angle for the AI export: its name's direction (none for 위 and 아래). */
 export function photoViewAngle(view: MaterialVersion['views'][number]): number | undefined {
-  const named = declaredProductDirection(view.direction) ?? DIAGONALS[view.direction.trim()];
-  if (named !== undefined) return named;
-  return view.product3d ? poseAzimuth(view.product3d.pose) : undefined;
+  return declaredProductDirection(view.direction);
 }
 /** The drawn product in a photo plane: content width × height (mm) and the anchor within it. */
 export type PhotoFootprint = { width: number; height: number; anchorX: number; anchorY: number };
@@ -268,23 +251,30 @@ export function sameFootprint(a: PhotoFootprint, b: PhotoFootprint) {
   );
 }
 /**
- * The AI export's photo for a camera direction: the usable photo whose angle is nearest to where
- * the camera stands. The selected photo stays when it has no angle, from steeply above or below,
- * or when it is the nearest; `usable` holds the photos that keep the footprint.
+ * The AI export's photo for a camera direction: the usable photo whose direction is nearest to how
+ * the camera sees the product (see chooseDirectionalPhoto). Seen from steeply above or below, the
+ * 위 or 아래 photo when there is a usable one. The selected photo stays when it has no horizontal
+ * name, or when it is the nearest; `usable` holds the photos that keep the footprint.
  */
 export function chooseExportPhoto(
-  angles: readonly (number | undefined)[],
+  names: readonly ProductDirection[],
   selected: number,
   localAzimuth: number,
   elevation: number,
   usable: ReadonlySet<number>,
 ): number {
-  const base = angles[selected];
-  if (base === undefined || Math.abs(elevation) > 35) return selected;
-  const target = base + localAzimuth;
+  if (Math.abs(elevation) > STEEP_DEGREES) {
+    const wanted = elevation > 0 ? '위' : '아래';
+    const index = names.findIndex((name, i) => name === wanted && (i === selected || usable.has(i)));
+    return index >= 0 ? index : selected;
+  }
+  const base = directionAngle(names[selected] ?? '정면');
+  if (base === undefined) return selected;
+  const target = base - localAzimuth;
   let index = selected,
     distance = angularDistance(base, target);
-  angles.forEach((angle, i) => {
+  names.forEach((name, i) => {
+    const angle = directionAngle(name);
     if (angle === undefined || i === selected || !usable.has(i)) return;
     const delta = angularDistance(angle, target);
     if (delta < distance) {
@@ -295,10 +285,6 @@ export function chooseExportPhoto(
   return index;
 }
 
-/** Whether a photo or 3D product faces the open front instead of into the room (left/right wall only). */
-export function facesFront(p: Pick<RoomPlacement, 'face' | 'facing'>): boolean {
-  return p.facing === 'front' && (p.face === 'left' || p.face === 'right');
-}
 /** World bounds of what shows of a product (the visible meshes only), from their vertices. */
 function visibleBounds(root: Object3D): Box3 {
   root.updateMatrixWorld(true);
@@ -309,15 +295,36 @@ function visibleBounds(root: Object3D): Box3 {
   return box;
 }
 /**
- * A product turned to face the open front stands on its wall's side: it is moved along x until its
- * side touches the wall's inner face (no part inside the wall, none floating off it), keeping its
- * height and its place along the wall. Returns whether it then reaches beyond the room.
+ * A product floating or sinking by less than this (mm) because of where its anchor sits is put on
+ * the floor; a bigger gap is taken to be what the anchor was set to.
  */
-function seatOnWall(product: Group, room: RoomDimensions, face: 'left' | 'right'): boolean {
+const FLOOR_SNAP_MM = 20;
+const FLOOR_SNAP_SHARE = 0.05;
+/**
+ * Stands a product on its face once the picture has decided which way it looks: the side that
+ * meets a wall touches the wall's inner face (nothing inside the wall, nothing floating off it), a
+ * product on a side wall stands centred on its place along the wall, one on the floor centred on
+ * its place and on the floor. Its height on a wall and its place across the back wall are the
+ * anchor's, as in the 2D editor. `gap` keeps a flat photo a hair off the back wall. Returns whether
+ * it then reaches beyond the room.
+ */
+function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: number): boolean {
   const box = visibleBounds(product);
   if (box.isEmpty()) return false;
   const wall = room.widthMm / 2;
-  product.position.x += face === 'left' ? -wall - box.min.x : wall - box.max.x;
+  const move = new Vector3();
+  if (face === 'left') move.x = -wall - box.min.x;
+  else if (face === 'right') move.x = wall - box.max.x;
+  else if (face === 'back') move.z = gap - box.min.z;
+  if (face === 'left' || face === 'right' || face === 'floor')
+    move.z = product.position.z - (box.min.z + box.max.z) / 2;
+  if (face === 'floor') {
+    const snap = Math.max(FLOOR_SNAP_MM, (box.max.y - box.min.y) * FLOOR_SNAP_SHARE);
+    if (Math.abs(box.min.y) <= snap) move.y = -box.min.y;
+  }
+  // Tiny moves are rounding only: leave the anchor's exact place alone.
+  for (const axis of ['x', 'y', 'z'] as const)
+    if (Math.abs(move[axis]) > 1e-6) product.position[axis] += move[axis];
   const seated = visibleBounds(product);
   const slack = 1;
   return (
@@ -405,7 +412,9 @@ export function createSavedProductGeometry(
   const p = checkPlacement(fixture);
   checkBounds(p.contentBounds);
   const pose = validatePose(reference.pose);
-  const orientation = new Quaternion(...pose.cameraQuaternion)
+  // The product as the 360° editor showed it, standing level: the camera's side and roll are kept,
+  // its look-down angle is not (see levelCameraQuaternion).
+  const orientation = levelCameraQuaternion(new Quaternion(...pose.cameraQuaternion))
     .invert()
     .multiply(new Quaternion(...pose.objectQuaternion))
     .normalize();
@@ -558,8 +567,8 @@ export async function buildViewerFixtures(
         if (!selected) throw new Error('선택했던 제품 사진을 찾을 수 없어요.');
         product = new Group();
         product.position.copy(roomFacePoint(room, p.face, p.u, p.v));
-        // Into the room from its wall, or (facing 'front') towards the open front like the 2D editor.
-        product.rotation.y = p.face === 'floor' || facesFront(p) ? 0 : orientationAngle(p.face);
+        // No turn for the wall: the photo's angle name decides which way the product looks (a 3D
+        // product by its saved pose, a flat photo as in 2D), then seatProduct stands it on its face.
         const content = new Group();
         content.rotation.z = (-fixture.rotation * Math.PI) / 180;
         product.add(content);
@@ -586,20 +595,17 @@ export async function buildViewerFixtures(
             '저장된 입체 형상·선택 사진 자세를 사용해요. 폭·높이에 비율을 유지해 맞추며 깊이는 저장 형상의 비율이에요.',
           );
         } else {
-          // The AI export picks among every photo with a known angle (diagonals and 3D poses
-          // included) that keeps the footprint; other views switch only between exact sides.
-          const angleOf = (view: MaterialVersion['views'][number]) =>
-            options.exportAngles ? photoViewAngle(view) : declaredProductDirection(view.direction);
-          const base = angleOf(selected);
-          const angles = material.views.map(angleOf);
+          // A photo shows its product facing its name's direction. The AI export picks among the
+          // photos that keep the footprint (3D poses included); the viewer switches only between
+          // flat photos.
+          const names = material.views.map(nameOf);
+          const base = declaredProductDirection(selected.direction);
           const choices = material.views
             .map((view, index) => ({ view, index }))
             .filter(
               ({ view, index }) =>
                 index === fixture.viewIndex ||
-                (base !== undefined &&
-                  angles[index] !== undefined &&
-                  (options.exportAngles || !view.product3d)),
+                (base !== undefined && (options.exportAngles || !view.product3d)),
             );
           const footprint = photoFootprint(p, p.contentBounds, p.imageAspect, fixture.anchor);
           const planes = new Map<number, Mesh>();
@@ -628,11 +634,14 @@ export async function buildViewerFixtures(
                   toneMapped: false,
                 }),
               );
-              // The AI export keeps every photo on the face-parallel plane (same footprint, nothing
-              // turned into the wall); elsewhere a side photo turns to face its side.
-              plane.rotation.y = options.exportAngles
-                ? 0
-                : (((angles[index] ?? base ?? 0) - (base ?? 0)) * Math.PI) / 180;
+              // Every flat photo stands facing the room's front, as in 2D. The AI export keeps all of
+              // them so (same footprint); in the viewer a photo of another direction turns to face
+              // the camera that would see its product that way (base − its direction).
+              const angle = photoViewAngle(view);
+              plane.rotation.y =
+                options.exportAngles || base === undefined || angle === undefined
+                  ? 0
+                  : ((base - angle) * Math.PI) / 180;
               plane.visible = index === fixture.viewIndex;
               plane.userData.viewIndex = index;
               planes.set(index, plane);
@@ -654,7 +663,7 @@ export async function buildViewerFixtures(
             const azimuth = degrees(Math.atan2(point.x, point.z)),
               elevation = degrees(Math.atan2(point.y, Math.hypot(point.x, point.z)));
             const index = options.exportAngles
-              ? chooseExportPhoto(angles, fixture.viewIndex, azimuth, elevation, new Set(planes.keys()))
+              ? chooseExportPhoto(names, fixture.viewIndex, azimuth, elevation, new Set(planes.keys()))
               : chooseDirectionalPhoto(material.views, fixture.viewIndex, azimuth, elevation);
             const actual = planes.has(index) ? index : fixture.viewIndex;
             for (const [i, plane] of planes) plane.visible = i === actual;
@@ -664,19 +673,27 @@ export async function buildViewerFixtures(
           notice(
             fixture,
             planes.size > 1
-              ? '2D 제품·각도 표현 제한: 명시된 정면·측면·뒷면 사진만 설치 위치의 고정 평면으로 전환해요. 실제 입체가 아니며 위·아래나 없는 방향에서는 선택 사진을 유지해요.'
+              ? '2D 제품·각도 표현 제한: 정면·왼쪽·오른쪽·뒤 사진만 설치 위치의 고정 평면으로 전환해요. 실제 입체가 아니며 위·아래에서는 선택 사진을 유지해요.'
               : '2D 제품·각도 표현 제한: 선택 사진을 설치 위치의 고정 평면으로 표시해요. 옆에서는 얇게 보이고 뒷면은 같은 사진이라 실제 제품 뒷면이 아니에요.',
           );
         }
       }
-      if (!fixture.reconstruction && facesFront(p)) {
-        if (seatOnWall(product, room, p.face as 'left' | 'right'))
-          notice(fixture, '앞쪽을 보게 돌린 제품이 방 밖으로 나가요. 위치나 크기를 확인해 주세요.');
-        else
+      if (!fixture.reconstruction) {
+        const flat = product.userData.representation !== 'saved-product-mesh';
+        if (seatProduct(product, room, p.face, flat && p.face === 'back' ? 1 : 0))
+          notice(fixture, '제품이 방 밖으로 나가요. 위치나 크기, 각도 방향을 확인해 주세요.');
+        else {
+          const direction = readProductDirection(
+            materials[fixture.materialVersionId]?.views[fixture.viewIndex]?.direction,
+          ).name;
+          const suits = directionSuitsFace(p.face, direction);
           notice(
             fixture,
-            '앞쪽(정면)을 보게 설정한 제품이에요. 방 기준으로 고정돼 카메라를 따라 돌지 않고, 옆에서 보면 측면이 보여요.',
+            `‘${direction}’ 각도 사진을 쓰며 ${describeProductFacing(p.face, direction)} 방 기준으로 고정돼 카메라를 따라 돌지 않아요.${
+              suits ? '' : ' 이 면에는 어울리는 각도가 아니에요.'
+            }`,
           );
+        }
       }
       prepareModel(product, fixture);
       group.add(product);

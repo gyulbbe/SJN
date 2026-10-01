@@ -97,8 +97,8 @@ function form(): MaterialInput {
     installation: 'wall',
     textureAssetIds: [],
     views: [
-      { assetId: first, direction: '직접 촬영 A', anchor: { x: 0.5, y: 0.8 } },
-      { assetId: second, direction: '직접 촬영 B', anchor: { x: 0.4, y: 0.7 } },
+      { assetId: first, direction: '정면', anchor: { x: 0.5, y: 0.8 } },
+      { assetId: second, direction: '왼쪽', anchor: { x: 0.4, y: 0.7 } },
     ],
     defaultGroutWidth: 2,
     defaultGroutColor: '#ffffff',
@@ -242,7 +242,7 @@ describe('multiple angles of one material', () => {
       app.capture.blob = new Blob([`angle ${i}`], { type: 'image/png' });
       const angle = await prepareProductReplacement(app, assets, 'floor');
       replacements.push(angle);
-      current = addProductPhoto(current, 0, original.views[0].assetId, angle, `각도 ${i + 1}`);
+      current = addProductPhoto(current, 0, original.views[0].assetId, angle, ['오른쪽', '위', '아래'][i]);
     }
     expect(original).toEqual(before);
     expect(current.views).toHaveLength(5);
@@ -258,22 +258,34 @@ describe('multiple angles of one material', () => {
     expect(records.size).toBe(5); // one input, one mesh, three PNGs
     replacements[0].product3d.pose.zoom = 7;
     expect(current.views[2].product3d?.pose.zoom).toBe(1);
-    const changed = renameProductPhoto(current, 3, '  왼쪽 사선  ');
-    expect(changed.views[3].direction).toBe('왼쪽 사선');
-    expect(current.views[3].direction).toBe('각도 2');
+    const changed = renameProductPhoto(current, 3, '  뒤  ');
+    expect(changed.views[3].direction).toBe('뒤');
+    expect(current.views[3].direction).toBe('위');
   });
 
   it('enforces names, stale source and existing storage view limit without changing a draft', async () => {
     const original = form();
     const angle = await prepareProductReplacement(application(), repository().assets, 'floor');
-    expect(() => addProductPhoto(original, 0, 'deleted', angle, '새 각도')).toThrow('선택한 제품 사진');
-    expect(() => addProductPhoto(original, 0, original.views[0].assetId, angle, '  ')).toThrow('각도 이름');
-    expect(() => renameProductPhoto(original, 0, 'a'.repeat(201))).toThrow('각도 이름');
+    expect(() => addProductPhoto(original, 0, 'deleted', angle, '오른쪽')).toThrow('선택한 제품 사진');
+    // The name is picked from the closed list: empty, free text, old names and long text are refused.
+    for (const free of ['  ', '새 각도', '사선', '오른쪽 측면', 'a'.repeat(201)]) {
+      expect(() => addProductPhoto(original, 0, original.views[0].assetId, angle, free)).toThrow(
+        '목록에서 골라',
+      );
+      expect(() => renameProductPhoto(original, 0, free)).toThrow('목록에서 골라');
+    }
+    // One photo per direction: adding or renaming to a name another photo has is refused.
+    expect(() => addProductPhoto(original, 0, original.views[0].assetId, angle, '왼쪽')).toThrow(
+      '이미 있어요',
+    );
+    expect(() => renameProductPhoto(original, 0, '왼쪽')).toThrow('이미 있어요');
+    expect(renameProductPhoto(original, 1, '왼쪽').views[1].direction).toBe('왼쪽');
     const full = {
       ...original,
       views: Array.from({ length: MAX_PRODUCT_VIEWS }, () => structuredClone(original.views[0])),
     };
-    expect(() => addProductPhoto(full, 0, full.views[0].assetId, angle, '초과')).toThrow('최대 100');
+    expect(MAX_PRODUCT_VIEWS).toBe(6);
+    expect(() => addProductPhoto(full, 0, full.views[0].assetId, angle, '뒤')).toThrow('최대 6');
     expect(full.views).toHaveLength(MAX_PRODUCT_VIEWS);
   });
 

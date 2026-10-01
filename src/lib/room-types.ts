@@ -13,11 +13,9 @@ export type RoomPlacement = {
   imageAspect: number;
   contentBounds: ProductBounds;
   /**
-   * Which way a product on the left or right wall faces in the 3D room (the space viewer and the AI
-   * export). Absent (or 'wall'): into the room, as before. 'front': towards the open front, fixed
-   * to the room, so it does not follow the camera. Only written when 'front'; the 2D editor draws
-   * the product the same either way.
+   * @deprecated No longer set or used (2026-10-01): the direction a product faces comes from its
+   * photo's angle name (product-direction.ts). Older saved projects may still carry 'front'; it is
+   * read and ignored.
    */
-  facing?: ProductFacing;
+  facing?: 'wall' | 'front';
 };
-export type ProductFacing = 'wall' | 'front';

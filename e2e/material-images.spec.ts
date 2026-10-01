@@ -110,16 +110,17 @@ for (const hasFront of [true, false]) {
     await expect(
       form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true }),
     ).toHaveCount(2);
-    const firstPreset = form.getByLabel('촬영 방향 1 빠른 선택', { exact: true });
-    await expect(firstPreset).toBeVisible();
-    await firstPreset.selectOption('오른쪽 사선');
-    await expect(form.getByLabel('촬영 방향 1', { exact: true })).toHaveValue('오른쪽 사선');
-    await form.getByLabel('촬영 방향 1', { exact: true }).fill('오른쪽 25도');
-    await expect(firstPreset).toHaveValue('');
-    await form
-      .getByLabel('촬영 방향 2 빠른 선택', { exact: true })
-      .selectOption(hasFront ? '정면' : '뒤에서');
-    await expect(form.getByLabel('촬영 방향 2', { exact: true })).toHaveValue(hasFront ? '정면' : '뒤에서');
+    // The names are picked from the closed list: the first photo starts as 정면, the next takes the
+    // first direction not used yet.
+    const first = form.getByLabel('촬영 방향 1', { exact: true });
+    const second = form.getByLabel('촬영 방향 2', { exact: true });
+    await expect(first).toHaveValue('정면');
+    await expect(second).toHaveValue('왼쪽');
+    await expect(first.evaluate((el) => el.tagName)).resolves.toBe('SELECT');
+    await first.selectOption('오른쪽');
+    await expect(first).toHaveValue('오른쪽');
+    await second.selectOption(hasFront ? '정면' : '뒤');
+    await expect(second).toHaveValue(hasFront ? '정면' : '뒤');
     await form.getByLabel('기준 단가', { exact: true }).fill('120000');
     await form.getByRole('heading', { name: '제품 이미지', exact: true }).scrollIntoViewIfNeeded();
     await form.screenshot({ path: test.info().outputPath('product-images-form.png') });
@@ -132,7 +133,12 @@ for (const hasFront of [true, false]) {
 test('타일 한 장을 사각형으로 선택하면 규격 비율로 잘라 텍스처로 쓴다', async ({ page }) => {
   // A 400×400 white photo with one 200×100 blue tile in the middle.
   const tile = await sharp({
-    create: { width: 200, height: 100, channels: 4, background: { r: blue[0], g: blue[1], b: blue[2], alpha: 1 } },
+    create: {
+      width: 200,
+      height: 100,
+      channels: 4,
+      background: { r: blue[0], g: blue[1], b: blue[2], alpha: 1 },
+    },
   })
     .png()
     .toBuffer();
@@ -158,7 +164,8 @@ test('타일 한 장을 사각형으로 선택하면 규격 비율로 잘라 텍
   await expect(crop.getByRole('checkbox', { name: '규격 비율 고정 (600:300)', exact: true })).toBeChecked();
   const field = (label: string) =>
     crop.getByRole('spinbutton', { name: `선택 영역 ${label} (%)`, exact: true });
-  const ratio = async () => Number(await field('가로').inputValue()) / Number(await field('세로').inputValue());
+  const ratio = async () =>
+    Number(await field('가로').inputValue()) / Number(await field('세로').inputValue());
   // The first rectangle already follows the 2:1 spec on a square photo.
   await expect.poll(ratio).toBeCloseTo(2, 1);
   // Dragging from outside the selection draws a new one; the lock keeps it 2:1.
@@ -214,7 +221,9 @@ test('타일 한 장을 사각형으로 선택하면 규격 비율로 잘라 텍
       [0.95, 0.92],
     ].map(([x, y]) => [...context.getImageData(canvas.width * x, canvas.height * y, 1, 1).data]);
   });
-  for (const pixel of pixels) for (const [i, value] of blue.slice(0, 3).entries()) expect(Math.abs(pixel[i] - value)).toBeLessThanOrEqual(4);
+  for (const pixel of pixels)
+    for (const [i, value] of blue.slice(0, 3).entries())
+      expect(Math.abs(pixel[i] - value)).toBeLessThanOrEqual(4);
 });
 
 test('타일은 텍스처만 등록: 상품 소개·대표 설정 없이 목록·상세·편집·사용 내역 표시', async ({ page }) => {

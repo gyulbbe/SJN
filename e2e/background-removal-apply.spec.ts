@@ -135,7 +135,7 @@ async function openSavedProduct(page: Page) {
     await expect(previewImages(page)).toHaveCount(i + 1);
     await expect(form.getByLabel('+ 제품 이미지 올리기', { exact: true })).toBeEnabled();
   }
-  await form.getByLabel('촬영 방향 2', { exact: true }).fill('오른쪽 측면');
+  await form.getByLabel('촬영 방향 2', { exact: true }).selectOption('오른쪽');
   await form.getByRole('button', { name: '자재 등록', exact: true }).click();
   await expect(form).toHaveCount(0);
   await page.getByRole('button', { name: '정보 수정', exact: true }).first().click();
@@ -196,7 +196,7 @@ test('모의 결과 UI: 선택 방향에만 PNG 적용 · 준비/저장 중 중�
   const beforeSources = await previewImages(page).evaluateAll((images) =>
     images.map((image) => (image as HTMLImageElement).src),
   );
-  await form.getByRole('button', { name: '오른쪽 측면 사진 AI 배경 제거 테스트', exact: true }).click();
+  await form.getByRole('button', { name: '오른쪽 사진 AI 배경 제거 테스트', exact: true }).click();
   const dialog = aiDialog(page);
   const apply = dialog.getByRole('button', { name: '투명 PNG 업로드', exact: true });
   await expect(apply).toBeDisabled();
@@ -224,7 +224,7 @@ test('모의 결과 UI: 선택 방향에만 PNG 적용 · 준비/저장 중 중�
     center: 255,
   });
   expect(await productVersions(page)).toEqual(beforeVersions);
-  await expect(form.getByLabel('촬영 방향 2', { exact: true })).toHaveValue('오른쪽 측면');
+  await expect(form.getByLabel('촬영 방향 2', { exact: true })).toHaveValue('오른쪽');
   await form.getByRole('button', { name: '새 버전 저장', exact: true }).click();
   await expect(form).toHaveCount(0);
   const versions = await productVersions(page);
@@ -244,7 +244,7 @@ test('모의 결과 UI: 선택 방향에만 PNG 적용 · 준비/저장 중 중�
     center: 255,
   });
   await expect(form.getByRole('button', { name: '배경 수동 지우기', exact: true })).toHaveCount(0);
-  await form.getByRole('button', { name: '오른쪽 측면 사진 AI 배경 제거 테스트', exact: true }).click();
+  await form.getByRole('button', { name: '오른쪽 사진 AI 배경 제거 테스트', exact: true }).click();
   await expect(aiDialog(page).getByTestId('background-removal-original')).toBeVisible();
   expect(await imagePixels(aiDialog(page).getByTestId('background-removal-original'))).toEqual({
     width: 64,
@@ -260,7 +260,7 @@ test('모의 결과 UI: PNG 적용 저장 실패 시 창·원본 유지, 같은 
   const form = await openSavedProduct(page);
   const versions = await productVersions(page);
   const source = await previewImages(page).nth(1).getAttribute('src');
-  await form.getByRole('button', { name: '오른쪽 측면 사진 AI 배경 제거 테스트', exact: true }).click();
+  await form.getByRole('button', { name: '오른쪽 사진 AI 배경 제거 테스트', exact: true }).click();
   await releaseResult(page);
   await page.evaluate(() => {
     (window as Window & TestControls).failAssetPut = true;
@@ -288,7 +288,7 @@ test('모의 결과 UI: 업로드 없이 결과 창 닫으면 현재 방향 사�
   const sources = await previewImages(page).evaluateAll((images) =>
     images.map((image) => (image as HTMLImageElement).src),
   );
-  await form.getByRole('button', { name: '오른쪽 측면 사진 AI 배경 제거 테스트', exact: true }).click();
+  await form.getByRole('button', { name: '오른쪽 사진 AI 배경 제거 테스트', exact: true }).click();
   await releaseResult(page);
   await aiDialog(page).getByRole('button', { name: '닫기', exact: true }).click();
   await expect(aiDialog(page)).toHaveCount(0);

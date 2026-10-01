@@ -25,6 +25,7 @@ import sharp from 'sharp';
 import { getActiveDesign } from '../src/lib/designs';
 import { savedProject } from '../tests/helpers/editor-actions';
 import { calculateMaterialUsage } from '../src/lib/material-usage';
+import { nearestPoseDirection } from '../src/lib/product3d/direction-pose';
 
 // These tests replay an ACTUAL TripoSR mesh through the production viewport and
 // persistence. The Worker response is controlled, so these are not inference tests.
@@ -215,8 +216,8 @@ async function openForm(page: Page, photoCount = 1) {
       { timeout: 30000 },
     )
     .toBe(true);
-  await form.getByLabel('촬영 방향 1', { exact: true }).fill('정면');
-  if (photoCount > 1) await form.getByLabel('촬영 방향 2', { exact: true }).fill('오른쪽 측면');
+  await form.getByLabel('촬영 방향 1', { exact: true }).selectOption('정면');
+  if (photoCount > 1) await form.getByLabel('촬영 방향 2', { exact: true }).selectOption('오른쪽');
   return { form, name };
 }
 async function openViewer(form: Locator, direction = '정면', saved = false) {
@@ -465,7 +466,7 @@ test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자�
     2,
   );
   await expect(form.getByLabel('촬영 방향 1', { exact: true })).toHaveValue('정면');
-  await expect(form.getByLabel('촬영 방향 2', { exact: true })).toHaveValue('오른쪽 측면');
+  await expect(form.getByLabel('촬영 방향 2', { exact: true })).toHaveValue('오른쪽');
   await saveForm(form, true);
   const saved = await versions(page, name);
   expect(saved[0]).toEqual(original);
@@ -507,7 +508,7 @@ test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자�
     )
     .toBe(0);
   expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
-  dialog = await openViewer(form, '오른쪽 측면');
+  dialog = await openViewer(form, '오른쪽');
   await reconstruct(page, dialog);
   await updateSelectedAndClose(dialog);
   await saveForm(form, true);
@@ -844,7 +845,7 @@ test('실제 AI opt-in: 프로덕션 Worker 추론→360 뷰어→PNG·각도 �
     await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
     await form.getByLabel('상품명').fill(`실제 AI 360 ${Date.now()}`);
     await form.getByLabel('+ 제품 이미지 올리기', { exact: true }).setInputFiles(sourceFile);
-    await form.getByLabel('촬영 방향 1', { exact: true }).fill('정면');
+    await form.getByLabel('촬영 방향 1', { exact: true }).selectOption('정면');
     const dialog = await openViewer(form);
     expect(served.filter((f) => f.file.endsWith('.onnx'))).toHaveLength(0);
     await dialog.getByRole('button', { name: '입체화 시작', exact: true }).click();
@@ -936,17 +937,24 @@ test('실제 메시 재생: 저장 자세의 초기 WebGL 실패 후 뷰어 재�
   expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
 });
 
+/** Picks the direction (the product turns to face it), adds the angle, returns the pose it was saved with. */
 async function addAngle(dialog: Locator, name: string) {
   const before = await dialog.getByTestId('product3d-angle-card').count();
-  await expect(dialog.getByLabel('새 각도 이름 빠른 선택', { exact: true })).toBeVisible();
-  await dialog.getByLabel('새 각도 이름 빠른 선택', { exact: true }).selectOption('왼쪽 사선');
-  await expect(dialog.getByLabel('새 각도 이름', { exact: true })).toHaveValue('왼쪽 사선');
-  await dialog.getByLabel('새 각도 이름', { exact: true }).fill(name);
+  const select = dialog.getByLabel('새 각도 이름', { exact: true });
+  await expect(select).toBeVisible();
+  expect(await select.evaluate((el) => el.tagName)).toBe('SELECT');
+  await select.selectOption(name);
+  await expect(select).toHaveValue(name);
+  const saved = await pose(dialog);
+  // Choosing the name turned the product: its pose now reads as that name, with no warning.
+  expect(nearestPoseDirection(saved as never).name).toBe(name);
+  await expect(dialog.getByTestId('product3d-direction-warning')).toHaveCount(0);
   await dialog.getByRole('button', { name: '이 각도 추가', exact: true }).click();
   await expect(dialog).toBeVisible();
   await expect(dialog.getByTestId('product3d-angle-card')).toHaveCount(before + 1);
   await expect(dialog.getByRole('button', { name: `${name} 각도 선택`, exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: '이 각도 추가', exact: true })).toBeEnabled();
+  return saved;
 }
 function closePose(actual: Pose, expected: Pose) {
   for (const field of ['objectQuaternion', 'cameraQuaternion'] as const)
@@ -967,41 +975,49 @@ test('실제 메시 재생: 한 번 입체화로 세 각도 추가·공유 메�
   const form = page.getByRole('dialog', { name: '자재 수정', exact: true });
   let dialog = await openViewer(form);
   await reconstruct(page, dialog);
-  const firstPose = await pose(dialog);
-  await addAngle(dialog, '왼쪽 25도');
+  const startPose = await pose(dialog);
+  // Picking a direction turns the product to face it: 왼쪽 is a different camera from the start.
+  const firstPose = await addAngle(dialog, '왼쪽');
+  expect(firstPose.cameraQuaternion).not.toEqual(startPose.cameraQuaternion);
   await drag(page, dialog.getByTestId('product3d-canvas'), 170, -65);
-  const secondPose = await pose(dialog);
+  const secondPose = await addAngle(dialog, '오른쪽');
   expect(secondPose.cameraQuaternion).not.toEqual(firstPose.cameraQuaternion);
-  await addAngle(dialog, '오른쪽 30도');
   await drag(page, dialog.getByTestId('product3d-canvas'), -90, 120);
-  const thirdPose = await pose(dialog);
-  expect(thirdPose.cameraQuaternion).not.toEqual(secondPose.cameraQuaternion);
-  await addAngle(dialog, '위에서 본 모습');
+  const thirdPose = await addAngle(dialog, '위');
   await expect(dialog.getByTestId('product3d-angle-card')).toHaveCount(4);
   expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(1);
-  await dialog.getByRole('button', { name: '왼쪽 25도 각도 선택', exact: true }).click();
+  await dialog.getByRole('button', { name: '왼쪽 각도 선택', exact: true }).click();
   closePose(await pose(dialog), firstPose);
   await drag(page, dialog.getByTestId('product3d-canvas'), 55, 0);
   const changedFirstPose = await pose(dialog);
   await dialog.getByRole('button', { name: '선택한 각도 수정', exact: true }).click();
   await expect(dialog.getByRole('button', { name: '선택한 각도 수정', exact: true })).toBeEnabled();
   await expect(dialog.getByTestId('product3d-angle-card')).toHaveCount(4);
-  await dialog.getByRole('button', { name: '오른쪽 30도 각도 선택', exact: true }).click();
+  await dialog.getByRole('button', { name: '오른쪽 각도 선택', exact: true }).click();
   closePose(await pose(dialog), secondPose);
-  await dialog.getByRole('button', { name: '위에서 본 모습 각도 선택', exact: true }).click();
+  await dialog.getByRole('button', { name: '위 각도 선택', exact: true }).click();
   closePose(await pose(dialog), thirdPose);
-  await dialog.getByRole('button', { name: '왼쪽 25도 각도 선택', exact: true }).click();
-  await dialog.getByRole('button', { name: '왼쪽 25도 이름 변경', exact: true }).click();
-  await dialog.getByLabel('각도 이름 변경 빠른 선택', { exact: true }).selectOption('정면');
-  await expect(dialog.getByLabel('각도 이름 변경', { exact: true })).toHaveValue('정면');
-  await dialog.getByLabel('각도 이름 변경', { exact: true }).fill('시공 확인 각도');
-  await dialog.getByRole('button', { name: '이름 저장', exact: true }).click();
-  await expect(dialog.getByRole('button', { name: '시공 확인 각도 각도 선택', exact: true })).toBeVisible();
+  // One photo per direction: 정면 is taken by the first photo, so it cannot be picked for another.
+  await dialog.getByRole('button', { name: '왼쪽 각도 선택', exact: true }).click();
+  await dialog.getByRole('button', { name: '왼쪽 이름 변경', exact: true }).click();
+  const rename = dialog.getByLabel('각도 이름 변경', { exact: true });
+  expect(await rename.evaluate((el) => el.tagName)).toBe('SELECT');
+  // (Playwright's toBeDisabled does not read <option>: ask the element itself.)
+  expect(
+    await rename.locator('option[value="정면"]').evaluate((el) => (el as HTMLOptionElement).disabled),
+  ).toBe(true);
+  await dialog.getByRole('button', { name: '취소', exact: true }).first().click();
+  // The first photo goes; then its direction is free and the 왼쪽 photo takes it.
   await dialog.getByRole('button', { name: '정면 각도 선택', exact: true }).click();
   page.once('dialog', (prompt) => prompt.accept());
   await dialog.getByRole('button', { name: '정면 삭제', exact: true }).click();
   await expect(dialog.getByTestId('product3d-angle-card')).toHaveCount(3);
-  await dialog.getByRole('button', { name: '시공 확인 각도 각도 선택', exact: true }).click();
+  await dialog.getByRole('button', { name: '왼쪽 각도 선택', exact: true }).click();
+  await dialog.getByRole('button', { name: '왼쪽 이름 변경', exact: true }).click();
+  await rename.selectOption('정면');
+  await dialog.getByRole('button', { name: '이름 저장', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: '정면 각도 선택', exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: '정면 각도 선택', exact: true }).click();
   closePose(await pose(dialog), changedFirstPose);
   await drag(page, dialog.getByTestId('product3d-canvas'), 90, 80); // Do not apply this final draft pose.
   await dialog.getByRole('button', { name: '닫기', exact: true }).click();
@@ -1011,7 +1027,7 @@ test('실제 메시 재생: 한 번 입체화로 세 각도 추가·공유 메�
   expect(all[0]).toEqual(first);
   const last = all.at(-1)!;
   expect(last.views).toHaveLength(3);
-  expect(last.views.map((v) => v.direction)).toEqual(['시공 확인 각도', '오른쪽 30도', '위에서 본 모습']);
+  expect(last.views.map((v) => v.direction)).toEqual(['정면', '오른쪽', '위']);
   expect(new Set(last.views.map((v) => v.product3d?.meshAssetId)).size).toBe(1);
   expect(new Set(last.views.map((v) => v.product3d?.inputAssetId)).size).toBe(1);
   expect(new Set(last.views.map((v) => v.assetId)).size).toBe(3);
@@ -1030,10 +1046,10 @@ test('실제 메시 재생: 한 번 입체화로 세 각도 추가·공유 메�
     .getByRole('button', { name: '정보 수정', exact: true })
     .click();
   const reopenedForm = page.getByRole('dialog', { name: '자재 수정', exact: true });
-  dialog = await openViewer(reopenedForm, '시공 확인 각도', true);
+  dialog = await openViewer(reopenedForm, '정면', true);
   await expect(dialog.getByRole('button', { name: '화면 맞춤', exact: true })).toBeEnabled();
   closePose(await pose(dialog), changedFirstPose);
-  await dialog.getByRole('button', { name: '위에서 본 모습 각도 선택', exact: true }).click();
+  await dialog.getByRole('button', { name: '위 각도 선택', exact: true }).click();
   closePose(await pose(dialog), thirdPose);
   expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
   await dialog.screenshot({ path: path.join(output, 'multiple-angles.png') });
@@ -1047,8 +1063,8 @@ test('실제 메시 재생: 한 번 입체화로 세 각도 추가·공유 메�
 
 test('여러 각도 자재: 공간에서 썸네일 변경 시 제품 ID·위치·배치 개수·단가 유지', async ({ page }) => {
   const { form, name } = await openForm(page, 2);
-  await form.getByLabel('촬영 방향 1', { exact: true }).fill('앞에서 보기');
-  await form.getByLabel('촬영 방향 2', { exact: true }).fill('옆에서 보기');
+  await form.getByLabel('촬영 방향 1', { exact: true }).selectOption('정면');
+  await form.getByLabel('촬영 방향 2', { exact: true }).selectOption('오른쪽');
   await form.getByLabel('기준 단가', { exact: true }).fill('350000');
   await saveForm(form);
   const material = (await versions(page, name))[0];
@@ -1072,7 +1088,7 @@ test('여러 각도 자재: 공간에서 썸네일 변경 시 제품 ID·위치�
   expect(before.total).toBe(350000);
   expect(before.rows[0].count).toBe(1);
   await expect(page.getByRole('combobox', { name: '제품 촬영 방향', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: '옆에서 보기 각도 선택', exact: true }).click();
+  await page.getByRole('button', { name: '오른쪽 각도 선택', exact: true }).click();
   const afterProject = await savedProject(page, originalProject.editRevision);
   const design = getActiveDesign(afterProject)!;
   const fixture = design.scene.fixtures[0];
@@ -1086,7 +1102,7 @@ test('여러 각도 자재: 공간에서 썸네일 변경 시 제품 ID·위치�
   expect(calculateMaterialUsage(design.scene, { [material.id]: material }, design.materialUsage)).toEqual(
     before,
   );
-  await page.getByRole('button', { name: '앞에서 보기 각도 선택', exact: true }).click();
+  await page.getByRole('button', { name: '정면 각도 선택', exact: true }).click();
   const restored = getActiveDesign(await savedProject(page, afterProject.editRevision))!.scene.fixtures[0];
   expect(restored.id).toBe(original.id);
   expect(restored.viewIndex).toBe(0);

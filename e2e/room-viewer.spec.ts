@@ -609,7 +609,7 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
           usage: 'both',
           installation: placement.face === 'floor' ? 'floor' : 'wall',
           textureAssetIds: [],
-          views: [{ assetId: asset.id, direction: '공간 공통 카메라', anchor: fixture.anchor }],
+          views: [{ assetId: asset.id, direction: '정면', anchor: fixture.anchor }],
           reconstruction: { version: reconstruction.version, kind: reconstruction.kind },
           defaultGroutWidth: 2,
           defaultGroutColor: '#d5d1c9',

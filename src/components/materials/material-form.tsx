@@ -28,7 +28,8 @@ import { AssetImage, useAsset } from './asset-image';
 import { ImagePreparer } from './image-preparer';
 import { BackgroundRemovalTest } from './background-removal-test';
 import { Product3dEditor } from './product3d-editor';
-import { AngleNameInput } from './angle-name-input';
+import { AngleNameSelect } from './angle-name-input';
+import { nextProductDirection } from '@/lib/product-direction';
 import { useAccess } from '@/components/app-provider';
 import { useFileDrop } from '@/components/use-file-drop';
 import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
@@ -42,6 +43,9 @@ import {
   type CatalogData,
   type CatalogSelection,
 } from '@/lib/catalog/contract';
+
+/** Textures have no direction: their limit is the stored count (100). */
+const MAX_TEXTURES = 100;
 
 const defaults: MaterialInput = {
   name: '',
@@ -298,7 +302,7 @@ export function MaterialForm({
     if (!incoming.length || !writable || uploading || busy) return;
     const pick = pickImageFiles(incoming, {
       multiple: true,
-      max: MAX_PRODUCT_VIEWS,
+      max: target === 'texture' ? MAX_TEXTURES : MAX_PRODUCT_VIEWS,
       current: target === 'texture' ? form.textureAssetIds.length : form.views.length,
     });
     setUploadNotice(pick.notice ?? '');
@@ -318,13 +322,16 @@ export function MaterialForm({
         setForm((current) => {
           if (target === 'texture')
             return { ...current, textureAssetIds: [...current.textureAssetIds, preview.id] };
+          // The first photo is 정면; each next one takes the first direction not used yet.
+          const direction = nextProductDirection(current.views.map((view) => view.direction));
+          if (!direction) return current;
           return {
             ...current,
             views: [
               ...current.views,
               {
                 assetId: preview.id,
-                direction: current.views.length === 0 ? '정면' : '사선',
+                direction,
                 anchor: { x: 0.5, y: current.installation === 'wall' ? 0.5 : 0.97 },
               },
             ],
@@ -393,7 +400,9 @@ export function MaterialForm({
     };
     assertCurrent();
     if (mode === 'add' && currentEdit.current.form.views.length >= MAX_PRODUCT_VIEWS)
-      throw new Error(`자재 하나에 각도 사진은 최대 ${MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요.`);
+      throw new Error(
+        `자재 하나에 각도 사진은 방향마다 한 장, 최대 ${MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요.`,
+      );
     const replacement = await prepareProductReplacement(
       result,
       getRepositories().assets,
@@ -462,6 +471,20 @@ export function MaterialForm({
     if (!catalogData || Object.values(pendingQueries).some(Boolean)) {
       setError('분류 목록을 불러온 뒤 검색한 항목을 선택하거나 검색어를 지워 주세요.');
       return;
+    }
+    if (form.category !== 'tile') {
+      const names = form.views.map((view) => view.direction);
+      const twice = names.find((name, index) => names.indexOf(name) !== index);
+      if (twice) {
+        setError(
+          `‘${twice}’ 방향 사진이 둘 이상이에요. 방향마다 한 장만 저장할 수 있어요. 방향을 바꾸거나 한 장을 제외해 주세요.`,
+        );
+        return;
+      }
+      if (form.views.length > MAX_PRODUCT_VIEWS) {
+        setError(`각도 사진은 최대 ${MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요. 나머지는 제외해 주세요.`);
+        return;
+      }
     }
     const ids = [
       selection.brandId,
@@ -558,7 +581,12 @@ export function MaterialForm({
         views:
           form.category === 'tile'
             ? []
-            : form.views.map((view) => ({ ...view, direction: productViewName(view.direction) })),
+            : form.views.map((view) => ({
+                assetId: view.assetId,
+                direction: productViewName(view.direction),
+                anchor: view.anchor,
+                ...(view.product3d ? { product3d: view.product3d } : {}),
+              })),
       };
       const repository = getRepositories().materials;
       const result = initial
@@ -796,7 +824,7 @@ export function MaterialForm({
                   {uploadInput('texture', '+ 타일 텍스처 올리기')}
                   <span className="muted">
                     무늬가 다른 여러 장을 등록하면 반복할 때 섞어서 사용해요. 여러 장을 한꺼번에 선택하거나 이
-                    줄에 끌어 놓을 수 있어요(최대 {MAX_PRODUCT_VIEWS}장).
+                    줄에 끌어 놓을 수 있어요(최대 {MAX_TEXTURES}장).
                   </span>
                 </div>
                 <div className={styles.textureGrid} {...textureDrop.dropProps}>
@@ -873,8 +901,8 @@ export function MaterialForm({
                 >
                   {uploadInput('view', '+ 제품 이미지 올리기')}
                   <span className="muted">
-                    정면·측면·사선 사진을 각각 등록할 수 있어요. 여러 장을 한꺼번에 선택하거나 이 줄에 끌어
-                    놓을 수 있어요(최대 {MAX_PRODUCT_VIEWS}장).
+                    정면·왼쪽·오른쪽·위·아래·뒤, 제품이 바라보는 방향마다 한 장씩 등록해요. 여러 장을 한꺼번에
+                    선택하거나 이 줄에 끌어 놓을 수 있어요(최대 {MAX_PRODUCT_VIEWS}장).
                   </span>
                 </div>
                 <div className={styles.viewGrid} {...viewDrop.dropProps}>
@@ -885,11 +913,13 @@ export function MaterialForm({
                         anchor={view.anchor}
                         onChange={(anchor) => setView(index, { anchor })}
                       />
-                      <AngleNameInput
+                      <AngleNameSelect
                         label={`촬영 방향 ${index + 1}`}
                         value={view.direction}
-                        onChange={(direction) => setView(index, { direction })}
+                        onChange={(direction) => setView(index, { direction, directionWas: undefined })}
                         disabled={busy || uploading}
+                        taken={form.views.filter((_, i) => i !== index).map((other) => other.direction)}
+                        unreadName={view.directionWas}
                       />
                       <p className={styles.note}>
                         사진에서 {form.installation === 'wall' ? '벽 부착점' : '바닥 접점'}을 눌러 + 기준점을
