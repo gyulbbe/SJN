@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Vector3 } from 'three';
+import { PerspectiveCamera, Vector3 } from 'three';
 import {
   clampFluxOrbit,
   FLUX_FRONT,
@@ -16,6 +16,7 @@ import {
   createRoomViewCamera,
   defaultRoomView,
   normalizeRoomView,
+  ORBIT_FOV,
   roomEyeView,
   validRoomOrbit,
   type RoomOrbit,
@@ -60,6 +61,52 @@ const directions: RoomOrbit[] = [
   { azimuth: 45, elevation: 30 },
   { azimuth: -135, elevation: 60 },
 ];
+
+describe('the AI orbit lens: long, so the walls are not stretched, and the room still fills the frame', () => {
+  const screenWidth = (c: PerspectiveCamera, z: number) => {
+    const left = new Vector3(-room.widthMm / 2, 0, z).project(c),
+      right = new Vector3(room.widthMm / 2, 0, z).project(c);
+    return right.x - left.x;
+  };
+  it('is a 20 degree lens (it was 40, which drew a side-wall fixture large and slanted)', () => {
+    expect(ORBIT_FOV).toBe(20);
+    expect(camera(FLUX_FRONT).fov).toBe(ORBIT_FOV);
+  });
+  it.each(rooms)(
+    'fits every corner of %s in the frame, filling it to 97% on its longer side',
+    (_name, dims) => {
+      for (const orbit of directions) {
+        const c = camera(orbit, dims);
+        const projected = corners(dims).map((point) => point.project(c));
+        const extent = Math.max(
+          ...projected.map((p) => Math.abs(p.x)),
+          ...projected.map((p) => Math.abs(p.y)),
+        );
+        expect(extent, JSON.stringify(orbit)).toBeLessThanOrEqual(0.97 + 1e-6);
+        expect(extent, JSON.stringify(orbit)).toBeGreaterThan(0.95);
+        // Every corner is in front of the camera.
+        for (const point of corners(dims))
+          expect(point.clone().applyMatrix4(c.matrixWorldInverse).z).toBeLessThan(0);
+      }
+    },
+  );
+  it('shows the back wall much wider relative to the open front: the room is flatter', () => {
+    // From the front, the back wall's floor edge over the open front's: 1 would be no perspective.
+    // The 40 degree lens gave about 0.53 here (the camera 3.9 m from the centre of a 2.4 m room), the
+    // 20 degree one 0.74 (8 m).
+    const c = camera(FLUX_FRONT);
+    const ratio = screenWidth(c, 0) / screenWidth(c, room.depthMm);
+    expect(ratio).toBeGreaterThan(0.7);
+    expect(ratio).toBeLessThan(0.8);
+  });
+  it('backs the camera away to keep the room the same size on the picture', () => {
+    const center = new Vector3(0, room.heightMm / 2, room.depthMm / 2);
+    const distance = camera(FLUX_FRONT).position.distanceTo(center);
+    // About twice as far as the 40 degree lens needed (tan 20° over tan 10°).
+    expect(distance).toBeGreaterThan(room.depthMm * 3);
+    expect(distance).toBeLessThan(room.depthMm * 4);
+  });
+});
 
 describe('the AI orbit camera', () => {
   it.each(directions)('has no roll and screen-up is the room up: %o', (orbit) => {

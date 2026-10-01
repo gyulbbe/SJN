@@ -48,8 +48,13 @@ export const ROOM_VIEW_MAX_ZOOM = 8;
 export const ROOM_VIEW_MAX_PAN = 4;
 const FOV = 50;
 const FIT_AVAILABLE = 0.88;
-/** The AI orbit: a longer lens than the space viewer (less wide-angle stretch) and a tight fit. */
-const ORBIT_FOV = 40;
+/**
+ * The AI orbit: a long lens, much longer than the space viewer's, so a product beside the middle
+ * is not stretched sideways (at 40° the side of a wall product was drawn large and slanted, and the
+ * AI redrew it as another shape). The camera backs away to fit the room, so the room is the same
+ * size in the picture, only flatter (2026-10-01; it was 40°).
+ */
+export const ORBIT_FOV = 20;
 /** Share of the frame's half-size the room's outline may fill; the rest is a thin white margin. */
 const ORBIT_FILL = 0.97;
 
