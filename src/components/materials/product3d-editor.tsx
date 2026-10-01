@@ -17,6 +17,7 @@ import type {
 import type { Product3dClient } from '@/lib/product3d/client';
 import { decodeProductMesh } from '@/lib/product3d/codec';
 import { prepareProductSurface } from '@/lib/product3d/surface';
+import { readPhotoSize, smallPhotoNotice } from '@/lib/image-size-hint';
 import { resolveProductInput } from '@/lib/product3d/source';
 import { createDefaultPose, sourceViewAngle } from '@/lib/product3d/pose';
 import { estimateUprightQuaternion } from '@/lib/product3d/upright';
@@ -86,7 +87,9 @@ export function Product3dEditor({
   const [nameError, setNameError] = useState('');
   const [renaming, setRenaming] = useState(false),
     [renameName, setRenameName] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(''),
+    // Said before the photo is turned into 3D when it is small (see image-size-hint).
+    [smallPhoto, setSmallPhoto] = useState('');
   // New reconstructions start mixed; saved views reopen the way they were saved (older ones unlit).
   const [shading, setShading] = useState<ProductShading>('mixed'),
     [viewAngle, setViewAngle] = useState(0);
@@ -131,6 +134,7 @@ export function Product3dEditor({
     setRenaming(false);
     setNameError('');
     setInput(undefined);
+    setSmallPhoto('');
     setResult(undefined);
     setStored(false);
     setShading(product3d && !blob ? (product3d.shading ?? 'baked') : 'mixed');
@@ -153,6 +157,10 @@ export function Product3dEditor({
       url = URL.createObjectURL(source.blob);
       setSourceUrl(url);
       setInput(source);
+      if (!(product3d && !blob))
+        void readPhotoSize(source.blob).then((size) => {
+          if (active && size) setSmallPhoto(smallPhotoNotice([{ name: source.name, ...size }]));
+        });
       if (product3d && !blob) {
         try {
           const asset = await repositories.assets.get(product3d.meshAssetId);
@@ -422,6 +430,11 @@ export function Product3dEditor({
                 </p>
                 <p className={styles.note}>사진은 이 브라우저에서 처리해요.</p>
               </div>
+            )}
+            {!stored && smallPhoto && (
+              <p className={styles.note} role="status" data-testid="product3d-small-photo">
+                {smallPhoto}
+              </p>
             )}
             <div className={styles.toolbar}>
               <button

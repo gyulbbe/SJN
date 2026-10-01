@@ -33,6 +33,7 @@ import { nextProductDirection } from '@/lib/product-direction';
 import { useAccess } from '@/components/app-provider';
 import { useFileDrop } from '@/components/use-file-drop';
 import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
+import { readPhotoSizes, smallPhotoNotice } from '@/lib/image-size-hint';
 import { useSharedCatalogAdmin } from './shared-access';
 import styles from './materials.module.css';
 import CatalogSelect from './catalog-select';
@@ -313,6 +314,11 @@ export function MaterialForm({
     setUploading(true);
     setError('');
     try {
+      // A product photo that is small comes out soft as a 3D model: say so at the pick, and add it anyway.
+      if (target === 'view')
+        setUploadNotice(
+          [pick.notice, smallPhotoNotice(await readPhotoSizes(pick.files))].filter(Boolean).join(' '),
+        );
       for (const file of pick.files) {
         const { preview } = await importImage(
           file,

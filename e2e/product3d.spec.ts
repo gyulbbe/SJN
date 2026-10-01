@@ -184,7 +184,7 @@ async function installReplay(page: Page) {
     { encoded, source },
   );
 }
-async function openForm(page: Page, photoCount = 1) {
+async function openForm(page: Page, photoCount = 1, photo = readFileSync(sourceFile)) {
   page.on('pageerror', (error) => console.log('PRODUCT3D PAGE ERROR', error.message));
   await installReplay(page);
   await page.goto('http://127.0.0.1:3000/admin/materials');
@@ -197,7 +197,7 @@ async function openForm(page: Page, photoCount = 1) {
     Array.from({ length: photoCount }, (_, i) => ({
       name: `source-${i}.png`,
       mimeType: 'image/png',
-      buffer: readFileSync(sourceFile),
+      buffer: photo,
     })),
   );
   await expect(form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })).toHaveCount(
@@ -510,6 +510,43 @@ test('실제 메시 재생: 혼합이 기본이고 저장·재열기에서 모�
   await chooseShading(opened.viewer, '혼합(권장)');
   await png(opened.viewer, path.join(output, 'shading-mixed-from-baked.png'));
   expect(sameFile('shading-mixed-reopened.png', 'shading-mixed-from-baked.png')).toBe(true);
+});
+
+test('실제 메시 재생: 360° 편집기도 작은 사진이면 입체화 전에 안내한다', async ({ page }) => {
+  const hint = '작은 사진은 흐리게 입체화돼요. 1000px 이상을 권해요';
+  // A transparent cut-out 400 px wide: small, but still a cut-out the editor can open.
+  const small = await sharp({
+    create: { width: 400, height: 300, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  })
+    .composite([
+      {
+        input: await sharp({
+          create: { width: 200, height: 220, channels: 4, background: { r: 230, g: 230, b: 225, alpha: 1 } },
+        })
+          .png()
+          .toBuffer(),
+        left: 100,
+        top: 40,
+      },
+    ])
+    .png()
+    .toBuffer();
+  const { form } = await openForm(page, 1, small);
+  const dialog = await openViewer(form);
+  const notice = dialog.getByTestId('product3d-small-photo');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText(hint);
+  await expect(notice).toContainText('300px');
+  // It only informs: the start button is there and nothing is blocked.
+  await expect(dialog.getByRole('button', { name: '입체화 시작', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  // A photo of a good size gets no hint.
+  const big = await sharp(small).resize(1200, 900, { fit: 'fill', kernel: 'nearest' }).png().toBuffer();
+  await page.reload();
+  const again = await openForm(page, 1, big);
+  const viewer = await openViewer(again.form);
+  await expect(viewer.getByRole('button', { name: '입체화 시작', exact: true })).toBeEnabled();
+  await expect(viewer.getByTestId('product3d-small-photo')).toHaveCount(0);
 });
 
 test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자세 재진입 무추론', async ({ page }) => {
