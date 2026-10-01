@@ -805,7 +805,7 @@ export const product3dReferenceSchema = z
       .strict(),
     modelId: z.string().min(1).max(300),
     modelRevision: z.string().min(1).max(300),
-    shading: z.enum(['lit', 'baked']).optional(),
+    shading: z.enum(['mixed', 'lit', 'baked']).optional(),
   })
   .strict();
 export const materialInputSchema = z

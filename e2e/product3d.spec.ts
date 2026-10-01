@@ -382,24 +382,35 @@ test('실제 메시 재생: 자유 회전·상하 뒤집기·기울기 손잡이
   );
 });
 
+/** Picks a view mode and waits until its colours are in (they are worked out in a Worker). */
+async function chooseShading(dialog: Locator, name: '혼합(권장)' | '조명 보정' | '원본 색') {
+  const button = dialog.getByRole('button', { name, exact: true });
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.getByTestId('product3d-shading-busy')).toHaveCount(0);
+}
+const sameFile = (a: string, b: string) =>
+  readFileSync(path.join(output, a)).equals(readFileSync(path.join(output, b)));
+
 test('실제 메시 재생: 조명 보정·자동 수평·사진 밖 각도 안내·저장 모드 복원', async ({ page }) => {
   const { form: create, name } = await openForm(page);
   let dialog = await openViewer(create);
   await reconstruct(page, dialog);
-  const lit = dialog.getByRole('button', { name: '조명 보정', exact: true });
-  const baked = dialog.getByRole('button', { name: '원본 색', exact: true });
-  // New reconstructions start lit; the saved RGB stays one click away.
-  await expect(lit).toHaveAttribute('aria-pressed', 'true');
+  // New reconstructions start mixed; the lighting correction and the saved RGB stay one click away.
+  await expect(dialog.getByRole('button', { name: '혼합(권장)', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await png(dialog, path.join(output, 'shading-mixed.png'));
+  await chooseShading(dialog, '조명 보정');
   await png(dialog, path.join(output, 'shading-lit.png'));
-  await baked.click();
-  await expect(baked).toHaveAttribute('aria-pressed', 'true');
+  await chooseShading(dialog, '원본 색');
   await png(dialog, path.join(output, 'shading-baked.png'));
-  expect(
-    readFileSync(path.join(output, 'shading-lit.png')).equals(
-      readFileSync(path.join(output, 'shading-baked.png')),
-    ),
-  ).toBe(false);
-  await lit.click();
+  // The three modes draw three different pictures.
+  expect(sameFile('shading-lit.png', 'shading-baked.png')).toBe(false);
+  expect(sameFile('shading-mixed.png', 'shading-lit.png')).toBe(false);
+  expect(sameFile('shading-mixed.png', 'shading-baked.png')).toBe(false);
+  await chooseShading(dialog, '조명 보정');
   // This fixture has no confident flat face, so auto-upright returns it to the reconstruction as-is.
   const initial = await pose(dialog);
   await selectProduct(dialog);
@@ -443,6 +454,62 @@ test('실제 메시 재생: 조명 보정·자동 수평·사진 밖 각도 안�
   );
   expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
   await dialog.screenshot({ path: path.join(output, 'shading-reopened-ui.png') });
+});
+
+test('실제 메시 재생: 혼합이 기본이고 저장·재열기에서 모드가 유지되며 옛 값(원본 색)도 그대로 열린다', async ({
+  page,
+}) => {
+  const { form: create, name } = await openForm(page);
+  const dialog = await openViewer(create);
+  await reconstruct(page, dialog);
+  await expect(dialog.getByRole('button', { name: '혼합(권장)', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  // The hint says what the mixed mode cannot do.
+  await expect(dialog).toContainText('안 찍힌 면(옆·뒤)의 모양은 AI의 추측이라 실제와 달라요');
+  await updateSelectedAndClose(dialog);
+  await saveForm(create);
+  expect((await versions(page, name)).at(-1)!.views[0].product3d?.shading).toBe('mixed');
+  const reopen = async () => {
+    await page.reload();
+    await page
+      .locator('article')
+      .filter({ hasText: name })
+      .getByRole('button', { name: '정보 수정', exact: true })
+      .click();
+    const form = page.getByRole('dialog', { name: '자재 수정', exact: true });
+    const viewer = await openViewer(form, '정면', true);
+    await expect(viewer.getByTestId('product3d-canvas')).toBeVisible();
+    await expect(viewer.getByTestId('product3d-shading-busy')).toHaveCount(0);
+    return { form, viewer };
+  };
+  // Reopened as saved, without inference.
+  let opened = await reopen();
+  await expect(opened.viewer.getByRole('button', { name: '혼합(권장)', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
+  await png(opened.viewer, path.join(output, 'shading-mixed-reopened.png'));
+  // Saved as the original colours (no field, as every save before the lit modes): it stays that way.
+  await chooseShading(opened.viewer, '원본 색');
+  await updateSelectedAndClose(opened.viewer);
+  await saveForm(opened.form, true);
+  expect((await versions(page, name)).at(-1)!.views[0].product3d?.shading).toBeUndefined();
+  opened = await reopen();
+  await expect(opened.viewer.getByRole('button', { name: '원본 색', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(opened.viewer.getByRole('button', { name: '혼합(권장)', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
+  // And back to mixed from there.
+  await chooseShading(opened.viewer, '혼합(권장)');
+  await png(opened.viewer, path.join(output, 'shading-mixed-from-baked.png'));
+  expect(sameFile('shading-mixed-reopened.png', 'shading-mixed-from-baked.png')).toBe(true);
 });
 
 test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자세 재진입 무추론', async ({ page }) => {

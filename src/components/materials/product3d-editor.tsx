@@ -16,6 +16,7 @@ import type {
 } from '@/lib/product3d/types';
 import type { Product3dClient } from '@/lib/product3d/client';
 import { decodeProductMesh } from '@/lib/product3d/codec';
+import { prepareProductSurface } from '@/lib/product3d/surface';
 import { resolveProductInput } from '@/lib/product3d/source';
 import { createDefaultPose, sourceViewAngle } from '@/lib/product3d/pose';
 import { estimateUprightQuaternion } from '@/lib/product3d/upright';
@@ -86,8 +87,8 @@ export function Product3dEditor({
   const [renaming, setRenaming] = useState(false),
     [renameName, setRenameName] = useState('');
   const [notice, setNotice] = useState('');
-  // New reconstructions start lit; saved views reopen the way they were saved (older ones unlit).
-  const [shading, setShading] = useState<ProductShading>('lit'),
+  // New reconstructions start mixed; saved views reopen the way they were saved (older ones unlit).
+  const [shading, setShading] = useState<ProductShading>('mixed'),
     [viewAngle, setViewAngle] = useState(0);
   const selectedView = views[selectedViewIndex];
   const locked = loading || busy || applying || capturing;
@@ -132,7 +133,7 @@ export function Product3dEditor({
     setInput(undefined);
     setResult(undefined);
     setStored(false);
-    setShading(product3d && !blob ? (product3d.shading ?? 'baked') : 'lit');
+    setShading(product3d && !blob ? (product3d.shading ?? 'baked') : 'mixed');
     void (async () => {
       const repositories = getRepositories();
       let source: ProductInput;
@@ -158,6 +159,8 @@ export function Product3dEditor({
           if (asset.kind !== 'product-mesh' || asset.sourceAssetId !== product3d.inputAssetId)
             throw new Error('저장된 입체 형상 종류가 올바르지 않아요.');
           const mesh = await decodeProductMesh(asset.blob);
+          // A lit view's colours are worked out off the main thread before the viewer opens.
+          if (product3d.shading) await prepareProductSurface(product3d.shading, mesh);
           if (!active) return;
           trackPose(structuredClone(product3d.pose));
           setInitialPose(structuredClone(product3d.pose));
@@ -225,6 +228,10 @@ export function Product3dEditor({
         modelLoading.push(product3dLoadEvent(p));
       });
       if (!alive.current || run !== generation.current) return;
+      // The mixed colours (what the photo shows keeps its detail, the rest is clean) take a moment.
+      setProgress({ stage: 'coloring', message: '안 찍힌 면의 색을 정리하고 있어요.' });
+      await prepareProductSurface('mixed', next.mesh);
+      if (!alive.current || run !== generation.current) return;
       setMeshAssetId(undefined);
       // A single photo cannot tell the camera height, so stand the new model upright first.
       const pose = {
@@ -234,7 +241,7 @@ export function Product3dEditor({
       trackPose(pose);
       setInitialPose(pose);
       setViewAngle(sourceViewAngle(pose));
-      setShading('lit');
+      setShading('mixed');
       setStored(false);
       setFreshModel(true);
       setViewerKey((k) => k + 1);

@@ -82,10 +82,14 @@ describe('persisted product3d material data', () => {
   });
   it('accepts the optional lighting mode and rejects unknown ones', async () => {
     const { png, reference } = await setup();
-    for (const shading of ['lit', 'baked'] as const)
+    // Every mode ever written reads back: 'baked' and no field (older saves), 'lit', and 'mixed'.
+    for (const shading of ['mixed', 'lit', 'baked'] as const)
       expect(
         materialInputSchema.parse(material(png.id, { ...reference, shading })).views[0].product3d?.shading,
       ).toBe(shading);
+    expect(
+      materialInputSchema.parse(material(png.id, reference)).views[0].product3d?.shading,
+    ).toBeUndefined();
     expect(
       materialInputSchema.safeParse(material(png.id, { ...reference, shading: 'glossy' } as never)).success,
     ).toBe(false);

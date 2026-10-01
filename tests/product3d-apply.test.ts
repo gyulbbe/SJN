@@ -113,6 +113,8 @@ describe('360 product photo application', () => {
     expect(unlit.product3d).not.toHaveProperty('shading');
     const lit = await prepareProductReplacement({ ...application(), shading: 'lit' }, assets, 'floor');
     expect(lit.product3d.shading).toBe('lit');
+    const mixed = await prepareProductReplacement({ ...application(), shading: 'mixed' }, assets, 'floor');
+    expect(mixed.product3d.shading).toBe('mixed');
   });
 
   it('retries a failed PNG write using the successfully staged input and mesh without duplicate writes', async () => {

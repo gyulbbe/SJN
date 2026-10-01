@@ -6,6 +6,8 @@ import type { ProductMesh, ProductPose, ProductShading } from '@/lib/product3d/s
 import { ProductRenderer, type ProductCapture } from '@/lib/product3d/renderer';
 import { estimateUprightQuaternion } from '@/lib/product3d/upright';
 import { levelByOutline, type OutlineLevelResult } from '@/lib/product3d/outline-level';
+import { readySurface } from '@/lib/product3d/shading';
+import { prepareProductSurface } from '@/lib/product3d/surface';
 import {
   createDefaultPose,
   MAX_PRODUCT_ZOOM,
@@ -26,7 +28,10 @@ export interface ProductViewportHandle {
 export interface ProductViewportProps {
   mesh: ProductMesh;
   initialPose: ProductPose;
-  /** 'lit' shows base colours under viewer lighting; 'baked' the model's own RGB. */
+  /**
+   * 'mixed': the photographed side keeps the photo's detail, the rest is clean base colour; 'lit':
+   * base colours only, under viewer lighting; 'baked': the model's own RGB.
+   */
   shading: ProductShading;
   onShadingChange: (shading: ProductShading) => void;
   onPoseChange: (pose: ProductPose) => void;
@@ -85,6 +90,10 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     const [ready, setReady] = useState(false);
     const [selected, setSelected] = useState(false);
     const [note, setNote] = useState('');
+    // The colours of a lit mode are worked out off the main thread; until they are in, the picture
+    // keeps the previous mode and a capture waits for them.
+    const preparing = useRef<Promise<void>>(Promise.resolve());
+    const [preparingShading, setPreparingShading] = useState(false);
     const [tool, setTool] = useState<LevelTool>('off');
     const [guide, setGuide] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
     const [guideTurn, setGuideTurn] = useState(0);
@@ -96,9 +105,27 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     }, [initialPose]);
     useEffect(() => {
       shadingRef.current = shading;
-      runtime.current?.renderer.setShading(shading);
-      runtime.current?.draw();
-    }, [shading, ready]);
+      const active = runtime.current;
+      if (!active) return;
+      if (shading === 'baked' || readySurface(shading, mesh)) {
+        preparing.current = Promise.resolve();
+        setPreparingShading(false);
+        active.renderer.setShading(shading);
+        active.draw();
+        return;
+      }
+      let current = true;
+      setPreparingShading(true);
+      preparing.current = prepareProductSurface(shading, mesh).then(() => {
+        if (!current) return;
+        active.renderer.setShading(shading);
+        active.draw();
+        setPreparingShading(false);
+      });
+      return () => {
+        current = false;
+      };
+    }, [shading, ready, mesh]);
 
     useImperativeHandle(
       ref,
@@ -112,6 +139,7 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
         async capture() {
           const active = runtime.current;
           if (!active) throw new Error('입체 미리보기가 준비되지 않았습니다.');
+          await preparing.current;
           return active.capture();
         },
         setPose(pose) {
@@ -553,24 +581,34 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
           <div className={styles.group} aria-label="제품 색 표현">
             {(
               [
-                ['lit', '조명 보정'],
-                ['baked', '원본 색'],
+                [
+                  'mixed',
+                  '혼합(권장)',
+                  '사진에 찍힌 쪽은 사진의 선·버튼 같은 디테일을 살리고, 안 찍힌 쪽은 깨끗한 제품 색에 음영으로 형태를 보여 줘요',
+                ],
+                [
+                  'lit',
+                  '조명 보정',
+                  '사진의 그림자를 걷어 낸 제품 색에 현재 시점의 조명을 입혀요(디테일은 사라져요)',
+                ],
+                ['baked', '원본 색', 'AI가 만든 색을 그대로 보여 줘요(사진의 명암과 추측한 어두운 색 포함)'],
               ] as const
-            ).map(([value, label]) => (
+            ).map(([value, label, title]) => (
               <button
                 key={value}
                 type="button"
                 aria-pressed={shading === value}
-                title={
-                  value === 'lit'
-                    ? '사진의 그림자를 걷어 낸 제품 색에 현재 시점의 조명을 입혀요'
-                    : 'AI가 만든 색을 그대로 보여 줘요(사진의 명암 포함)'
-                }
+                title={title}
                 onClick={() => onShadingChange(value)}
               >
                 {label}
               </button>
             ))}
+            {preparingShading && (
+              <span role="status" className={styles.preparing} data-testid="product3d-shading-busy">
+                색을 계산하고 있어요…
+              </span>
+            )}
           </div>
           <div className={styles.group} aria-label="미리보기 배경">
             {(['checker', 'white', 'black'] as const).map((value) => (
@@ -771,7 +809,9 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
         <p className={styles.hint}>
           드래그로 자유 회전 · 휠/두 손가락으로 확대 · 제품을 클릭한 뒤 위·아래 손잡이를 움직여 기울기를
           바로잡으세요. 손잡이는 좌우 방향키로도 조절할 수 있어요. 자동 수평 맞춤은 제품의 윤곽선까지 읽어요.
-          이전에 저장한 각도는 자동 수평 맞춤을 다시 누르고 저장해야 3D 방에 반영돼요.
+          이전에 저장한 각도는 자동 수평 맞춤을 다시 누르고 저장해야 3D 방에 반영돼요. 안 찍힌 면(옆·뒤)의
+          모양은 AI의 추측이라 실제와 달라요. 색 표현을 혼합으로 두면 칙칙한 색과 뭉개짐은 줄지만 정확해지지는
+          않아요. 더 정확하게 하려면 다른 각도의 사진을 추가로 올려 주세요.
         </p>
         <output hidden data-testid="product3d-pose" data-pose={JSON.stringify(pose)}>
           {JSON.stringify(pose)}

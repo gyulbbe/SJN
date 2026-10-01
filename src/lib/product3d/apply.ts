@@ -79,8 +79,8 @@ export async function prepareProductReplacement(
       pose: structuredClone(result.pose),
       modelId: result.modelId,
       modelRevision: result.modelRevision,
-      // Only record the new mode; older saves without the field keep opening as the model's RGB.
-      ...(result.shading === 'lit' ? { shading: 'lit' as const } : {}),
+      // 'baked' is the absence of the field, so it is written exactly as before; only a lit mode is recorded.
+      ...(result.shading === 'baked' ? {} : { shading: result.shading }),
     },
   };
 }
