@@ -37,13 +37,21 @@ describe('estimateSilhouetteTilt: the screen roll of the outline from its straig
     }
   });
 
-  it('finds the clockwise turn of every shape from −40° to 40° within a degree', () => {
+  it('finds the clockwise turn of every shape from −43° to 43° within a degree', () => {
     for (const [name, shape] of [
       ['toilet', toilet()],
       ['basin', basin()],
       ['bath', bath()],
     ] as const)
-      for (let degrees = -40; degrees <= 40; degrees += 5) {
+      for (const degrees of [
+        -43,
+        -42,
+        -41,
+        ...Array.from({ length: 17 }, (_, i) => -40 + i * 5),
+        41,
+        42,
+        43,
+      ]) {
         const tilt = read(shape, degrees);
         expect(tilt, `${name} ${degrees}°`).toBeDefined();
         expect(Math.abs(tilt!.degrees - degrees), `${name} ${degrees}°`).toBeLessThan(1);
@@ -58,7 +66,7 @@ describe('estimateSilhouetteTilt: the screen roll of the outline from its straig
     expect(read(basin(), -15)!.degrees).toBeLessThan(-14);
   });
 
-  it('never answers beyond ±44°: a half-turn is ambiguous, not a tilt', () => {
+  it('never gives a wrong answer near the limit: past ±44° it stays silent (a half-turn is ambiguous)', () => {
     for (const degrees of [-45, 45, 135]) expect(read(basin(), degrees), `${degrees}°`).toBeUndefined();
   });
 
