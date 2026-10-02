@@ -549,6 +549,103 @@ test('실제 메시 재생: 360° 편집기도 작은 사진이면 입체화 전
   await expect(viewer.getByTestId('product3d-small-photo')).toHaveCount(0);
 });
 
+test('실제 메시 재생: 제품 맞추기(크기 입력 안내·켜고 끄기·실행 취소·저장·재열기·크기를 고치면 따라감)', async ({
+  page,
+}) => {
+  const { form: create, name } = await openForm(page);
+  // The depth is what the front-to-back proportion is fitted to: a toilet left at the tile default 9 mm
+  // is asked to have one, and the hint settles once the three sizes are real.
+  const hint = create.getByTestId('material-depth-hint');
+  await expect(hint).toContainText('깊이를 꼭 입력해 주세요');
+  await create.getByLabel('가로 (mm)').fill('360');
+  await create.getByLabel('높이 (mm)').fill('780');
+  await create.getByLabel('깊이 (mm)').fill('700');
+  await expect(hint).not.toContainText('꼭 입력');
+  await expect(hint).toContainText('앞뒤 비율');
+  await create.getByLabel('카테고리', { exact: true }).selectOption('tile');
+  await expect(hint).toHaveCount(0);
+  await create.getByLabel('카테고리', { exact: true }).selectOption('toilet');
+  let dialog = await openViewer(create);
+  await reconstruct(page, dialog);
+  const size = dialog.getByTestId('product3d-fit-size');
+  const mirror = dialog.getByTestId('product3d-fit-mirror');
+  const note = dialog.getByTestId('product3d-fit-note');
+  const undo = dialog.getByTestId('product3d-fit-undo');
+  const redo = dialog.getByTestId('product3d-fit-redo');
+  await expect(size).toBeEnabled();
+  // A size the photo disagrees with by a lot is asked about, not applied on its own.
+  const ask = dialog.getByTestId('product3d-fit-ask');
+  if (await ask.count()) {
+    await expect(size).not.toBeChecked();
+    await dialog.getByTestId('product3d-fit-ask-yes').click();
+  }
+  await expect(size).toBeChecked();
+  await expect(note).toContainText('가로 360 × 깊이 700 × 높이 780mm에 맞춰');
+  // Off, undo, redo: each one a step of its own, and the picture follows.
+  const before = await pose(dialog);
+  await size.uncheck();
+  await expect(size).not.toBeChecked();
+  await expect(note).toContainText('아직 적용하지 않았어요');
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  await expect(size).toBeChecked();
+  await expect(redo).toBeEnabled();
+  await redo.click();
+  await expect(size).not.toBeChecked();
+  await undo.click();
+  await expect(size).toBeChecked();
+  // The product keeps the pose it had while the parts are switched.
+  const after = await pose(dialog);
+  expect(after.objectQuaternion).toEqual(before.objectQuaternion);
+  // The mirror evening-out: on when a plane was found, else it says it left the shape alone.
+  const wasMirror = await mirror.isChecked();
+  await mirror.click();
+  await expect(note).toBeVisible();
+  // Either it went on (a plane was found) or it says the shape was left alone and stays off.
+  await expect
+    .poll(
+      async () =>
+        (await mirror.isChecked()) !== wasMirror ||
+        /대칭인 면을 찾지 못해/.test((await note.textContent()) ?? ''),
+    )
+    .toBe(true);
+  const hasMirror = await mirror.isChecked();
+  await dialog.screenshot({ path: path.join(output, 'fit-panel.png') });
+  await updateSelectedAndClose(dialog);
+  await saveForm(create);
+  const [saved] = await versions(page, name);
+  expect(saved.views[0].product3d?.fit?.size).toBe(true);
+  expect(saved.views[0].product3d?.fit?.upright).toHaveLength(4);
+  // Reopened as saved, with the same parts on and no inference.
+  await page.reload();
+  await page
+    .locator('article')
+    .filter({ hasText: name })
+    .getByRole('button', { name: '정보 수정', exact: true })
+    .click();
+  const form = page.getByRole('dialog', { name: '자재 수정', exact: true });
+  dialog = await openViewer(form, '정면', true);
+  await expect(dialog.getByTestId('product3d-canvas')).toBeVisible();
+  await expect(dialog.getByTestId('product3d-fit-size')).toBeChecked();
+  await expect(dialog.getByTestId('product3d-fit-mirror')).toHaveJSProperty('checked', hasMirror);
+  await expect(dialog.getByTestId('product3d-fit-note')).toContainText('깊이 700');
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
+  // The material's size corrected later: the reopened editor follows it, the saved mesh is untouched.
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  await form.getByLabel('깊이 (mm)').fill('900');
+  dialog = await openViewer(form, '정면', true);
+  await expect(dialog.getByTestId('product3d-fit-size')).toBeChecked();
+  await expect(dialog.getByTestId('product3d-fit-note')).toContainText('깊이 900');
+  // A size that is not a size turns the part off and says why.
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  await form.getByLabel('깊이 (mm)').fill('9');
+  dialog = await openViewer(form, '정면', true);
+  await expect(dialog.getByTestId('product3d-fit-size')).toBeDisabled();
+  await expect(dialog.getByTestId('product3d-fit-note')).toContainText(
+    '깊이가 9mm(타일 기본값)이면 맞추지 않아요',
+  );
+});
+
 test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자세 재진입 무추론', async ({ page }) => {
   const { form: create, name } = await openForm(page, 2);
   await saveForm(create);

@@ -81,6 +81,8 @@ export async function prepareProductReplacement(
       modelRevision: result.modelRevision,
       // 'baked' is the absence of the field, so it is written exactly as before; only a lit mode is recorded.
       ...(result.shading === 'baked' ? {} : { shading: result.shading }),
+      // Only a fit that was asked for is recorded; older saves carry none and the mesh stays as made.
+      ...(result.fit ? { fit: structuredClone(result.fit) } : {}),
     },
   };
 }

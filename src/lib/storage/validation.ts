@@ -806,6 +806,15 @@ export const product3dReferenceSchema = z
     modelId: z.string().min(1).max(300),
     modelRevision: z.string().min(1).max(300),
     shading: z.enum(['mixed', 'lit', 'baked']).optional(),
+    fit: z
+      .object({
+        upright: quaternionSchema,
+        front: number.min(-360).max(360),
+        mirror: number.min(-100).max(100).optional(),
+        size: z.boolean(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const materialInputSchema = z

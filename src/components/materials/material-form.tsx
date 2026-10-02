@@ -34,6 +34,7 @@ import { useAccess } from '@/components/app-provider';
 import { useFileDrop } from '@/components/use-file-drop';
 import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
 import { readPhotoSizes, smallPhotoNotice } from '@/lib/image-size-hint';
+import { validProductSize } from '@/lib/product3d/fit';
 import { useSharedCatalogAdmin } from './shared-access';
 import styles from './materials.module.css';
 import CatalogSelect from './catalog-select';
@@ -606,6 +607,12 @@ export function MaterialForm({
     }
   };
 
+  // A product's depth is what its 3D model's front-to-back proportion is fitted to (see product3d/fit.ts).
+  const sizeMissing = !validProductSize({
+    widthMm: form.widthMm,
+    depthMm: form.depthMm,
+    heightMm: form.heightMm,
+  });
   const uploadInput = (target: 'texture' | 'view', label: string) => (
     <label className={styles.uploadButton}>
       {label}
@@ -737,9 +744,23 @@ export function MaterialForm({
                   step=".1"
                   required
                   value={form.depthMm}
+                  aria-describedby={form.category !== 'tile' ? 'material-depth-hint' : undefined}
                   onChange={(event) => set('depthMm', Number(event.target.value))}
                 />
               </label>
+              {form.category !== 'tile' && (
+                <small
+                  id="material-depth-hint"
+                  className={sizeMissing ? styles.error : 'muted'}
+                  style={{ gridColumn: '1 / -1' }}
+                  role="status"
+                  data-testid="material-depth-hint"
+                >
+                  {sizeMissing
+                    ? '깊이를 꼭 입력해 주세요(10~5000mm). 9mm는 타일 기본값이라 입체 제품의 앞뒤 비율에 쓰지 않아요.'
+                    : '360° 입체 제품의 앞뒤 비율을 가로·깊이·높이에 맞춰 보여 줘요.'}
+                </small>
+              )}
             </div>
             <label className="field">
               설명
@@ -1200,6 +1221,8 @@ export function MaterialForm({
             setProductEditor(undefined);
           }}
           canApply={writable && (form.scope !== 'shared' || isAdmin)}
+          size={{ widthMm: form.widthMm, depthMm: form.depthMm, heightMm: form.heightMm }}
+          category={form.category}
           onClose={() => setProductEditor(undefined)}
         />
       )}

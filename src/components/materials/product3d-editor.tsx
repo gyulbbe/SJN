@@ -7,7 +7,12 @@ import { isProductDirection, nextProductDirection, type ProductDirection } from 
 import { directionMismatch, poseForDirection } from '@/lib/product3d/direction-pose';
 import { AssetImage } from './asset-image';
 import { AngleNameSelect } from './angle-name-input';
-import type { Product3dReference, ProductPose, ProductShading } from '@/lib/product3d/state-types';
+import type {
+  Product3dReference,
+  ProductMesh,
+  ProductPose,
+  ProductShading,
+} from '@/lib/product3d/state-types';
 import type {
   Product3dApplication,
   Product3dProgress,
@@ -16,7 +21,19 @@ import type {
 } from '@/lib/product3d/types';
 import type { Product3dClient } from '@/lib/product3d/client';
 import { decodeProductMesh } from '@/lib/product3d/codec';
-import { prepareProductSurface } from '@/lib/product3d/surface';
+import { prepareFittedMesh, prepareProductFit, prepareProductSurface } from '@/lib/product3d/surface';
+import {
+  buildFit,
+  fittedPhotoDirection,
+  sizeMismatch,
+  startingFit,
+  SIZE_MISMATCH,
+  validProductSize,
+  type FitEstimate,
+  type ProductFit,
+  type ProductSize,
+} from '@/lib/product3d/fit';
+import type { MaterialCategory } from '@/lib/types';
 import { readPhotoSize, smallPhotoNotice } from '@/lib/image-size-hint';
 import { resolveProductInput } from '@/lib/product3d/source';
 import { createDefaultPose, sourceViewAngle } from '@/lib/product3d/pose';
@@ -26,6 +43,9 @@ import styles from './product3d-editor.module.css';
 import { PRODUCT3D_LOAD, product3dLoadEvent } from '@/lib/ai-progress';
 import { ModelLoadingProgress, useModelLoadingProgress } from '@/components/model-loading-progress';
 const seconds = (value: number) => `${(value / 1000).toFixed(2)}초`;
+/** Products that are left-right symmetric: the mirror evening-out starts on for these. */
+const SYMMETRIC_CATEGORIES = new Set<string>(['toilet', 'basin', 'bath', 'vanity']);
+const percent = (share: number) => `${share >= 0 ? '+' : ''}${Math.round(share * 100)}%`;
 /** Beyond this, most of what the viewer shows was not in the photo. */
 const GUESSED_VIEW_DEGREES = 40;
 /** The next photo's name: the first direction not used yet. */
@@ -46,6 +66,8 @@ export function Product3dEditor({
   onApply,
   onClose,
   onRemoveBackground,
+  size,
+  category,
 }: {
   assetId: string;
   inputSourceAssetId?: string;
@@ -60,6 +82,9 @@ export function Product3dEditor({
   onApply: (result: Product3dApplication, mode: 'add' | 'replace', name: string) => Promise<void>;
   onClose: () => void;
   onRemoveBackground: (assetId: string) => void;
+  /** The material's width, depth and height (mm) as typed in the form, for the real-size fit. */
+  size?: ProductSize;
+  category?: MaterialCategory;
 }) {
   const dialog = useRef<HTMLDialogElement>(null),
     viewport = useRef<ProductViewportHandle>(null),
@@ -93,8 +118,20 @@ export function Product3dEditor({
   // New reconstructions start mixed; saved views reopen the way they were saved (older ones unlit).
   const [shading, setShading] = useState<ProductShading>('mixed'),
     [viewAngle, setViewAngle] = useState(0);
+  // How the mesh is fitted to the product (real size, mirror symmetry, front); see product3d/fit.ts.
+  const [fit, setFit] = useState<ProductFit>(),
+    [fitted, setFitted] = useState<{ source: ProductMesh; mesh: ProductMesh }>(),
+    [estimate, setEstimate] = useState<FitEstimate>(),
+    [flip, setFlip] = useState(false),
+    [fitting, setFitting] = useState(false),
+    [fitNote, setFitNote] = useState(''),
+    [fitPast, setFitPast] = useState<(ProductFit | undefined)[]>([]),
+    [fitFuture, setFitFuture] = useState<(ProductFit | undefined)[]>([]),
+    [sizeAsk, setSizeAsk] = useState<ReturnType<typeof sizeMismatch>>();
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
   const selectedView = views[selectedViewIndex];
-  const locked = loading || busy || applying || capturing;
+  const locked = loading || busy || applying || capturing || fitting;
   const latestPose = useRef<ProductPose>(createDefaultPose());
   // The live pose, to compare with the names while the product is turned.
   const [livePose, setLivePose] = useState<ProductPose>(() => createDefaultPose());
@@ -136,6 +173,14 @@ export function Product3dEditor({
     setInput(undefined);
     setSmallPhoto('');
     setResult(undefined);
+    setFit(undefined);
+    setFitted(undefined);
+    setEstimate(undefined);
+    setFlip(false);
+    setFitNote('');
+    setFitPast([]);
+    setFitFuture([]);
+    setSizeAsk(undefined);
     setStored(false);
     setShading(product3d && !blob ? (product3d.shading ?? 'baked') : 'mixed');
     void (async () => {
@@ -167,13 +212,27 @@ export function Product3dEditor({
           if (asset.kind !== 'product-mesh' || asset.sourceAssetId !== product3d.inputAssetId)
             throw new Error('저장된 입체 형상 종류가 올바르지 않아요.');
           const mesh = await decodeProductMesh(asset.blob);
+          // A view saved with a fit draws the fitted mesh (the saved one is left as it was made).
+          const shown = await prepareFittedMesh(mesh, product3d.fit, sizeRef.current);
           // A lit view's colours are worked out off the main thread before the viewer opens.
-          if (product3d.shading) await prepareProductSurface(product3d.shading, mesh);
+          if (product3d.shading) await prepareProductSurface(product3d.shading, shown);
           if (!active) return;
+          if (product3d.fit) {
+            setFit(structuredClone(product3d.fit));
+            setFitted({ source: mesh, mesh: shown });
+            // The saved fit stands in for a search: turning a part off and on again uses its numbers.
+            setEstimate({
+              fit: structuredClone(product3d.fit),
+              symmetric: product3d.fit.mirror !== undefined || product3d.fit.front !== 0,
+              uncertainFront: false,
+            });
+          }
           trackPose(structuredClone(product3d.pose));
           setInitialPose(structuredClone(product3d.pose));
           setFreshModel(false);
-          setViewAngle(sourceViewAngle(product3d.pose));
+          setViewAngle(
+            sourceViewAngle(product3d.pose, product3d.fit ? fittedPhotoDirection(product3d.fit) : undefined),
+          );
           setMeshAssetId(asset.id);
           setStored(true);
           setResult({
@@ -236,19 +295,40 @@ export function Product3dEditor({
         modelLoading.push(product3dLoadEvent(p));
       });
       if (!alive.current || run !== generation.current) return;
-      // The mixed colours (what the photo shows keeps its detail, the rest is clean) take a moment.
-      setProgress({ stage: 'coloring', message: '안 찍힌 면의 색을 정리하고 있어요.' });
-      await prepareProductSurface('mixed', next.mesh);
-      if (!alive.current || run !== generation.current) return;
-      setMeshAssetId(undefined);
       // A single photo cannot tell the camera height, so stand the new model upright first.
       const pose = {
         ...createDefaultPose(),
         objectQuaternion: estimateUprightQuaternion(next.mesh.positions),
       };
+      // Then fit it to the product: where its mirror plane and front are, and the material's real size.
+      setProgress({ stage: 'geometry', message: '제품의 크기와 좌우 대칭을 맞추고 있어요.' });
+      const found = await prepareProductFit(next.mesh, pose.objectQuaternion, {
+        size: sizeRef.current,
+        mirror: true,
+      });
+      if (!alive.current || run !== generation.current) return;
+      // A typed size that the photo disagrees with by a lot is not applied on its own: it is asked.
+      const { fit: first, ask } = startingFit(next.mesh, found, {
+        size: sizeRef.current,
+        symmetricKind: SYMMETRIC_CATEGORIES.has(category ?? ''),
+      });
+      const shown = await prepareFittedMesh(next.mesh, first, sizeRef.current);
+      // The mixed colours (what the photo shows keeps its detail, the rest is clean) take a moment.
+      setProgress({ stage: 'coloring', message: '안 찍힌 면의 색을 정리하고 있어요.' });
+      await prepareProductSurface('mixed', shown);
+      if (!alive.current || run !== generation.current) return;
+      setMeshAssetId(undefined);
+      setEstimate(found);
+      setFit(first);
+      setFitted({ source: next.mesh, mesh: shown });
+      setFlip(false);
+      setFitPast([]);
+      setFitFuture([]);
+      setSizeAsk(ask);
+      setFitNote('');
       trackPose(pose);
       setInitialPose(pose);
-      setViewAngle(sourceViewAngle(pose));
+      setViewAngle(sourceViewAngle(pose, first ? fittedPhotoDirection(first) : undefined));
       setShading('mixed');
       setStored(false);
       setFreshModel(true);
@@ -314,6 +394,7 @@ export function Product3dEditor({
           modelId: result.timings.modelId,
           modelRevision: result.timings.modelRevision,
           shading,
+          ...(fit ? { fit } : {}),
         },
         mode,
         name,
@@ -340,6 +421,91 @@ export function Product3dEditor({
       operation.current = false;
       if (alive.current) setApplying(false);
     }
+  };
+  /** Draws the mesh with `next` as its fit (undefined: as made), keeping the pose the product has now. */
+  const changeFit = async (next: ProductFit | undefined, remember = true) => {
+    if (!result || fitting) return;
+    setFitting(true);
+    setError('');
+    try {
+      const shown = await prepareFittedMesh(result.mesh, next, sizeRef.current);
+      if (shading !== 'baked') await prepareProductSurface(shading, shown);
+      if (!alive.current) return;
+      if (remember) {
+        setFitPast((past) => [...past.slice(-19), fit]);
+        setFitFuture([]);
+      }
+      const pose = viewport.current ? viewport.current.getPose() : latestPose.current;
+      trackPose(pose);
+      setInitialPose(structuredClone(pose));
+      setFit(next);
+      setFitted({ source: result.mesh, mesh: shown });
+      setFreshModel(false);
+      setViewAngle(sourceViewAngle(pose, next ? fittedPhotoDirection(next) : undefined));
+      setViewerKey((key) => key + 1);
+    } catch (reason) {
+      if (alive.current)
+        setError(reason instanceof Error ? reason.message : '제품 맞춤을 적용하지 못했어요.');
+    } finally {
+      if (alive.current) setFitting(false);
+    }
+  };
+  /** The search for the mirror plane and front, once for the pose the product has now. */
+  const search = async (again = false) => {
+    if ((estimate && !again) || !result) return estimate;
+    const found = await prepareProductFit(result.mesh, latestPose.current.objectQuaternion, {
+      size: sizeRef.current,
+      mirror: true,
+    });
+    if (alive.current) setEstimate(found);
+    return found;
+  };
+  const choice = (change: Partial<{ size: boolean; mirror: boolean; flip: boolean }>) => ({
+    size: !!fit?.size,
+    mirror: fit?.mirror !== undefined,
+    flip,
+    ...change,
+  });
+  const setPart = async (change: Partial<{ size: boolean; mirror: boolean }>) => {
+    if (!result || locked) return;
+    setFitNote('');
+    setSizeAsk(undefined);
+    setFitting(true);
+    let found: FitEstimate | undefined;
+    try {
+      // A fit read back from a save has no mirror plane to turn on when it was saved without one: search.
+      found = await search(!!change.mirror && estimate !== undefined && estimate.fit.mirror === undefined);
+    } finally {
+      if (alive.current) setFitting(false);
+    }
+    if (!found || !alive.current) return;
+    if (change.mirror && !found.symmetric) {
+      setFitNote('좌우 대칭인 면을 찾지 못해 형상은 그대로 뒀어요. 앞쪽 방향도 모델 기준 그대로예요.');
+      return;
+    }
+    // A typed size the photo disagrees with by a lot is asked about, not applied.
+    if (change.size && validProductSize(sizeRef.current)) {
+      const measured = sizeMismatch(result.mesh, found.fit, sizeRef.current);
+      if (measured.worst > SIZE_MISMATCH) {
+        setSizeAsk(measured);
+        return;
+      }
+    }
+    await changeFit(buildFit(found, choice(change)));
+  };
+  const undoFit = () => {
+    const previous = fitPast.at(-1);
+    if (fitPast.length === 0 || fitting) return;
+    setFitPast(fitPast.slice(0, -1));
+    setFitFuture([fit, ...fitFuture]);
+    void changeFit(previous, false);
+  };
+  const redoFit = () => {
+    if (fitFuture.length === 0 || fitting) return;
+    const [next, ...rest] = fitFuture;
+    setFitFuture(rest);
+    setFitPast([...fitPast, fit]);
+    void changeFit(next, false);
   };
   const changeView = (index: number) => {
     if (locked || index === selectedViewIndex) return;
@@ -508,14 +674,14 @@ export function Product3dEditor({
               <Product3dViewport
                 key={viewerKey}
                 ref={viewport}
-                mesh={result.mesh}
+                mesh={fitted?.source === result.mesh ? fitted.mesh : result.mesh}
                 initialPose={initialPose}
                 levelOnOpen={freshModel}
                 shading={shading}
                 onShadingChange={setShading}
                 onPoseChange={(pose) => {
                   trackPose(pose);
-                  setViewAngle(sourceViewAngle(pose));
+                  setViewAngle(sourceViewAngle(pose, fit ? fittedPhotoDirection(fit) : undefined));
                 }}
                 onError={setViewerError}
               />
@@ -537,6 +703,96 @@ export function Product3dEditor({
                 </button>
               </div>
             )}
+            <fieldset className={styles.fit} aria-label="제품 맞추기" disabled={fitting || busy || applying}>
+              <legend>제품 맞추기</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  data-testid="product3d-fit-size"
+                  checked={!!fit?.size}
+                  disabled={!validProductSize(size)}
+                  onChange={(event) => void setPart({ size: event.target.checked })}
+                />{' '}
+                실제 크기 맞추기
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  data-testid="product3d-fit-mirror"
+                  checked={fit?.mirror !== undefined}
+                  onChange={(event) => void setPart({ mirror: event.target.checked })}
+                />{' '}
+                좌우 대칭 다듬기
+              </label>
+              <button
+                type="button"
+                className="btn"
+                data-testid="product3d-fit-flip"
+                disabled={!fit || !estimate?.symmetric}
+                onClick={() => {
+                  if (!estimate || !fit) return;
+                  setFlip(!flip);
+                  void changeFit(buildFit(estimate, choice({ flip: !flip })));
+                }}
+              >
+                앞쪽 뒤집기
+              </button>
+              <button
+                type="button"
+                className="btn"
+                data-testid="product3d-fit-undo"
+                disabled={fitPast.length === 0}
+                onClick={undoFit}
+              >
+                맞춤 실행 취소
+              </button>
+              <button
+                type="button"
+                className="btn"
+                data-testid="product3d-fit-redo"
+                disabled={fitFuture.length === 0}
+                onClick={redoFit}
+              >
+                맞춤 다시 실행
+              </button>
+              <p className={styles.note} role="status" data-testid="product3d-fit-note">
+                {fitting
+                  ? '맞추고 있어요…'
+                  : fitNote ||
+                    (validProductSize(size)
+                      ? fit?.size
+                        ? `자재의 가로 ${size.widthMm} × 깊이 ${size.depthMm} × 높이 ${size.heightMm}mm에 맞춰 보여 줘요. 자재 크기를 고치면 다시 열 때 따라가요.`
+                        : `자재 크기(가로 ${size.widthMm} × 깊이 ${size.depthMm} × 높이 ${size.heightMm}mm)는 아직 적용하지 않았어요.`
+                      : '실제 크기를 맞추려면 자재의 가로·깊이·높이(10~5000mm)를 입력해 주세요. 깊이가 9mm(타일 기본값)이면 맞추지 않아요.')}
+                {!fitting && fit && estimate?.symmetric && estimate.uncertainFront && !flip
+                  ? ' 제품의 앞쪽 방향을 확신하지 못했어요. 맞는지 확인하고 틀리면 앞쪽 뒤집기를 눌러 주세요.'
+                  : ''}
+              </p>
+              {sizeAsk && size && (
+                <div role="status" className={styles.error} data-testid="product3d-fit-ask">
+                  <p>
+                    입력한 크기와 사진의 비율이 많이 달라요(깊이 {percent(sizeAsk.depth)}, 가로{' '}
+                    {percent(sizeAsk.width)}, 높이 {percent(sizeAsk.height)}). 크기를 잘못 입력했다면 형상이
+                    망가질 수 있어요. 그래도 맞출까요?
+                  </p>
+                  <button
+                    type="button"
+                    className="btn"
+                    data-testid="product3d-fit-ask-yes"
+                    onClick={() => {
+                      setSizeAsk(undefined);
+                      const found = estimate;
+                      if (found) void changeFit(buildFit(found, choice({ size: true })));
+                    }}
+                  >
+                    그래도 맞추기
+                  </button>
+                  <button type="button" className="btn" onClick={() => setSizeAsk(undefined)}>
+                    맞추지 않기
+                  </button>
+                </div>
+              )}
+            </fieldset>
             {!stored && (
               <dl className={styles.timings}>
                 <div>

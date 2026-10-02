@@ -94,6 +94,35 @@ describe('persisted product3d material data', () => {
       materialInputSchema.safeParse(material(png.id, { ...reference, shading: 'glossy' } as never)).success,
     ).toBe(false);
   });
+  it('accepts the optional fit and keeps older saves without it valid', async () => {
+    const { png, reference } = await setup();
+    const fit = {
+      upright: [0, 0, 0, 1] as [number, number, number, number],
+      front: 38.5,
+      mirror: 0.014,
+      size: true,
+    };
+    // An older save has no fit and reads exactly as before.
+    expect(materialInputSchema.parse(material(png.id, reference)).views[0].product3d).toEqual(reference);
+    expect(
+      materialInputSchema.parse(material(png.id, { ...reference, fit })).views[0].product3d?.fit,
+    ).toEqual(fit);
+    // The mirror plane is optional: a fit may only carry the real size.
+    const sizeOnly = { upright: fit.upright, front: 0, size: true };
+    expect(
+      materialInputSchema.parse(material(png.id, { ...reference, fit: sizeOnly })).views[0].product3d?.fit,
+    ).toEqual(sizeOnly);
+    for (const bad of [
+      { ...fit, extra: 1 },
+      { ...fit, size: 'yes' },
+      { ...fit, front: 400 },
+      { ...fit, upright: [0, 0, 0, 0] },
+      { front: 0, size: true },
+    ])
+      expect(
+        materialInputSchema.safeParse(material(png.id, { ...reference, fit: bad } as never)).success,
+      ).toBe(false);
+  });
   it('collects PNG, mesh and exact input references only once', async () => {
     const { png, input, mesh, reference } = await setup();
     expect(new Set(materialReferences(material(png.id, reference)))).toEqual(

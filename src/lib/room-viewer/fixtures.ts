@@ -29,7 +29,7 @@ import type { AssetRecord, ColorAdjust, FixtureInstance, MaterialVersion, Scene 
 import { decodeProductMesh } from '../product3d/codec';
 import { levelCameraQuaternion, validatePose } from '../product3d/pose';
 import { isLitShading, productSurface } from '../product3d/shading';
-import { prepareProductSurface } from '../product3d/surface';
+import { prepareFittedMesh, prepareProductSurface } from '../product3d/surface';
 import type { Product3dReference, ProductMesh } from '../product3d/state-types';
 import { createTemplateModel, disposeTemplateModel } from '../reconstruction/templates';
 import { reconstructionModelTransform } from '../reconstruction/projection';
@@ -586,7 +586,14 @@ export async function buildViewerFixtures(
         product.add(content);
         if (selected.product3d) {
           if (selected.product3d.version !== 1) throw new Error('지원하지 않는 제품 입체 데이터 버전이에요.');
-          const mesh = await cache.mesh(selected.product3d.meshAssetId);
+          // A view saved with a fit draws the mesh as its product is: the material's real size, the
+          // mirror symmetry and the front (see fit.ts). The saved mesh is left as it was made, so a
+          // material whose size is corrected later follows.
+          const mesh = await prepareFittedMesh(
+            await cache.mesh(selected.product3d.meshAssetId),
+            selected.product3d.fit,
+            { widthMm: material.widthMm, depthMm: material.depthMm, heightMm: material.heightMm },
+          );
           // The colours of a lit view are worked out off the main thread first (and kept per mesh),
           // so the room does not stop for them.
           if (isLitShading(selected.product3d.shading))

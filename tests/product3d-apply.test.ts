@@ -117,6 +117,23 @@ describe('360 product photo application', () => {
     expect(mixed.product3d.shading).toBe('mixed');
   });
 
+  it('records the fit only when there is one, so older and unfitted saves look identical', async () => {
+    const { assets } = repository();
+    const plain = await prepareProductReplacement(application(), assets, 'floor');
+    expect(plain.product3d).not.toHaveProperty('fit');
+    const fit = {
+      upright: [0, 0, 0, 1] as [number, number, number, number],
+      front: 30,
+      mirror: 0.02,
+      size: true,
+    };
+    const fitted = await prepareProductReplacement({ ...application(), fit }, assets, 'floor');
+    expect(fitted.product3d.fit).toEqual(fit);
+    // A copy: changing the editor's fit afterwards does not change what was saved.
+    fit.front = 90;
+    expect(fitted.product3d.fit?.front).toBe(30);
+  });
+
   it('retries a failed PNG write using the successfully staged input and mesh without duplicate writes', async () => {
     const result = application();
     const { assets, records, put } = repository();

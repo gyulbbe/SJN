@@ -1,4 +1,5 @@
 import { estimateAlbedo } from './albedo';
+import { fittedFrom, fittedNormals } from './fit';
 import { mixedSurface } from './mixed-color';
 import { shadingNormals } from './mesh-cleanup';
 import type { ProductMesh, ProductShading } from './state-types';
@@ -32,6 +33,17 @@ export function keepSurface(mode: ProductShading, mesh: ProductMesh, surface: Pr
 export function productSurface(mode: ProductShading, mesh: ProductMesh): ProductSurface {
   const modes = computed.get(mesh) ?? {};
   computed.set(mesh, modes);
+  const from = fittedFrom(mesh);
+  // A fitted mesh has the vertices, colours and triangles of the mesh it was made from, only moved:
+  // its colours are that mesh's, its normals are turned and stretched with it.
+  if (from)
+    return (modes[mode] ??= (() => {
+      const base = productSurface(mode, from.source);
+      return {
+        colors: base.colors,
+        ...(base.normals ? { normals: fittedNormals(base.normals, from.normalMatrix) } : {}),
+      };
+    })());
   return (modes[mode] ??=
     mode === 'baked'
       ? { colors: mesh.colors }

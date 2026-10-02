@@ -531,6 +531,33 @@ describe('room viewer immutable physical fixtures', () => {
     expect(kinds).toEqual(new Set(['MeshStandardMaterial']));
     result.dispose();
   });
+  it('draws a saved view with a fit in the proportions of the material\u2019s size, and follows a corrected size', async () => {
+    const asset = await makeProductMeshAsset(cube(), 'mesh', 'input');
+    const depthOf = async (depthMm: number, fit: Product3dReference['fit']) => {
+      const f = fixture();
+      const m = material();
+      m.depthMm = depthMm;
+      m.views[0].product3d = { ...reference(), ...(fit ? { fit } : {}) };
+      const result = await buildViewerFixtures(scene([f]), { m }, async () => asset);
+      const box = new Box3().setFromObject(result.group, true);
+      result.dispose();
+      return box.max.z - box.min.z;
+    };
+    const fit = { upright: [0, 0, 0, 1] as [number, number, number, number], front: 0, size: true };
+    // The envelope is 400 wide × 800 high; the box is 1 deep, 2 wide, 4 tall: a quarter as deep as it is tall.
+    const plain = await depthOf(400, undefined);
+    // With the size (400 wide × 800 high × 400 deep) it is half as deep as it is tall, and 800 deep makes it as deep.
+    const half = await depthOf(400, fit);
+    const full = await depthOf(800, fit);
+    expect(half / plain).toBeGreaterThan(1.9);
+    expect(half / plain).toBeLessThan(2.1);
+    expect(full / half).toBeGreaterThan(1.9);
+    expect(full / half).toBeLessThan(2.1);
+    // A size that is not a size (the tile default 9 mm) leaves the mesh as it was.
+    expect(await depthOf(9, fit)).toBeCloseTo(plain, 4);
+    // A fit that asks nothing of the size leaves it, too.
+    expect(await depthOf(800, { ...fit, size: false })).toBeCloseTo(plain, 4);
+  });
   it('stands a saved mesh on its wall by the way its pose faces: side against the wall for 정면, back against it for 오른쪽', async () => {
     const build = async (face: 'left' | 'right' | 'back', name: ProductDirection) => {
       const f = fixture();

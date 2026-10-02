@@ -77,13 +77,14 @@ export function createDefaultPose(): ProductPose {
 }
 
 /**
- * Degrees between the current view and the photographed side (+x of the product). Past about
+ * Degrees between the current view and the photographed side (+x of the product, or `photo`, the
+ * direction the photo was taken from in the mesh's own frame once a fit has turned it). Past about
  * 40° the viewer mostly shows surfaces TripoSR had to guess.
  */
-export function sourceViewAngle(pose: ProductPose): number {
+export function sourceViewAngle(pose: ProductPose, photo: [number, number, number] = [1, 0, 0]): number {
   const valid = validatePose(pose);
   const toCamera = new Vector3(0, 0, 1).applyQuaternion(new Quaternion(...valid.cameraQuaternion));
-  const photographed = new Vector3(1, 0, 0).applyQuaternion(new Quaternion(...valid.objectQuaternion));
+  const photographed = new Vector3(...photo).applyQuaternion(new Quaternion(...valid.objectQuaternion));
   return (toCamera.angleTo(photographed) * 180) / Math.PI;
 }
 

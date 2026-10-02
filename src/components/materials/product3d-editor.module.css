@@ -327,3 +327,27 @@
     max-width: none;
   }
 }
+.fit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 12px 0;
+  padding: 10px 14px;
+  border: 1px solid #d3dfd8;
+  border-radius: 10px;
+}
+.fit legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 650;
+  color: #426154;
+}
+.fit label {
+  font-size: 14px;
+}
+.fit .note,
+.fit > div {
+  flex-basis: 100%;
+  margin: 0;
+}

@@ -1,4 +1,5 @@
 import type { ProductMesh, ProductPose, ProductShading } from './state-types';
+import type { ProductFit } from './fit';
 import type { Product3dModelPart } from './model';
 export interface Product3dProgress {
   stage:
@@ -55,5 +56,7 @@ export interface Product3dApplication {
   modelId: string;
   modelRevision: string;
   shading: ProductShading;
+  /** How the mesh was fitted to the product when this angle was captured (see fit.ts). */
+  fit?: ProductFit;
   capture: { blob: Blob; width: number; height: number; anchor: { x: number; y: number } };
 }
