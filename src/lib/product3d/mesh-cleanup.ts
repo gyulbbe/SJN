@@ -175,6 +175,244 @@ export function taubinSmooth(
   return current;
 }
 
+/** Mean edge length of a mesh. */
+export function meanEdgeLength(positions: Float32Array, indices: Uint32Array): number {
+  let sum = 0;
+  for (let t = 0; t < indices.length; t += 3)
+    for (let k = 0; k < 3; k++) {
+      const a = indices[t + k] * 3,
+        b = indices[t + ((k + 1) % 3)] * 3;
+      sum += Math.hypot(
+        positions[a] - positions[b],
+        positions[a + 1] - positions[b + 1],
+        positions[a + 2] - positions[b + 2],
+      );
+    }
+  return indices.length ? sum / indices.length : 0;
+}
+
+/**
+ * Edge-keeping smoothing by bilateral normal filtering (after Zheng et al., 2011): every face's normal
+ * becomes the average of the normals of the faces around it, each counting by its area and by how
+ * alike its normal is (`sharpness`, the normal difference where its weight falls to 60%), so a flat
+ * patch with a hammered pattern is made flat and a crease or a rim, whose faces differ by more than
+ * that, is not averaged across. The vertices then move to fit the filtered normals. Taubin smoothing
+ * rounds every edge as it flattens; this runs after it to take out the pattern it leaves while the
+ * edges stay.
+ */
+export function bilateralSmooth(
+  positions: Float32Array,
+  indices: Uint32Array,
+  { normalRounds = 6, fitRounds = 20, sharpness = 0.35 } = {},
+): Float32Array {
+  const triangles = indices.length / 3;
+  const vertices = positions.length / 3;
+  // Faces around each vertex (compressed rows).
+  const start = new Uint32Array(vertices + 1);
+  for (let t = 0; t < indices.length; t++) start[indices[t] + 1]++;
+  for (let v = 0; v < vertices; v++) start[v + 1] += start[v];
+  const faces = new Uint32Array(indices.length);
+  const fill = start.slice(0, vertices);
+  for (let t = 0; t < indices.length; t++) faces[fill[indices[t]]++] = Math.floor(t / 3);
+  const current = new Float32Array(positions);
+  const centre = new Float32Array(triangles * 3);
+  const normal = new Float32Array(triangles * 3);
+  const area = new Float32Array(triangles);
+  const measure = () => {
+    for (let t = 0; t < triangles; t++) {
+      const a = indices[t * 3] * 3,
+        b = indices[t * 3 + 1] * 3,
+        c = indices[t * 3 + 2] * 3;
+      const ux = current[b] - current[a],
+        uy = current[b + 1] - current[a + 1],
+        uz = current[b + 2] - current[a + 2];
+      const vx = current[c] - current[a],
+        vy = current[c + 1] - current[a + 1],
+        vz = current[c + 2] - current[a + 2];
+      const nx = uy * vz - uz * vy,
+        ny = uz * vx - ux * vz,
+        nz = ux * vy - uy * vx;
+      const length = Math.hypot(nx, ny, nz);
+      area[t] = length / 2;
+      normal[t * 3] = length > 0 ? nx / length : 0;
+      normal[t * 3 + 1] = length > 0 ? ny / length : 0;
+      normal[t * 3 + 2] = length > 0 ? nz / length : 0;
+      centre[t * 3] = (current[a] + current[b] + current[c]) / 3;
+      centre[t * 3 + 1] = (current[a + 1] + current[b + 1] + current[c + 1]) / 3;
+      centre[t * 3 + 2] = (current[a + 2] + current[b + 2] + current[c + 2]) / 3;
+    }
+  };
+  measure();
+  // Spatial scale: the distance between the centres of neighbouring faces.
+  let spread = 0,
+    pairs = 0;
+  for (let t = 0; t < triangles; t += 7) {
+    const v = indices[t * 3];
+    for (let a = start[v]; a < start[v + 1]; a++) {
+      const g = faces[a];
+      if (g === t) continue;
+      spread += Math.hypot(
+        centre[t * 3] - centre[g * 3],
+        centre[t * 3 + 1] - centre[g * 3 + 1],
+        centre[t * 3 + 2] - centre[g * 3 + 2],
+      );
+      pairs++;
+    }
+  }
+  const sigmaSpace = pairs ? spread / pairs : 1;
+  let filtered = new Float32Array(normal),
+    scratch = new Float32Array(normal.length);
+  const seen = new Int32Array(triangles).fill(-1);
+  for (let round = 0; round < normalRounds; round++) {
+    for (let t = 0; t < triangles; t++) {
+      let x = 0,
+        y = 0,
+        z = 0;
+      for (let k = 0; k < 3; k++) {
+        const v = indices[t * 3 + k];
+        for (let a = start[v]; a < start[v + 1]; a++) {
+          const g = faces[a];
+          if (seen[g] === t + round * triangles) continue;
+          seen[g] = t + round * triangles;
+          const dx = normal[g * 3] - filtered[t * 3],
+            dy = normal[g * 3 + 1] - filtered[t * 3 + 1],
+            dz = normal[g * 3 + 2] - filtered[t * 3 + 2];
+          const sx = centre[g * 3] - centre[t * 3],
+            sy = centre[g * 3 + 1] - centre[t * 3 + 1],
+            sz = centre[g * 3 + 2] - centre[t * 3 + 2];
+          const weight =
+            area[g] *
+            Math.exp(-(sx * sx + sy * sy + sz * sz) / (2 * sigmaSpace * sigmaSpace)) *
+            Math.exp(-(dx * dx + dy * dy + dz * dz) / (2 * sharpness * sharpness));
+          x += weight * normal[g * 3];
+          y += weight * normal[g * 3 + 1];
+          z += weight * normal[g * 3 + 2];
+        }
+      }
+      const length = Math.hypot(x, y, z) || 1;
+      scratch[t * 3] = x / length;
+      scratch[t * 3 + 1] = y / length;
+      scratch[t * 3 + 2] = z / length;
+    }
+    [filtered, scratch] = [scratch, filtered];
+  }
+  // Move each vertex to the planes the filtered normals ask for, over its faces.
+  const move = new Float32Array(positions.length);
+  for (let round = 0; round < fitRounds; round++) {
+    for (let v = 0; v < vertices; v++) {
+      const count = start[v + 1] - start[v];
+      let x = 0,
+        y = 0,
+        z = 0;
+      for (let a = start[v]; a < start[v + 1]; a++) {
+        const g = faces[a];
+        const nx = filtered[g * 3],
+          ny = filtered[g * 3 + 1],
+          nz = filtered[g * 3 + 2];
+        const gap =
+          nx * (centre[g * 3] - current[v * 3]) +
+          ny * (centre[g * 3 + 1] - current[v * 3 + 1]) +
+          nz * (centre[g * 3 + 2] - current[v * 3 + 2]);
+        x += nx * gap;
+        y += ny * gap;
+        z += nz * gap;
+      }
+      move[v * 3] = count ? x / count : 0;
+      move[v * 3 + 1] = count ? y / count : 0;
+      move[v * 3 + 2] = count ? z / count : 0;
+    }
+    for (let i = 0; i < current.length; i++) current[i] += move[i];
+    measure();
+  }
+  return current;
+}
+
+/**
+ * How bumpy the surface is at the scale of two rings: the mean height of a vertex above the average
+ * of the vertices around it, along the smoothed normal, in mean edge lengths.
+ */
+export function bumpiness(positions: Float32Array, indices: Uint32Array): number {
+  const vertices = positions.length / 3;
+  const { offsets, list } = neighbours(vertices, indices);
+  const normals = shadingNormals(positions, indices, { iterations: 8 });
+  const edge = meanEdgeLength(positions, indices) || 1;
+  const stamp = new Int32Array(vertices).fill(-1);
+  let sum = 0,
+    counted = 0;
+  for (let v = 0; v < vertices; v++) {
+    let x = 0,
+      y = 0,
+      z = 0,
+      n = 0;
+    stamp[v] = v;
+    for (let a = offsets[v]; a < offsets[v + 1]; a++) {
+      const u = list[a];
+      for (let b = offsets[u]; b < offsets[u + 1]; b++) {
+        const w = list[b];
+        if (stamp[w] === v) continue;
+        stamp[w] = v;
+        x += positions[w * 3];
+        y += positions[w * 3 + 1];
+        z += positions[w * 3 + 2];
+        n++;
+      }
+    }
+    if (!n) continue;
+    sum += Math.abs(
+      (x / n - positions[v * 3]) * normals[v * 3] +
+        (y / n - positions[v * 3 + 1]) * normals[v * 3 + 1] +
+        (z / n - positions[v * 3 + 2]) * normals[v * 3 + 2],
+    );
+    counted++;
+  }
+  return counted ? sum / counted / edge : 0;
+}
+
+/** Vertices on an edge where the two faces meet at more than `degrees` (a crease, a rim, a seam). */
+export function sharpVertexCount(positions: Float32Array, indices: Uint32Array, degrees = 40): number {
+  const triangles = indices.length / 3;
+  const normals = new Float32Array(triangles * 3);
+  for (let t = 0; t < triangles; t++) {
+    const [a, b, c] = [indices[t * 3] * 3, indices[t * 3 + 1] * 3, indices[t * 3 + 2] * 3];
+    const ux = positions[b] - positions[a],
+      uy = positions[b + 1] - positions[a + 1],
+      uz = positions[b + 2] - positions[a + 2];
+    const vx = positions[c] - positions[a],
+      vy = positions[c + 1] - positions[a + 1],
+      vz = positions[c + 2] - positions[a + 2];
+    const nx = uy * vz - uz * vy,
+      ny = uz * vx - ux * vz,
+      nz = ux * vy - uy * vx;
+    const length = Math.hypot(nx, ny, nz) || 1;
+    normals[t * 3] = nx / length;
+    normals[t * 3 + 1] = ny / length;
+    normals[t * 3 + 2] = nz / length;
+  }
+  const vertices = positions.length / 3;
+  const first = new Map<number, number>();
+  const sharp = new Uint8Array(vertices);
+  const limit = Math.cos((degrees * Math.PI) / 180);
+  for (let t = 0; t < triangles; t++)
+    for (let k = 0; k < 3; k++) {
+      const a = indices[t * 3 + k],
+        b = indices[t * 3 + ((k + 1) % 3)];
+      const key = a < b ? a * vertices + b : b * vertices + a;
+      const other = first.get(key);
+      if (other === undefined) {
+        first.set(key, t);
+        continue;
+      }
+      const dot =
+        normals[t * 3] * normals[other * 3] +
+        normals[t * 3 + 1] * normals[other * 3 + 1] +
+        normals[t * 3 + 2] * normals[other * 3 + 2];
+      if (dot < limit) sharp[a] = sharp[b] = 1;
+    }
+  let count = 0;
+  for (const s of sharp) count += s;
+  return count;
+}
+
 /** Mean distance from each vertex to its neighbour average, relative to the mean edge length. */
 export function surfaceRoughness(positions: Float32Array, indices: Uint32Array): number {
   const vertices = positions.length / 3;

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bilateralSmooth,
+  bumpiness,
+  meanEdgeLength,
+  sharpVertexCount,
   removeSmallPieces,
   meshVolume,
   shadingNormals,
@@ -96,5 +100,102 @@ describe('product3d mesh cleanup', () => {
     };
     expect(spread(results[0])).toBeLessThan(spread(results[1]) * 0.5);
     expect(spread(results[2])).toBeLessThan(spread(results[1]) * 0.5);
+  });
+
+  describe('bilateralSmooth: flat faces are flattened, edges stay', () => {
+    /** A plate with a hammered pattern and a 0.2 high step across the middle, `cells` × `cells` squares. */
+    function plate(cells = 60, spacing = 0.02, noise = 0.004) {
+      let seed = 5;
+      const random = () => {
+        seed = (seed * 1664525 + 1013904223) % 4294967296;
+        return seed / 4294967296;
+      };
+      const positions: number[] = [];
+      const indices: number[] = [];
+      for (let j = 0; j <= cells; j++)
+        for (let i = 0; i <= cells; i++) {
+          const x = (i - cells / 2) * spacing;
+          positions.push(x, (j - cells / 2) * spacing, (x > 0 ? 0.2 : 0) + (random() * 2 - 1) * noise);
+        }
+      for (let j = 0; j < cells; j++)
+        for (let i = 0; i < cells; i++) {
+          const a = j * (cells + 1) + i,
+            b = a + 1,
+            c = a + cells + 1,
+            d = c + 1;
+          indices.push(a, b, c, b, d, c);
+        }
+      return { positions: new Float32Array(positions), indices: new Uint32Array(indices), cells };
+    }
+    const side = (positions: Float32Array, cells: number, left: boolean) => {
+      let sum = 0,
+        count = 0;
+      for (let j = 8; j <= cells - 8; j++)
+        for (let i = left ? 8 : cells / 2 + 8; i <= (left ? cells / 2 - 8 : cells - 8); i++) {
+          sum += positions[(j * (cells + 1) + i) * 3 + 2];
+          count++;
+        }
+      return sum / count;
+    };
+
+    it('takes the pattern off a flat patch and keeps the step between two levels', () => {
+      const { positions, indices, cells } = plate();
+      const smooth = bilateralSmooth(positions, indices);
+      // (The step itself counts as a bump, so the whole plate gets less bumpy by less than each level does.)
+      expect(bumpiness(smooth, indices)).toBeLessThan(bumpiness(positions, indices) * 0.85);
+      // The step is as high as it was (a mean of the two levels well away from the edge).
+      const step = side(smooth, cells, false) - side(smooth, cells, true);
+      expect(step).toBeGreaterThan(0.2 * 0.9);
+      expect(step).toBeLessThan(0.2 * 1.1);
+      // Each level is flatter than before.
+      const spread = (p: Float32Array, left: boolean) => {
+        const mean = side(p, cells, left);
+        let sum = 0,
+          n = 0;
+        for (let j = 8; j <= cells - 8; j++)
+          for (let i = left ? 8 : cells / 2 + 8; i <= (left ? cells / 2 - 8 : cells - 8); i++) {
+            sum += (p[(j * (cells + 1) + i) * 3 + 2] - mean) ** 2;
+            n++;
+          }
+        return Math.sqrt(sum / n);
+      };
+      expect(spread(smooth, true)).toBeLessThan(spread(positions, true) * 0.6);
+      expect(spread(smooth, false)).toBeLessThan(spread(positions, false) * 0.6);
+    });
+
+    it('keeps the creases that Taubin smoothing rounds off', () => {
+      const { positions, indices } = plate();
+      const edges = sharpVertexCount(positions, indices, 60);
+      expect(edges).toBeGreaterThan(50);
+      expect(sharpVertexCount(bilateralSmooth(positions, indices), indices, 60)).toBeGreaterThanOrEqual(
+        edges * 0.9,
+      );
+      // Taubin (the earlier smoothing) is no help: it rounds the step off.
+      const rounded = taubinSmooth(positions, indices, { iterations: 12 });
+      expect(sharpVertexCount(rounded, indices, 60)).toBeLessThan(edges * 0.9);
+    });
+
+    it('keeps the volume of a rounded body to 5% and leaves a clean surface as it is', () => {
+      const sphere = icosphere(4);
+      const bumpy = sphere.positions.map((n, i) => n * (1 + 0.01 * Math.sin(i * 12.9898)));
+      const smooth = bilateralSmooth(bumpy, sphere.indices);
+      const volume = meshVolume(bumpy, sphere.indices);
+      expect(Math.abs(meshVolume(smooth, sphere.indices) - volume) / volume).toBeLessThan(0.05);
+      const clean = bilateralSmooth(sphere.positions, sphere.indices);
+      let moved = 0;
+      for (let i = 0; i < clean.length; i++)
+        moved = Math.max(moved, Math.abs(clean[i] - sphere.positions[i]));
+      expect(moved).toBeLessThan(0.02);
+    });
+
+    it('measures edges, bumps and size on a flat grid', () => {
+      const flat = plate(30, 0.02, 0);
+      const level = new Float32Array(flat.positions);
+      for (let i = 0; i < level.length; i += 3) level[i + 2] = 0;
+      expect(bumpiness(level, flat.indices)).toBeLessThan(1e-6);
+      expect(sharpVertexCount(level, flat.indices, 40)).toBe(0);
+      expect(meanEdgeLength(level, flat.indices)).toBeGreaterThan(0.02);
+      expect(meanEdgeLength(level, flat.indices)).toBeLessThan(0.03);
+    });
   });
 });

@@ -9,7 +9,7 @@ import {
 } from './model';
 import { defringeAlpha, foregroundBounds, rgbNchw, transposeTokens } from './pixels';
 import { extractMesh, refineMeshSurface, resampleDensity, sampleSurfaceColors } from './geometry';
-import { removeSmallPieces, taubinSmooth } from './mesh-cleanup';
+import { bilateralSmooth, removeSmallPieces, taubinSmooth } from './mesh-cleanup';
 import { MAX_PRODUCT_MESH_BYTES } from './codec';
 import type { Product3dProgress, Product3dReply, Product3dRequest, Product3dTimings } from './types';
 
@@ -288,8 +288,10 @@ async function generate(blob: Blob, progress: (value: Product3dProgress) => void
           }),
       },
     );
-    // Taubin smoothing flattens lumps without shrinking; colours are sampled on the final surface.
-    const positions = taubinSmooth(refined, mesh.indices, { iterations: 4 });
+    // Taubin smoothing flattens lumps without shrinking; the edge-keeping pass then takes out the
+    // pattern it leaves on flat faces while rims and seams stay. Colours are sampled on the final surface.
+    progress({ stage: 'geometry', message: '평평한 면을 펴고 모서리는 살리고 있어요.' });
+    const positions = bilateralSmooth(taubinSmooth(refined, mesh.indices, { iterations: 4 }), mesh.indices);
     const colors = await sampleSurfaceColors(positions, (points) => query(points, 'color'), {
       chunkSize: CHUNK,
       onProgress: (completed, total) =>
