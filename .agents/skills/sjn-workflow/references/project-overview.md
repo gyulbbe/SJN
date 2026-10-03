@@ -90,6 +90,8 @@
 
 근거: [AI 내보내기 UI](../../../../src/components/editor/ai-export.tsx), [입력 시점](../../../../src/lib/ai-export/view.ts), [알림 규칙](../../../../src/lib/ai-export/notices.ts), [FLUX 계약](../../../../src/lib/ai-export/contract.ts), [장면 계약](../../../../src/lib/ai-export/scene-contract.ts), [장면 추출](../../../../src/lib/ai-export/scene.ts), [프롬프트](../../../../src/lib/ai-export/prompt.ts), [서버 경로](../../../../src/app/api/export/photoreal/route.ts), [결과 확인](../../../../src/lib/ai-export/check-server.ts). 상세: [FLUX 변환](../../../../docs/flux-export.md).
 
+변환 창의 "변환 방식"에는 지금 방식(기본)과 실험 A·B(빈 방/회색 자리 합성) 외에 **실험 C · 제품별 다듬기**가 있다(2026-10-03, 기본값 아님, 고른 방식은 `sjn:flux-composite`에 기억). 방은 빈 채로 AI에 한 번 보내고, 저장된 입체 제품·표준 모형은 같은 카메라에서 하나씩 크게 잘라(`RoomViewerRenderer.exportProductCrops`) 별도 라우트 `POST /api/export/photoreal/product`(필드 `image`·`seed`·`product`와 선택 `reference`, enum·숫자·색만)로 사진처럼 다듬은 뒤 BiRefNet 컷아웃을 3D 제품의 접지점·높이에 세워 겹침 0.85 이상일 때만 제자리에 올린다. 안 맞는 제품(요청 실패·컷아웃 실패·모양 달라짐)은 제품별로 3D 렌더로 남기고 이유를 알린다. 한 클릭은 AI 요청 N+1회(제품 N + 빈 방 1)이고 처음 한 번은 윤곽 모델(약 98MB)을 받는다. 근거: [refine](../../../../src/lib/ai-export/refine.ts), [refine-run](../../../../src/lib/ai-export/refine-run.ts), [product-server](../../../../src/lib/ai-export/product-server.ts), [제품별 다듬기 결과](../../../../docs/flux-product-refine-results-20261003.md).
+
 ## 현재 AI 구성
 
 | 역할                                       | 현재 모델·실행 위치                                                         | 근거                                                                                                                                              |
