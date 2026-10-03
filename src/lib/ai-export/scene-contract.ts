@@ -54,8 +54,8 @@ export type FluxFace = (typeof FLUX_FACES)[number];
 export type FluxFinish = (typeof FLUX_FINISHES)[number];
 export type FluxFacing = (typeof FLUX_FACINGS)[number];
 
-const hex = z.string().regex(/^#[0-9a-f]{6}$/);
-const mm = z.number().finite().min(1).max(20000);
+export const fluxHex = z.string().regex(/^#[0-9a-f]{6}$/);
+export const fluxMm = z.number().finite().min(1).max(20000);
 const unit = z.number().finite().min(0).max(1);
 /** [left, top, right, bottom] of image 0, 0–1. */
 const box = z
@@ -66,20 +66,20 @@ export const fluxFixtureSchema = z.strictObject({
   kind: z.enum(FLUX_FIXTURE_KINDS),
   forms: z.array(z.enum(FLUX_FIXTURE_FORMS)).max(4),
   face: z.enum(FLUX_FACES),
-  color: hex,
+  color: fluxHex,
   finish: z.enum(FLUX_FINISHES),
   /** Absent for a standard model, or a photo that names no horizontal direction (위, 아래). */
   facing: z.enum(FLUX_FACINGS).optional(),
   /** Width × height × depth. */
-  sizeMm: z.tuple([mm, mm, mm]),
+  sizeMm: z.tuple([fluxMm, fluxMm, fluxMm]),
   box,
 });
 export const fluxSurfaceSchema = z.strictObject({
   faces: z.array(z.enum(FLUX_FACES)).min(1).max(4),
-  color: hex,
-  tileMm: z.tuple([mm, mm]),
+  color: fluxHex,
+  tileMm: z.tuple([fluxMm, fluxMm]),
   pattern: z.enum(['grid', 'brick']),
-  groutColor: hex,
+  groutColor: fluxHex,
   groutMm: z.number().finite().min(0).max(50),
   finish: z.enum(FLUX_FINISHES),
 });
@@ -88,7 +88,7 @@ export const fluxSurfaceSchema = z.strictObject({
  * front composite and older requests, which show no ceiling.
  */
 export const fluxCeilingSchema = z.strictObject({
-  color: hex,
+  color: fluxHex,
   light: z.enum(['flat-panel']),
 });
 /**

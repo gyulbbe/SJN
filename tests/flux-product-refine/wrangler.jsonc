@@ -1,0 +1,8 @@
+{
+  // A local Worker for the per-product refinement experiment only (see worker.ts). It is not the app.
+  "name": "sjn-flux-product-refine-temp",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "ai": { "binding": "AI" }
+}

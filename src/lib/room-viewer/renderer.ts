@@ -9,6 +9,7 @@ import {
   Mesh,
   NoBlending,
   NoToneMapping,
+  type Object3D,
   OrthographicCamera,
   PCFShadowMap,
   Plane,
@@ -81,6 +82,44 @@ type Prepared = {
   dispose(): void;
 };
 const POLICY = 'room-quarter-turn-world-v1';
+/**
+ * A product's close-up: the camera of the whole frame (`aspect`) narrowed to `window`, [left, top,
+ * right, bottom] of that frame (0–1, y down, may reach outside it). Same direction and perspective,
+ * so the close-up is the same picture as that part of the frame, only with more pixels.
+ */
+export type RoomCropWindow = { aspect: number; window: [number, number, number, number] };
+function narrowProjection(
+  camera: { projectionMatrix: Matrix4; projectionMatrixInverse: Matrix4 },
+  crop: RoomCropWindow,
+) {
+  const [left, top, right, bottom] = crop.window;
+  const nx0 = left * 2 - 1,
+    nx1 = right * 2 - 1,
+    ny0 = 1 - bottom * 2,
+    ny1 = 1 - top * 2;
+  const cx = (nx0 + nx1) / 2,
+    cy = (ny0 + ny1) / 2,
+    hx = (nx1 - nx0) / 2,
+    hy = (ny1 - ny0) / 2;
+  camera.projectionMatrix.premultiply(
+    new Matrix4().set(1 / hx, 0, 0, -cx / hx, 0, 1 / hy, 0, -cy / hy, 0, 0, 1, 0, 0, 0, 0, 1),
+  );
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+}
+/** See RoomViewerRenderer.exportProductCrops. */
+export type RoomProductCrop = {
+  id: string;
+  width: number;
+  height: number;
+  /** The product alone on the backdrop colour, RGBA top-down. */
+  data: Uint8ClampedArray;
+  /** How much of each pixel the product covers (0–255), top-down. */
+  coverage: Uint8Array;
+  /** The close-up's window in the frame (0–1, y down). */
+  window: [number, number, number, number];
+  /** The product's own tight box in the frame (0–1, y down). */
+  box: [number, number, number, number];
+};
 /** The space viewer's backdrop around the room. */
 const VIEWER_BACKGROUND = '#e8e8e4';
 /**
@@ -554,17 +593,25 @@ export class RoomViewerRenderer {
     }
   }
   /** Camera, sizes and photo rectangle for one frame; resizes the targets and the canvas. */
-  private frame(width: number, height: number, view: RoomViewState, mode: RoomViewerMode, canvas = true) {
+  private frame(
+    width: number,
+    height: number,
+    view: RoomViewState,
+    mode: RoomViewerMode,
+    canvas = true,
+    crop?: RoomCropWindow,
+  ) {
     const size = fitOutput(width, height, this.maxOutputEdge);
     const state = normalizeRoomView(view);
     const panelWidth = mode === 'compare' ? size.width / 2 : size.width;
     const camera = createRoomViewCamera(
       this.snapshot!.scene.room!,
-      panelWidth / size.height,
+      crop?.aspect ?? panelWidth / size.height,
       state,
       this.prepared!.bounds,
       this.prepared!.structureBounds,
     );
+    if (crop) narrowProjection(camera, crop);
     this.sourceDepthClip = undefined;
     if (state.sourceCamera && state.projection === 'source-photo') {
       // Decide visible cutaway walls/directional meshes before deriving one shared depth interval.
@@ -750,9 +797,10 @@ export class RoomViewerRenderer {
     mode: RoomViewerMode,
     split: number,
     effects?: PhotoEffects,
+    crop?: RoomCropWindow,
   ): HTMLCanvasElement {
     const prepared = this.prepared!;
-    const frame = this.frame(width, height, view, mode);
+    const frame = this.frame(width, height, view, mode, true, crop);
     if (mode !== 'after') this.paint(prepared.before, this.beforeTarget, frame);
     if (mode !== 'before') this.paint(prepared.after, this.afterTarget, frame);
     this.composite(frame, mode, split, this.beforeTarget.texture, this.afterTarget.texture, effects);
@@ -1214,17 +1262,25 @@ export class RoomViewerRenderer {
     return { width, height, full, shadowed, empty, coverage };
   }
   /** Fixture coverage of an After frame (see coverageMaterial), top-down, one byte per pixel. */
-  private fixtureCoverage(width: number, height: number, view: RoomViewState): Uint8Array {
+  private fixtureCoverage(
+    width: number,
+    height: number,
+    view: RoomViewState,
+    crop?: RoomCropWindow,
+  ): Uint8Array {
     const size = fitOutput(width, height, this.maxOutputEdge);
     const state = normalizeRoomView(view);
     const camera = createRoomViewCamera(
       this.snapshot!.scene.room!,
-      size.width / size.height,
+      crop?.aspect ?? size.width / size.height,
       state,
       this.prepared!.bounds,
       this.prepared!.structureBounds,
     );
-    const rect = roomViewViewport(size.width, size.height, state);
+    if (crop) narrowProjection(camera, crop);
+    const rect = crop
+      ? { x: 0, y: 0, width: size.width, height: size.height }
+      : roomViewViewport(size.width, size.height, state);
     const after = this.prepared!.after;
     after.surfaces.updateView(camera);
     after.fixtures.updateView(camera);
@@ -1282,6 +1338,123 @@ export class RoomViewerRenderer {
       this.renderer.setRenderTarget(previous);
       target.dispose();
     }
+  }
+  /**
+   * One close-up per fixture for the per-product AI refinement: each product alone on the backdrop
+   * colour (no room, no shadow it casts, no contact shade), drawn with the room's own light and
+   * colour pass from the very camera of the `frame`-sized After frame, narrowed to the product's
+   * tight outline plus `margin` (a share of its own size) on every side. `longEdge` is the close-up's
+   * long side in pixels. The room needs a plain backdrop (`setSnapshot({ background })`).
+   */
+  exportProductCrops(
+    view: RoomViewState,
+    options: { frame: { width: number; height: number }; longEdge: number; margin: number },
+  ): RoomProductCrop[] {
+    this.assertOpen();
+    if (!this.snapshot || !this.prepared) throw new Error('공간을 먼저 준비해 주세요.');
+    if (!this.backdrop) throw new Error('제품 확대 그림은 배경색이 있는 공간에서만 만들 수 있어요.');
+    if (this.accumulating) throw new Error('다른 이미지를 만드는 중이에요. 잠시 뒤 다시 시도해 주세요.');
+    const previous = this.lastFrame;
+    const after = this.prepared.after;
+    const state = normalizeRoomView(view);
+    const full = fitOutput(options.frame.width, options.frame.height, this.maxOutputEdge);
+    const aspect = full.width / full.height;
+    const camera = createRoomViewCamera(
+      this.snapshot.scene.room!,
+      aspect,
+      state,
+      this.prepared.bounds,
+      this.prepared.structureBounds,
+    );
+    const rect = roomViewViewport(full.width, full.height, state);
+    after.fixtures.updateView(camera);
+    after.world.updateMatrixWorld(true);
+    // The tight outline of every vertex the view shows, in frame fractions (y down).
+    const point = new Vector3();
+    const outlines = new Map<Object3D, [number, number, number, number]>();
+    const objects = after.fixtures.group.children.filter(
+      (object) => typeof object.userData.fixtureId === 'string',
+    );
+    for (const object of objects) {
+      let left = Infinity,
+        top = Infinity,
+        right = -Infinity,
+        bottom = -Infinity;
+      object.traverseVisible((node) => {
+        const mesh = node as Mesh;
+        const positions = mesh.isMesh ? mesh.geometry.getAttribute('position') : undefined;
+        if (!positions) return;
+        for (let i = 0; i < positions.count; i++) {
+          point.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld).project(camera);
+          if (!Number.isFinite(point.x + point.y) || point.z < -1 || point.z > 1) continue;
+          const x = (rect.x + ((point.x + 1) / 2) * rect.width) / full.width;
+          const y = 1 - (rect.y + ((point.y + 1) / 2) * rect.height) / full.height;
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
+      });
+      if (right > left && bottom > top) outlines.set(object, [left, top, right, bottom]);
+    }
+    const copy = document.createElement('canvas');
+    const context = copy.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('이미지를 만들 수 없습니다.');
+    const surfaces = after.surfaces.group;
+    const surfacesVisible = surfaces.visible;
+    const hidden = new Map<Object3D, boolean>(objects.map((object) => [object, object.visible]));
+    const autoUpdate = this.renderer.shadowMap.autoUpdate;
+    const result: RoomProductCrop[] = [];
+    try {
+      // The room and every other product are out of the picture; the shadow map follows.
+      surfaces.visible = false;
+      after.surfaces.setContacts([]);
+      this.renderer.shadowMap.autoUpdate = true;
+      for (const [object, box] of outlines) {
+        for (const other of objects) other.visible = other === object;
+        const [left, top, right, bottom] = box;
+        const around = Math.max(0, options.margin);
+        const w = (right - left) * (1 + 2 * around),
+          h = (bottom - top) * (1 + 2 * around);
+        // The window keeps the product's own proportions in pixels, not the frame's.
+        const pixelsW = w * full.width,
+          pixelsH = h * full.height;
+        const scale = options.longEdge / Math.max(pixelsW, pixelsH);
+        const width = Math.max(1, Math.round(pixelsW * scale)),
+          height = Math.max(1, Math.round(pixelsH * scale));
+        const cx = (left + right) / 2,
+          cy = (top + bottom) / 2;
+        const crop: RoomCropWindow = {
+          aspect,
+          window: [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2],
+        };
+        copy.width = width;
+        copy.height = height;
+        context.clearRect(0, 0, width, height);
+        context.drawImage(this.drawFrame(width, height, view, 'after', 0.5, undefined, crop), 0, 0);
+        const data = new Uint8ClampedArray(context.getImageData(0, 0, width, height).data);
+        const coverage = this.fixtureCoverage(width, height, view, crop);
+        result.push({
+          id: object.userData.fixtureId as string,
+          width,
+          height,
+          data,
+          coverage,
+          window: crop.window,
+          box,
+        });
+      }
+    } finally {
+      for (const [object, visible] of hidden) object.visible = visible;
+      surfaces.visible = surfacesVisible;
+      after.surfaces.setContacts(after.contacts);
+      this.renderer.shadowMap.autoUpdate = autoUpdate;
+      this.renderer.shadowMap.needsUpdate = true;
+      copy.width = copy.height = 1;
+      if (previous && !this.disposed)
+        this.render(previous.width, previous.height, previous.view, previous.mode, previous.split);
+    }
+    return result;
   }
   /** Normalized canvas coordinates, y down. Only the editable After panel is pickable. */
   private pointerRay(x: number, y: number): Raycaster | undefined {
