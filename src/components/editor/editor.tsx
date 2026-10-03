@@ -75,7 +75,9 @@ import CanvasWorkspace from './canvas-workspace';
 import Inspector from './inspector';
 import AiExport from './ai-export';
 import type { AiPreview } from './ai-view-picker';
-import { visibleCeiling, type FluxCaptureSource } from '@/lib/ai-export/scene';
+import { prepareReferenceImage } from '@/lib/ai-export/client';
+import { REFINE_CROP_EDGE, REFINE_MARGIN, REFINE_MAX_PRODUCTS } from '@/lib/ai-export/refine';
+import { refineTargets, visibleCeiling, type FluxCaptureSource } from '@/lib/ai-export/scene';
 import { FLUX_BACKDROP, fluxRoom } from '@/lib/ai-export/view';
 import type { RoomViewState } from '@/lib/room-viewer/view-state';
 import type { PhotoCompositor } from '@/lib/render/compositor';
@@ -1259,6 +1261,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     view?: RoomViewState,
     /** The composite export: also the room/fixture layers, with photos chosen by angle. */
     composite?: boolean,
+    /** The per-product export: also each repaintable product's close-up and its photo. */
+    refine?: boolean,
   ): Promise<FluxCaptureSource> {
     if (isGuest) throw new Error('이미지 출력은 로그인 후 사용할 수 있어요.');
     if (!st.project) throw new Error('내보낼 공간이 아직 준비되지 않았어요.');
@@ -1296,6 +1300,30 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         Math.min(edge, (edge * height) / width),
         view,
       );
+      const layers = composite ? roomRenderer.exportLayers(view, { longEdge: edge }) : undefined;
+      // Each repaintable product alone, large, from the very camera of the frame above; the real
+      // product's photo goes with it (read from the saved assets, never from the room).
+      let refined: FluxCaptureSource['refine'];
+      if (refine && layers) {
+        const targets = refineTargets(snapshot).slice(0, REFINE_MAX_PRODUCTS);
+        const crops = roomRenderer.exportProductCrops(view, {
+          frame: { width: layers.width, height: layers.height },
+          longEdge: REFINE_CROP_EDGE,
+          margin: REFINE_MARGIN,
+          ids: targets.map((target) => target.id),
+        });
+        const references: Record<string, Blob> = {};
+        for (const target of targets) {
+          if (!target.referenceAssetId || !crops.some((crop) => crop.id === target.id)) continue;
+          try {
+            const asset = await assetReader(target.referenceAssetId);
+            if (asset) references[target.id] = await prepareReferenceImage(asset.blob);
+          } catch {
+            // No photo for this product: it is repainted from its render alone.
+          }
+        }
+        refined = { crops, references };
+      }
       return {
         blob,
         reader: assetReader,
@@ -1305,7 +1333,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         ...(visibleCeiling(regions) ? { ceiling: VIEWER_CEILING_COLOR } : {}),
         ...(view.projection === 'room-orbit' ? { cutaway: true } : {}),
         // Same renderer, camera and pixel grid as the frame above.
-        ...(composite ? { layers: roomRenderer.exportLayers(view, { longEdge: edge }) } : {}),
+        ...(layers ? { layers } : {}),
+        ...(refined ? { refine: refined } : {}),
       };
     } finally {
       roomRenderer.dispose();
@@ -1319,7 +1348,12 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       : undefined;
   const aiRoom =
     aiRoomDims && aiAfter
-      ? { aspect: aiAfter.imageWidth / aiAfter.imageHeight, prepare: prepareAiPreview }
+      ? {
+          aspect: aiAfter.imageWidth / aiAfter.imageHeight,
+          prepare: prepareAiPreview,
+          // How many placed products the per-product export would repaint (one request each).
+          refinable: refineTargets({ scene: aiAfter, materials }).slice(0, REFINE_MAX_PRODUCTS).length,
+        }
       : undefined;
   async function exportImage() {
     if (requireLogin('이미지 출력')) return;

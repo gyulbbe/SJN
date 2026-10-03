@@ -7,6 +7,7 @@ import {
   readPixels,
   requestFluxCheck,
   requestFluxImage,
+  requestFluxProduct,
 } from '@/lib/ai-export/client';
 import {
   framing,
@@ -33,6 +34,15 @@ import {
 } from '@/lib/ai-export/scene';
 import { composeFluxResult, placeholderRoom, type RoomLayers } from '@/lib/ai-export/composite';
 import type { FluxRoomMode } from '@/lib/ai-export/scene-contract';
+import { ownMask, REFINE_MAX_PRODUCTS, type OwnMask } from '@/lib/ai-export/refine';
+import {
+  productFact,
+  refineEstimate,
+  runRefine,
+  type RefineOutcome,
+  type RefineProduct,
+} from '@/lib/ai-export/refine-run';
+import type { BackgroundRemovalClient } from '@/lib/background-removal/client';
 import styles from './ai-export.module.css';
 
 type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: string };
@@ -42,17 +52,18 @@ type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: s
  * without fixtures, bare or with grey stand-ins, and ours go back on top). The current one is the
  * default; this browser remembers the choice (a convenience only: unreadable storage means default).
  */
-type FluxMethod = 'current' | FluxRoomMode;
+type FluxMethod = 'current' | FluxRoomMode | 'refine';
 const FLUX_METHODS: { value: FluxMethod; label: string }[] = [
   { value: 'current', label: '지금 방식' },
   { value: 'empty-room', label: '실험 A · 빈 방 합성' },
   { value: 'placeholders', label: '실험 B · 회색 자리 합성' },
+  { value: 'refine', label: '실험 C · 제품별 다듬기' },
 ];
 export const FLUX_COMPOSITE_FLAG = 'sjn:flux-composite';
 function savedMethod(): FluxMethod {
   try {
     const value = window.localStorage.getItem(FLUX_COMPOSITE_FLAG);
-    return value === 'empty-room' || value === 'placeholders' ? value : 'current';
+    return value === 'empty-room' || value === 'placeholders' || value === 'refine' ? value : 'current';
   } catch {
     return 'current';
   }
@@ -71,6 +82,43 @@ function saveMethod(method: FluxMethod) {
  * The answer is still requested and kept in the check response for later evaluation.
  */
 const FLUX_SHOW_TILE_NOTICE = false;
+/**
+ * The per-product export's time limit: the room's request, then every product asked two at a time
+ * and cut out one at a time, and the first run also loads the cut-out model (about 98 MB).
+ */
+const REFINE_LIMIT_MS = 150_000;
+const REFINE_LIMIT_PER_PRODUCT_MS = 30_000;
+/** What the cut-out model is doing, in words (nothing once it is working). */
+function cutoutNote(progress: { stage: string; loadedBytes?: number; totalBytes?: number }) {
+  if (progress.stage === 'download' && progress.totalBytes)
+    return `윤곽을 따는 모델을 받는 중이에요(처음 한 번, ${Math.round((progress.loadedBytes ?? 0) / 1e6)}/${Math.round(progress.totalBytes / 1e6)}MB)`;
+  if (['loading-runtime', 'checking', 'download', 'initializing'].includes(progress.stage))
+    return '윤곽을 따는 모델을 준비하는 중이에요';
+  return undefined;
+}
+/**
+ * The products to repaint, in the grounding's order (the easily replaced kinds first): the ones with
+ * a close-up, at most REFINE_MAX_PRODUCTS, each with what the server is told about it and its photo.
+ */
+function refineProducts(source: FluxCaptureSource, grounding: FluxGrounding | undefined): RefineProduct[] {
+  const refine = source.refine;
+  if (!refine || !grounding) return [];
+  const crops = new Map(refine.crops.map((crop) => [crop.id, crop]));
+  const products: RefineProduct[] = [];
+  grounding.placed.forEach((placed, index) => {
+    const crop = crops.get(placed.id);
+    const fixture = grounding.scene.fixtures[index];
+    if (!crop || !fixture || products.length >= REFINE_MAX_PRODUCTS) return;
+    products.push({
+      id: placed.id,
+      label: placed.label,
+      crop,
+      fact: productFact(fixture),
+      ...(refine.references[placed.id] ? { reference: refine.references[placed.id] } : {}),
+    });
+  });
+  return products;
+}
 /** A radio shown as a pill (view and method choices). */
 const chipClass = (checked: boolean) =>
   `cursor-pointer rounded-full border px-3 py-1 text-xs has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 ${
@@ -78,6 +126,13 @@ const chipClass = (checked: boolean) =>
       ? 'border-[color:var(--ink)] bg-[color:var(--ink)] font-semibold text-[color:var(--paper)]'
       : 'border-[color:var(--line)] bg-[color:var(--paper)] text-[color:var(--ink)]'
   }`;
+/** What the per-product export is and what one click of it costs, said before the click. */
+function refineNote(products: number) {
+  if (!products)
+    return '실험: 다듬을 제품이 없어요(입체 제품이나 표준 모형이 아닌 제품과 유리·거울은 3D 렌더 그대로예요). 빈 방만 AI로 변환하고 제품은 3D 렌더를 올려요(실험 A와 같아요).';
+  const estimate = refineEstimate(products);
+  return `실험: 빈 방은 AI에 보내고, 제품은 하나씩 크게 잘라 따로 AI로 다듬은 뒤 같은 자리·크기에 올려요. 지금 배치에서 다듬을 제품은 ${products}개라 AI 요청이 ${estimate.calls}회(제품 ${products} + 빈 방 1) 나가고 최대 약 ${estimate.neurons}뉴런(추정)이 들어요. 지금 방식은 1회·약 110뉴런이에요. 처음 한 번은 제품 윤곽을 따는 모델(약 98MB)을 받아요. 모양이 달라진 제품은 3D 렌더로 두고 알려 드려요. 사진에 없는 옆·뒤 면은 AI의 추측이에요.`;
+}
 export default function AiExport({
   capture,
   room,
@@ -90,12 +145,17 @@ export default function AiExport({
    * Renders the After for the AI input from the chosen view (none: the legacy front composite);
    * `composite` also returns the room and fixture layers of the same frame.
    */
-  capture: (view?: RoomViewState, composite?: boolean) => Promise<FluxCaptureSource>;
+  capture: (view?: RoomViewState, composite?: boolean, refine?: boolean) => Promise<FluxCaptureSource>;
   /**
    * The room the input is drawn in, with the input's aspect and a live preview renderer; absent
    * for a scene without room dimensions (the 2D front composite, no turning).
    */
-  room?: { aspect: number; prepare: (composite: boolean) => Promise<AiPreview> };
+  room?: {
+    aspect: number;
+    prepare: (composite: boolean) => Promise<AiPreview>;
+    /** How many placed products the per-product export would repaint (one request each). */
+    refinable?: number;
+  };
   filename: string;
   userId?: string | null;
   disabled: boolean;
@@ -118,7 +178,17 @@ export default function AiExport({
   const [marginKept, setMarginKept] = useState(false);
   // Only scenes drawn in the room can be composited.
   const [method, setMethod] = useState<FluxMethod>(() => (room ? savedMethod() : 'current'));
-  const mode = room && method !== 'current' ? method : undefined;
+  const refining = !!room && method === 'refine';
+  // The per-product export sends the room empty, as experiment A does.
+  const mode: FluxRoomMode | undefined =
+    room && method !== 'current' ? (method === 'refine' ? 'empty-room' : method) : undefined;
+  /** The per-product export's progress (products done of all) and what the cut-out model is doing. */
+  const [refineProgress, setRefineProgress] = useState<{ done: number; total: number; note?: string }>();
+  const [refineSummary, setRefineSummary] = useState<{
+    refined: string[];
+    kept: { label: string; message: string }[];
+  }>();
+  const cancelled = useRef(false);
   // A stable handle for the picker, so a store update does not rebuild its renderer.
   const prepareRef = useRef(room?.prepare);
   prepareRef.current = room?.prepare;
@@ -133,6 +203,10 @@ export default function AiExport({
     walls?: FluxCheckWall[];
     /** The composite export: the frame's layers and the fixtures' capture boxes. */
     composite?: { layers: RoomLayers; boxes: [number, number, number, number][] };
+    /** The per-product export: the products to repaint and every close-up's silhouette on the frame. */
+    refine?: { products: RefineProduct[]; owns: OwnMask[] };
+    /** The cut-out model's worker, made when the first product needs it. */
+    background?: BackgroundRemovalClient;
     urls: string[];
     controller?: AbortController;
   }>({ urls: [] });
@@ -142,6 +216,7 @@ export default function AiExport({
     return () => {
       live.current = false;
       current.controller?.abort();
+      current.background?.dispose();
       current.urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
@@ -155,6 +230,9 @@ export default function AiExport({
     state.current.color = undefined;
     state.current.walls = undefined;
     state.current.composite = undefined;
+    state.current.refine = undefined;
+    setRefineProgress(undefined);
+    setRefineSummary(undefined);
     setSent(undefined);
     setShifted(false);
     setMarginKept(false);
@@ -178,6 +256,8 @@ export default function AiExport({
     if (turned) restart();
     const controller = new AbortController();
     state.current.controller = controller;
+    cancelled.current = false;
+    setRefineSummary(undefined);
     setBusy(true);
     onBusyChange(true);
     setResult((previous) => ({ ...previous, error: undefined }));
@@ -192,7 +272,7 @@ export default function AiExport({
         startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
         // Exactly the picker's camera: the same view, fit and lens.
         const captured = { ...orbit };
-        const source = await capture(room ? fluxOrbitView(captured) : undefined, !!mode);
+        const source = await capture(room ? fluxOrbitView(captured) : undefined, !!mode, refining);
         setSent(room ? captured : undefined);
         const layers = mode ? source.layers : undefined;
         if (mode && (!layers || !source.regions || !source.boxes))
@@ -233,6 +313,15 @@ export default function AiExport({
           bitmap.close();
         }
         controller.signal.throwIfAborted();
+        state.current.refine =
+          refining && layers && source.refine
+            ? {
+                products: refineProducts(source, grounding),
+                owns: source.refine.crops.map((crop) =>
+                  ownMask(crop, { width: layers.width, height: layers.height }),
+                ),
+              }
+            : undefined;
         state.current.image = input;
         state.current.grounding = grounding;
         setPlaced(grounding?.placed ?? []);
@@ -275,6 +364,53 @@ export default function AiExport({
       }
       setMarginKept(marginKept);
       const composite = state.current.composite;
+      // The per-product export: every product repainted on its own, then each one stands or falls
+      // on its own (the room's request above is already answered, so a failing product costs only
+      // itself).
+      let outcomes: RefineOutcome[] = [];
+      const refineState = state.current.refine;
+      if (composite && color && refineState?.products.length) {
+        const products = refineState.products;
+        clearTimeout(timer);
+        timer = setTimeout(
+          () => controller.abort(),
+          REFINE_LIMIT_MS + REFINE_LIMIT_PER_PRODUCT_MS * products.length,
+        );
+        startWait({ message: '제품을 하나씩 따로 다듬는 중이에요.' });
+        setRefineProgress({ done: 0, total: products.length });
+        outcomes = await runRefine({
+          products,
+          frame: { width: composite.layers.width, height: composite.layers.height },
+          seed,
+          signal: controller.signal,
+          onProgress: (done, total) => live.current && setRefineProgress((p) => ({ ...p, done, total })),
+          deps: {
+            encode: pixelsToPng,
+            decode: readPixels,
+            request: (image, reference, requestSeed, product, signal) =>
+              requestFluxProduct(image, reference, requestSeed, product, signal, userId),
+            cutout: async (image) => {
+              if (!state.current.background) {
+                const { BackgroundRemovalClient } = await import('@/lib/background-removal/client');
+                state.current.background = new BackgroundRemovalClient();
+              }
+              const result = await state.current.background.run(image, (progress) => {
+                if (live.current) setRefineProgress((p) => (p ? { ...p, note: cutoutNote(progress) } : p));
+              });
+              return result.blob;
+            },
+          },
+        });
+        finishWait(false);
+        if (!live.current) return;
+        setRefineProgress(undefined);
+        setRefineSummary({
+          refined: outcomes.flatMap((o) => (o.status === 'refined' ? [o.label] : [])),
+          kept: outcomes.flatMap((o) =>
+            o.status === 'kept' ? [{ label: o.label, message: o.message }] : [],
+          ),
+        });
+      } else if (composite && refining) setRefineSummary({ refined: [], kept: [] });
       if (composite && color) {
         // Our fixtures back on the model's room, where the render put them (no AI call).
         const composed = composeFluxResult({
@@ -284,6 +420,14 @@ export default function AiExport({
           mask: color.mask,
           layout: color.layout,
           boxes: composite.boxes,
+          ...(outcomes.length
+            ? {
+                refine: {
+                  layers: outcomes.flatMap((o) => (o.status === 'refined' ? [o.layer] : [])),
+                  owns: refineState?.owns ?? [],
+                },
+              }
+            : {}),
         });
         if (!live.current) return;
         const rawUrl = URL.createObjectURL(await pixelsToPng(composed.raw));
@@ -363,22 +507,35 @@ export default function AiExport({
       }
     } catch (error) {
       if (!live.current) return;
-      const message = controller.signal.aborted
-        ? '응답 대기 시간이 끝났어요. 서버 처리는 계속될 수 있어요. 자동 재시도하지 않았어요.'
-        : error instanceof Error
-          ? error.message
-          : '이미지 변환에 실패했어요.';
+      const message = cancelled.current
+        ? '제품 다듬기를 취소했어요. 이미 보낸 AI 요청은 사용량에 포함될 수 있어요.'
+        : controller.signal.aborted
+          ? '응답 대기 시간이 끝났어요. 서버 처리는 계속될 수 있어요. 자동 재시도하지 않았어요.'
+          : error instanceof Error
+            ? error.message
+            : '이미지 변환에 실패했어요.';
       // A failed re-generate keeps the previous successful result.
       setResult((previous) => ({ ...previous, error: message }));
     } finally {
       clearTimeout(timer);
       state.current.controller = undefined;
       finishWait(false);
+      // A stopped run leaves no cut-out half done: the next run starts a clean worker.
+      if (controller.signal.aborted) {
+        state.current.background?.dispose();
+        state.current.background = undefined;
+      }
       if (live.current) {
+        setRefineProgress(undefined);
         setBusy(false);
         onBusyChange(false);
       }
     }
+  }
+  /** Stops the per-product export: the requests already sent still count toward the usage. */
+  function cancelRefine() {
+    cancelled.current = true;
+    state.current.controller?.abort();
   }
   const shown = showOriginal || !result.correctedUrl ? result.url : result.correctedUrl;
   const notices = fluxResultNotices({
@@ -387,7 +544,7 @@ export default function AiExport({
     colors: colors?.status === 'corrected' && !result.correctedUrl ? undefined : colors,
     corrected: !showOriginal,
     showTiles: FLUX_SHOW_TILE_NOTICE,
-    ...(mode ? { composite: { shifted } } : {}),
+    ...(mode ? { composite: { shifted, ...(refineSummary ? { refine: refineSummary } : {}) } } : {}),
     ...(marginKept ? { backdrop: 'reframed' as const } : {}),
   });
   return (
@@ -442,9 +599,11 @@ export default function AiExport({
             className="mt-1.5 text-xs leading-relaxed text-[color:var(--muted)]"
             data-testid="flux-composite-note"
           >
-            {mode
-              ? `실험: AI에는 제품을 뺀 빈 방${mode === 'placeholders' ? '(제품 자리는 회색 표시)' : ''}을 보내고, 결과 위에 3D 렌더의 제품을 같은 자리·크기 그대로 올려요. 제품 모양은 그대로지만 매끈한 3D 질감으로 보일 수 있어요.`
-              : '제품까지 AI가 다시 그려요. 사진 같지만 제품 모양이 바뀌거나 없던 물건이 생길 수 있어요.'}
+            {refining
+              ? refineNote(room?.refinable ?? 0)
+              : mode
+                ? `실험: AI에는 제품을 뺀 빈 방${mode === 'placeholders' ? '(제품 자리는 회색 표시)' : ''}을 보내고, 결과 위에 3D 렌더의 제품을 같은 자리·크기 그대로 올려요. 제품 모양은 그대로지만 매끈한 3D 질감으로 보일 수 있어요.`
+                : '제품까지 AI가 다시 그려요. 사진 같지만 제품 모양이 바뀌거나 없던 물건이 생길 수 있어요.'}
             {result.url ? ' 방식을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.' : ''}
           </div>
         </fieldset>
@@ -533,6 +692,21 @@ export default function AiExport({
               </button>
             )}
           </div>
+          {busy && refineProgress && (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-2 text-xs leading-relaxed text-[color:var(--ink)]"
+              data-testid="flux-refine-progress"
+              role="status"
+            >
+              <span>
+                제품 다듬기 {refineProgress.done}/{refineProgress.total}개
+                {refineProgress.note ? ` · ${refineProgress.note}` : ''}
+              </span>
+              <button type="button" className="btn" data-testid="flux-refine-cancel" onClick={cancelRefine}>
+                제품 다듬기 취소
+              </button>
+            </div>
+          )}
           {wait && result.url && (
             <div className="mt-2">
               <ServerWaitProgress

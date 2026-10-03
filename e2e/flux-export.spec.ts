@@ -856,7 +856,7 @@ test('composite export (chosen in the dialog): the room goes out empty, our prod
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
   // The current method is the default; experiment A and B are one click away.
   const methods = dialog.getByRole('group', { name: '변환 방식' });
-  await expect(methods.getByRole('radio')).toHaveCount(3);
+  await expect(methods.getByRole('radio')).toHaveCount(4);
   await expect(methods.getByRole('radio', { name: '지금 방식', exact: true })).toBeChecked();
   await expect(dialog.getByTestId('flux-composite-note')).toContainText('제품까지 AI가 다시 그려요');
   await methods.getByText('실험 A · 빈 방 합성', { exact: true }).click();
@@ -934,5 +934,20 @@ test('composite export (chosen in the dialog): the room goes out empty, our prod
   expect(sent[2].scene).toMatchObject({ fixtures: [], mode: 'placeholders' });
   await expect.poll(() => checks.length).toBe(3);
   expect(checks[2]).toMatchObject({ fixtures: [], room: 'placeholders' });
+  // Experiment C with nothing to repaint (a flat product photo is a photograph already): the dialog
+  // says so before the click, the room goes out empty once, and no product is sent at all.
+  let productCalls = 0;
+  await page.route('**/api/export/photoreal/product', async (route) => {
+    productCalls++;
+    await route.abort();
+  });
+  await methods.getByText('실험 C · 제품별 다듬기', { exact: true }).click();
+  await expect(dialog.getByTestId('flux-composite-note')).toContainText('다듬을 제품이 없어요');
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  await expect(dialog.getByTestId('flux-refine-note')).toContainText('AI가 다듬은 제품이 없어', {
+    timeout: 30000,
+  });
+  expect(sent[3].scene).toMatchObject({ fixtures: [], mode: 'empty-room' });
+  expect(productCalls).toBe(0);
   expect(errors).toEqual([]);
 });
