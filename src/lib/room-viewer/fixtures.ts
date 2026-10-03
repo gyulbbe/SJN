@@ -29,7 +29,8 @@ import type { AssetRecord, ColorAdjust, FixtureInstance, MaterialVersion, Scene 
 import { decodeProductMesh } from '../product3d/codec';
 import { levelCameraQuaternion, validatePose } from '../product3d/pose';
 import { isLitShading, productSurface } from '../product3d/shading';
-import { prepareFittedMesh, prepareProductSurface } from '../product3d/surface';
+import { decodeProductPhoto } from '../product3d/input-cutout';
+import { preparePaintedMesh, prepareFittedMesh, prepareProductSurface } from '../product3d/surface';
 import type { Product3dReference, ProductMesh } from '../product3d/state-types';
 import { createTemplateModel, disposeTemplateModel } from '../reconstruction/templates';
 import { reconstructionModelTransform } from '../reconstruction/projection';
@@ -456,8 +457,9 @@ export function createSavedProductGeometry(
   geometry.scale(scale, scale, scale);
   // A view saved with lighting correction ('lit', 'mixed') shows its colours lit by the room, like
   // the editor: the same colour calculation (productSurface), here with the mesh turned as saved.
-  const surface = isLitShading(reference.shading) ? productSurface(reference.shading!, mesh) : undefined;
-  const source = surface?.colors ?? mesh.colors;
+  // (The original colours too: they carry the photo's where it was put on.)
+  const surface = productSurface(reference.shading ?? 'baked', mesh);
+  const source = surface.colors;
   const colors = new Float32Array(source.length),
     color = new Color();
   for (let i = 0; i < colors.length; i += 3) {
@@ -467,7 +469,7 @@ export function createSavedProductGeometry(
     colors[i + 2] = color.b;
   }
   geometry.setAttribute('color', new BufferAttribute(colors, 3));
-  if (surface?.normals) {
+  if (surface.normals) {
     // Turning the mesh turns its smoothed normals the same way (the scaling does not change them).
     const normals = new BufferAttribute(new Float32Array(surface.normals), 3);
     normals.applyNormalMatrix(
@@ -589,11 +591,25 @@ export async function buildViewerFixtures(
           // A view saved with a fit draws the mesh as its product is: the material's real size, the
           // mirror symmetry and the front (see fit.ts). The saved mesh is left as it was made, so a
           // material whose size is corrected later follows.
-          const mesh = await prepareFittedMesh(
-            await cache.mesh(selected.product3d.meshAssetId),
-            selected.product3d.fit,
-            { widthMm: material.widthMm, depthMm: material.depthMm, heightMm: material.heightMm },
-          );
+          let source = await cache.mesh(selected.product3d.meshAssetId);
+          // A view saved with the photo's colours on it draws them: the input photo is read back and
+          // laid over the mesh through the saved camera (the saved mesh itself is untouched).
+          const photoCamera = selected.product3d.photoCamera;
+          if (photoCamera) {
+            const inputAssetId = selected.product3d.inputAssetId;
+            const painted = await preparePaintedMesh(
+              source,
+              async () => decodeProductPhoto((await cache.asset(inputAssetId)).blob),
+              photoCamera,
+            );
+            if (painted.status === 'ok') source = painted.mesh;
+            else notice(fixture, painted.message);
+          }
+          const mesh = await prepareFittedMesh(source, selected.product3d.fit, {
+            widthMm: material.widthMm,
+            depthMm: material.depthMm,
+            heightMm: material.heightMm,
+          });
           // The colours of a lit view are worked out off the main thread first (and kept per mesh),
           // so the room does not stop for them.
           if (isLitShading(selected.product3d.shading))

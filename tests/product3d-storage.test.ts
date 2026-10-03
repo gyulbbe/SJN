@@ -123,6 +123,33 @@ describe('persisted product3d material data', () => {
         materialInputSchema.safeParse(material(png.id, { ...reference, fit: bad } as never)).success,
       ).toBe(false);
   });
+  it('accepts the optional photo camera and keeps older saves without it valid', async () => {
+    const { png, reference } = await setup();
+    const photoCamera = {
+      azimuth: 4.5,
+      elevation: -1.2,
+      distance: 1.85,
+      focal: 2.8,
+      shift: [0.01, -0.02] as [number, number],
+      iou: 0.97,
+    };
+    expect(materialInputSchema.parse(material(png.id, reference)).views[0].product3d).toEqual(reference);
+    expect(
+      materialInputSchema.parse(material(png.id, { ...reference, photoCamera })).views[0].product3d
+        ?.photoCamera,
+    ).toEqual(photoCamera);
+    for (const bad of [
+      { ...photoCamera, extra: 1 },
+      { ...photoCamera, distance: 0.1 },
+      { ...photoCamera, iou: 1.5 },
+      { ...photoCamera, shift: [2, 0] },
+      { ...photoCamera, azimuth: 'left' },
+      { azimuth: 0, elevation: 0, distance: 1.9, focal: 2.7, shift: [0, 0] },
+    ])
+      expect(
+        materialInputSchema.safeParse(material(png.id, { ...reference, photoCamera: bad } as never)).success,
+      ).toBe(false);
+  });
   it('collects PNG, mesh and exact input references only once', async () => {
     const { png, input, mesh, reference } = await setup();
     expect(new Set(materialReferences(material(png.id, reference)))).toEqual(

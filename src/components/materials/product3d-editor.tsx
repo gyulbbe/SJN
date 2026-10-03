@@ -8,6 +8,7 @@ import { directionMismatch, poseForDirection } from '@/lib/product3d/direction-p
 import { AssetImage } from './asset-image';
 import { AngleNameSelect } from './angle-name-input';
 import type {
+  PhotoCameraReference,
   Product3dReference,
   ProductMesh,
   ProductPose,
@@ -21,7 +22,14 @@ import type {
 } from '@/lib/product3d/types';
 import type { Product3dClient } from '@/lib/product3d/client';
 import { decodeProductMesh } from '@/lib/product3d/codec';
-import { prepareFittedMesh, prepareProductFit, prepareProductSurface } from '@/lib/product3d/surface';
+import {
+  prepareFittedMesh,
+  preparePaintedMesh,
+  prepareProductFit,
+  prepareProductSurface,
+} from '@/lib/product3d/surface';
+import { decodeProductPhoto } from '@/lib/product3d/input-cutout';
+import type { PhotoCamera } from '@/lib/product3d/photo-camera';
 import {
   buildFit,
   fittedPhotoDirection,
@@ -48,6 +56,11 @@ const SYMMETRIC_CATEGORIES = new Set<string>(['toilet', 'basin', 'bath', 'vanity
 const percent = (share: number) => `${share >= 0 ? '+' : ''}${Math.round(share * 100)}%`;
 /** Beyond this, most of what the viewer shows was not in the photo. */
 const GUESSED_VIEW_DEGREES = 40;
+/** One step of the fit's undo history: the fit and whether the photo's colours were on. */
+interface FitStep {
+  fit: ProductFit | undefined;
+  photo: boolean;
+}
 /** The next photo's name: the first direction not used yet. */
 function nextAngleName(names: string[]): ProductDirection {
   return nextProductDirection(names) ?? '정면';
@@ -125,11 +138,40 @@ export function Product3dEditor({
     [flip, setFlip] = useState(false),
     [fitting, setFitting] = useState(false),
     [fitNote, setFitNote] = useState(''),
-    [fitPast, setFitPast] = useState<(ProductFit | undefined)[]>([]),
-    [fitFuture, setFitFuture] = useState<(ProductFit | undefined)[]>([]),
+    [fitPast, setFitPast] = useState<FitStep[]>([]),
+    [fitFuture, setFitFuture] = useState<FitStep[]>([]),
     [sizeAsk, setSizeAsk] = useState<ReturnType<typeof sizeMismatch>>();
+  // The input photo's colours on the mesh (see product3d/photo-color.ts): on or off, the camera found
+  // for the photo (kept while off, so turning it on again does not search again), and a plain-language note.
+  const [paintOn, setPaintOn] = useState(false),
+    [paintBusy, setPaintBusy] = useState(false),
+    [paintNote, setPaintNote] = useState(''),
+    [paintMatch, setPaintMatch] = useState<number>();
+  const paintCamera = useRef<PhotoCamera>(undefined);
   const sizeRef = useRef(size);
   sizeRef.current = size;
+  /**
+   * Puts the input photo's colours on `mesh` (or finds out it cannot be done): the camera is searched
+   * the first time and remembered. Gives the painted mesh, or undefined with the reason in the note.
+   */
+  const paintMesh = async (mesh: ProductMesh, photo: Blob, known?: PhotoCamera) => {
+    setPaintBusy(true);
+    setPaintNote('');
+    try {
+      const outcome = await preparePaintedMesh(mesh, () => decodeProductPhoto(photo), known);
+      if (!alive.current) return undefined;
+      if (outcome.status === 'ok') {
+        paintCamera.current = outcome.camera;
+        setPaintMatch(outcome.iou);
+        return outcome.mesh;
+      }
+      setPaintMatch(outcome.iou || undefined);
+      setPaintNote(outcome.message);
+      return undefined;
+    } finally {
+      if (alive.current) setPaintBusy(false);
+    }
+  };
   const selectedView = views[selectedViewIndex];
   const locked = loading || busy || applying || capturing || fitting;
   const latestPose = useRef<ProductPose>(createDefaultPose());
@@ -181,6 +223,11 @@ export function Product3dEditor({
     setFitPast([]);
     setFitFuture([]);
     setSizeAsk(undefined);
+    setPaintOn(false);
+    setPaintBusy(false);
+    setPaintNote('');
+    setPaintMatch(undefined);
+    paintCamera.current = undefined;
     setStored(false);
     setShading(product3d && !blob ? (product3d.shading ?? 'baked') : 'mixed');
     void (async () => {
@@ -212,14 +259,19 @@ export function Product3dEditor({
           if (asset.kind !== 'product-mesh' || asset.sourceAssetId !== product3d.inputAssetId)
             throw new Error('저장된 입체 형상 종류가 올바르지 않아요.');
           const mesh = await decodeProductMesh(asset.blob);
+          // A view saved with the photo's colours reads the photo back and lays it over the mesh.
+          const painted = product3d.photoCamera
+            ? await paintMesh(mesh, source.blob, product3d.photoCamera)
+            : undefined;
+          if (painted) setPaintOn(true);
           // A view saved with a fit draws the fitted mesh (the saved one is left as it was made).
-          const shown = await prepareFittedMesh(mesh, product3d.fit, sizeRef.current);
+          const shown = await prepareFittedMesh(painted ?? mesh, product3d.fit, sizeRef.current);
           // A lit view's colours are worked out off the main thread before the viewer opens.
           if (product3d.shading) await prepareProductSurface(product3d.shading, shown);
           if (!active) return;
+          if (painted || product3d.fit) setFitted({ source: mesh, mesh: shown });
           if (product3d.fit) {
             setFit(structuredClone(product3d.fit));
-            setFitted({ source: mesh, mesh: shown });
             // The saved fit stands in for a search: turning a part off and on again uses its numbers.
             setEstimate({
               fit: structuredClone(product3d.fit),
@@ -312,11 +364,17 @@ export function Product3dEditor({
         size: sizeRef.current,
         symmetricKind: SYMMETRIC_CATEGORIES.has(category ?? ''),
       });
-      const shown = await prepareFittedMesh(next.mesh, first, sizeRef.current);
+      // The input photo's own colours go on what the photo shows (when its outline fits the model's).
+      setProgress({ stage: 'coloring', message: '사진의 색과 무늬를 입체에 입히고 있어요.' });
+      paintCamera.current = undefined;
+      const painted = await paintMesh(next.mesh, input.blob);
+      if (!alive.current || run !== generation.current) return;
+      const shown = await prepareFittedMesh(painted ?? next.mesh, first, sizeRef.current);
       // The mixed colours (what the photo shows keeps its detail, the rest is clean) take a moment.
       setProgress({ stage: 'coloring', message: '안 찍힌 면의 색을 정리하고 있어요.' });
       await prepareProductSurface('mixed', shown);
       if (!alive.current || run !== generation.current) return;
+      setPaintOn(!!painted);
       setMeshAssetId(undefined);
       setEstimate(found);
       setFit(first);
@@ -395,6 +453,9 @@ export function Product3dEditor({
           modelRevision: result.timings.modelRevision,
           shading,
           ...(fit ? { fit } : {}),
+          ...(paintOn && paintCamera.current && paintMatch !== undefined
+            ? { photoCamera: { ...paintCamera.current, iou: paintMatch } satisfies PhotoCameraReference }
+            : {}),
         },
         mode,
         name,
@@ -422,19 +483,26 @@ export function Product3dEditor({
       if (alive.current) setApplying(false);
     }
   };
-  /** Draws the mesh with `next` as its fit (undefined: as made), keeping the pose the product has now. */
-  const changeFit = async (next: ProductFit | undefined, remember = true) => {
+  /**
+   * Draws the mesh with `next` as its fit (undefined: as made) and the photo's colours on or off,
+   * keeping the pose the product has now.
+   */
+  const changeFit = async (next: ProductFit | undefined, remember = true, photo = paintOn) => {
     if (!result || fitting) return;
     setFitting(true);
     setError('');
     try {
-      const shown = await prepareFittedMesh(result.mesh, next, sizeRef.current);
+      const painted =
+        photo && input ? await paintMesh(result.mesh, input.blob, paintCamera.current) : undefined;
+      if (!alive.current) return;
+      const shown = await prepareFittedMesh(painted ?? result.mesh, next, sizeRef.current);
       if (shading !== 'baked') await prepareProductSurface(shading, shown);
       if (!alive.current) return;
       if (remember) {
-        setFitPast((past) => [...past.slice(-19), fit]);
+        setFitPast((past) => [...past.slice(-19), { fit, photo: paintOn }]);
         setFitFuture([]);
       }
+      setPaintOn(!!painted);
       const pose = viewport.current ? viewport.current.getPose() : latestPose.current;
       trackPose(pose);
       setInitialPose(structuredClone(pose));
@@ -495,17 +563,17 @@ export function Product3dEditor({
   };
   const undoFit = () => {
     const previous = fitPast.at(-1);
-    if (fitPast.length === 0 || fitting) return;
+    if (!previous || fitting) return;
     setFitPast(fitPast.slice(0, -1));
-    setFitFuture([fit, ...fitFuture]);
-    void changeFit(previous, false);
+    setFitFuture([{ fit, photo: paintOn }, ...fitFuture]);
+    void changeFit(previous.fit, false, previous.photo);
   };
   const redoFit = () => {
     if (fitFuture.length === 0 || fitting) return;
     const [next, ...rest] = fitFuture;
     setFitFuture(rest);
-    setFitPast([...fitPast, fit]);
-    void changeFit(next, false);
+    setFitPast([...fitPast, { fit, photo: paintOn }]);
+    void changeFit(next.fit, false, next.photo);
   };
   const changeView = (index: number) => {
     if (locked || index === selectedViewIndex) return;
@@ -792,6 +860,30 @@ export function Product3dEditor({
                   </button>
                 </div>
               )}
+            </fieldset>
+            <fieldset
+              className={styles.fit}
+              aria-label="사진 색 입히기"
+              disabled={fitting || busy || applying || paintBusy || !input}
+            >
+              <legend>사진 색 입히기</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  data-testid="product3d-photo-color"
+                  checked={paintOn}
+                  onChange={(event) => void changeFit(fit, true, event.target.checked)}
+                />{' '}
+                원본 사진의 색 입히기
+              </label>
+              <p className={styles.note} role="status" data-testid="product3d-photo-note">
+                {paintBusy
+                  ? '사진의 색과 무늬를 입히고 있어요…'
+                  : paintNote ||
+                    (paintOn
+                      ? `사진을 찍은 쪽 면에 원본 사진의 색과 무늬를 그대로 입혔어요(윤곽 일치 ${Math.round((paintMatch ?? 0) * 100)}%). 사진에 안 보이는 면은 모델이 추측한 색이에요. 되돌리려면 위의 맞춤 실행 취소를 눌러요.`
+                      : '켜면 사진을 찍은 쪽 면의 색을 원본 사진에서 직접 가져와 얼굴 무늬·테두리가 또렷해져요.')}
+              </p>
             </fieldset>
             {!stored && (
               <dl className={styles.timings}>

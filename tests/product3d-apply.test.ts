@@ -134,6 +134,25 @@ describe('360 product photo application', () => {
     expect(fitted.product3d.fit?.front).toBe(30);
   });
 
+  it('records the photo camera only when the photo colours are on, so older saves look identical', async () => {
+    const { assets } = repository();
+    const plain = await prepareProductReplacement(application(), assets, 'floor');
+    expect(plain.product3d).not.toHaveProperty('photoCamera');
+    const photoCamera = {
+      azimuth: 1,
+      elevation: 0.5,
+      distance: 1.9,
+      focal: 2.75,
+      shift: [0, 0] as [number, number],
+      iou: 0.98,
+    };
+    const painted = await prepareProductReplacement({ ...application(), photoCamera }, assets, 'floor');
+    expect(painted.product3d.photoCamera).toEqual(photoCamera);
+    // A copy, like the fit.
+    photoCamera.azimuth = 40;
+    expect(painted.product3d.photoCamera?.azimuth).toBe(1);
+  });
+
   it('retries a failed PNG write using the successfully staged input and mesh without duplicate writes', async () => {
     const result = application();
     const { assets, records, put } = repository();

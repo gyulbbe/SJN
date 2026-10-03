@@ -83,6 +83,8 @@ export async function prepareProductReplacement(
       ...(result.shading === 'baked' ? {} : { shading: result.shading }),
       // Only a fit that was asked for is recorded; older saves carry none and the mesh stays as made.
       ...(result.fit ? { fit: structuredClone(result.fit) } : {}),
+      // Likewise the photo's colours: recorded only when they are on, so older saves read as they were.
+      ...(result.photoCamera ? { photoCamera: structuredClone(result.photoCamera) } : {}),
     },
   };
 }

@@ -815,6 +815,17 @@ export const product3dReferenceSchema = z
       })
       .strict()
       .optional(),
+    photoCamera: z
+      .object({
+        azimuth: number.min(-100).max(100),
+        elevation: number.min(-60).max(70),
+        distance: number.min(1.2).max(6),
+        focal: number.min(1.2).max(8),
+        shift: z.tuple([number.min(-0.6).max(0.6), number.min(-0.6).max(0.6)]),
+        iou: number.min(0).max(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const materialInputSchema = z

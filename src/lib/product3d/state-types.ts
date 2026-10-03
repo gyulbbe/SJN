@@ -1,4 +1,5 @@
 import type { ProductFit } from './fit';
+import type { PhotoCamera } from './photo-camera';
 
 export interface ProductMesh {
   positions: Float32Array;
@@ -27,5 +28,12 @@ export interface Product3dReference {
    * (2026-10). Absent (older saves): the mesh as it was made.
    */
   fit?: ProductFit;
+  /**
+   * The input photo's colours are put on the mesh through this camera (found from the outline, with
+   * how well it matched). Absent (older saves, or the item off): the model's own colours (2026-10).
+   */
+  photoCamera?: PhotoCameraReference;
 }
+/** A camera found for the input photo and its outline match, 0–1. */
+export type PhotoCameraReference = PhotoCamera & { iou: number };
 export type ProductShading = 'mixed' | 'lit' | 'baked';

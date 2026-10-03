@@ -22,6 +22,7 @@ import { MIXED } from '../src/lib/product3d/mixed-color';
 import { icosphere } from './helpers/product3d-meshes';
 import { shadingNormals } from '../src/lib/product3d/mesh-cleanup';
 import { productSurface } from '../src/lib/product3d/shading';
+import { registerPainted } from '../src/lib/product3d/painted';
 import { poseDirection, poseForDirection } from '../src/lib/product3d/direction-pose';
 import type { ProductDirection } from '../src/lib/product-direction';
 import { roomPlacementSchema } from '../src/lib/room-validation';
@@ -557,6 +558,45 @@ describe('room viewer immutable physical fixtures', () => {
     expect(await depthOf(9, fit)).toBeCloseTo(plain, 4);
     // A fit that asks nothing of the size leaves it, too.
     expect(await depthOf(800, { ...fit, size: false })).toBeCloseTo(plain, 4);
+  });
+  it('draws a saved view with the photo colours from the photo, and falls back to its own colours with a notice when the photo cannot be read', async () => {
+    const asset = await makeProductMeshAsset(cube(), 'mesh', 'input');
+    const f = fixture();
+    const m = material();
+    m.views[0].product3d = {
+      ...reference(),
+      photoCamera: { azimuth: 0, elevation: 0, distance: 1.9, focal: 2.75, shift: [0, 0], iou: 0.97 },
+    };
+    // The reader gives the mesh asset for every id, so the "input photo" is not an image here.
+    const result = await buildViewerFixtures(scene([f]), { m }, async () => asset);
+    expect(result.notices.some((n) => n.message.includes('사진 색을 입히지 않았어요'))).toBe(true);
+    expect(result.notices.some((n) => n.severity === 'error')).toBe(false);
+    let drawn = 0;
+    result.group.traverse((node) => {
+      if (node instanceof Mesh) drawn++;
+    });
+    expect(drawn).toBe(1);
+    result.dispose();
+    // Older saves have no camera: no photo is read and nothing is said.
+    const plain = material();
+    plain.views[0].product3d = reference();
+    const older = await buildViewerFixtures(scene([fixture()]), { m: plain }, async () => asset);
+    expect(older.notices.some((n) => n.message.includes('사진 색'))).toBe(false);
+    older.dispose();
+  });
+  it('draws the original colours of a mesh that carries the photo’s, and the same colours of a mesh that does not', () => {
+    const mesh = cube();
+    const plainColours = createSavedProductGeometry(mesh, reference(), fixture()).getAttribute('color')
+      .array as Float32Array;
+    expect(plainColours[0]).toBeCloseTo(0.214, 3); // sRGB 0.5 in the linear buffer
+    const painted: ProductMesh = { ...mesh };
+    registerPainted(painted, {
+      colors: new Float32Array(mesh.colors.length).fill(1),
+      weight: new Float32Array(mesh.colors.length / 3).fill(1),
+    });
+    const colours = createSavedProductGeometry(painted, reference(), fixture()).getAttribute('color')
+      .array as Float32Array;
+    expect(colours[0]).toBeCloseTo(1, 4);
   });
   it('stands a saved mesh on its wall by the way its pose faces: side against the wall for 정면, back against it for 오른쪽', async () => {
     const build = async (face: 'left' | 'right' | 'back', name: ProductDirection) => {

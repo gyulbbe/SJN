@@ -1,4 +1,4 @@
-import type { ProductMesh, ProductPose, ProductShading } from './state-types';
+import type { PhotoCameraReference, ProductMesh, ProductPose, ProductShading } from './state-types';
 import type { ProductFit } from './fit';
 import type { Product3dModelPart } from './model';
 export interface Product3dProgress {
@@ -58,5 +58,7 @@ export interface Product3dApplication {
   shading: ProductShading;
   /** How the mesh was fitted to the product when this angle was captured (see fit.ts). */
   fit?: ProductFit;
+  /** The camera the input photo's colours were put on through when this angle was captured (see photo-color.ts). */
+  photoCamera?: PhotoCameraReference;
   capture: { blob: Blob; width: number; height: number; anchor: { x: number; y: number } };
 }
