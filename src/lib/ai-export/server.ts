@@ -12,7 +12,7 @@ import { FLUX_MAX_SCENE_BYTES, fluxSceneSchema, type FluxScene } from './scene-c
 
 const MAX_REQUEST_BYTES = FLUX_MAX_IMAGE_BYTES + FLUX_MAX_SCENE_BYTES + 4096;
 
-type Environment = ReturnType<typeof getRuntimeEnvironment>;
+export type FluxEnvironment = ReturnType<typeof getRuntimeEnvironment>;
 type FluxBinding = {
   run: (
     model: string,
@@ -20,10 +20,10 @@ type FluxBinding = {
     options: { returnRawResponse: true; signal: AbortSignal },
   ) => Promise<Response>;
 };
-function fail(message: string, status = 400): never {
+export function fail(message: string, status = 400): never {
   throw new CloudGemmaError(message, status === 400 ? 'invalid_input' : 'invalid_response', status);
 }
-async function bounded(message: Request | Response, limit: number, signal: AbortSignal, status = 400) {
+export async function bounded(message: Request | Response, limit: number, signal: AbortSignal, status = 400) {
   if (Number(message.headers.get('content-length')) > limit) fail('이미지 데이터가 너무 커요.', status);
   if (!message.body) fail('이미지 데이터가 비어 있어요.', status);
   const reader = message.body.getReader();
@@ -58,7 +58,8 @@ async function bounded(message: Request | Response, limit: number, signal: Abort
   }
   return result;
 }
-export async function runFluxExport(request: Request, environment: Environment = getRuntimeEnvironment()) {
+/** Same-origin and login checks, then the Workers AI binding (absent in a plain Next dev server). */
+export async function openFluxRequest(request: Request, environment: FluxEnvironment) {
   await assertCloudGemmaRequest(request, environment);
   const ai = environment.AI as FluxBinding | undefined;
   if (environment.platform !== 'cloudflare' || typeof ai?.run !== 'function')
@@ -67,65 +68,69 @@ export async function runFluxExport(request: Request, environment: Environment =
       'binding_unavailable',
       503,
     );
+  return ai;
+}
+/** The multipart body of a FLUX request, read within `limit` bytes. */
+export async function readFluxForm(request: Request, limit: number): Promise<FormData> {
   const contentType = request.headers.get('content-type') ?? '';
   if (!contentType.startsWith('multipart/form-data;')) fail('이미지를 multipart 형식으로 전달해 주세요.');
-  const bytes = await bounded(request, MAX_REQUEST_BYTES, request.signal);
-  let form: FormData;
+  const bytes = await bounded(request, limit, request.signal);
   try {
-    form = await new Response(bytes, { headers: { 'Content-Type': contentType } }).formData();
+    return await new Response(bytes, { headers: { 'Content-Type': contentType } }).formData();
   } catch {
     return fail('이미지 요청 형식이 올바르지 않아요.');
   }
-  const required = ['image', 'seed'],
-    allowed = [...required, 'scene'];
+}
+/** Only these fields, each once, and every required one. */
+export function checkFluxFields(form: FormData, required: string[], optional: string[]) {
+  const allowed = [...required, ...optional];
   if (
     [...form.keys()].some((key) => !allowed.includes(key)) ||
     required.some((key) => form.getAll(key).length !== 1) ||
     allowed.some((key) => form.getAll(key).length > 1)
   )
     fail('이미지 요청 필드를 확인해 주세요.');
+}
+export function readFluxSeed(form: FormData): number {
   const seedText = form.get('seed');
   if (typeof seedText !== 'string' || !/^\d{1,10}$/.test(seedText)) fail('이미지 seed가 올바르지 않아요.');
   const seed = Number(seedText);
   if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) fail('이미지 seed가 올바르지 않아요.');
-  const image = form.get('image');
+  return seed;
+}
+/** A PNG within the model's input size: sides 128–496 px in 16 px steps. */
+export async function readFluxPng(image: unknown, message: string) {
   if (!(image instanceof Blob) || image.size === 0 || image.size > FLUX_MAX_IMAGE_BYTES)
     fail('입력 이미지는 2MB 이하여야 해요.');
   let header: ReturnType<typeof readImageHeader>;
   try {
     header = readImageHeader(new Uint8Array(await image.arrayBuffer()));
   } catch {
-    return fail('올바른 PNG 이미지를 전달해 주세요.');
+    return fail(message);
   }
   if (
     header.mime !== 'image/png' ||
     [header.width, header.height].some((n) => n < 128 || n > FLUX_INPUT_EDGE || n % 16 !== 0)
   )
     fail('AI 변환용 PNG의 크기가 올바르지 않아요.');
-  // Placed-product facts arrive as enums and numbers only; every sentence is written here.
-  let scene: FluxScene | undefined;
-  const sceneText = form.get('scene');
-  if (sceneText !== null) {
-    if (typeof sceneText !== 'string' || new TextEncoder().encode(sceneText).length > FLUX_MAX_SCENE_BYTES)
-      fail('제품 정보가 너무 커요.');
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(sceneText);
-    } catch {
-      fail('제품 정보 형식이 올바르지 않아요.');
-    }
-    const result = fluxSceneSchema.safeParse(parsed);
-    if (!result.success) fail('제품 정보 형식이 올바르지 않아요.');
-    scene = result.data;
-  }
-  const prompt = buildFluxPrompt(scene);
-  const input = new FormData();
-  input.set('input_image_0', image, 'after.png');
-  input.set('prompt', prompt);
-  input.set('width', String(header.width * 2));
-  input.set('height', String(header.height * 2));
-  input.set('seed', String(seed));
-  const serialized = new Response(input);
+  return { blob: image, header };
+}
+/**
+ * One explicit request -> one model call, for every FLUX route. No AI Gateway here: FLUX takes its
+ * images as a multipart stream and the gateway rejects stream bodies ("AI Gateway does not support
+ * ReadableStreams yet"), which surfaced as a generic failure in production. The binding does not
+ * retry, and neither does this. The answer is the model's image, checked, as a response.
+ */
+export async function callFlux(input: {
+  request: Request;
+  ai: FluxBinding;
+  /** The model's fields (input_image_N, prompt, width, height, seed). */
+  model: FormData;
+  /** Sizes only: never the prompt text, images or any user data. */
+  diagnostics: Record<string, unknown>;
+}): Promise<Response> {
+  const { request, ai, model } = input;
+  const serialized = new Response(model);
   const controller = new AbortController();
   const cancel = () => controller.abort();
   request.signal.addEventListener('abort', cancel, { once: true });
@@ -134,15 +139,10 @@ export async function runFluxExport(request: Request, environment: Environment =
   const diagnostics: Record<string, unknown> = {
     model: FLUX_MODEL,
     phase: 'provider-request',
-    // Sizes only: never the prompt text, images or any user data.
-    promptLength: prompt.length,
-    fixtures: scene?.fixtures.length ?? 0,
+    ...input.diagnostics,
   };
   try {
     request.signal.throwIfAborted();
-    // One explicit click -> one model call. No AI Gateway here: FLUX takes its image as a multipart
-    // stream and the gateway rejects stream bodies ("AI Gateway does not support ReadableStreams
-    // yet"), which surfaced as a generic failure in production. The binding does not retry.
     const response = await ai.run(
       FLUX_MODEL,
       {
@@ -225,4 +225,43 @@ export async function runFluxExport(request: Request, environment: Environment =
     clearTimeout(timer);
     request.signal.removeEventListener('abort', cancel);
   }
+}
+export async function runFluxExport(
+  request: Request,
+  environment: FluxEnvironment = getRuntimeEnvironment(),
+) {
+  const ai = await openFluxRequest(request, environment);
+  const form = await readFluxForm(request, MAX_REQUEST_BYTES);
+  checkFluxFields(form, ['image', 'seed'], ['scene']);
+  const seed = readFluxSeed(form);
+  const { blob: image, header } = await readFluxPng(form.get('image'), '올바른 PNG 이미지를 전달해 주세요.');
+  // Placed-product facts arrive as enums and numbers only; every sentence is written here.
+  let scene: FluxScene | undefined;
+  const sceneText = form.get('scene');
+  if (sceneText !== null) {
+    if (typeof sceneText !== 'string' || new TextEncoder().encode(sceneText).length > FLUX_MAX_SCENE_BYTES)
+      fail('제품 정보가 너무 커요.');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(sceneText);
+    } catch {
+      fail('제품 정보 형식이 올바르지 않아요.');
+    }
+    const result = fluxSceneSchema.safeParse(parsed);
+    if (!result.success) fail('제품 정보 형식이 올바르지 않아요.');
+    scene = result.data;
+  }
+  const prompt = buildFluxPrompt(scene);
+  const model = new FormData();
+  model.set('input_image_0', image, 'after.png');
+  model.set('prompt', prompt);
+  model.set('width', String(header.width * 2));
+  model.set('height', String(header.height * 2));
+  model.set('seed', String(seed));
+  return callFlux({
+    request,
+    ai,
+    model,
+    diagnostics: { promptLength: prompt.length, fixtures: scene?.fixtures.length ?? 0 },
+  });
 }

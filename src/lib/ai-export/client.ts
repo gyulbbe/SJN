@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Pixels } from './color';
 import { fluxInputLayout } from './contract';
+import type { FluxProduct } from './product-prompt';
 import { FLUX_FIXTURE_KINDS, type FluxScene } from './scene-contract';
 import {
   FLUX_CHECK_MAX_EDGE,
@@ -63,27 +64,17 @@ export async function prepareFluxImage(blob: Blob): Promise<Blob> {
     bitmap.close();
   }
 }
-export async function requestFluxImage(
-  image: Blob,
-  seed: number,
-  signal: AbortSignal,
-  userId?: string | null,
-  scene?: FluxScene,
-) {
-  const form = new FormData();
-  form.set('image', image, 'after.png');
-  form.set('seed', String(seed));
-  if (scene) form.set('scene', JSON.stringify(scene));
-  const response = await fetch('/api/export/photoreal', {
-    method: 'POST',
-    body: form,
-    credentials: 'same-origin',
-    signal,
-    headers: userId ? { 'X-SJN-User-Id': userId } : {},
-  });
+/** The model's picture from a FLUX route's answer, decoded and re-encoded as a real PNG. */
+async function readFluxAnswer(response: Response): Promise<Blob> {
   if (!response.ok) {
     const failure = await response.json().catch(() => null);
-    throw new Error(failure?.error || 'AI 이미지 변환에 실패했어요. 자동 재시도하지 않았어요.');
+    // The status travels with the error: a spent limit or a refused login ends a whole run (refine-run).
+    throw Object.assign(
+      new Error(failure?.error || 'AI 이미지 변환에 실패했어요. 자동 재시도하지 않았어요.'),
+      {
+        status: response.status,
+      },
+    );
   }
   const result = await response.blob();
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(result.type) || !result.size)
@@ -101,6 +92,54 @@ export async function requestFluxImage(
   } finally {
     bitmap.close();
   }
+}
+export async function requestFluxImage(
+  image: Blob,
+  seed: number,
+  signal: AbortSignal,
+  userId?: string | null,
+  scene?: FluxScene,
+) {
+  const form = new FormData();
+  form.set('image', image, 'after.png');
+  form.set('seed', String(seed));
+  if (scene) form.set('scene', JSON.stringify(scene));
+  return readFluxAnswer(
+    await fetch('/api/export/photoreal', {
+      method: 'POST',
+      body: form,
+      credentials: 'same-origin',
+      signal,
+      headers: userId ? { 'X-SJN-User-Id': userId } : {},
+    }),
+  );
+}
+/**
+ * One product's close-up (and, when there is one, the real product's photo on white) redrawn by the
+ * model as a studio photograph. One request, no retry; the answer is a PNG of twice the crop's size.
+ */
+export async function requestFluxProduct(
+  image: Blob,
+  reference: Blob | undefined,
+  seed: number,
+  product: FluxProduct,
+  signal: AbortSignal,
+  userId?: string | null,
+) {
+  const form = new FormData();
+  form.set('image', image, 'product.png');
+  form.set('seed', String(seed));
+  form.set('product', JSON.stringify(product));
+  if (reference) form.set('reference', reference, 'photo.png');
+  return readFluxAnswer(
+    await fetch('/api/export/photoreal/product', {
+      method: 'POST',
+      body: form,
+      credentials: 'same-origin',
+      signal,
+      headers: userId ? { 'X-SJN-User-Id': userId } : {},
+    }),
+  );
 }
 
 /**
