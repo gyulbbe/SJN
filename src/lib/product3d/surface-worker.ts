@@ -1,4 +1,6 @@
 import { computeFit, estimateProductFit } from './fit';
+import { registerPainted } from './painted';
+import { paintFromPhoto, paintReply } from './photo-color';
 import { productSurface } from './shading';
 import type { ProductShading } from './state-types';
 import type { WorkerReply, WorkerRequest } from './surface';
@@ -9,7 +11,8 @@ const scope = globalThis as unknown as {
 };
 /**
  * Does the slow work on a mesh off the page's main thread: the colours of a view mode, the fit of a
- * mesh to its product (symmetry, front, real size), and the search for that fit.
+ * mesh to its product (symmetry, front, real size), the search for that fit, and the input photo's
+ * camera and colours.
  */
 scope.onmessage = (event) => {
   const request = event.data;
@@ -28,7 +31,27 @@ scope.onmessage = (event) => {
           mirror: request.mirror,
         }),
       });
+    } else if (request.kind === 'paint') {
+      const paint = paintReply(paintFromPhoto(request.mesh, request.photo, request.camera), request.mesh);
+      scope.postMessage(
+        { id: request.id, kind: 'paint', paint },
+        paint.status === 'ok'
+          ? [
+              paint.photo.colors.buffer as ArrayBuffer,
+              paint.photo.weight.buffer as ArrayBuffer,
+              ...(paint.mesh
+                ? [
+                    paint.mesh.positions.buffer as ArrayBuffer,
+                    paint.mesh.indices.buffer as ArrayBuffer,
+                    paint.mesh.colors.buffer as ArrayBuffer,
+                  ]
+                : []),
+            ]
+          : [],
+      );
     } else {
+      // A mesh that carries the photo's colours arrives with them, and is drawn with them.
+      if (request.photo) registerPainted(request.mesh, request.photo);
       const surface = productSurface(request.mode as ProductShading, request.mesh);
       scope.postMessage(
         { id: request.id, kind: 'surface', colors: surface.colors, normals: surface.normals },

@@ -1,5 +1,6 @@
 import { estimateAlbedo, linearToSrgb, srgbToLinear } from './albedo';
 import { neighbours, shadingNormalSteps } from './mesh-cleanup';
+import type { PhotoColors } from './painted';
 
 /**
  * "혼합" colours: what the photo shows keeps its detail, what it does not show is clean product colour.
@@ -258,7 +259,11 @@ export function mixedSurface(
   positions: Float32Array,
   indices: Uint32Array,
   colors: Float32Array,
-  { sourceDirection = [1, 0, 0] as [number, number, number], tuning = MIXED } = {},
+  {
+    sourceDirection = [1, 0, 0] as [number, number, number],
+    tuning = MIXED,
+    photo,
+  }: { sourceDirection?: [number, number, number]; tuning?: typeof MIXED; photo?: PhotoColors } = {},
 ): MixedSurface {
   const vertices = colors.length / 3;
   if (!vertices) return { colors: new Float32Array(0), normals: new Float32Array(0) };
@@ -271,12 +276,20 @@ export function mixedSurface(
   const base = estimateAlbedo(positions, indices, colors, { sourceDirection, visibility: shown });
   const { diagonal } = boundsOf(positions);
   // The photo's colour, linear, and its broad shading: the average over the photographed surface.
+  // With the photo's own colours (see photo-color), the detail is read from them where the photo
+  // shows the product, in place of the model's soft copy of it; the base colour stays as it was.
+  const detail = photo ? photo.weight : shown;
   const linear = new Float32Array(colors.length);
-  for (let i = 0; i < colors.length; i++) linear[i] = srgbToLinear(colors[i]);
+  for (let i = 0; i < colors.length; i++) {
+    const share = photo ? photo.weight[(i / 3) | 0] : 0;
+    linear[i] = share
+      ? srgbToLinear(colors[i]) * (1 - share) + srgbToLinear(photo!.colors[i]) * share
+      : srgbToLinear(colors[i]);
+  }
   const areas = vertexAreas(positions, indices);
   const meanArea = areas.reduce((sum, a) => sum + a, 0) / vertices || 1;
   const weights = new Float32Array(vertices);
-  for (let v = 0; v < vertices; v++) weights[v] = shown[v] * (areas[v] / meanArea);
+  for (let v = 0; v < vertices; v++) weights[v] = detail[v] * (areas[v] / meanArea);
   const broad = localAverage(
     positions,
     normals,
@@ -304,7 +317,7 @@ export function mixedSurface(
       let ratio = linear[i] / Math.max(broad[i], 1e-4);
       if (tuning.chroma < 1 && grey > 0) ratio = grey * (ratio / grey) ** tuning.chroma;
       ratio = Math.min(tuning.ratio.brightest, Math.max(tuning.ratio.darkest, ratio));
-      out[i] = linearToSrgb(Math.min(1, srgbToLinear(base[i]) * (1 + shown[v] * (ratio - 1)) * darkening));
+      out[i] = linearToSrgb(Math.min(1, srgbToLinear(base[i]) * (1 + detail[v] * (ratio - 1)) * darkening));
     }
   }
   return { colors: out, normals };

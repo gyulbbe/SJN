@@ -9,12 +9,22 @@ import {
   type ProductSize,
   type Quaternion4,
 } from './fit';
+import { paintedFrom, registerPainted, type PhotoColors } from './painted';
+import {
+  paintFailureMessage,
+  paintFromPhoto,
+  paintReply,
+  type PaintReply,
+  type ProductPhoto,
+} from './photo-color';
+import type { PhotoCamera } from './photo-camera';
 import { keepSurface, productSurface, readySurface, type ProductSurface } from './shading';
 import type { ProductMesh, ProductShading } from './state-types';
 
 /** What the page asks the worker (`kind` left out: the colours of a view mode). */
 export type WorkerRequest =
-  | { id: number; kind?: 'surface'; mode: ProductShading; mesh: ProductMesh }
+  | { id: number; kind?: 'surface'; mode: ProductShading; mesh: ProductMesh; photo?: PhotoColors }
+  | { id: number; kind: 'paint'; mesh: ProductMesh; photo: ProductPhoto; camera?: PhotoCamera }
   | { id: number; kind: 'fit'; mesh: ProductMesh; fit: ProductFit; size?: Partial<ProductSize> }
   | {
       id: number;
@@ -27,6 +37,7 @@ export type WorkerRequest =
 export type WorkerReply =
   | { id: number; kind: 'surface'; colors: Float32Array; normals?: Float32Array }
   | { id: number; kind: 'fit'; positions: Float32Array; normalMatrix: number[] }
+  | { id: number; kind: 'paint'; paint: PaintReply }
   | { id: number; kind: 'estimate'; estimate: FitEstimate }
   | { id: number; error: string };
 
@@ -107,7 +118,7 @@ export async function prepareProductSurface(
   if (mode === 'baked') return productSurface(mode, mesh);
   return once(mesh, `surface:${mode}`, async () => {
     const reply = await inWorker(
-      (id) => ({ id, mode, mesh }),
+      (id) => ({ id, mode, mesh, photo: paintedFrom(mesh) }),
       (r): r is Extract<WorkerReply, { kind: 'surface' }> =>
         'kind' in r &&
         r.kind === 'surface' &&
@@ -178,4 +189,76 @@ export async function prepareProductFit(
     }),
   );
   return reply.estimate;
+}
+
+export type PaintOutcome =
+  | { status: 'ok'; mesh: ProductMesh; camera: PhotoCamera; iou: number }
+  | { status: 'failed'; reason: 'outline' | 'empty' | 'photo'; iou: number; message: string };
+
+const paints = new WeakMap<ProductMesh, Map<string, Promise<PaintOutcome>>>();
+
+/**
+ * The mesh with the input photo's colours on it (see photo-color.ts), made in a Web Worker: a new
+ * mesh that shows the photo where the photo shows the product (finer where the photo has detail),
+ * or a plain-language reason it was not. `known` is a camera found earlier (it is not searched for
+ * again). The result is kept per mesh and camera, and `photo` is asked for only when there is none.
+ */
+export function preparePaintedMesh(
+  mesh: ProductMesh,
+  photo: () => Promise<ProductPhoto>,
+  known?: PhotoCamera,
+): Promise<PaintOutcome> {
+  const key = known ? JSON.stringify(known) : 'search';
+  const memo = paints.get(mesh)?.get(key);
+  if (memo) return memo;
+  const job = (async (): Promise<PaintOutcome> => {
+    let pixels: ProductPhoto;
+    try {
+      pixels = await photo();
+    } catch {
+      return { status: 'failed', reason: 'photo', iou: 0, message: paintFailureMessage('photo', 0) };
+    }
+    let reply: Extract<WorkerReply, { kind: 'paint' }>;
+    try {
+      reply = await inWorker(
+        (id) => ({ id, kind: 'paint', mesh, photo: pixels, camera: known }),
+        (r): r is Extract<WorkerReply, { kind: 'paint' }> => 'kind' in r && r.kind === 'paint',
+        () => {
+          const found = paintFromPhoto(mesh, pixels, known);
+          return { id: 0, kind: 'paint' as const, paint: paintReply(found) };
+        },
+      );
+    } catch {
+      return { status: 'failed', reason: 'photo', iou: 0, message: paintFailureMessage('photo', 0) };
+    }
+    const { paint } = reply;
+    if (paint.status === 'failed')
+      return {
+        status: 'failed',
+        reason: paint.reason,
+        iou: paint.iou,
+        message: paintFailureMessage(paint.reason, paint.iou),
+      };
+    if (
+      paint.photo.colors.length !== (paint.mesh ?? mesh).colors.length ||
+      paint.photo.weight.length !== paint.photo.colors.length / 3
+    )
+      return { status: 'failed', reason: 'photo', iou: 0, message: paintFailureMessage('photo', 0) };
+    // Always a new object: one that carries the photo's colours must not be mistaken for the mesh without.
+    const painted: ProductMesh = paint.mesh
+      ? { positions: paint.mesh.positions, indices: paint.mesh.indices, colors: paint.mesh.colors }
+      : { positions: mesh.positions, indices: mesh.indices, colors: mesh.colors };
+    registerPainted(painted, paint.photo);
+    return { status: 'ok', mesh: painted, camera: paint.camera, iou: paint.iou };
+  })();
+  const jobs = paints.get(mesh) ?? new Map();
+  jobs.set(key, job);
+  paints.set(mesh, jobs);
+  void job.then((outcome) => {
+    // A photo that could not be read may be read the next time: only the other outcomes are kept.
+    if (outcome.status === 'failed' && outcome.reason === 'photo') jobs.delete(key);
+    // The camera that was found answers the next ask that names it, without another search.
+    else if (outcome.status === 'ok') jobs.set(JSON.stringify(outcome.camera), job);
+  });
+  return job;
 }

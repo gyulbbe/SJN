@@ -7,7 +7,8 @@ import {
   PRODUCT3D_RUNTIME_URL,
   type Product3dModelPart,
 } from './model';
-import { defringeAlpha, foregroundBounds, rgbNchw, transposeTokens } from './pixels';
+import { drawCutout } from './input-cutout';
+import { rgbNchw, transposeTokens } from './pixels';
 import { extractMesh, refineMeshSurface, resampleDensity, sampleSurfaceColors } from './geometry';
 import { bilateralSmooth, removeSmallPieces, taubinSmooth } from './mesh-cleanup';
 import { MAX_PRODUCT_MESH_BYTES } from './codec';
@@ -33,45 +34,10 @@ const CHUNK = 8192;
 async function prepare(blob: Blob) {
   const bitmap = await createImageBitmap(blob);
   try {
-    if (bitmap.width * bitmap.height > 40_000_000)
-      throw new Error('제품 사진은 4,000만 화소 이하로 줄여 주세요.');
-    const factor = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
-    const scan = new OffscreenCanvas(
-      Math.max(1, Math.round(bitmap.width * factor)),
-      Math.max(1, Math.round(bitmap.height * factor)),
-    );
-    const ctx = scan.getContext('2d', { willReadFrequently: true });
-    if (!ctx) throw new Error('이 브라우저에서 이미지 준비 기능을 사용할 수 없어요.');
-    ctx.drawImage(bitmap, 0, 0, scan.width, scan.height);
-    const bounds = foregroundBounds(
-      ctx.getImageData(0, 0, scan.width, scan.height).data,
-      scan.width,
-      scan.height,
-    );
+    // The cut-out placed in the model's 512 picture (shared with the photo colours), then on grey.
+    const product = drawCutout(bitmap);
     const input = new OffscreenCanvas(512, 512);
     const out = input.getContext('2d', { willReadFrequently: true })!;
-    const extent = Math.max(bounds.width, bounds.height) / 0.85;
-    const width = (bounds.width / extent) * 512;
-    const height = (bounds.height / extent) * 512;
-    // Clean the cut-out edge on its own layer first so no grey halo is baked into the colours.
-    const product = new OffscreenCanvas(512, 512);
-    const item = product.getContext('2d', { willReadFrequently: true })!;
-    item.imageSmoothingEnabled = true;
-    item.imageSmoothingQuality = 'high';
-    item.drawImage(
-      bitmap,
-      bounds.x / factor,
-      bounds.y / factor,
-      bounds.width / factor,
-      bounds.height / factor,
-      (512 - width) / 2,
-      (512 - height) / 2,
-      width,
-      height,
-    );
-    const pixels = item.getImageData(0, 0, 512, 512);
-    pixels.data.set(defringeAlpha(pixels.data, 512, 512, 1));
-    item.putImageData(pixels, 0, 0);
     out.fillStyle = '#808080';
     out.fillRect(0, 0, 512, 512);
     out.drawImage(product, 0, 0);

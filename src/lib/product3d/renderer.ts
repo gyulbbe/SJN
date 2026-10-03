@@ -121,7 +121,8 @@ export class ProductRenderer {
     for (const n of mesh.colors)
       if (!Number.isFinite(n) || n < 0 || n > 1) throw new Error('제품 형상에 잘못된 색상이 있습니다.');
     this.source = mesh;
-    this.bakedColors = linearColors(mesh.colors);
+    // The model's own colours (with the photo's over them where the photo's were put on, see painted.ts).
+    this.bakedColors = linearColors(productSurface('baked', mesh).colors);
     this.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.positions), 3));
     this.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.bakedColors), 3));
     this.geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));

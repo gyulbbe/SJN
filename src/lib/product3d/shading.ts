@@ -1,6 +1,7 @@
 import { estimateAlbedo } from './albedo';
 import { fittedFrom, fittedNormals } from './fit';
 import { mixedSurface } from './mixed-color';
+import { paintedFrom, type PhotoColors } from './painted';
 import { shadingNormals } from './mesh-cleanup';
 import type { ProductMesh, ProductShading } from './state-types';
 
@@ -13,6 +14,16 @@ export interface ProductSurface {
 /** The editor, the 3D room, the PNG capture and the AI export all take their colours from here. */
 export const isLitShading = (mode: ProductShading | undefined) => mode === 'lit' || mode === 'mixed';
 
+/** The model's own colours with the photo's laid over where it shows the product. */
+function photoBlend(colors: Float32Array, photo: PhotoColors) {
+  const out = new Float32Array(colors.length);
+  for (let i = 0; i < colors.length; i++) {
+    const share = photo.weight[(i / 3) | 0];
+    out[i] = colors[i] * (1 - share) + photo.colors[i] * share;
+  }
+  return out;
+}
+
 const computed = new WeakMap<ProductMesh, Partial<Record<ProductShading, ProductSurface>>>();
 
 /** The colours of a mode if they were worked out already (here or, handed over, by a worker). */
@@ -24,7 +35,8 @@ export function keepSurface(mode: ProductShading, mesh: ProductMesh, surface: Pr
 }
 
 /**
- * 'baked': the model's own RGB, as saved. 'lit': one base colour per material, lit by the viewer.
+ * 'baked': the model's own RGB, as saved (a mesh carrying the photo's colours, see painted.ts, has
+ * them laid over where the photo shows the product). 'lit': one base colour per material, lit by the viewer.
  * 'mixed': base colour plus the photo's detail where the photo shows the product (see mixed-color).
  * It takes about a second on a 290k-vertex mesh, so it is kept for as long as the mesh is, and a
  * screen that must not stop for it asks prepareProductSurface (surface.ts) first, which does the
@@ -44,13 +56,14 @@ export function productSurface(mode: ProductShading, mesh: ProductMesh): Product
         ...(base.normals ? { normals: fittedNormals(base.normals, from.normalMatrix) } : {}),
       };
     })());
+  const photo = paintedFrom(mesh);
   return (modes[mode] ??=
     mode === 'baked'
-      ? { colors: mesh.colors }
+      ? { colors: photo ? photoBlend(mesh.colors, photo) : mesh.colors }
       : mode === 'lit'
         ? {
             colors: estimateAlbedo(mesh.positions, mesh.indices, mesh.colors),
             normals: shadingNormals(mesh.positions, mesh.indices),
           }
-        : mixedSurface(mesh.positions, mesh.indices, mesh.colors));
+        : mixedSurface(mesh.positions, mesh.indices, mesh.colors, { photo }));
 }
