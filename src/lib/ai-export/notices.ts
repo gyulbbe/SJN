@@ -214,7 +214,14 @@ export type FluxNoticeInput = {
    * The composite export: our fixtures were put on the model's empty room. "shifted" when the
    * model moved the room's floor line (or reframed), so fixtures standing on it may look afloat.
    */
-  composite?: { shifted: boolean };
+  composite?: {
+    shifted: boolean;
+    /**
+     * The per-product export: which products the model repainted alone and which stayed the 3D
+     * render (with the reason in plain words).
+     */
+    refine?: { refined: string[]; kept: { label: string; message: string }[] };
+  };
 };
 export type FluxNoticeSection = { key: string; title?: string; lines: string[] };
 export type FluxNotices = {
@@ -305,11 +312,14 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
                 .join(', ')} 바뀌어 원래 자재 색으로 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.`
             : '벽·바닥 색을 원래 자재 색에 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.',
       });
-    // In the composite the products are ours, not the model's.
+    // In the composite the products are ours, not the model's (the per-product export: repainted
+    // one by one, or the render where that did not hold).
     if (composite && infos[0]?.key === 'color')
       infos[0].text = infos[0].text.replace(
         '명암·질감과 제품·유리는 AI 결과 그대로예요.',
-        '제품은 3D 렌더를 제자리에 그대로 올렸어요.',
+        composite.refine
+          ? '제품은 따로 다듬은 결과나 3D 렌더를 제자리에 올렸어요.'
+          : '제품은 3D 렌더를 제자리에 그대로 올렸어요.',
       );
   } else if (colors?.status === 'reframed')
     infos.unshift({
@@ -325,5 +335,17 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
       key: 'check',
       text: `${composite ? 'AI 확인을' : 'AI 제품 확인을'} 하지 못했어요. ${check.message}`,
     });
+  if (composite?.refine) {
+    const { refined, kept } = composite.refine;
+    const parts = [
+      refined.length
+        ? `AI가 제품을 하나씩 따로 다듬어 제자리에 올렸어요: ${refined.join(', ')}.`
+        : 'AI가 다듬은 제품이 없어 제품은 모두 3D 렌더 그대로예요.',
+      kept.length
+        ? `3D 렌더 그대로 둔 제품: ${kept.map(({ label, message }) => `${label}(${message})`).join(', ')}.`
+        : '',
+    ];
+    infos.push({ key: 'refine', text: parts.filter(Boolean).join(' ') });
+  }
   return { warnings, suggestRetry: retry, infos };
 }

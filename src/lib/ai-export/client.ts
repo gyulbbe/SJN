@@ -93,6 +93,27 @@ async function readFluxAnswer(response: Response): Promise<Blob> {
     bitmap.close();
   }
 }
+/**
+ * The real product's photo as the model's second image: on white, whole (never cropped or stretched),
+ * within the model's input size. The saved photo is a cut-out, so the transparent part becomes white.
+ */
+export async function prepareReferenceImage(photo: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(photo);
+  try {
+    const layout = fluxInputLayout(bitmap.width, bitmap.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = layout.width;
+    canvas.height = layout.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('제품 사진을 준비하지 못했어요.');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, layout.width, layout.height);
+    context.drawImage(bitmap, layout.x, layout.y, layout.contentWidth, layout.contentHeight);
+    return await pngBlob(canvas, '제품 사진 PNG 변환에 실패했어요.');
+  } finally {
+    bitmap.close();
+  }
+}
 export async function requestFluxImage(
   image: Blob,
   seed: number,

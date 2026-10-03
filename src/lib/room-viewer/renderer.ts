@@ -1348,7 +1348,13 @@ export class RoomViewerRenderer {
    */
   exportProductCrops(
     view: RoomViewState,
-    options: { frame: { width: number; height: number }; longEdge: number; margin: number },
+    options: {
+      frame: { width: number; height: number };
+      longEdge: number;
+      margin: number;
+      /** Only these fixtures; every product when absent. */
+      ids?: readonly string[];
+    },
   ): RoomProductCrop[] {
     this.assertOpen();
     if (!this.snapshot || !this.prepared) throw new Error('공간을 먼저 준비해 주세요.');
@@ -1375,7 +1381,9 @@ export class RoomViewerRenderer {
     const objects = after.fixtures.group.children.filter(
       (object) => typeof object.userData.fixtureId === 'string',
     );
+    const wanted = options.ids ? new Set(options.ids) : undefined;
     for (const object of objects) {
+      if (wanted && !wanted.has(object.userData.fixtureId as string)) continue;
       let left = Infinity,
         top = Infinity,
         right = -Infinity,

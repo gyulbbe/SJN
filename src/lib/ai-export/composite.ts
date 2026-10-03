@@ -1,5 +1,6 @@
 import type { FluxInputLayout } from './contract';
 import { FIXTURE_REGION, reviewResultColors, type ColorReview, type Pixels, type RegionMask } from './color';
+import { applyRefined, type OwnMask, type RefinedLayer } from './refine';
 
 /**
  * The composite FLUX export: the model repaints an empty room, and our own fixtures (drawn by the
@@ -419,9 +420,16 @@ export function composeFluxResult(input: {
   mask: RegionMask;
   layout: FluxInputLayout;
   boxes: [number, number, number, number][];
+  /**
+   * The per-product export: products the model repainted alone (refine.ts), put in place of their
+   * 3D selves, with every product's 3D silhouette (repainted or kept) so overlaps are left alone.
+   */
+  refine?: { layers: readonly RefinedLayer[]; owns: readonly OwnMask[] };
 }): ComposedResult {
   const { result, layers, mask, layout, boxes } = input;
-  const fixtures = fixtureLayer(layers),
+  const fixtures = input.refine?.layers.length
+      ? applyRefined(layers, input.refine.layers, input.refine.owns)
+      : fixtureLayer(layers),
     shadow = shadowLayer(layers);
   const size = { width: layers.width, height: layers.height };
   const room = resultOnCapture(result, layout, size);

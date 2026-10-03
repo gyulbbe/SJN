@@ -14,6 +14,7 @@ import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import { hexToLinear, linearToHex } from '../reconstruction/photo-lighting';
 import type { RegionMask } from './color';
 import type { RoomLayers } from './composite';
+import type { ProductCrop } from './refine';
 import type { FluxInputLayout } from './contract';
 import { FLUX_KIND_PRIORITY } from './prompt';
 import {
@@ -280,6 +281,11 @@ export type FluxCaptureSource = {
   cutaway?: boolean;
   /** The composite export: the same frame split into room and fixture layers. */
   layers?: RoomLayers;
+  /**
+   * The per-product export: each repaintable product's close-up from the same camera, and the real
+   * product's photo on white (within the model's input size) for those that have one.
+   */
+  refine?: { crops: ProductCrop[]; references: Record<string, Blob> };
 };
 
 /**
@@ -294,6 +300,50 @@ export function visibleCeiling(mask: RegionMask): boolean {
     if (label === 0 && !mask.outside?.[i]) unlabelled++;
   });
   return unlabelled >= mask.data.length * 0.01;
+}
+
+/**
+ * The kinds worth repainting alone. Glass, doors, windows, curtains and mirrors are thin or see-through
+ * (a cut-out cannot hold them) and stay as rendered.
+ */
+const REFINE_KINDS = new Set<string>([
+  'toilet',
+  'basin',
+  'vanity',
+  'bath',
+  'shower',
+  'faucet',
+  'mirrorCabinet',
+  'wallCabinet',
+  'wallShelf',
+]);
+export type RefineTarget = {
+  id: string;
+  /** The real product's photo (the input of its saved 3D view); none for a standard model. */
+  referenceAssetId?: string;
+};
+/**
+ * The placed products the per-product export repaints: a saved 3D product (its input photo is the
+ * reference) or a standard model (no photo), of a kind in REFINE_KINDS. A flat product photo is a
+ * photograph already and is left as it is.
+ */
+export function refineTargets(snapshot: Pick<RenderSnapshot, 'scene' | 'materials'>): RefineTarget[] {
+  const targets: RefineTarget[] = [];
+  const { scene } = snapshot;
+  for (const fixture of scene.fixtures) {
+    if (resolveBathRimFixture(scene, fixture).status === 'held') continue;
+    const material = snapshot.materials[fixture.materialVersionId];
+    const reconstruction = fixture.reconstruction;
+    const kind = reconstruction?.kind ?? material?.category;
+    if (!kind || !REFINE_KINDS.has(kind)) continue;
+    if (reconstruction) {
+      targets.push({ id: fixture.id });
+      continue;
+    }
+    const product = material?.views?.[fixture.viewIndex]?.product3d;
+    if (product) targets.push({ id: fixture.id, referenceAssetId: product.inputAssetId });
+  }
+  return targets;
 }
 
 /** A wall that covers at least this share of the capture is asked about in the result check. */
