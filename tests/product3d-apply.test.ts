@@ -153,6 +153,18 @@ describe('360 product photo application', () => {
     expect(painted.product3d.photoCamera?.azimuth).toBe(1);
   });
 
+  it('records a glaze only when there is one, so older saves and matte products look identical', async () => {
+    const { assets } = repository();
+    const plain = await prepareProductReplacement(application(), assets, 'floor');
+    expect(plain.product3d).not.toHaveProperty('gloss');
+    const none = await prepareProductReplacement({ ...application(), gloss: 'none' }, assets, 'floor');
+    expect(none.product3d).not.toHaveProperty('gloss');
+    const light = await prepareProductReplacement({ ...application(), gloss: 'light' }, assets, 'floor');
+    expect(light.product3d.gloss).toBe('light');
+    const normal = await prepareProductReplacement({ ...application(), gloss: 'normal' }, assets, 'floor');
+    expect(normal.product3d.gloss).toBe('normal');
+  });
+
   it('retries a failed PNG write using the successfully staged input and mesh without duplicate writes', async () => {
     const result = application();
     const { assets, records, put } = repository();

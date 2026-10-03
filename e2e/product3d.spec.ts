@@ -646,6 +646,91 @@ test('실제 메시 재생: 제품 맞추기(크기 입력 안내·켜고 끄기
   );
 });
 
+test('실제 메시 재생: 사진 색 입히기와 도기 광택(켜고 끄기·실행 취소·저장·재열기·도기가 아니면 광택 없음)', async ({
+  page,
+}) => {
+  const { form: create, name } = await openForm(page);
+  let dialog = await openViewer(create);
+  await reconstruct(page, dialog);
+  const photo = dialog.getByTestId('product3d-photo-color');
+  const photoNote = dialog.getByTestId('product3d-photo-note');
+  await expect(photo).toBeVisible();
+  await expect(photoNote).toBeVisible();
+  // The photo's colours go on by themselves when the photo's outline fits the model's; when it does
+  // not, the item is off and says why in plain words (what the model colours were stays).
+  const on = await photo.isChecked();
+  if (on) {
+    await expect(photoNote).toContainText('원본 사진의 색과 무늬를 그대로 입혔어요');
+    await expect(photoNote).toContainText('윤곽 일치');
+    // Off and undo: one step each, and the pose is kept.
+    const before = await pose(dialog);
+    // (A click, not uncheck(): the box follows the state, which changes when the picture is redrawn.)
+    await photo.click();
+    await expect(photo).not.toBeChecked();
+    await expect(dialog.getByTestId('product3d-fit-undo')).toBeEnabled();
+    await dialog.getByTestId('product3d-fit-undo').click();
+    await expect(photo).toBeChecked();
+    expect((await pose(dialog)).objectQuaternion).toEqual(before.objectQuaternion);
+  } else {
+    await expect(photoNote).toContainText('윤곽');
+    await expect(photoNote).toContainText('사진 색을 입히지 않고 지금 색을 그대로 써요');
+  }
+  // The glaze: a toilet is ceramic, so a new model starts with a light one and it can be changed.
+  const light = dialog.getByTestId('product3d-gloss-light');
+  await expect(light).toBeEnabled();
+  await expect(light).toBeChecked();
+  await dialog.getByTestId('product3d-gloss-normal').click();
+  await expect(dialog.getByTestId('product3d-gloss-normal')).toBeChecked();
+  await dialog.screenshot({ path: path.join(output, 'photo-colour-gloss.png') });
+  await updateSelectedAndClose(dialog);
+  await saveForm(create);
+  const [saved] = await versions(page, name);
+  expect(saved.views[0].product3d?.gloss).toBe('normal');
+  if (on) {
+    const camera = saved.views[0].product3d?.photoCamera;
+    expect(camera?.iou).toBeGreaterThan(0.85);
+    expect(camera?.distance).toBeGreaterThan(1);
+  } else expect(saved.views[0].product3d?.photoCamera).toBeUndefined();
+  // Reopened as saved: the same state, no inference.
+  const reopen = async () => {
+    await page.reload();
+    await page
+      .locator('article')
+      .filter({ hasText: name })
+      .getByRole('button', { name: '정보 수정', exact: true })
+      .click();
+    const form = page.getByRole('dialog', { name: '자재 수정', exact: true });
+    const viewer = await openViewer(form, '정면', true);
+    await expect(viewer.getByTestId('product3d-canvas')).toBeVisible();
+    return { form, viewer };
+  };
+  let opened = await reopen();
+  dialog = opened.viewer;
+  await expect(dialog.getByTestId('product3d-gloss-normal')).toBeChecked();
+  if (on) await expect(dialog.getByTestId('product3d-photo-color')).toBeChecked();
+  else await expect(dialog.getByTestId('product3d-photo-color')).not.toBeChecked();
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
+  // The original colours are never glazed, and the note says so.
+  await chooseShading(dialog, '원본 색');
+  await expect(dialog.getByTestId('product3d-gloss-note')).toContainText(
+    '원본 색 보기에서는 광택을 주지 않아요',
+  );
+  await chooseShading(dialog, '혼합(권장)');
+  // Not ceramic: a vanity keeps the matte material, the control is off and says so; nothing is saved.
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  await opened.form.getByLabel('카테고리', { exact: true }).selectOption('vanity');
+  dialog = await openViewer(opened.form, '정면', true);
+  await expect(dialog.getByTestId('product3d-gloss-light')).toBeDisabled();
+  await expect(dialog.getByTestId('product3d-gloss-none')).toBeChecked();
+  await expect(dialog.getByTestId('product3d-gloss-note')).toContainText('도기에만 광택을 줘요');
+  await updateSelectedAndClose(dialog);
+  await saveForm(opened.form, true);
+  expect((await versions(page, name)).at(-1)!.views[0].product3d?.gloss).toBeUndefined();
+  // Saved as a vanity it opens matte (no glaze field was written).
+  opened = await reopen();
+  await expect(opened.viewer.getByTestId('product3d-gloss-none')).toBeChecked();
+});
+
 test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자세 재진입 무추론', async ({ page }) => {
   const { form: create, name } = await openForm(page, 2);
   await saveForm(create);

@@ -7,6 +7,7 @@ import { ProductRenderer, type ProductCapture } from '@/lib/product3d/renderer';
 import { estimateUprightQuaternion } from '@/lib/product3d/upright';
 import { levelByOutline, type OutlineLevelResult } from '@/lib/product3d/outline-level';
 import { readySurface } from '@/lib/product3d/shading';
+import type { ProductGloss } from '@/lib/product3d/glaze';
 import { prepareProductSurface } from '@/lib/product3d/surface';
 import {
   createDefaultPose,
@@ -33,6 +34,8 @@ export interface ProductViewportProps {
    * base colours only, under viewer lighting; 'baked': the model's own RGB.
    */
   shading: ProductShading;
+  /** The glaze of the lit modes (ceramic products only; see product3d/glaze.ts). */
+  gloss?: ProductGloss;
   onShadingChange: (shading: ProductShading) => void;
   onPoseChange: (pose: ProductPose) => void;
   onError: (message: string) => void;
@@ -70,7 +73,16 @@ interface Runtime {
 
 export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewportProps>(
   function ProductViewport(
-    { mesh, initialPose, shading, onShadingChange, onPoseChange, onError, levelOnOpen = false },
+    {
+      mesh,
+      initialPose,
+      shading,
+      gloss = 'none',
+      onShadingChange,
+      onPoseChange,
+      onError,
+      levelOnOpen = false,
+    },
     ref,
   ) {
     const canvasMountRef = useRef<HTMLDivElement>(null);
@@ -82,6 +94,7 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     const callbacks = useRef({ onPoseChange, onError });
     const initial = useRef(initialPose);
     const shadingRef = useRef(shading);
+    const glossRef = useRef(gloss);
     const levelOnOpenRef = useRef(levelOnOpen);
     const toolLayerRef = useRef<HTMLDivElement>(null);
     const [background, setBackground] = useState<'checker' | 'white' | 'black'>('checker');
@@ -103,6 +116,13 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     useEffect(() => {
       initial.current = initialPose;
     }, [initialPose]);
+    useEffect(() => {
+      glossRef.current = gloss;
+      const active = runtime.current;
+      if (!active) return;
+      active.renderer.setGloss(gloss);
+      active.draw();
+    }, [gloss, ready]);
     useEffect(() => {
       shadingRef.current = shading;
       const active = runtime.current;
@@ -166,6 +186,7 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
       try {
         initialized = new ProductRenderer(canvas, mesh);
         initialized.setShading(shadingRef.current);
+        initialized.setGloss(glossRef.current);
         initialized.setPose(initial.current);
         // A new model comes level by its outline, on top of the shape estimate it was given.
         if (levelOnOpenRef.current) {

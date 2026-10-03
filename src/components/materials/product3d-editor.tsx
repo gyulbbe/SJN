@@ -29,6 +29,7 @@ import {
   prepareProductSurface,
 } from '@/lib/product3d/surface';
 import { decodeProductPhoto } from '@/lib/product3d/input-cutout';
+import { GLOSS_LABELS, PRODUCT_GLOSSES, canGlaze, glossFor, type ProductGloss } from '@/lib/product3d/glaze';
 import type { PhotoCamera } from '@/lib/product3d/photo-camera';
 import {
   buildFit,
@@ -148,6 +149,10 @@ export function Product3dEditor({
     [paintNote, setPaintNote] = useState(''),
     [paintMatch, setPaintMatch] = useState<number>();
   const paintCamera = useRef<PhotoCamera>(undefined);
+  // The glaze of a ceramic product (see product3d/glaze.ts): a model just made starts with a light one.
+  const [gloss, setGloss] = useState<ProductGloss>('none');
+  const glazed = canGlaze(category);
+  const shownGloss = glossFor(category, gloss);
   const sizeRef = useRef(size);
   sizeRef.current = size;
   /**
@@ -228,6 +233,7 @@ export function Product3dEditor({
     setPaintNote('');
     setPaintMatch(undefined);
     paintCamera.current = undefined;
+    setGloss(product3d && !blob ? (product3d.gloss ?? 'none') : 'light');
     setStored(false);
     setShading(product3d && !blob ? (product3d.shading ?? 'baked') : 'mixed');
     void (async () => {
@@ -453,6 +459,7 @@ export function Product3dEditor({
           modelRevision: result.timings.modelRevision,
           shading,
           ...(fit ? { fit } : {}),
+          ...(shownGloss !== 'none' ? { gloss: shownGloss } : {}),
           ...(paintOn && paintCamera.current && paintMatch !== undefined
             ? { photoCamera: { ...paintCamera.current, iou: paintMatch } satisfies PhotoCameraReference }
             : {}),
@@ -746,6 +753,7 @@ export function Product3dEditor({
                 initialPose={initialPose}
                 levelOnOpen={freshModel}
                 shading={shading}
+                gloss={shownGloss}
                 onShadingChange={setShading}
                 onPoseChange={(pose) => {
                   trackPose(pose);
@@ -883,6 +891,28 @@ export function Product3dEditor({
                     (paintOn
                       ? `사진을 찍은 쪽 면에 원본 사진의 색과 무늬를 그대로 입혔어요(윤곽 일치 ${Math.round((paintMatch ?? 0) * 100)}%). 사진에 안 보이는 면은 모델이 추측한 색이에요. 되돌리려면 위의 맞춤 실행 취소를 눌러요.`
                       : '켜면 사진을 찍은 쪽 면의 색을 원본 사진에서 직접 가져와 얼굴 무늬·테두리가 또렷해져요.')}
+              </p>
+            </fieldset>
+            <fieldset className={styles.fit} aria-label="도기 광택" disabled={applying || !glazed}>
+              <legend>도기 광택</legend>
+              {PRODUCT_GLOSSES.map((value) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name="product3d-gloss"
+                    data-testid={`product3d-gloss-${value}`}
+                    checked={shownGloss === value}
+                    onChange={() => setGloss(value)}
+                  />{' '}
+                  {GLOSS_LABELS[value]}
+                </label>
+              ))}
+              <p className={styles.note} data-testid="product3d-gloss-note">
+                {!glazed
+                  ? '변기·세면대·욕조 같은 도기에만 광택을 줘요. 이 자재는 그대로 둬요.'
+                  : shading === 'baked'
+                    ? '원본 색 보기에서는 광택을 주지 않아요. 혼합 또는 조명 보정으로 바꾸면 보여요.'
+                    : '유약을 바른 도기처럼 은은하게 반짝여요. 저장하면 3D 방과 AI 입력에도 같은 광택으로 나와요.'}
               </p>
             </fieldset>
             {!stored && (

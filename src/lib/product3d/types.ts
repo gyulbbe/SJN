@@ -1,5 +1,6 @@
 import type { PhotoCameraReference, ProductMesh, ProductPose, ProductShading } from './state-types';
 import type { ProductFit } from './fit';
+import type { ProductGloss } from './glaze';
 import type { Product3dModelPart } from './model';
 export interface Product3dProgress {
   stage:
@@ -60,5 +61,7 @@ export interface Product3dApplication {
   fit?: ProductFit;
   /** The camera the input photo's colours were put on through when this angle was captured (see photo-color.ts). */
   photoCamera?: PhotoCameraReference;
+  /** The glaze the angle was captured with (ceramic only; see glaze.ts). */
+  gloss?: ProductGloss;
   capture: { blob: Blob; width: number; height: number; anchor: { x: number; y: number } };
 }

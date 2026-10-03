@@ -11,6 +11,7 @@ import {
   Matrix4,
   Mesh,
   MeshBasicMaterial,
+  MeshPhysicalMaterial,
   MeshStandardMaterial,
   Object3D,
   PlaneGeometry,
@@ -30,7 +31,9 @@ import { decodeProductMesh } from '../product3d/codec';
 import { levelCameraQuaternion, validatePose } from '../product3d/pose';
 import { isLitShading, productSurface } from '../product3d/shading';
 import { decodeProductPhoto } from '../product3d/input-cutout';
+import { GLAZE, glossFor } from '../product3d/glaze';
 import { preparePaintedMesh, prepareFittedMesh, prepareProductSurface } from '../product3d/surface';
+import type { ProductGloss } from '../product3d/glaze';
 import type { Product3dReference, ProductMesh } from '../product3d/state-types';
 import { createTemplateModel, disposeTemplateModel } from '../reconstruction/templates';
 import { reconstructionModelTransform } from '../reconstruction/projection';
@@ -416,6 +419,26 @@ function prepareModel(group: Group, fixture: FixtureInstance) {
   group.userData.fixtureId = fixture.id;
 }
 
+/**
+ * The material of a lit saved product: the matte one as before, or for ceramic with a glaze (see
+ * product3d/glaze.ts) a physical one with a lower roughness and a thin clear coat. The room's own
+ * environment (see render/realistic-lighting.ts) is what it reflects, and the colour correction and
+ * tone mapping of applyColor are added to either, so shadows and colour work as they did.
+ */
+export function litProductMaterial(gloss: ProductGloss) {
+  if (gloss === 'none')
+    return new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.5, metalness: 0 });
+  const glaze = GLAZE[gloss].room;
+  return new MeshPhysicalMaterial({
+    vertexColors: true,
+    side: DoubleSide,
+    metalness: 0,
+    roughness: glaze.roughness,
+    clearcoat: glaze.clearcoat,
+    clearcoatRoughness: glaze.clearcoatRoughness,
+  });
+}
+
 /** Uniformly fits the selected PNG pose into its W×H envelope; depth is the saved mesh ratio. */
 export function createSavedProductGeometry(
   mesh: ProductMesh,
@@ -619,12 +642,7 @@ export async function buildViewerFixtures(
             new Mesh(
               geometry,
               isLitShading(selected.product3d.shading)
-                ? new MeshStandardMaterial({
-                    vertexColors: true,
-                    side: DoubleSide,
-                    roughness: 0.5,
-                    metalness: 0,
-                  })
+                ? litProductMaterial(glossFor(material.category, selected.product3d.gloss))
                 : new MeshBasicMaterial({ vertexColors: true, side: DoubleSide, toneMapped: false }),
             ),
           );

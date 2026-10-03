@@ -826,6 +826,7 @@ export const product3dReferenceSchema = z
       })
       .strict()
       .optional(),
+    gloss: z.enum(['none', 'light', 'normal']).optional(),
   })
   .strict();
 export const materialInputSchema = z

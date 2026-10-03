@@ -85,6 +85,8 @@ export async function prepareProductReplacement(
       ...(result.fit ? { fit: structuredClone(result.fit) } : {}),
       // Likewise the photo's colours: recorded only when they are on, so older saves read as they were.
       ...(result.photoCamera ? { photoCamera: structuredClone(result.photoCamera) } : {}),
+      // A glaze only when there is one: 'none' is the absence of the field, as in older saves.
+      ...(result.gloss && result.gloss !== 'none' ? { gloss: result.gloss } : {}),
     },
   };
 }

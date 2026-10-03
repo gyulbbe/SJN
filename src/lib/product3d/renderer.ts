@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { ProductMesh, ProductPose, ProductShading } from './state-types';
 import { validatePose } from './pose';
 import { productSurface } from './shading';
+import { GLAZE, disposeGlazeEnvironment, glazeEnvironment, type ProductGloss } from './glaze';
 
 export interface ProductCapture {
   blob: Blob;
@@ -45,6 +46,10 @@ function pngBlob(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<Blob> 
   });
 }
 
+/** The editor's lights for the matte material (a glaze takes a share of them, see glaze.ts). */
+const KEY_LIGHT = 1.8;
+const SKY_LIGHT = 1.9;
+
 /** sRGB 0–1 colours to the linear buffer the renderer draws. */
 function linearColors(source: Float32Array) {
   const colors = new Float32Array(source.length);
@@ -67,7 +72,10 @@ function linearColors(source: Float32Array) {
 export class ProductRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly camera: THREE.OrthographicCamera;
-  readonly object: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial | THREE.MeshStandardMaterial>;
+  readonly object: THREE.Mesh<
+    THREE.BufferGeometry,
+    THREE.MeshBasicMaterial | THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial
+  >;
   readonly scene = new THREE.Scene();
   private readonly geometry = new THREE.BufferGeometry();
   private readonly material = new THREE.MeshBasicMaterial({
@@ -81,10 +89,13 @@ export class ProductRenderer {
     roughness: 0.55,
     metalness: 0,
   });
+  // The glazed ceramic of the lit modes (see glaze.ts), made when first asked for.
+  private glazeMaterial?: THREE.MeshPhysicalMaterial;
+  private gloss: ProductGloss = 'none';
   // A white glaze facing the viewer comes out just under full white (about the brightness of a
   // studio product photo), sides turned away from the key light about half as bright.
-  private readonly key = new THREE.DirectionalLight(0xffffff, 1.8);
-  private readonly sky = new THREE.HemisphereLight(0xffffff, 0xcfcfca, 1.9);
+  private readonly key = new THREE.DirectionalLight(0xffffff, KEY_LIGHT);
+  private readonly sky = new THREE.HemisphereLight(0xffffff, 0xcfcfca, SKY_LIGHT);
   private readonly source: ProductMesh;
   private readonly bakedColors: Float32Array;
   private readonly litColors: Partial<Record<ProductShading, Float32Array>> = {};
@@ -142,10 +153,10 @@ export class ProductRenderer {
     for (const x of [box.min.x, box.max.x])
       for (const y of [box.min.y, box.max.y])
         for (const z of [box.min.z, box.max.z]) this.boxCorners.push(new THREE.Vector3(x, y, z));
-    this.object = new THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial | THREE.MeshStandardMaterial>(
-      this.geometry,
-      this.material,
-    );
+    this.object = new THREE.Mesh<
+      THREE.BufferGeometry,
+      THREE.MeshBasicMaterial | THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial
+    >(this.geometry, this.material);
     this.scene.add(this.object, this.sky, this.key, this.key.target);
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, this.radius * 0.01, this.radius * 12);
     try {
@@ -176,13 +187,54 @@ export class ProductRenderer {
       const surface = productSurface(mode, this.source);
       (attribute.array as Float32Array).set((this.litColors[mode] ??= linearColors(surface.colors)));
       this.geometry.setAttribute('normal', new THREE.BufferAttribute(surface.normals!, 3));
-      this.object.material = this.litMaterial;
+      this.shading = mode;
+      this.useMaterial();
     } else {
       (attribute.array as Float32Array).set(this.bakedColors);
-      this.object.material = this.material;
+      this.shading = mode;
+      this.useMaterial();
     }
     attribute.needsUpdate = true;
-    this.shading = mode;
+  }
+
+  /**
+   * The gloss of the lit modes (ceramic only, chosen by the caller): 'none' is the matte material of
+   * before; 'light' and 'normal' are a glaze (see glaze.ts), lit a little less so a white glaze
+   * facing the viewer is as bright as the matte one. The original colours are never glazed.
+   */
+  setGloss(gloss: ProductGloss) {
+    if (gloss === this.gloss) return;
+    this.gloss = gloss;
+    this.useMaterial();
+  }
+
+  private useMaterial() {
+    if (this.shading === 'baked') {
+      this.object.material = this.material;
+      return;
+    }
+    if (this.gloss === 'none') {
+      this.key.intensity = KEY_LIGHT;
+      this.sky.intensity = SKY_LIGHT;
+      this.object.material = this.litMaterial;
+      return;
+    }
+    const glaze = GLAZE[this.gloss];
+    const material = (this.glazeMaterial ??= new THREE.MeshPhysicalMaterial({
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      metalness: 0,
+    }));
+    material.roughness = glaze.roughness;
+    material.clearcoat = glaze.clearcoat;
+    material.clearcoatRoughness = glaze.clearcoatRoughness;
+    material.envMap = glazeEnvironment(this.renderer) ?? null;
+    material.envMapIntensity = glaze.editor.environment;
+    material.specularIntensity = glaze.editor.specular;
+    material.needsUpdate = true;
+    this.key.intensity = KEY_LIGHT * glaze.editor.key;
+    this.sky.intensity = SKY_LIGHT * glaze.editor.sky;
+    this.object.material = material;
   }
 
   /** Key light from the viewer's upper left, so the shading always matches the current view. */
@@ -386,7 +438,9 @@ export class ProductRenderer {
     this.geometry.dispose();
     this.material.dispose();
     this.litMaterial.dispose();
+    this.glazeMaterial?.dispose();
     this.scene.clear();
+    disposeGlazeEnvironment(this.renderer);
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     this.canvas.width = 0;

@@ -150,6 +150,18 @@ describe('persisted product3d material data', () => {
         materialInputSchema.safeParse(material(png.id, { ...reference, photoCamera: bad } as never)).success,
       ).toBe(false);
   });
+  it('accepts the optional gloss and keeps older saves without it valid', async () => {
+    const { png, reference } = await setup();
+    expect(materialInputSchema.parse(material(png.id, reference)).views[0].product3d?.gloss).toBeUndefined();
+    for (const gloss of ['none', 'light', 'normal'] as const)
+      expect(
+        materialInputSchema.parse(material(png.id, { ...reference, gloss })).views[0].product3d?.gloss,
+      ).toBe(gloss);
+    for (const bad of ['glossy', '', 1, null])
+      expect(
+        materialInputSchema.safeParse(material(png.id, { ...reference, gloss: bad } as never)).success,
+      ).toBe(false);
+  });
   it('collects PNG, mesh and exact input references only once', async () => {
     const { png, input, mesh, reference } = await setup();
     expect(new Set(materialReferences(material(png.id, reference)))).toEqual(

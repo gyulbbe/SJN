@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { Box3, Matrix4, Mesh, PerspectiveCamera, Quaternion, Texture, Vector3 } from 'three';
+import {
+  Box3,
+  Matrix4,
+  Mesh,
+  MeshPhysicalMaterial,
+  PerspectiveCamera,
+  Quaternion,
+  Texture,
+  Vector3,
+} from 'three';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 import {
   DEFAULT_COLOR,
@@ -583,6 +592,53 @@ describe('room viewer immutable physical fixtures', () => {
     const older = await buildViewerFixtures(scene([fixture()]), { m: plain }, async () => asset);
     expect(older.notices.some((n) => n.message.includes('사진 색'))).toBe(false);
     older.dispose();
+  });
+  it('draws a ceramic product with a glaze only when it was saved with one, and everything else as before', async () => {
+    const asset = await makeProductMeshAsset(cube(), 'mesh', 'input');
+    const typeOf = async (category: MaterialVersion['category'], gloss?: 'light' | 'normal' | 'none') => {
+      const m = material();
+      m.category = category;
+      m.views[0].product3d = { ...reference(), shading: 'mixed', ...(gloss ? { gloss } : {}) };
+      const result = await buildViewerFixtures(scene([fixture()]), { m }, async () => asset);
+      let found:
+        { type: string; roughness: number; shadow: boolean; compiled: boolean; key: string } | undefined;
+      result.group.traverse((node) => {
+        if (!(node instanceof Mesh)) return;
+        const surface = node.material as MeshPhysicalMaterial;
+        found = {
+          type: surface.type,
+          roughness: surface.roughness,
+          shadow: node.castShadow && node.receiveShadow,
+          compiled:
+            typeof surface.onBeforeCompile === 'function' && surface.onBeforeCompile.toString().length > 50,
+          key: surface.customProgramCacheKey(),
+        };
+      });
+      result.dispose();
+      return found!;
+    };
+    const matte = await typeOf('basin');
+    expect(matte.type).toBe('MeshStandardMaterial');
+    expect(matte.roughness).toBe(0.5);
+    // Ceramic with a glaze: a physical material with the room's colour correction and tone mapping
+    // (the same program key as the matte lit one) and the shadows of every product.
+    for (const category of ['toilet', 'basin', 'bath'] as const)
+      for (const gloss of ['light', 'normal'] as const) {
+        const glazed = await typeOf(category, gloss);
+        expect(glazed.type).toBe('MeshPhysicalMaterial');
+        expect(glazed.roughness).toBeLessThan(0.5);
+        expect(glazed.shadow).toBe(true);
+        expect(glazed.compiled).toBe(true);
+        expect(glazed.key).toBe(matte.key);
+      }
+    // No glaze saved, or 'none': matte (older saves).
+    expect((await typeOf('basin', 'none')).type).toBe('MeshStandardMaterial');
+    // A category that is not ceramic keeps the matte material whatever was saved.
+    for (const category of ['vanity', 'faucet', 'mirror'] as const) {
+      const other = await typeOf(category, 'normal');
+      expect(other.type).toBe('MeshStandardMaterial');
+      expect(other.roughness).toBe(0.5);
+    }
   });
   it('draws the original colours of a mesh that carries the photo’s, and the same colours of a mesh that does not', () => {
     const mesh = cube();
