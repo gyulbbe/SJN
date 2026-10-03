@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildFluxProductPrompt,
   FLUX_PRODUCT_KEEP_SENTENCE,
+  FLUX_PRODUCT_MARKING_SENTENCE,
   FLUX_PRODUCT_PROMPT,
   FLUX_PRODUCT_REFERENCE_SENTENCE,
   fluxProductSchema,
@@ -43,6 +44,11 @@ describe('per-product refinement prompt', () => {
     expect(text).toContain('use it for colours, markings and small details only');
     // The photo never decides the shape, the viewing angle or the position.
     expect(text).toContain('never for the shape, the viewing angle or the position');
+    // The markings of the photo are to be drawn on the render's product, said last; without a photo
+    // there is nothing to copy and the sentence is not there.
+    expect(text.endsWith(FLUX_PRODUCT_MARKING_SENTENCE)).toBe(true);
+    expect(text).toContain('Reproduce every printed or painted marking visible on the product in image 1');
+    expect(buildFluxProductPrompt(toilet, false)).not.toContain('marking visible');
     // Image 0 stays the first thing said, whatever follows.
     expect(text.indexOf('Image 0')).toBe(0);
     expect(text).not.toContain('image 2');

@@ -13,8 +13,12 @@
 import { FLUX_MODEL } from '../../src/lib/ai-export/contract';
 import { buildFluxProductPrompt, fluxProductSchema } from '../../src/lib/ai-export/product-prompt';
 
-/** The approved number of FLUX calls for this session; raise it only after a new approval. */
-const FLUX_CAP = 12;
+/**
+ * The approved number of FLUX calls for this session; raise it only after a new approval. 12 for the
+ * 2026-10-03 comparison; the user then approved further tests without a limit (2026-10-03), and 80
+ * stays as a guard against a runaway script, not as a budget.
+ */
+const FLUX_CAP = 80;
 let fluxCalls = 0;
 
 type Ai = {
@@ -38,7 +42,11 @@ const worker = {
     const bytes = new Uint8Array(await image.arrayBuffer());
     const size = header(bytes);
     const product = fluxProductSchema.parse(JSON.parse(String(form.get('product'))));
-    const prompt = buildFluxProductPrompt(product, !!reference);
+    // Experiment-only knobs, never in the app: a sentence appended to the prompt, a bigger answer.
+    const extra = String(form.get('extra') ?? '');
+    const scale = Number(form.get('scale') ?? 2);
+    if (![2, 3].includes(scale)) return Response.json({ error: 'scale must be 2 or 3' }, { status: 400 });
+    const prompt = [buildFluxProductPrompt(product, !!reference), extra].filter(Boolean).join(' ');
     const input = new FormData();
     input.set('input_image_0', new Blob([bytes], { type: 'image/png' }), 'crop.png');
     if (reference)
@@ -48,8 +56,8 @@ const worker = {
         'photo.png',
       );
     input.set('prompt', prompt);
-    input.set('width', String(size.width * 2));
-    input.set('height', String(size.height * 2));
+    input.set('width', String(size.width * scale));
+    input.set('height', String(size.height * scale));
     input.set('seed', String(form.get('seed')));
     const serialized = new Response(input);
     const started = Date.now();
@@ -63,8 +71,8 @@ const worker = {
       status: response.status,
       ms: Date.now() - started,
       prompt,
-      width: size.width * 2,
-      height: size.height * 2,
+      width: size.width * scale,
+      height: size.height * scale,
       body: response.ok ? JSON.parse(text) : text.slice(0, 2000),
     });
   },

@@ -28,7 +28,7 @@ const gpu = process.argv.includes('--gpu');
 const [azimuth, elevation] = (process.env.VIEW ?? '30,20').split(',').map(Number);
 const margin = Number(process.env.MARGIN ?? 0.15);
 const root = 'test-results/product3d-batch';
-const output = 'test-results/flux-product-refine/inputs';
+const output = process.env.INPUTS_DIR ?? 'test-results/flux-product-refine/inputs';
 const metricsPath = 'test-results/product3d-photo/metrics-browser.json';
 const metrics = JSON.parse(readFileSync(metricsPath, 'utf8')) as {
   name: string;

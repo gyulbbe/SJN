@@ -25,22 +25,30 @@ import {
 import { createServer } from 'node:http';
 import path from 'node:path';
 import sharp, { type OverlayOptions } from 'sharp';
+import { alignToSilhouette, cutoutAlpha } from '../src/lib/ai-export/refine';
 
 const root = path.resolve('test-results/flux-product-refine');
-const names = ['bear-toilet', 'smart-toilet', 'bathtub'];
+// Other sets of answers (a variant comparison) are measured with these: where the close-ups are, where
+// the answers are, where the cut-outs and the report go, and SINGLE_NAME when every answer in REAL_DIR
+// belongs to that one product (its file names need not start with the product's).
+const inputs = process.env.INPUTS_DIR ? path.resolve(process.env.INPUTS_DIR) : `${root}/inputs`;
+const real = process.env.REAL_DIR ? path.resolve(process.env.REAL_DIR) : `${root}/real`;
+const outRoot = process.env.OUT_DIR ? path.resolve(process.env.OUT_DIR) : root;
+const single = process.env.SINGLE_NAME;
+const names = single ? [single] : ['bear-toilet', 'smart-toilet', 'bathtub'];
 const SHIFT = 16;
 const models = path.resolve('tmp/background-model');
 const runtime = path.resolve('node_modules/onnxruntime-web/dist');
-mkdirSync(`${root}/cutouts`, { recursive: true });
-mkdirSync(`${root}/report`, { recursive: true });
+mkdirSync(`${outRoot}/cutouts`, { recursive: true });
+mkdirSync(`${outRoot}/report`, { recursive: true });
 
 type Item = { key: string; file: string };
 const items: Item[] = [];
 for (const name of names)
-  if (existsSync(`${root}/inputs/${name}/crop.png`))
-    items.push({ key: `${name}-crop-input`, file: `${root}/inputs/${name}/crop.png` });
-for (const file of existsSync(`${root}/real`) ? readdirSync(`${root}/real`) : [])
-  if (/\.(jpe?g|png)$/.test(file)) items.push({ key: path.parse(file).name, file: `${root}/real/${file}` });
+  if (existsSync(`${inputs}/${name}/crop.png`))
+    items.push({ key: `${name}-crop-input`, file: `${inputs}/${name}/crop.png` });
+for (const file of existsSync(`${real}`) ? readdirSync(`${real}`) : [])
+  if (/\.(jpe?g|png)$/.test(file)) items.push({ key: path.parse(file).name, file: `${real}/${file}` });
 if (!items.length) throw new Error('nothing to measure; run tests/flux-product-crops-browser.ts first');
 
 const bundles = new Map<string, string>();
@@ -75,7 +83,7 @@ const server = createServer(async (req, res) => {
       if (!items.some((item) => item.key === key)) throw new Error('Unexpected output');
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(chunk as Buffer);
-      writeFileSync(`${root}/cutouts/${key}.png`, Buffer.concat(chunks));
+      writeFileSync(`${outRoot}/cutouts/${key}.png`, Buffer.concat(chunks));
       res.end('ok');
       return;
     }
@@ -205,19 +213,22 @@ type Row = {
   alignedIou: number;
   shift: [number, number];
   area: number;
+  /** As the app measures it: stood on the 3D product's ground point at its height (alignToSilhouette). */
+  appIou?: number;
+  ratio?: number;
 };
 const rows: Row[] = [];
 for (const name of names) {
-  const metaFile = `${root}/inputs/${name}/meta.json`;
+  const metaFile = `${inputs}/${name}/meta.json`;
   if (!existsSync(metaFile)) continue;
   const { layout } = JSON.parse(readFileSync(metaFile, 'utf8')) as {
     layout: { width: number; height: number };
   };
   const { width, height } = layout;
-  const silhouette = await maskOf(`${root}/inputs/${name}/silhouette.png`, width, height, false);
+  const silhouette = await maskOf(`${inputs}/${name}/silhouette.png`, width, height, false);
   const area = silhouette.reduce((sum, value) => sum + value, 0);
-  for (const item of items.filter((entry) => entry.key.startsWith(`${name}-`))) {
-    const mask = await maskOf(`${root}/cutouts/${item.key}.png`, width, height, true);
+  for (const item of items.filter((entry) => single || entry.key.startsWith(`${name}-`))) {
+    const mask = await maskOf(`${outRoot}/cutouts/${item.key}.png`, width, height, true);
     const iou = overlap(mask, silhouette, width, height, 0, 0);
     let best = { iou, dx: 0, dy: 0 };
     for (let dy = -SHIFT; dy <= SHIFT; dy += 2)
@@ -225,9 +236,27 @@ for (const name of names) {
         const value = overlap(mask, silhouette, width, height, dx, dy);
         if (value > best.iou) best = { iou: value, dx, dy };
       }
+    // The app's own measure on the model input's grid.
+    const cut = await sharp(`${outRoot}/cutouts/${item.key}.png`)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const alpha = cutoutAlpha(
+      { width: cut.info.width, height: cut.info.height, data: new Uint8ClampedArray(cut.data) },
+      { width, height },
+    );
+    const aligned = alignToSilhouette(
+      alpha,
+      Uint8Array.from(silhouette, (v) => v * 255),
+      width,
+      height,
+    );
     rows.push({
       key: item.key,
       name,
+      ...('failure' in aligned
+        ? {}
+        : { appIou: Math.round(aligned.iou * 1000) / 1000, ratio: Math.round(aligned.ratio * 100) / 100 }),
       iou: Math.round(iou * 1000) / 1000,
       alignedIou: Math.round(best.iou * 1000) / 1000,
       shift: [best.dx, best.dy],
@@ -235,11 +264,12 @@ for (const name of names) {
     });
   }
 }
-writeFileSync(`${root}/report/measures.json`, JSON.stringify(rows, null, 1));
+writeFileSync(`${outRoot}/report/measures.json`, JSON.stringify(rows, null, 1));
 for (const row of rows)
   console.log(
-    `${row.key.padEnd(34)} IoU ${row.iou.toFixed(3)}  aligned ${row.alignedIou.toFixed(3)} (shift ${row.shift.join(',')})  area ${row.area.toFixed(2)}`,
+    `${row.key.padEnd(34)} IoU ${row.iou.toFixed(3)}  aligned ${row.alignedIou.toFixed(3)} (shift ${row.shift.join(',')})  area ${row.area.toFixed(2)}  app ${row.appIou?.toFixed(3) ?? 'n/a'} (height ratio ${row.ratio ?? 'n/a'})`,
   );
+if (process.env.NO_SHEET) process.exit(0);
 
 // The sheets: one row per product, [3D crop | (i) | (i) | (ii) | (ii) | photo], each on its own
 // white cell, the IoU written under it.
@@ -250,7 +280,7 @@ const columns = [
   {
     title: '3D crop',
     key: (n: string) => `${n}-crop-input`,
-    file: (n: string) => `${root}/inputs/${n}/crop.png`,
+    file: (n: string) => `${inputs}/${n}/crop.png`,
   },
   ...[424242, 777001].map((seed) => ({
     title: `(i) crop only · ${seed}`,
@@ -262,11 +292,11 @@ const columns = [
     key: (n: string) => `${n}-crop-photo-${seed}`,
     file: (n: string) => findReal(`${n}-crop-photo-${seed}`),
   })),
-  { title: 'photo', key: () => '', file: (n: string) => `${root}/inputs/${n}/reference.png` },
+  { title: 'photo', key: () => '', file: (n: string) => `${inputs}/${n}/reference.png` },
 ];
 function findReal(key: string) {
   for (const extension of ['jpg', 'png']) {
-    const file = `${root}/real/${key}.${extension}`;
+    const file = `${real}/${key}.${extension}`;
     if (existsSync(file)) return file;
   }
   return '';
@@ -300,7 +330,7 @@ for (const name of names) {
     .composite(composites)
     .png()
     .toBuffer();
-  writeFileSync(`${root}/report/sheet-${name}.png`, sheet);
+  writeFileSync(`${outRoot}/report/sheet-${name}.png`, sheet);
   sheets.push(sheet);
 }
 await sharp({
@@ -313,5 +343,5 @@ await sharp({
 })
   .composite(sheets.map((input, index) => ({ input, left: 0, top: index * (cell + label) })))
   .png()
-  .toFile(`${root}/report/sheet-all.png`);
-console.log('sheets:', `${root}/report/sheet-all.png`);
+  .toFile(`${outRoot}/report/sheet-all.png`);
+console.log('sheets:', `${outRoot}/report/sheet-all.png`);

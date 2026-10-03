@@ -36,6 +36,15 @@ export const FLUX_PRODUCT_PROMPT =
   'Image 0 is a render of this exact product. Make it a photorealistic studio photograph of the same product: keep the shape, proportions, viewing angle, size and position in the frame exactly; keep the plain white background; only improve materials, glaze, edges and small details.';
 export const FLUX_PRODUCT_REFERENCE_SENTENCE =
   'Image 1 shows the real product: use it for colours, markings and small details only, never for the shape, the viewing angle or the position, which stay exactly as in image 0.';
+/**
+ * With the photo only: the printed or painted markings seen on it (a face, a logo) are to be drawn on
+ * the product in image 0. Said last, as it was tried (2026-10-03, real answers, four seeds a product):
+ * on a toilet with a printed bear face the whole face came out in 4 of 4 answers with it and 3 of 4
+ * without it, and across three products 8–9 of 12 answers kept the 3D product's outline (overlap 0.90)
+ * against 6 of 12 without it. Small samples: see docs/flux-product-refine-results-20261003.md.
+ */
+export const FLUX_PRODUCT_MARKING_SENTENCE =
+  'Reproduce every printed or painted marking visible on the product in image 1 (faces, logos, patterns) in the same place on the product in image 0, with the same shapes and the same darkness; do not remove or simplify them.';
 export const FLUX_PRODUCT_KEEP_SENTENCE =
   'Add no other object, no floor, no cast shadow, no text and no label; do not add, remove or replace any part of the product.';
 
@@ -60,6 +69,7 @@ export function buildFluxProductPrompt(product: FluxProduct, withReference: bool
     withReference ? FLUX_PRODUCT_REFERENCE_SENTENCE : '',
     `The product is a ${colorWords(product.color)} ${product.finish} ${forms}${noun}, about ${size} mm (W × H × D)${facing}. It must remain this ${noun}.`,
     FLUX_PRODUCT_KEEP_SENTENCE,
+    withReference ? FLUX_PRODUCT_MARKING_SENTENCE : '',
   ]
     .filter(Boolean)
     .join(' ');
