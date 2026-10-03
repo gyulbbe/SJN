@@ -14,8 +14,12 @@ import { fluxInputLayout, type FluxInputLayout } from './contract';
  * product stays the 3D render.
  */
 
-/** A repainted product is used only when its silhouette overlaps the 3D one by at least this. */
-export const REFINE_MIN_IOU = 0.85;
+/**
+ * A repainted product is used only when its silhouette overlaps the 3D one by at least this (0.85
+ * in the first version; 0.90 by the user's decision on 2026-10-03: of the twelve real answers two
+ * between 0.89 and 0.90 had changed the product's proportions).
+ */
+export const REFINE_MIN_IOU = 0.9;
 /** Its height may differ from the 3D product's by this factor (a stand-in for "it changed shape"). */
 export const REFINE_HEIGHT_RATIO: readonly [number, number] = [0.7, 1.4];
 export const REFINE_MAX_PRODUCTS = 12;

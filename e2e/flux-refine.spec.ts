@@ -280,7 +280,7 @@ test('실험 C · 제품별 다듬기: 방은 빈 채로 한 번, 제품은 하�
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
   const methods = dialog.getByRole('group', { name: '변환 방식' });
   await expect(methods.getByRole('radio')).toHaveCount(4);
-  await methods.getByText('실험 C · 제품별 다듬기', { exact: true }).click();
+  // The room has a product C can repaint, so C is the method the dialog opens with (nothing chosen yet).
   await expect(methods.getByRole('radio', { name: '실험 C · 제품별 다듬기', exact: true })).toBeChecked();
   // What one click costs is said before the click: one product, so a request for it and one for the room.
   const note = dialog.getByTestId('flux-composite-note');
@@ -350,6 +350,18 @@ test('실험 C · 제품별 다듬기: 방은 빈 채로 한 번, 제품은 하�
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  // Choosing the current method is remembered too (it is no longer "nothing chosen"): the dialog opens
+  // with it next time, and with C again once C is chosen.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await methods.getByText('지금 방식', { exact: true }).click();
+  await expect(methods.getByRole('radio', { name: '지금 방식', exact: true })).toBeChecked();
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  await expect(methods.getByRole('radio', { name: '지금 방식', exact: true })).toBeChecked();
+  await methods.getByText('실험 C · 제품별 다듬기', { exact: true }).click();
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  await expect(methods.getByRole('radio', { name: '실험 C · 제품별 다듬기', exact: true })).toBeChecked();
   expect(errors).toEqual([]);
 });
 

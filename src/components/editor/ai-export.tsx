@@ -47,10 +47,12 @@ import styles from './ai-export.module.css';
 
 type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: string };
 /**
- * The conversion method, chosen in the dialog while the composite export is being tested: the
- * current one (the model repaints the whole render), or experiment A/B (the model repaints the room
- * without fixtures, bare or with grey stand-ins, and ours go back on top). The current one is the
- * default; this browser remembers the choice (a convenience only: unreadable storage means default).
+ * The conversion method, chosen in the dialog: the current one (the model repaints the whole
+ * render), experiment A/B (the model repaints the room without fixtures, bare or with grey
+ * stand-ins, and ours go back on top) or experiment C (A, and each product repainted on its own).
+ * C is the default when the room has a product it can repaint (a saved 3D product or a standard
+ * model); with none, C would only be A, so the current one stays the default. This browser
+ * remembers the choice, "current" too (a convenience only: unreadable storage means the default).
  */
 type FluxMethod = 'current' | FluxRoomMode | 'refine';
 const FLUX_METHODS: { value: FluxMethod; label: string }[] = [
@@ -60,18 +62,20 @@ const FLUX_METHODS: { value: FluxMethod; label: string }[] = [
   { value: 'refine', label: '실험 C · 제품별 다듬기' },
 ];
 export const FLUX_COMPOSITE_FLAG = 'sjn:flux-composite';
-function savedMethod(): FluxMethod {
+/** The method this browser remembers; none when it never chose (or storage is unreadable). */
+function savedMethod(): FluxMethod | undefined {
   try {
     const value = window.localStorage.getItem(FLUX_COMPOSITE_FLAG);
-    return value === 'empty-room' || value === 'placeholders' || value === 'refine' ? value : 'current';
+    return value === 'current' || value === 'empty-room' || value === 'placeholders' || value === 'refine'
+      ? value
+      : undefined;
   } catch {
-    return 'current';
+    return undefined;
   }
 }
 function saveMethod(method: FluxMethod) {
   try {
-    if (method === 'current') window.localStorage.removeItem(FLUX_COMPOSITE_FLAG);
-    else window.localStorage.setItem(FLUX_COMPOSITE_FLAG, method);
+    window.localStorage.setItem(FLUX_COMPOSITE_FLAG, method);
   } catch {
     // Not remembered; the choice still applies in this dialog.
   }
@@ -177,7 +181,9 @@ export default function AiExport({
   /** The model reframed an outside view, so its white margin could not be put back. */
   const [marginKept, setMarginKept] = useState(false);
   // Only scenes drawn in the room can be composited.
-  const [method, setMethod] = useState<FluxMethod>(() => (room ? savedMethod() : 'current'));
+  const [method, setMethod] = useState<FluxMethod>(() =>
+    room ? (savedMethod() ?? (room.refinable ? 'refine' : 'current')) : 'current',
+  );
   const refining = !!room && method === 'refine';
   // The per-product export sends the room empty, as experiment A does.
   const mode: FluxRoomMode | undefined =
