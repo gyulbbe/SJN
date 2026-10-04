@@ -25,7 +25,7 @@ import sharp from 'sharp';
 import { getActiveDesign } from '../src/lib/designs';
 import { savedProject } from '../tests/helpers/editor-actions';
 import { calculateMaterialUsage } from '../src/lib/material-usage';
-import { nearestPoseDirection } from '../src/lib/product3d/direction-pose';
+import { nearestPoseDirection, poseDirection } from '../src/lib/product3d/direction-pose';
 
 // These tests replay an ACTUAL TripoSR mesh through the production viewport and
 // persistence. The Worker response is controlled, so these are not inference tests.
@@ -42,6 +42,8 @@ type Controls = {
   workers: number;
   pngExports: number;
   failAssetWrite: boolean;
+  /** Asset writes tried (POST /api/d1/assets), failed or not. */
+  assetPosts: number;
   contexts: number;
   contextsLost: number;
   drawCalls: number;
@@ -66,6 +68,7 @@ async function installReplay(page: Page) {
         workers: 0,
         pngExports: 0,
         failAssetWrite: false,
+        assetPosts: 0,
         contexts: 0,
         contextsLost: 0,
         drawCalls: 0,
@@ -147,6 +150,7 @@ async function installReplay(page: Page) {
       });
       const nativeFetch = window.fetch.bind(window);
       window.fetch = async (input, init) => {
+        if (String(input).includes('/api/d1/assets') && init?.method === 'POST') state.assetPosts++;
         if (state.failAssetWrite && String(input).includes('/api/d1/assets') && init?.method === 'POST')
           return Response.json({ error: '검증용 저장 공간 부족' }, { status: 503 });
         return nativeFetch(input, init);
@@ -229,7 +233,20 @@ async function openViewer(form: Locator, direction = '정면', saved = false) {
     .click();
   return form.page().getByRole('dialog', { name: '360° 제품 편집', exact: true });
 }
-async function reconstruct(page: Page, dialog: Locator) {
+/**
+ * The model just made is saved as 3D by itself, as the angle it was made for (a flat photo only, see
+ * docs/product3d-editor.md): waits for the notice and for the save to be over. The editor keeps the
+ * model open as it is (no reading it back from storage).
+ */
+async function autoSaved(dialog: Locator, direction = '정면') {
+  await expect(dialog.getByText(`“${direction}” 사진을 입체로 저장했어요`)).toBeVisible({ timeout: 60000 });
+  await expect(dialog.getByTestId('product3d-auto-saving')).toHaveCount(0);
+  await expect(dialog.getByTestId('product3d-canvas')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '화면 맞춤', exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: '이 각도 추가', exact: true })).toBeEnabled();
+}
+/** Starts the reconstruction, lets the replayed model through, and (unless asked not to) waits for the automatic save. */
+async function reconstruct(page: Page, dialog: Locator, direction: string | false = '정면') {
   await dialog.getByRole('button', { name: '입체화 시작', exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => typeof (window as unknown as State).product3dTest.release))
@@ -250,6 +267,7 @@ async function reconstruct(page: Page, dialog: Locator) {
     .toBe(true);
   await expect(dialog.getByRole('button', { name: '이 각도 추가', exact: true })).toBeEnabled();
   await expect(dialog.getByRole('button', { name: /대표/ })).toHaveCount(0);
+  if (direction) await autoSaved(dialog, direction);
 }
 async function pose(dialog: Locator): Promise<Pose> {
   return JSON.parse((await dialog.getByTestId('product3d-pose').getAttribute('data-pose')) ?? '{}');
@@ -795,7 +813,7 @@ test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자�
     .toBe(0);
   expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(0);
   dialog = await openViewer(form, '오른쪽');
-  await reconstruct(page, dialog);
+  await reconstruct(page, dialog, '오른쪽');
   await updateSelectedAndClose(dialog);
   await saveForm(form, true);
   const last = (await versions(page, name)).at(-1)!;
@@ -805,11 +823,12 @@ test('실제 메시 재생: 선택 사진만 교체·불변 버전·저장 자�
 
 test('실제 메시 재생: 저장 용량 실패 후 사진·결과 보존과 재시도', async ({ page }) => {
   const { form } = await openForm(page);
+  const dialog = await openViewer(form);
+  await reconstruct(page, dialog);
+  // The model was saved by itself; this is the photo the form shows now.
   const source = await form
     .getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true })
     .getAttribute('src');
-  const dialog = await openViewer(form);
-  await reconstruct(page, dialog);
   await page.evaluate(() => {
     (window as unknown as State).product3dTest.failAssetWrite = true;
   });
@@ -1565,4 +1584,142 @@ test('실제 메시 재생: 모바일에서 손가락으로 선을 그어 수평
   expect(turned(rolled, await pose(dialog))).toBeCloseTo(10, 0);
   await dialog.screenshot({ path: path.join(output, 'mobile-level-tool.png') });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+/** The pose a saved angle reads as: where the product faces and how high the camera stands. */
+const readPose = (saved: unknown) => poseDirection(saved as never);
+const flatPhoto = (form: Locator) =>
+  form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true });
+/** Lets a model through: waits for the replayed worker to ask, then answers. */
+async function releaseModel(page: Page) {
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as unknown as State).product3dTest.release))
+    .toBe('function');
+  await page.evaluate(() => (window as unknown as State).product3dTest.release?.());
+}
+
+test('실제 메시 재생: 입체화가 끝나면 정면이 클릭 없이 3D로 저장되고, 첫 화면에 이름 경고가 없고, 고르지 않은 다음 이름은 그 방향으로 돌려 저장한다', async ({
+  page,
+}) => {
+  const { form, name } = await openForm(page);
+  const flat = await flatPhoto(form).getAttribute('src');
+  const dialog = await openViewer(form);
+  await reconstruct(page, dialog);
+  // The 정면 photo became the 3D capture with no click on 선택한 각도 수정: the form shows a new image.
+  expect(await flatPhoto(form).getAttribute('src')).not.toBe(flat);
+  // The first screen is the saved pose: facing front (0° ±2°) at the editor's 10° height.
+  const first = await pose(dialog);
+  expect(Math.abs(readPose(first).angle)).toBeLessThan(2);
+  expect(readPose(first).elevation).toBeCloseTo(10, 4);
+  // The model stays open as it is: what only a new model says (the outline level) is still there.
+  await expect(dialog.getByTestId('product3d-level-note')).toContainText('새 입체 형상');
+  // No “왼쪽 / 정면에 가까워요” warning on it; the next name is suggested quietly instead.
+  await expect(dialog.getByLabel('새 각도 이름', { exact: true })).toHaveValue('왼쪽');
+  await expect(dialog.getByTestId('product3d-direction-warning')).toHaveCount(0);
+  await expect(dialog.getByTestId('product3d-direction-hint')).toContainText('왼쪽');
+  await dialog.screenshot({ path: path.join(output, 'auto-saved-first-screen.png') });
+  // Adding the next angle without touching the name or the product turns the product to face it.
+  await dialog.getByRole('button', { name: '이 각도 추가', exact: true }).click();
+  await expect(dialog.getByTestId('product3d-angle-card')).toHaveCount(2);
+  await expect(dialog.getByText('제품을 ‘왼쪽’ 방향으로 돌려 저장했어요')).toBeVisible();
+  await dialog.getByRole('button', { name: '닫기', exact: true }).click();
+  await saveForm(form);
+  const [version] = await versions(page, name);
+  expect(version.views.map((view) => view.direction)).toEqual(['정면', '왼쪽']);
+  expect(version.views.every((view) => view.product3d)).toBe(true);
+  expect(new Set(version.views.map((view) => view.product3d?.meshAssetId)).size).toBe(1);
+  expect(Math.abs(readPose(version.views[0].product3d!.pose).angle)).toBeLessThan(2);
+  expect(readPose(version.views[0].product3d!.pose).elevation).toBeCloseTo(10, 4);
+  expect(readPose(version.views[1].product3d!.pose).angle).toBeCloseTo(-90, 0);
+  // One inference, and the form needed no further click on 선택한 각도 수정.
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(1);
+});
+
+test('실제 메시 재생: 이름을 고르거나 제품을 돌리면 이름 불일치 경고는 지금처럼 뜬다', async ({ page }) => {
+  const { form } = await openForm(page);
+  const dialog = await openViewer(form);
+  await reconstruct(page, dialog);
+  const warning = dialog.getByTestId('product3d-direction-warning');
+  const hint = dialog.getByTestId('product3d-direction-hint');
+  await expect(hint).toBeVisible();
+  await expect(warning).toHaveCount(0);
+  // Picking a name turns the product to it: they agree, so no warning, and no hint any more.
+  await dialog.getByLabel('새 각도 이름', { exact: true }).selectOption('오른쪽');
+  await expect(warning).toHaveCount(0);
+  await expect(hint).toHaveCount(0);
+  // Turning the product away from the name it carries warns, as before.
+  await dialog.getByRole('button', { name: '시점 초기화', exact: true }).click();
+  await expect(warning).toBeVisible();
+  await expect(warning).toContainText('‘오른쪽’ 이름과 제품이 바라보는 방향이 달라요');
+  await dialog.getByRole('button', { name: '‘오른쪽’ 방향으로 돌리기', exact: true }).click();
+  await expect(warning).toHaveCount(0);
+});
+
+test('실제 메시 재생: 이미 3D인 각도를 다시 입체화해도 말없이 덮어쓰지 않는다', async ({ page }) => {
+  const { form } = await openForm(page);
+  const dialog = await openViewer(form);
+  await reconstruct(page, dialog);
+  const saved = await flatPhoto(form).getAttribute('src');
+  await page.evaluate(() => {
+    (window as unknown as State).product3dTest.release = undefined;
+  });
+  await dialog.getByRole('button', { name: '다시 입체화', exact: true }).click();
+  await releaseModel(page);
+  await expect(dialog.getByText('새 형상은 아직 저장되지 않았어요')).toBeVisible({ timeout: 60000 });
+  await expect(dialog.getByText('‘선택한 각도 수정’을 눌러 “정면” 각도에 반영해 주세요')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '선택한 각도 수정', exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(2);
+  expect(await flatPhoto(form).getAttribute('src')).toBe(saved);
+  // The new model is saved only by that click.
+  await dialog.getByRole('button', { name: '선택한 각도 수정', exact: true }).click();
+  await expect.poll(() => flatPhoto(form).getAttribute('src')).not.toBe(saved);
+});
+
+test('실제 메시 재생: 입체화 도중 창을 닫으면 늦게 온 결과는 저장되지 않는다', async ({ page }) => {
+  const { form, name } = await openForm(page);
+  const flat = await flatPhoto(form).getAttribute('src');
+  const dialog = await openViewer(form);
+  // Writes so far are the photo's own upload.
+  const posts = await page.evaluate(() => (window as unknown as State).product3dTest.assetPosts);
+  await dialog.getByRole('button', { name: '입체화 시작', exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => typeof (window as unknown as State).product3dTest.release))
+    .toBe('function');
+  await dialog.getByRole('button', { name: '취소하고 닫기', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  // The model arrives after the window closed: nothing is saved, nothing is written.
+  await page.evaluate(() => (window as unknown as State).product3dTest.release?.());
+  await page.waitForTimeout(2000);
+  expect(await flatPhoto(form).getAttribute('src')).toBe(flat);
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.assetPosts)).toBe(posts);
+  await saveForm(form);
+  expect((await versions(page, name))[0].views[0].product3d).toBeUndefined();
+});
+
+test('실제 메시 재생: 자동 저장이 실패해도 입체 결과는 그대로이고 다시 시도하지 않으며 직접 저장할 수 있다', async ({
+  page,
+}) => {
+  const { form } = await openForm(page);
+  const flat = await flatPhoto(form).getAttribute('src');
+  const dialog = await openViewer(form);
+  await page.evaluate(() => {
+    (window as unknown as State).product3dTest.failAssetWrite = true;
+  });
+  await dialog.getByRole('button', { name: '입체화 시작', exact: true }).click();
+  await releaseModel(page);
+  await expect(dialog.getByRole('alert')).toContainText('자동 저장하지 못했어요', { timeout: 60000 });
+  await expect(dialog.getByRole('alert')).toContainText('‘선택한 각도 수정’을 눌러 직접 저장');
+  await expect(dialog.getByTestId('product3d-canvas')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '선택한 각도 수정', exact: true })).toBeEnabled();
+  expect(await flatPhoto(form).getAttribute('src')).toBe(flat);
+  // One try, no retry by itself.
+  const tried = await page.evaluate(() => (window as unknown as State).product3dTest.assetPosts);
+  await page.waitForTimeout(2000);
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.assetPosts)).toBe(tried);
+  expect(await page.evaluate(() => (window as unknown as State).product3dTest.workers)).toBe(1);
+  await page.evaluate(() => {
+    (window as unknown as State).product3dTest.failAssetWrite = false;
+  });
+  await dialog.getByRole('button', { name: '선택한 각도 수정', exact: true }).click();
+  await expect.poll(() => flatPhoto(form).getAttribute('src')).not.toBe(flat);
 });

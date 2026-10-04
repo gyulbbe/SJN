@@ -19,6 +19,8 @@ Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [pack
 
 vinext 개발 서버는 클라이언트 모듈을 동적 import로 받아 Next 개발 서버보다 하이드레이션이 늦다(홈 기준 0.3~2초). 서버에서 먼저 그려지는 공개 화면의 버튼은 하이드레이션 전까지 비활성으로 두고(`GuestHome`), e2e는 활성화를 기다린 뒤 누른다.
 
+개발 서버(vinext)는 1MB를 넘는 업로드를 기본 한도(`serverActions.bodySizeLimit`)로 413으로 막는다. 입체 메시(수 MB)나 큰 사진을 실제로 저장해 보는 확인(예: 360° 입체화 자동 저장)에서만 `next.config.ts`에 `experimental: { serverActions: { bodySizeLimit: '40mb' } }`를 임시로 넣고 서버를 다시 띄운 뒤, 끝나면 반드시 되돌린다(커밋 금지). 운영 Workers에서도 그런지는 확인하지 못했다.
+
 [dev-local](../../../../scripts/dev-local.mjs)는 `APP_ENV=development`, `SJN_DEV_BINDINGS=1`을 설정한다. [Vite 설정](../../../../vite.config.ts)이 이를 보고 `wrangler.dev.jsonc`와 `persistState.path=.wrangler/development`를 선택한다. 개발용 DB/R2에는 `remote:false`가 명시돼 있다. 기본 빌드 설정과 개발 설정을 섞지 않는다. 기존 `.wrangler/state`나 origin별 IndexedDB 자료는 삭제·자동 이전하지 않는다.
 
 ## 설정 파일과 변수

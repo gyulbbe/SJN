@@ -40,6 +40,12 @@ export interface ProductViewportProps {
   onPoseChange: (pose: ProductPose) => void;
   onError: (message: string) => void;
   /**
+   * The viewer is open and has drawn its first frame: a new model's outline level (levelOnOpen) is
+   * done and the pose is final. The editor saves a model made for a flat photo from here, so what is
+   * saved is what is on screen, level.
+   */
+  onReady?: () => void;
+  /**
    * A model just made: stand it level by its outline when the viewer opens (see levelByOutline). A
    * saved product opens as saved.
    */
@@ -81,6 +87,7 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
       onShadingChange,
       onPoseChange,
       onError,
+      onReady,
       levelOnOpen = false,
     },
     ref,
@@ -91,7 +98,7 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     const topRef = useRef<HTMLButtonElement>(null);
     const bottomRef = useRef<HTMLButtonElement>(null);
     const runtime = useRef<Runtime | null>(null);
-    const callbacks = useRef({ onPoseChange, onError });
+    const callbacks = useRef({ onPoseChange, onError, onReady });
     const initial = useRef(initialPose);
     const shadingRef = useRef(shading);
     const glossRef = useRef(gloss);
@@ -111,8 +118,8 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
     const [guide, setGuide] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
     const [guideTurn, setGuideTurn] = useState(0);
     useEffect(() => {
-      callbacks.current = { onPoseChange, onError };
-    }, [onPoseChange, onError]);
+      callbacks.current = { onPoseChange, onError, onReady };
+    }, [onPoseChange, onError, onReady]);
     useEffect(() => {
       initial.current = initialPose;
     }, [initialPose]);
@@ -540,6 +547,7 @@ export const ProductViewport = forwardRef<ProductViewportHandle, ProductViewport
           setReady(true);
           setSelected(false);
           if (openNote) setNote(openNote);
+          callbacks.current.onReady?.();
         }
       });
       return () => {

@@ -4,7 +4,19 @@ import { getRepositories } from '@/lib/repositories';
 import type { MaterialVersion } from '@/lib/types';
 import { MAX_PRODUCT_VIEWS, productViewName } from '@/lib/product3d/apply';
 import { isProductDirection, nextProductDirection, type ProductDirection } from '@/lib/product-direction';
-import { directionMismatch, poseForDirection } from '@/lib/product3d/direction-pose';
+import { directionMismatch, nearestPoseDirection, poseForDirection } from '@/lib/product3d/direction-pose';
+import {
+  autoSaveFailure,
+  autoSavedNotice,
+  DENIED_NOTICE,
+  directionMoved,
+  notSavedNotice,
+  openingPose,
+  planAutoSave,
+  poseForNewAngle,
+  sameAngle,
+  UNNAMED_NOTICE,
+} from '@/lib/product3d/auto-save';
 import { AssetImage } from './asset-image';
 import { AngleNameSelect } from './angle-name-input';
 import type {
@@ -106,6 +118,16 @@ export function Product3dEditor({
   const generation = useRef(0),
     alive = useRef(true),
     operation = useRef(false);
+  // A model made for a flat photo is saved as that angle's 3D picture by itself once the viewer shows it
+  // (see planAutoSave): the run and the photo it waits for. The latest apply, for the viewer's callback.
+  // After it is saved the editor keeps what is on screen (keepSession) instead of reading the same data back.
+  const keepSession = useRef(false),
+    sourceObjectUrl = useRef<string>(undefined);
+  const pendingSave = useRef<{ run: number; index: number; assetId: string } | null>(null),
+    applyRef = useRef<
+      | ((mode: 'add' | 'replace', auto?: { run: number; index: number; assetId: string }) => Promise<void>)
+      | null
+    >(null);
   const [input, setInput] = useState<ProductInput>(),
     [sourceUrl, setSourceUrl] = useState(''),
     [loading, setLoading] = useState(true);
@@ -126,6 +148,11 @@ export function Product3dEditor({
   const [nameError, setNameError] = useState('');
   const [renaming, setRenaming] = useState(false),
     [renameName, setRenameName] = useState('');
+  // The angle being saved by itself, and whether the user picked a name or turned the product since the
+  // viewer opened (until then the next name the list suggests is a hint, not a mismatch).
+  const [autoSaving, setAutoSaving] = useState(''),
+    [touched, setTouched] = useState(false);
+  const openedAt = useRef<ProductPose | null>(null);
   const [notice, setNotice] = useState(''),
     // Said before the photo is turned into 3D when it is small (see image-size-hint).
     [smallPhoto, setSmallPhoto] = useState('');
@@ -185,10 +212,13 @@ export function Product3dEditor({
   const trackPose = (pose: ProductPose) => {
     latestPose.current = pose;
     setLivePose(pose);
+    if (openedAt.current && directionMoved(openedAt.current, pose)) setTouched(true);
   };
   // A name and the way the product faces right now, for the warnings (more than 25° apart).
   const addMismatch =
     result && isProductDirection(newAngleName) ? directionMismatch(livePose, newAngleName) : undefined;
+  // The name the shown view reads as, for what is said about its guessed surfaces.
+  const viewName = nearestPoseDirection(livePose).name;
   const replaceMismatch =
     result && selectedView && isProductDirection(selectedView.direction)
       ? directionMismatch(livePose, selectedView.direction)
@@ -207,6 +237,16 @@ export function Product3dEditor({
     };
   }, []);
   useEffect(() => {
+    // The model that was just saved by itself is the one open: keep it, and what only a new model has (the
+    // outline level note, the size question, the front hint), instead of reading the same data back from
+    // storage. Its photo's preview address stays too (the previous run left it alone for this).
+    if (keepSession.current) {
+      keepSession.current = false;
+      const kept = sourceObjectUrl.current;
+      return () => {
+        if (kept) URL.revokeObjectURL(kept);
+      };
+    }
     let active = true;
     let url: string | undefined;
     setLoading(true);
@@ -233,6 +273,9 @@ export function Product3dEditor({
     setPaintNote('');
     setPaintMatch(undefined);
     paintCamera.current = undefined;
+    setTouched(false);
+    openedAt.current = null;
+    pendingSave.current = null;
     setGloss(product3d && !blob ? (product3d.gloss ?? 'none') : 'light');
     setStored(false);
     setShading(product3d && !blob ? (product3d.shading ?? 'baked') : 'mixed');
@@ -253,6 +296,7 @@ export function Product3dEditor({
       }
       if (!active) return;
       url = URL.createObjectURL(source.blob);
+      sourceObjectUrl.current = url;
       setSourceUrl(url);
       setInput(source);
       if (!(product3d && !blob))
@@ -316,7 +360,7 @@ export function Product3dEditor({
     });
     return () => {
       active = false;
-      if (url) URL.revokeObjectURL(url);
+      if (url && !keepSession.current) URL.revokeObjectURL(url);
     };
   }, [assetId, inputSourceAssetId, product3d, blob, attempt, selectedViewIndex]);
   const close = () => {
@@ -339,9 +383,11 @@ export function Product3dEditor({
     client.current?.dispose();
     setBusy(true);
     setError('');
+    setNotice('');
     setViewerError('');
     setProgress(undefined);
     modelLoading.reset();
+    pendingSave.current = null;
     try {
       const { Product3dClient: Client } = await import('@/lib/product3d/client');
       if (!alive.current || run !== generation.current) return;
@@ -353,11 +399,15 @@ export function Product3dEditor({
         modelLoading.push(product3dLoadEvent(p));
       });
       if (!alive.current || run !== generation.current) return;
-      // A single photo cannot tell the camera height, so stand the new model upright first.
-      const pose = {
-        ...createDefaultPose(),
-        objectQuaternion: estimateUprightQuaternion(next.mesh.positions),
-      };
+      // A single photo cannot tell the camera height, so stand the new model upright first, and open it
+      // facing the direction of the angle it is made for (the pose that angle is saved with).
+      const pose = openingPose(
+        {
+          ...createDefaultPose(),
+          objectQuaternion: estimateUprightQuaternion(next.mesh.positions),
+        },
+        selectedView?.direction,
+      );
       // Then fit it to the product: where its mirror plane and front are, and the material's real size.
       setProgress({ stage: 'geometry', message: '제품의 크기와 좌우 대칭을 맞추고 있어요.' });
       const found = await prepareProductFit(next.mesh, pose.objectQuaternion, {
@@ -396,6 +446,24 @@ export function Product3dEditor({
       setShading('mixed');
       setStored(false);
       setFreshModel(true);
+      setTouched(false);
+      openedAt.current = null;
+      // A flat photo's angle is saved as 3D once the viewer shows the model; an angle that is already 3D is
+      // never overwritten without a click, and the user is told the new model is not saved.
+      const plan = planAutoSave(selectedView, canApply);
+      pendingSave.current =
+        plan.action === 'save' && selectedView
+          ? { run, index: selectedViewIndex, assetId: selectedView.assetId }
+          : null;
+      setNotice(
+        plan.action === 'ask'
+          ? notSavedNotice(plan.name)
+          : plan.action === 'unnamed'
+            ? UNNAMED_NOTICE
+            : plan.action === 'denied'
+              ? DENIED_NOTICE
+              : '',
+      );
       setViewerKey((k) => k + 1);
       setResult(next);
     } catch (reason) {
@@ -428,9 +496,11 @@ export function Product3dEditor({
       if (alive.current) setCapturing(false);
     }
   };
-  const apply = async (mode: 'add' | 'replace') => {
+  const apply = async (mode: 'add' | 'replace', auto?: { run: number; index: number; assetId: string }) => {
     if (!viewport.current || !result || !input || busy || operation.current || !canApply) return;
     if (mode === 'replace' && !selectedView) return;
+    // A model saved by itself goes to the angle it was made for, and only while that photo is still there.
+    if (auto && !sameAngle(auto, { index: selectedViewIndex, view: selectedView })) return;
     let name: string;
     try {
       name = productViewName(mode === 'add' ? newAngleName : selectedView.direction);
@@ -442,12 +512,32 @@ export function Product3dEditor({
     }
     operation.current = true;
     setApplying(true);
+    if (auto) setAutoSaving(name);
     setError('');
     setNameError('');
     setNotice('');
     try {
+      // The model saved by itself is turned to its angle's direction (as 선택한 각도 수정 after picking the
+      // name would); a new angle nobody named or turned yet is turned to face the name it carries.
+      let turned = false;
+      if (auto) {
+        // Turning the model to its angle is not the user turning it: the baseline moves with it.
+        openedAt.current = null;
+        viewport.current.setPose(openingPose(viewport.current.getPose(), name));
+        openedAt.current = viewport.current.getPose();
+        setTouched(false);
+      } else if (mode === 'add') {
+        const next = poseForNewAngle(viewport.current.getPose(), name, !touched);
+        if (next.turned) {
+          viewport.current.setPose(next.pose);
+          turned = true;
+        }
+      }
       const pose = viewport.current.getPose();
       const capture = await viewport.current.capture();
+      // The form takes the photo and the editor's props change with it: this model stays open as it is.
+      // Said before the save, so it does not depend on when the props reach the editor; undone if it fails.
+      if (auto) keepSession.current = true;
       await onApply(
         {
           capture,
@@ -469,9 +559,11 @@ export function Product3dEditor({
       );
       if (alive.current) {
         setNotice(
-          mode === 'add'
-            ? `“${name}” 각도를 추가했어요. 이어서 다른 각도를 만들 수 있어요.`
-            : `“${name}” 각도를 수정했어요.`,
+          auto
+            ? autoSavedNotice(name)
+            : mode === 'add'
+              ? `“${name}” 각도를 추가했어요. 이어서 다른 각도를 만들 수 있어요.${turned ? ` 제품을 ‘${name}’ 방향으로 돌려 저장했어요.` : ''}`
+              : `“${name}” 각도를 수정했어요.`,
         );
         if (mode === 'add') {
           // Ready for the next direction, turned to face it.
@@ -481,14 +573,32 @@ export function Product3dEditor({
         }
       }
     } catch (reason) {
-      if (alive.current)
+      keepSession.current = false;
+      if (alive.current) {
+        const why = reason instanceof Error ? reason.message : '저장에 실패했어요.';
+        // A failed automatic save keeps the model, is not retried, and leaves the save to the user.
         setError(
-          `각도 사진을 ${mode === 'add' ? '추가' : '수정'}하지 않았어요. ${reason instanceof Error ? reason.message : '저장에 실패했어요.'} 결과는 유지되므로 다시 시도할 수 있어요.`,
+          auto
+            ? autoSaveFailure(name, why)
+            : `각도 사진을 ${mode === 'add' ? '추가' : '수정'}하지 않았어요. ${why} 결과는 유지되므로 다시 시도할 수 있어요.`,
         );
+      }
     } finally {
       operation.current = false;
-      if (alive.current) setApplying(false);
+      if (alive.current) {
+        setApplying(false);
+        setAutoSaving('');
+      }
     }
+  };
+  applyRef.current = apply;
+  /** The viewer shows the model, level: remember how it opened, and save a model made for a flat photo. */
+  const handleReady = () => {
+    openedAt.current = latestPose.current;
+    const pending = pendingSave.current;
+    pendingSave.current = null;
+    if (pending && alive.current && pending.run === generation.current)
+      void applyRef.current?.('replace', pending);
   };
   /**
    * Draws the mesh with `next` as its fit (undefined: as made) and the photo's colours on or off,
@@ -647,6 +757,11 @@ export function Product3dEditor({
             {notice}
           </p>
         )}
+        {autoSaving && (
+          <p className={styles.note} role="status" data-testid="product3d-auto-saving">
+            “{autoSaving}” 사진을 입체로 저장하고 있어요…
+          </p>
+        )}
         <section className={styles.setup}>
           <div className={styles.source}>
             {sourceUrl ? (
@@ -760,6 +875,7 @@ export function Product3dEditor({
                   setViewAngle(sourceViewAngle(pose, fit ? fittedPhotoDirection(fit) : undefined));
                 }}
                 onError={setViewerError}
+                onReady={handleReady}
               />
             )}
             {viewerError && (
@@ -1055,6 +1171,7 @@ export function Product3dEditor({
               onChange={(value) => {
                 setNewAngleName(value);
                 setNameError('');
+                setTouched(true);
                 // Picking a name turns the product to face that direction.
                 turnTo(value);
               }}
@@ -1069,7 +1186,13 @@ export function Product3dEditor({
             추가는 새 사진을 만들고, 수정은 선택한 “{selectedView?.direction ?? '각도'}” 사진을 바꿔요. 자재
             저장 시 함께 반영돼요.
           </p>
-          {result && addMismatch && (
+          {result && addMismatch && !touched && (
+            <p data-testid="product3d-direction-hint" role="status" className={styles.note}>
+              새 각도를 추가하면 제품이 ‘{newAngleName}’ 방향으로 돌아서 저장돼요. 이름을 고르거나 제품을 직접
+              돌리면 그 모습 그대로 저장해요.
+            </p>
+          )}
+          {result && addMismatch && touched && (
             <div
               data-testid="product3d-direction-warning"
               role="status"
@@ -1114,8 +1237,8 @@ export function Product3dEditor({
               aria-live="polite"
               className="text-[13px] text-amber-800"
             >
-              사진에 없던 면이라 모양이 부정확할 수 있어요. 지금 시점은 사진 방향에서 약{' '}
-              {Math.round(viewAngle)}° 돌아가 있어요.
+              ‘{viewName}’ 모습은 사진에 없던 면이라 AI가 추측해요(사진 방향에서 약 {Math.round(viewAngle)}°
+              돌아가 있어요). {viewName}에서 찍은 사진을 쓰면 더 정확해요.
             </p>
           )}
           {views.length >= MAX_PRODUCT_VIEWS && (
