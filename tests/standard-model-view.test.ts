@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { refineTargets } from '../src/lib/ai-export/scene';
 import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
 import { normalizeRoomScene } from '../src/lib/room-editing';
+import { createQuote } from '../src/lib/quote';
 import { fixtureSlotBox } from '../src/lib/room-slot';
 import {
   brightHalfColor,
@@ -474,5 +475,28 @@ describe('the products the AI dialog can repaint', () => {
     expect(both.some((target) => !target.fromPhoto)).toBe(true);
     // a photo product that is not switched is not a target at all
     expect(refineTargets({ scene: sceneWith(fixtureOf(photo, 'floor', 0.5, 0.5)), materials })).toEqual([]);
+  });
+});
+
+describe('the quote', () => {
+  it('counts a product by its material, so showing it as a model changes no line and no signature', () => {
+    const toilet = material('toilet', {
+      pricing: { unit: 'piece', unitPrice: 150000, boxCoverageM2: null, piecesPerBox: null, wastePercent: 0 },
+    });
+    const fixture = fixtureOf(toilet, 'floor', 0.4, 0.5);
+    const scene = sceneWith(fixture);
+    const quoteOf = () =>
+      createQuote({ schemaVersion: 2, name: '견적', scene } as never, { [toilet.id]: toilet });
+    const lines = (quote: ReturnType<typeof quoteOf>) => quote.lines.map((line) => ({ ...line, id: '' }));
+    const before = quoteOf();
+    showAsStandardModel(scene, fixture.id, toilet, '#eeeeee');
+    const on = quoteOf();
+    showAsPhoto(scene, fixture.id, toilet);
+    const off = quoteOf();
+    expect(on.sourceSignature).toBe(before.sourceSignature);
+    expect(off.sourceSignature).toBe(before.sourceSignature);
+    expect(lines(on)).toEqual(lines(before));
+    expect(lines(off)).toEqual(lines(before));
+    expect(before.lines.some((line) => line.category === 'fixture')).toBe(true);
   });
 });
