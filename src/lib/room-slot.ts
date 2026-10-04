@@ -91,6 +91,32 @@ export function fixtureDepthMm(
   return fixture.reconstruction?.depthMm ?? materials[fixture.materialVersionId]?.depthMm ?? 0;
 }
 
+/**
+ * The box of a fixture on its face. A photo product is boxed by its placement and the anchor in its
+ * picture. A standard model (the switch "표준 모형으로 보기" on, or one a photo reconstruction made) is
+ * not placed by a picture: on the floor its centre is at (u, v) and a quarter turn swaps its width
+ * and depth; on a wall (u, v) is its lower edge, so the box stands on it.
+ */
+export function fixtureSlotBox(
+  fixture: FixtureInstance,
+  materials: Record<string, Pick<MaterialVersion, 'depthMm'> | undefined>,
+): SlotBox | undefined {
+  const placement = fixture.roomPlacement;
+  if (!placement) return undefined;
+  const model = fixture.reconstruction;
+  if (model?.version !== 2) return slotBox(placement, fixture.anchor, fixtureDepthMm(fixture, materials));
+  const scale = Number.isFinite(placement.scale) && placement.scale > 0 ? placement.scale : 1;
+  const floor = placement.face === 'floor';
+  const turned = floor && Math.abs(Math.sin(((model.yawDegrees ?? 0) * Math.PI) / 180)) > Math.SQRT1_2;
+  return {
+    widthMm: (turned ? model.depthMm : model.widthMm) * scale,
+    heightMm: model.heightMm * scale,
+    depthMm: (turned ? model.widthMm : model.depthMm) * scale,
+    anchor: { x: 0.5, y: floor ? 0.5 : 1 },
+    contentBounds: { left: 0, top: 0, right: 1, bottom: 1 },
+  };
+}
+
 /** A box and where its anchor stands on the face. */
 export type PlacedBox = SlotBox & { u: number; v: number };
 
@@ -104,13 +130,8 @@ export function slotObstacles(
   return scene.fixtures.flatMap((fixture) => {
     const placement = fixture.roomPlacement;
     if (!placement || placement.face !== face || except.includes(fixture.id)) return [];
-    return [
-      {
-        ...slotBox(placement, fixture.anchor, fixtureDepthMm(fixture, materials)),
-        u: placement.u,
-        v: placement.v,
-      },
-    ];
+    const box = fixtureSlotBox(fixture, materials);
+    return box ? [{ ...box, u: placement.u, v: placement.v }] : [];
   });
 }
 

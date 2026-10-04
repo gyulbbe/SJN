@@ -11,6 +11,7 @@ import {
 import { finishAppearance } from '../render/finish';
 import { facingOfDirection, readProductDirection } from '../product-direction';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
+import { isStandardModelOfPhoto } from '../standard-model-view';
 import { hexToLinear, linearToHex } from '../reconstruction/photo-lighting';
 import type { RegionMask } from './color';
 import type { RoomLayers } from './composite';
@@ -321,6 +322,12 @@ export type RefineTarget = {
   id: string;
   /** The real product's photo, when the target has one; a standard model has none. */
   referenceAssetId?: string;
+  /**
+   * A photo product the person switched to its standard model ("표준 모형으로 보기"), not a model a
+   * photo reconstruction made. The dialog still repaints it when asked, but does not open on that
+   * method for it alone (the whole-room conversion was steadier from above, see flux-export.md).
+   */
+  fromPhoto?: boolean;
 };
 /**
  * The placed products the per-product export repaints: a standard model (no photo) of a kind in
@@ -333,7 +340,13 @@ export function refineTargets(snapshot: Pick<RenderSnapshot, 'scene' | 'material
   for (const fixture of scene.fixtures) {
     if (resolveBathRimFixture(scene, fixture).status === 'held') continue;
     const reconstruction = fixture.reconstruction;
-    if (reconstruction && REFINE_KINDS.has(reconstruction.kind)) targets.push({ id: fixture.id });
+    if (reconstruction && REFINE_KINDS.has(reconstruction.kind))
+      targets.push({
+        id: fixture.id,
+        ...(isStandardModelOfPhoto(fixture, snapshot.materials[fixture.materialVersionId])
+          ? { fromPhoto: true }
+          : {}),
+      });
   }
   return targets;
 }
