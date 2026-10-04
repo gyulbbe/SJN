@@ -1,9 +1,12 @@
 'use client';
 import { roomSurfaceAreaM2 } from '@/lib/room-surface-areas';
-import { productContentBounds } from '@/lib/room-fixtures';
 import type { RoomFace } from '@/lib/room-types';
+import { applyFixtureView, prepareFixtureView } from '@/lib/fixture-view';
+import { getPlacementViewIndex } from '@/lib/material-images';
+import { findFreeSlot, fixtureDepthMm, slotBox, slotObstacles } from '@/lib/room-slot';
 import {
   describeProductFacing,
+  directionSuitsFace,
   mismatchMessage,
   readProductDirection,
   suitingDirection,
@@ -122,6 +125,9 @@ export default function Inspector({
   const [colorTarget, setColorTarget] = useState<'global' | 'selection'>('global');
   const [pendingView, setPendingView] = useState<number | null>(null);
   const [viewError, setViewError] = useState('');
+  // What the editor did on its own for the selected product: switched its photo with a new face, or
+  // put a copy on top of another product because the face was full.
+  const [viewNotice, setViewNotice] = useState('');
   // Which surface's settings were last copied to every surface; the notice hides once another is selected.
   const [tileShared, setTileShared] = useState<{ surfaceId: string; count: number } | null>(null);
   const viewRequest = useRef(0);
@@ -131,6 +137,7 @@ export default function Inspector({
     requests.current++;
     setPendingView(null);
     setViewError('');
+    setViewNotice('');
     const cancel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       requests.current++;
@@ -201,33 +208,95 @@ export default function Inspector({
         : undefined;
     };
     try {
-      const asset = await repositories.assets.get(view.assetId);
-      if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
-      if (!currentFixture()) return;
-      if (
-        !Number.isFinite(asset.width) ||
-        !Number.isFinite(asset.height) ||
-        asset.width <= 0 ||
-        asset.height <= 0
-      ) {
-        throw new Error('선택한 제품 이미지의 가로·세로 크기를 확인할 수 없어요.');
-      }
-      const contentBounds = selected.roomPlacement ? await productContentBounds(asset) : undefined;
+      const prepared = await prepareFixtureView(view, index, repositories.assets, !!selected.roomPlacement);
       if (!currentFixture()) return;
       useEditor.getState().change((scene) => {
-        const product = scene.fixtures.find((item) => item.id === selected.id)!;
-        product.viewIndex = index;
-        product.anchor = { ...view.anchor };
-        if (product.roomPlacement && contentBounds) {
-          product.roomPlacement.contentBounds = contentBounds;
-          product.roomPlacement.imageAspect = asset.width / asset.height;
-        }
-        product.height =
-          (((product.width * scene.imageWidth) / scene.imageHeight) * asset.height) / asset.width;
+        applyFixtureView(scene, selected.id, prepared);
       });
     } catch (error) {
       if (currentFixture())
         setViewError(error instanceof Error ? error.message : '제품 방향 이미지를 불러오지 못했어요.');
+    } finally {
+      if (viewRequest.current === request) setPendingView(null);
+    }
+  }
+  /**
+   * A new installation face. When the photo shown does not suit the new wall and the product has
+   * the photo that does (왼쪽 벽 → 오른쪽 …), the photo changes with the face in one scene change, so
+   * one undo puts both back. Only the moment of the face change does this; a photo picked by hand
+   * stays as long as the face stays. A locked product, a draft and the floor (it takes any) keep
+   * the photo.
+   */
+  async function changeFixtureFace(face: RoomFace) {
+    const request = ++viewRequest.current;
+    setViewError('');
+    setViewNotice('');
+    const captured = useEditor.getState();
+    const project = captured.project;
+    const selected =
+      project &&
+      getEditingScene(project, captured.editing).fixtures.find((item) => item.id === captured.selection);
+    if (!selected?.roomPlacement || selected.roomPlacement.face === face) return;
+    const material = materials[selected.materialVersionId];
+    const showing = material?.views[selected.viewIndex];
+    const pick =
+      writable &&
+      project &&
+      material &&
+      showing &&
+      !selected.locked &&
+      !captured.draft &&
+      !selected.reconstruction &&
+      face !== 'floor' &&
+      !directionSuitsFace(face, readProductDirection(showing.direction).name)
+        ? getPlacementViewIndex(material, face)
+        : undefined;
+    const view =
+      pick && !pick.missing && pick.index !== selected.viewIndex ? material.views[pick.index] : undefined;
+    if (!pick || !view || !project) {
+      useEditor.getState().change((scene) => {
+        const product = scene.fixtures.find((item) => item.id === selected.id);
+        if (product?.roomPlacement) product.roomPlacement.face = face;
+      });
+      return;
+    }
+    setPendingView(pick.index);
+    const stillThere = () => {
+      const current = useEditor.getState();
+      if (
+        viewRequest.current !== request ||
+        current.project?.id !== project.id ||
+        current.project.editRevision !== project.editRevision ||
+        current.project.activeDesignId !== project.activeDesignId ||
+        current.selection !== selected.id ||
+        current.editing !== captured.editing ||
+        current.draft
+      )
+        return false;
+      const product = getEditingScene(current.project, current.editing).fixtures.find(
+        (item) => item.id === selected.id,
+      );
+      return !!product && !product.locked && product.materialVersionId === selected.materialVersionId;
+    };
+    try {
+      const prepared = await prepareFixtureView(view, pick.index, repositories.assets, true);
+      if (!stillThere()) return;
+      useEditor.getState().change((scene) => {
+        const product = scene.fixtures.find((item) => item.id === selected.id);
+        if (!product?.roomPlacement) return;
+        product.roomPlacement.face = face;
+        applyFixtureView(scene, selected.id, prepared);
+      });
+      setViewNotice(`각도를 ‘${readProductDirection(view.direction).name}’으로 바꿨어요.`);
+    } catch (error) {
+      // The face still changes; only the photo could not be read.
+      if (stillThere()) {
+        useEditor.getState().change((scene) => {
+          const product = scene.fixtures.find((item) => item.id === selected.id);
+          if (product?.roomPlacement) product.roomPlacement.face = face;
+        });
+        setViewError(error instanceof Error ? error.message : '제품 방향 이미지를 불러오지 못했어요.');
+      }
     } finally {
       if (viewRequest.current === request) setPendingView(null);
     }
@@ -555,19 +624,48 @@ export default function Inspector({
                   className="btn small"
                   onClick={() => {
                     if (!writable) return;
+                    // A copy goes to the free place nearest the original on the same face, not on top of it.
+                    const slot =
+                      fixture.roomPlacement && s.room
+                        ? findFreeSlot(
+                            s.room,
+                            fixture.roomPlacement.face,
+                            slotBox(
+                              fixture.roomPlacement,
+                              fixture.anchor,
+                              fixtureDepthMm(fixture, materials),
+                            ),
+                            slotObstacles(s, fixture.roomPlacement.face, materials),
+                            { defaultSlot: { u: fixture.roomPlacement.u, v: fixture.roomPlacement.v } },
+                          )
+                        : undefined;
+                    setViewError('');
+                    setViewNotice(
+                      slot?.status === 'crowded' ? '놓을 자리가 없어 겹쳐 놓았어요. 위치를 옮겨 주세요.' : '',
+                    );
                     const clone = {
                       ...structuredClone(fixture),
                       id: crypto.randomUUID(),
-                      position: { x: fixture.position.x + 0.035, y: fixture.position.y + 0.035 },
-                      ...(fixture.roomPlacement
+                      ...(fixture.roomPlacement && slot
                         ? {
                             roomPlacement: {
                               ...structuredClone(fixture.roomPlacement),
-                              u: Math.min(1, fixture.roomPlacement.u + 0.04),
-                              v: Math.min(1, fixture.roomPlacement.v + 0.04),
+                              u: slot.u,
+                              v: slot.v,
                             },
                           }
-                        : {}),
+                        : {
+                            position: { x: fixture.position.x + 0.035, y: fixture.position.y + 0.035 },
+                            ...(fixture.roomPlacement
+                              ? {
+                                  roomPlacement: {
+                                    ...structuredClone(fixture.roomPlacement),
+                                    u: Math.min(1, fixture.roomPlacement.u + 0.04),
+                                    v: Math.min(1, fixture.roomPlacement.v + 0.04),
+                                  },
+                                }
+                              : {}),
+                          }),
                     };
                     if (
                       clone.reconstruction?.version === 2 &&
@@ -623,11 +721,7 @@ export default function Inspector({
                             aria-label="제품 설치 면"
                             value={fixture.roomPlacement.face}
                             disabled={fixture.locked}
-                            onChange={(e) =>
-                              changeFixture((v) => {
-                                if (v.roomPlacement) v.roomPlacement.face = e.target.value as RoomFace;
-                              })
-                            }
+                            onChange={(e) => void changeFixtureFace(e.target.value as RoomFace)}
                           >
                             <option value="floor">바닥</option>
                             <option value="back">정면 벽</option>
@@ -635,6 +729,16 @@ export default function Inspector({
                             <option value="right">오른쪽 벽</option>
                           </select>
                         </label>
+                        {viewNotice && (
+                          <p
+                            role="status"
+                            data-testid="facing-notice"
+                            className="muted"
+                            style={{ fontSize: 12, marginBottom: 8 }}
+                          >
+                            {viewNotice}
+                          </p>
+                        )}
                         {facing && (
                           <div data-testid="facing-info" style={{ marginBottom: 12 }}>
                             <p className="muted" style={{ fontSize: 11 }}>

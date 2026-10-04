@@ -1,5 +1,11 @@
 'use client';
-import { getMaterialImageAssetId, getPreferredProductViewIndex } from '@/lib/material-images';
+import {
+  getMaterialImageAssetId,
+  getPlacementViewIndex,
+  getPreferredProductViewIndex,
+} from '@/lib/material-images';
+import { readProductDirection } from '@/lib/product-direction';
+import { findFreeSlot, slotBox, slotObstacles, type FreeSlot } from '@/lib/room-slot';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -91,7 +97,7 @@ import WallFeaturesDialog from '@/components/rooms/wall-features-dialog';
 import RoomCanvasWorkspace from '@/components/rooms/room-canvas-workspace';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
-import type { RoomDefinition } from '@/lib/room-types';
+import type { RoomDefinition, RoomFace } from '@/lib/room-types';
 import { renderRoomBackground } from '@/lib/room-background';
 import { projectWallFeatureResizeError, roomResetWarnings } from '@/lib/room-editing';
 import { createRoomPlacement, projectRoomFixture } from '@/lib/room-fixtures';
@@ -991,7 +997,24 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         return;
       }
       const fixtureId = previous?.id || crypto.randomUUID();
-      const viewIndex = getPreferredProductViewIndex(m);
+      setDetectionNotice('');
+      // The face comes first, then the photo that suits it: a product replaced keeps its face, a new
+      // one stands where the selected surface or its installation says (the floor, else a wall).
+      const sf =
+        scene.surfaces.find((s) => s.id === st.selection) ||
+        scene.surfaces.find((s) => s.kind === (m.installation === 'wall' ? 'wall' : 'floor'));
+      const face: RoomFace =
+        previous?.roomPlacement?.face ??
+        (m.installation === 'floor'
+          ? 'floor'
+          : sf?.roomFace && sf.roomFace !== 'floor'
+            ? sf.roomFace
+            : 'back');
+      // Without a room (an older 2D scene) there is no face: the usual photo (정면 first).
+      const picked = scene.room
+        ? getPlacementViewIndex(m, face)
+        : { index: getPreferredProductViewIndex(m), missing: undefined };
+      const viewIndex = picked.index;
       const view = m.views[viewIndex];
       const asset = await repositories.assets.get(view.assetId);
       if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
@@ -1007,9 +1030,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         return;
       let width = 0.24;
       let position = { x: 0.5, y: 0.77 };
-      const sf =
-        scene.surfaces.find((s) => s.id === st.selection) ||
-        scene.surfaces.find((s) => s.kind === (m.installation === 'wall' ? 'wall' : 'floor'));
       if (sf) {
         position = {
           x: sf.quad.reduce((a, p) => a + p.x, 0) / 4,
@@ -1033,17 +1053,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           );
         }
       }
-      const roomPlacement = scene.room
-        ? await createRoomPlacement(
-            m,
-            asset,
-            m.installation === 'floor'
-              ? 'floor'
-              : sf?.roomFace && sf.roomFace !== 'floor'
-                ? sf.roomFace
-                : 'back',
-          )
-        : undefined;
+      const roomPlacement = scene.room ? await createRoomPlacement(m, asset, face) : undefined;
       if (
         useEditor.getState().project?.id !== id ||
         useEditor.getState().project?.editRevision !== captured.project?.editRevision ||
@@ -1054,6 +1064,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         applyRequest.current !== request
       )
         return;
+      let slot: FreeSlot | undefined;
       st.change((s) => {
         const fixture = {
           id: fixtureId,
@@ -1078,12 +1089,33 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             v: previous.roomPlacement.v,
             scale: previous.roomPlacement.scale,
           });
+        else if (s.room && fixture.roomPlacement) {
+          // A new product goes where no other product on its face stands (the default place when free).
+          slot = findFreeSlot(
+            s.room,
+            fixture.roomPlacement.face,
+            slotBox(fixture.roomPlacement, fixture.anchor, m.depthMm),
+            slotObstacles(s, fixture.roomPlacement.face, materialsRef.current, [fixtureId]),
+          );
+          fixture.roomPlacement.u = slot.u;
+          fixture.roomPlacement.v = slot.v;
+        }
         if (s.room) projectRoomFixture(s.room, fixture, s.imageWidth / s.imageHeight);
         if (previous) s.fixtures = s.fixtures.map((item) => (item.id === previous.id ? fixture : item));
         else s.fixtures.push(fixture);
       });
       st.select(fixtureId);
       st.setTool('select');
+      // What was decided for the person: the photo that stood in for the missing one, a full face.
+      const notes = [
+        picked.missing
+          ? `‘${picked.missing}’ 각도 사진이 없어 ‘${readProductDirection(view.direction).name}’ 사진으로 놓았어요.`
+          : '',
+        (slot as FreeSlot | undefined)?.status === 'crowded'
+          ? '놓을 자리가 없어 겹쳐 놓았어요. 위치를 옮겨 주세요.'
+          : '',
+      ].filter(Boolean);
+      if (notes.length) setDetectionNotice(notes.join(' '));
     }
     st.setMode('after');
     setCatalogOpen(false);
