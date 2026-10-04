@@ -9,7 +9,7 @@ import {
 import { createLegacyLocalRepositories } from './helpers/legacy-local-repositories';
 import { materialReferences } from '../src/lib/repositories/references';
 import { materialInputSchema } from '../src/lib/storage/validation';
-import { makeProductMeshAsset } from '../src/lib/product3d/codec';
+import { legacyMeshAsset } from './helpers/legacy-mesh-asset';
 import type { ImageAssetRecord, MaterialInput } from '../src/lib/types';
 
 function material(): MaterialInput {
@@ -141,18 +141,7 @@ describe('material persistence without a separate cover/gallery', () => {
       png = image(),
       orphan = image();
     for (const asset of [cover, gallery, input, png, orphan]) await repos.assets.put(asset);
-    const mesh = {
-      ...(await makeProductMeshAsset(
-        {
-          positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
-          colors: new Float32Array(9).fill(1),
-          indices: new Uint32Array([0, 1, 2]),
-        },
-        '입체',
-        input.id,
-      )),
-      createdAt: input.createdAt,
-    };
+    const mesh = { ...legacyMeshAsset('입체', input.id), createdAt: input.createdAt };
     await repos.assets.put(mesh);
     const legacy = {
       ...material(),

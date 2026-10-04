@@ -84,6 +84,7 @@ export function materialReferences(
         version.coverAssetId,
         ...(version.imageAssetIds ?? []),
         ...version.textureAssetIds,
+        // 읽기 전용 호환: 옛 360° 자재의 메시·입력 사진 자산도 참조로 남겨 지워지지 않게 한다(docs/product3d-removal.md).
         ...version.views.flatMap((v) => [v.assetId, v.product3d?.meshAssetId, v.product3d?.inputAssetId]),
       ].filter((id): id is string => !!id),
     ),

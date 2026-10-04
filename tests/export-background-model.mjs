@@ -1,5 +1,5 @@
 // Copies the cached BiRefNet FP16 model out of the local QA Chrome profile into tmp/background-model
-// for tests/product3d-batch-browser.ts, without a network download. Needs a dev server on 127.0.0.1:3000,
+// for the browser tools that need the cutout model (tests/flux-product-refine-measure.ts), without a network download. Needs a dev server on 127.0.0.1:3000,
 // because Cache Storage belongs to that origin. Run: node tests/export-background-model.mjs
 import { chromium } from '@playwright/test';
 import fs from 'node:fs/promises';

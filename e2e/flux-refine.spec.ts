@@ -1,8 +1,7 @@
 import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import sharp from 'sharp';
+import { getActiveDesign } from '../src/lib/designs';
 
 let app: AuthenticatedApp;
 test.beforeEach(async ({ page }) => {
@@ -14,63 +13,32 @@ test.afterEach(async () => {
 test.use({ channel: 'chrome', actionTimeout: 20000 });
 test.setTimeout(240000);
 
-// A saved 3D product (an ACTUAL TripoSR mesh replayed through the production viewport and persistence,
-// as e2e/product3d.spec.ts does) placed in the room, then converted with "실험 C · 제품별 다듬기". The
-// model is a mock (the crop painted blue and doubled in size) and so is the cut-out model (anything
-// that is not plain white): no real AI runs, and nothing is downloaded.
-const meshDirectory = path.resolve(
-  process.env.SJN_PRODUCT3D_MESH ?? 'test-results/front-alignment-toilet/photograph',
-);
-const sourceFile = path.resolve(
-  process.env.SJN_PRODUCT3D_SOURCE ?? 'test-results/multiview-quality-toilet-after/source.png',
-);
-const hasFixture = existsSync(path.join(meshDirectory, 'mesh-positions.bin')) && existsSync(sourceFile);
+// A toilet that is a standard model (what a photo reconstruction places) in the room, then converted with
+// "실험 C · 제품별 다듬기". The model is a mock (the crop painted blue and doubled in size) and so is the
+// cut-out model (anything that is not plain white): no real AI runs, and nothing is downloaded. (A flat
+// product photo is a photograph already and is not repainted; see refineTargets.)
+
+/** A plain toilet-like shape on white: the material's flat photo. */
+const toiletPhoto = () =>
+  sharp(
+    Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600"><rect width="400" height="600" fill="#fff"/><rect x="90" y="40" width="220" height="150" rx="24" fill="#e9e6df"/><rect x="70" y="190" width="260" height="360" rx="90" fill="#f2f1ec" stroke="#b9b5aa" stroke-width="6"/></svg>',
+    ),
+  )
+    .png()
+    .toBuffer();
 
 async function installDoubles(page: Page) {
-  test.skip(!hasFixture, 'Requires the documented real TripoSR mesh and transparent source fixture.');
-  const encoded = Object.fromEntries(
-    ['positions', 'indices', 'colors'].map((field) => [
-      field,
-      readFileSync(path.join(meshDirectory, `mesh-${field}.bin`)).toString('base64'),
-    ]),
-  );
-  await page.addInitScript((encoded) => {
+  await page.addInitScript(() => {
     const Original = Worker;
-    const decode = (field: string) => Uint8Array.from(atob(encoded[field]), (c) => c.charCodeAt(0)).buffer;
     class Double extends EventTarget {
       onmessage: ((event: MessageEvent) => void) | null = null;
       onerror = null;
       onmessageerror = null;
-      constructor(readonly name: string) {
-        super();
-      }
       private send(data: unknown) {
         this.onmessage?.(new MessageEvent('message', { data }));
       }
       postMessage(message: { id: number; blob?: Blob }) {
-        if (this.name === 'sjn-product3d') {
-          setTimeout(() => {
-            this.send({
-              type: 'mesh',
-              id: message.id,
-              mesh: {
-                positions: new Float32Array(decode('positions')),
-                indices: new Uint32Array(decode('indices')),
-                colors: new Float32Array(decode('colors')),
-              },
-              timings: {
-                downloadMs: 0,
-                initializationMs: 0,
-                processingMs: 0,
-                cacheSource: 'cache',
-                backend: 'webgpu',
-                modelId: 'actual-mesh-replay',
-                modelRevision: 'actual-mesh-replay',
-              },
-            });
-          }, 50);
-          return;
-        }
         // The cut-out model double: whatever is not plain white is the product.
         void (async () => {
           this.send({
@@ -113,16 +81,19 @@ async function installDoubles(page: Page) {
     Object.defineProperty(globalThis, 'Worker', {
       configurable: true,
       value: function (url: string | URL, options?: WorkerOptions) {
-        if (options?.name === 'sjn-product3d' || options?.name === 'sjn-background-removal')
-          return new Double(options.name);
+        if (options?.name === 'sjn-background-removal') return new Double();
         return new Original(url, options);
       },
     });
-  }, encoded);
+  });
 }
 
-/** Registers the saved 3D toilet from the editor and places it in the default room. */
-async function placeSaved3dToilet(page: Page) {
+/**
+ * Registers a toilet from the material form, places it in the default room, then makes the placed
+ * product a standard model in the stored project (as a photo reconstruction would have made it) and
+ * reopens the editor.
+ */
+async function placeStandardToilet(page: Page) {
   await page.goto('/');
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
   await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
@@ -136,7 +107,7 @@ async function placeSaved3dToilet(page: Page) {
   await form.getByLabel('높이 (mm)', { exact: true }).fill('750');
   await form
     .getByLabel('+ 제품 이미지 올리기', { exact: true })
-    .setInputFiles({ name: 'toilet.png', mimeType: 'image/png', buffer: readFileSync(sourceFile) });
+    .setInputFiles({ name: 'toilet.png', mimeType: 'image/png', buffer: await toiletPhoto() });
   const photo = form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true });
   await expect(photo).toBeVisible();
   await expect
@@ -147,21 +118,30 @@ async function placeSaved3dToilet(page: Page) {
     )
     .toBe(true);
   await form.getByLabel('촬영 방향 1', { exact: true }).selectOption('정면');
-  await form.getByRole('button', { name: '정면 사진 AI 360° 입체화', exact: true }).click();
-  const viewer = page.getByRole('dialog', { name: '360° 제품 편집', exact: true });
-  await viewer.getByRole('button', { name: '입체화 시작', exact: true }).click();
-  await expect(viewer.getByTestId('product3d-canvas')).toBeVisible({ timeout: 60000 });
-  await expect(viewer.getByRole('button', { name: '이 각도 추가', exact: true })).toBeEnabled({
-    timeout: 60000,
-  });
-  await viewer.getByRole('button', { name: '선택한 각도 수정', exact: true }).click();
-  await expect(viewer.getByRole('button', { name: '선택한 각도 수정', exact: true })).toBeEnabled();
-  await viewer.getByRole('button', { name: '닫기', exact: true }).click();
-  await expect(viewer).toHaveCount(0);
   await form.getByRole('button', { name: '자재 등록', exact: true }).click();
   await expect(form).toHaveCount(0);
   await page.getByRole('button', { name: '위생도기', exact: true }).click();
   await page.locator('button.material-tile').filter({ hasText: '다듬을 변기' }).click();
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  // The placed toilet becomes a standard model, in the stored project (the same place the editor reads).
+  await expect.poll(async () => getActiveDesign(await app.project())!.scene.fixtures.length).toBe(1);
+  const project = await app.project();
+  const fixture = getActiveDesign(project)!.scene.fixtures[0];
+  fixture.reconstruction = {
+    version: 2,
+    kind: 'toilet',
+    color: '#f2f1ec',
+    widthMm: 400,
+    heightMm: 750,
+    depthMm: 600,
+  };
+  const row = await app.env.DB.prepare('SELECT object_key FROM d1_projects WHERE id=?')
+    .bind(project.id)
+    .first<{ object_key: string }>();
+  await app.env.ASSET_BUCKET.put(row!.object_key, JSON.stringify(project));
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
 }
 
@@ -275,7 +255,7 @@ test('실험 C · 제품별 다듬기: 방은 빈 채로 한 번, 제품은 하�
       body: await blueProduct(Buffer.from(await (form.get('image') as Blob).arrayBuffer())),
     });
   });
-  await placeSaved3dToilet(page);
+  await placeStandardToilet(page);
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
   const methods = dialog.getByRole('group', { name: '변환 방식' });
@@ -300,13 +280,14 @@ test('실험 C · 제품별 다듬기: 방은 빈 채로 한 번, 제품은 하�
   await expect(refined).toContainText('AI가 제품을 하나씩 따로 다듬어 제자리에 올렸어요', { timeout: 60000 });
   await expect(result).toBeVisible();
   await expect(progress).toHaveCount(0);
-  // The room went out empty once; the product went out once, with its photo, the seed and its facts.
+  // The room went out empty once; the product went out once, with the seed and its facts.
   expect(rooms).toHaveLength(1);
   expect(rooms[0].scene.fixtures).toEqual([]);
   expect(rooms[0].scene.mode).toBe('empty-room');
   expect(products).toHaveLength(1);
-  expect(products[0].fields).toEqual(['image', 'product', 'reference', 'seed']);
-  expect(products[0].reference).toBe(true);
+  // A standard model has no photo to send along: the crop, the facts and the seed only.
+  expect(products[0].fields).toEqual(['image', 'product', 'seed']);
+  expect(products[0].reference).toBe(false);
   expect(products[0].product).toMatchObject({ kind: 'toilet', finish: 'glossy' });
   expect(Object.keys(products[0].product).sort()).toEqual(['color', 'finish', 'forms', 'kind', 'sizeMm']);
   expect(products[0].product.color).toMatch(/^#[0-9a-f]{6}$/);
@@ -391,7 +372,7 @@ test('실험 C · 제품별 다듬기: 진행 중 취소하면 더 보내지 않
     await new Promise((resolve) => setTimeout(resolve, 20000));
     await route.abort();
   });
-  await placeSaved3dToilet(page);
+  await placeStandardToilet(page);
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
   await dialog

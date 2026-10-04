@@ -14,7 +14,9 @@ import {
   type ProjectDocument,
   type MaterialVersion,
 } from '../src/lib/types';
-import { encodeProductMesh, PRODUCT_MESH_MIME } from '../src/lib/product3d/codec';
+
+/** What the removed 360° editor stored as a mesh asset: opaque bytes now, only kept and read back. */
+const PRODUCT_MESH_MIME = 'application/x-sjn-product-mesh';
 
 let worker: Miniflare;
 let env: D1Bindings;
@@ -370,41 +372,82 @@ describe('D1/R2 storage in a real local Worker', () => {
     const list = await (await call('materials', { operation: 'list' }, user)).json();
     expect(list.some((row: { version: MaterialVersion }) => row.version.id === second.id)).toBe(true);
   });
-  it('validates mesh bytes and the ownership of its source image', async () => {
+  it('no longer takes a new mesh, and keeps and reads a material saved with an older 360° view', async () => {
     const user = crypto.randomUUID(),
-      { id } = await upload(user);
-    const mesh = encodeProductMesh({
-      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
-      colors: new Float32Array(9).fill(1),
-      indices: new Uint32Array([0, 1, 2]),
-    });
-    const bytes = new Uint8Array(await mesh.arrayBuffer());
+      { id } = await upload(user),
+      bytes = new Uint8Array([1, 2, 3, 4]);
+    await registerAdministrator(user);
+    // Read-only compatibility (docs/product3d-removal.md): a new mesh is refused, whatever its bytes.
     expect(
       (await upload(user, { bytes, mime: PRODUCT_MESH_MIME, kind: 'product-mesh', sourceAssetId: id }))
         .response.status,
-    ).toBe(200);
-    const corrupt = bytes.slice();
-    new DataView(corrupt.buffer).setUint32(corrupt.length - 4, 999, true);
-    expect(
-      (
-        await upload(user, {
-          bytes: corrupt,
-          mime: PRODUCT_MESH_MIME,
-          kind: 'product-mesh',
-          sourceAssetId: id,
-        })
-      ).response.status,
     ).toBe(400);
-    expect(
-      (
-        await upload(crypto.randomUUID(), {
-          bytes,
-          mime: PRODUCT_MESH_MIME,
+    // A mesh stored by an earlier version of the app: put in as it was (a row and its object).
+    const meshId = crypto.randomUUID(),
+      key = `assets/${encodeURIComponent(user)}/${meshId}/older`;
+    await env.ASSET_BUCKET.put(key, bytes, { httpMetadata: { contentType: PRODUCT_MESH_MIME } });
+    await env.DB.prepare(
+      'INSERT INTO d1_assets(id,owner_id,object_key,source_asset_id,metadata_json,content_hash,created_at) VALUES(?,?,?,?,?,?,?)',
+    )
+      .bind(
+        meshId,
+        user,
+        key,
+        id,
+        JSON.stringify({
+          id: meshId,
+          name: '옛 입체 형상',
           kind: 'product-mesh',
           sourceAssetId: id,
-        })
-      ).response.status,
-    ).toBe(404);
+          mime: PRODUCT_MESH_MIME,
+          ownerId: user,
+          size: bytes.length,
+          createdAt: old,
+        }),
+        'older-mesh',
+        old,
+      )
+      .run();
+    const input = material(id);
+    input.views = [
+      {
+        assetId: id,
+        direction: '정면',
+        anchor: { x: 0.5, y: 1 },
+        product3d: {
+          version: 1,
+          meshAssetId: meshId,
+          inputAssetId: id,
+          pose: {
+            objectQuaternion: [0, 0, 0, 1],
+            cameraQuaternion: [0, 0, 0, 1],
+            zoom: 1,
+          },
+          modelId: 'older-model',
+          modelRevision: 'older-revision',
+        },
+      },
+    ];
+    const created = await call('materials', { operation: 'create', input }, user, 'older-360', true);
+    expect(created.status, await created.clone().text()).toBe(200);
+    const version = (await created.json()) as MaterialVersion;
+    expect(version.views[0].product3d?.meshAssetId).toBe(meshId);
+    // The version is read back with its stored reference, and its flat capture (assetId) is an image.
+    const read = (await (
+      await call('materials', { operation: 'getVersion', id: version.id }, user, undefined, true)
+    ).json()) as MaterialVersion;
+    expect(read.views[0]).toMatchObject({
+      assetId: id,
+      direction: '정면',
+      product3d: { meshAssetId: meshId },
+    });
+    expect((await assetGet(user, id)).status).toBe(200);
+    // A view may not name a mesh that is not one, nor use a mesh as the picture.
+    const wrong = material(id);
+    wrong.views = [{ ...input.views[0], assetId: meshId }];
+    expect(
+      (await call('materials', { operation: 'create', input: wrong }, user, 'older-360-wrong', true)).status,
+    ).toBe(400);
   });
   it('rolls back a failed snapshot commit and later removes its R2 orphan without touching the source', async () => {
     const user = crypto.randomUUID(),

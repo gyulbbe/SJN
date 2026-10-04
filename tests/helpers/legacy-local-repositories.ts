@@ -1,5 +1,5 @@
 import { getMaterialImageAssetId, stripLegacyMaterialImages } from '../../src/lib/material-images';
-import { decodeProductMesh, PRODUCT_MESH_MIME } from '../../src/lib/product3d/codec';
+import { PRODUCT_MESH_MIME } from './legacy-mesh-asset';
 import { normalizeProjectDocument, projectWriteError } from '../../src/lib/comparison';
 import { duplicateProjectDocument } from '../../src/lib/designs';
 import {
@@ -47,7 +47,6 @@ async function validateAsset(asset: AssetRecord) {
   if (asset.kind === 'product-mesh') {
     if (asset.mime !== PRODUCT_MESH_MIME || !asset.sourceAssetId)
       throw new Error('입체 데이터 형식과 원본 연결을 확인해 주세요.');
-    await decodeProductMesh(asset.blob);
   } else if (
     !asset.blob.size ||
     asset.blob.size > 25 * 1024 * 1024 ||
@@ -61,7 +60,10 @@ async function validateAsset(asset: AssetRecord) {
 }
 
 export type LegacyProjectRepository = RepositoryOperations['projects'] & {
-  createWithResources(bundle: ProjectResourceBundle, options?: { signal?: AbortSignal }): Promise<ProjectDocument>;
+  createWithResources(
+    bundle: ProjectResourceBundle,
+    options?: { signal?: AbortSignal },
+  ): Promise<ProjectDocument>;
 };
 export type LegacyRepositories = RepositoryOperations & { mode: 'local'; projects: LegacyProjectRepository };
 

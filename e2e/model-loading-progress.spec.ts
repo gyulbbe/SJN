@@ -5,7 +5,6 @@ import { resolve } from 'node:path';
 import sharp from 'sharp';
 import { seedTestTiles, uploadBathroomPhoto } from '../tests/helpers/catalog-fixtures.mjs';
 import { BACKGROUND_MODEL_FILES } from '../src/lib/background-removal/model';
-import { PRODUCT3D_FILES } from '../src/lib/product3d/model';
 import { MOGE_ARTIFACT } from '../src/lib/reconstruction/moge-browser/artifact';
 
 // UI only: scripted Workers replay the progress messages each model sends. No model is downloaded
@@ -22,7 +21,7 @@ test.setTimeout(120000);
 
 const captures = resolve('test-results/ai-model-loading-progress');
 mkdirSync(captures, { recursive: true });
-type Kind = 'background' | 'product3d' | 'moge' | 'segmentation';
+type Kind = 'background' | 'moge' | 'segmentation';
 type MockWindow = Window & {
   __mockJobs: { kind: Kind; send: (data: Record<string, unknown>) => void }[];
   __mockUnnamed: boolean;
@@ -58,7 +57,6 @@ async function installScriptedWorkers(page: Page) {
     }
     const names: Record<string, Kind> = {
       'sjn-background-removal': 'background',
-      'sjn-product3d': 'product3d',
       'sjn-moge2': 'moge',
     };
     Object.defineProperty(globalThis, 'Worker', {
@@ -140,23 +138,15 @@ async function expectNoOverflow(page: Page, progress: Locator) {
   expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 0.5);
 }
 
-async function openProductForm(page: Page, transparent = false) {
+async function openProductForm(page: Page) {
   await page.goto('/admin/materials');
   await page.getByRole('button', { name: '자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
-  await form.getByLabel('카테고리', { exact: true }).selectOption(transparent ? 'toilet' : 'basin');
+  await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
   await form.getByLabel('상품명').fill('로딩 진행률 검증 제품');
-  const buffer = transparent
-    ? await sharp(
-        Buffer.from(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect x="24" y="16" width="48" height="64" fill="#f2f1ec"/></svg>',
-        ),
-      )
-        .png()
-        .toBuffer()
-    : await sharp({ create: { width: 64, height: 48, channels: 4, background: '#a9bec0' } })
-        .png()
-        .toBuffer();
+  const buffer = await sharp({ create: { width: 64, height: 48, channels: 4, background: '#a9bec0' } })
+    .png()
+    .toBuffer();
   await form
     .getByLabel('+ 제품 이미지 올리기', { exact: true })
     .setInputFiles({ name: 'progress.png', mimeType: 'image/png', buffer });
@@ -231,61 +221,6 @@ test('배경 제거: 모델 준비 중 취소하면 표시가 바로 사라진�
   await dialog.getByRole('button', { name: '취소하고 닫기', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId('model-loading-progress')).toHaveCount(0);
-});
-
-test('360° 입체화: 세 모델 파일 합산 %, 추론 사이 단계 문구, 캐시 안내, 취소', async ({ page }) => {
-  await installScriptedWorkers(page);
-  const form = await openProductForm(page, true);
-  await form.getByRole('button', { name: '정면 사진 AI 360° 입체화', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '360° 제품 편집', exact: true });
-  await dialog.getByRole('button', { name: '입체화 시작', exact: true }).click();
-  await send(page, 'product3d', {
-    type: 'progress',
-    progress: { stage: 'loading-runtime', message: '실행 모듈' },
-  });
-  const progress = dialog.getByTestId('model-loading-progress');
-  await expect(dialog.getByRole('progressbar', { name: '입체화 모델 다운로드' })).toBeVisible();
-  let value = await percentOf(progress);
-  const encoder = PRODUCT3D_FILES.encoder.bytes;
-  await send(page, 'product3d', {
-    type: 'progress',
-    progress: {
-      stage: 'download',
-      part: 'encoder',
-      message: '저장된 사진 분석 모델을 불러오는 중',
-      loadedBytes: encoder,
-      totalBytes: encoder,
-      source: 'cache',
-    },
-  });
-  value = await expectPercent(progress, value);
-  await expect(progress).toContainText('저장된 모델을 불러오는 중이에요.');
-  await send(page, 'product3d', {
-    type: 'progress',
-    progress: { stage: 'initializing', part: 'encoder', message: '사진 분석 모델을 GPU에 준비하고 있어요.' },
-  });
-  await send(page, 'product3d', {
-    type: 'progress',
-    progress: { stage: 'encoding', message: '형태와 색상 분석 중' },
-  });
-  // Between model files the percentage holds and the current inference stage is shown.
-  await expect(dialog.getByRole('status')).toContainText('형태와 색상 분석 중');
-  await expect(progress).toBeVisible();
-  const backbone = PRODUCT3D_FILES.backbone.bytes;
-  await send(page, 'product3d', {
-    type: 'progress',
-    progress: {
-      stage: 'download',
-      part: 'backbone',
-      message: '제품 형태 복원 모델 다운로드 중',
-      loadedBytes: backbone / 2,
-      totalBytes: backbone,
-    },
-  });
-  await expectPercent(progress, value);
-  await capture(page, 'product3d-1440', progress);
-  await dialog.getByRole('button', { name: '생성 취소', exact: true }).click();
-  await expect(progress).toHaveCount(0);
 });
 
 async function openCreate(page: Page) {

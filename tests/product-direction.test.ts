@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { Quaternion, Vector3 } from 'three';
 import {
   PRODUCT_DIRECTIONS,
   MAX_PRODUCT_VIEWS,
@@ -15,19 +14,6 @@ import {
   readProductDirection,
   suitingDirection,
 } from '../src/lib/product-direction';
-import {
-  DIRECTION_TOLERANCE,
-  directionMismatch,
-  nearestPoseDirection,
-  poseDirection,
-  poseForDirection,
-} from '../src/lib/product3d/direction-pose';
-import { createDefaultPose, levelCameraQuaternion } from '../src/lib/product3d/pose';
-import type { ProductPose } from '../src/lib/product3d/state-types';
-
-const away = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180);
-const quaternion = (q: Quaternion) => q.toArray() as ProductPose['objectQuaternion'];
-
 describe('the closed list of angle names', () => {
   it('has the six names, in the list order, one photo each', () => {
     expect([...PRODUCT_DIRECTIONS]).toEqual(['정면', '왼쪽', '오른쪽', '위', '아래', '뒤']);
@@ -157,95 +143,5 @@ describe('older stored material versions', () => {
   it('drops a stale flag once the name is on the list', () => {
     const read = readMaterialViews({ views: [view('정면', { directionWas: '사선' })] });
     expect('directionWas' in read.views[0]).toBe(false);
-  });
-});
-
-describe('a 360° pose against a name', () => {
-  it("the default pose faces the front at the editor's 10° height", () => {
-    const read = poseDirection(createDefaultPose());
-    expect(read.angle).toBeCloseTo(0, 6);
-    expect(read.elevation).toBeCloseTo(10, 6);
-    expect(nearestPoseDirection(createDefaultPose()).name).toBe('정면');
-  });
-
-  it.each([
-    ['정면', 0],
-    ['오른쪽', 90],
-    ['왼쪽', -90],
-    ['뒤', 180],
-  ] as const)('turning to %s makes the product face %i° and keeps its standing', (name, angle) => {
-    const start = createDefaultPose();
-    const turned = poseForDirection(start, name);
-    const read = poseDirection(turned);
-    expect(away(read.angle, angle)).toBeLessThan(1e-6);
-    expect(read.elevation).toBeCloseTo(10, 6);
-    // The object is not touched, only the camera moves; no roll.
-    expect(turned.objectQuaternion).toEqual(start.objectQuaternion);
-    const camera = new Quaternion(...turned.cameraQuaternion);
-    expect(new Vector3(1, 0, 0).applyQuaternion(camera).z).toBeCloseTo(0, 9);
-    expect(directionMismatch(turned, name)).toBeUndefined();
-    expect(nearestPoseDirection(turned).name).toBe(name);
-  });
-
-  it('turns an already turned or tilted object by where it faces, not from the default', () => {
-    // An object standing 7° off the vertical and turned 130° about it.
-    const object = new Quaternion()
-      .setFromAxisAngle(new Vector3(0, 0, 1), (130 * Math.PI) / 180)
-      .multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), (7 * Math.PI) / 180));
-    const start: ProductPose = { ...createDefaultPose(), objectQuaternion: quaternion(object) };
-    for (const name of ['정면', '오른쪽', '왼쪽', '뒤'] as const) {
-      const turned = poseForDirection(start, name);
-      expect(turned.objectQuaternion).toEqual(start.objectQuaternion);
-      expect(away(poseDirection(turned).angle, directionAngle(name)!)).toBeLessThan(1e-6);
-    }
-  });
-
-  it('위 raises the camera above the limit and keeps the side; 아래 lowers it; a name turns it back', () => {
-    const side = poseForDirection(createDefaultPose(), '오른쪽');
-    const up = poseForDirection(side, '위');
-    expect(poseDirection(up).elevation).toBeCloseTo(60, 6);
-    expect(poseDirection(up).angle).toBeCloseTo(poseDirection(side).angle, 6);
-    expect(nearestPoseDirection(up).name).toBe('위');
-    const down = poseForDirection(side, '아래');
-    expect(poseDirection(down).elevation).toBeCloseTo(-45, 6);
-    expect(nearestPoseDirection(down).name).toBe('아래');
-    // Already high enough: stays where it is.
-    expect(poseDirection(poseForDirection(up, '위')).elevation).toBeCloseTo(60, 6);
-    // Back to a side from above returns to the normal height.
-    expect(poseDirection(poseForDirection(up, '왼쪽')).elevation).toBeCloseTo(10, 6);
-    expect(directionMismatch(up, '위')).toBeUndefined();
-    expect(directionMismatch(side, '위')?.nearest).toBe('오른쪽');
-    expect(directionMismatch(up, '정면')?.nearest).toBe('위');
-  });
-
-  it('warns past 25° and names the nearest direction', () => {
-    const turn = (degreesOff: number) => {
-      const q = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (-degreesOff * Math.PI) / 180);
-      // Orbiting the camera about the vertical by degreesOff changes where the product faces by the same.
-      const pose = createDefaultPose();
-      const camera = new Quaternion(...pose.cameraQuaternion);
-      return { ...pose, cameraQuaternion: quaternion(q.multiply(camera)) };
-    };
-    expect(DIRECTION_TOLERANCE).toBe(25);
-    expect(directionMismatch(turn(20), '정면')).toBeUndefined();
-    expect(directionMismatch(turn(24), '정면')).toBeUndefined();
-    const off = directionMismatch(turn(35), '정면');
-    expect(off?.nearest).toBe('정면');
-    expect(off!.degrees).toBeGreaterThan(25);
-    const far = directionMismatch(turn(80), '정면');
-    expect(far?.nearest === '오른쪽' || far?.nearest === '왼쪽').toBe(true);
-  });
-
-  it('the room sees the same direction the name gives (level camera)', () => {
-    // The product's front in the level camera's frame, as the 3D room places it.
-    for (const name of ['정면', '오른쪽', '왼쪽', '뒤'] as const) {
-      const pose = poseForDirection(createDefaultPose(), name);
-      const level = levelCameraQuaternion(new Quaternion(...pose.cameraQuaternion));
-      const front = new Vector3(1, 0, 0).applyQuaternion(
-        level.invert().multiply(new Quaternion(...pose.objectQuaternion)),
-      );
-      const angle = (Math.atan2(front.x, front.z) * 180) / Math.PI;
-      expect(away(angle, directionAngle(name)!)).toBeLessThan(1e-6);
-    }
   });
 });

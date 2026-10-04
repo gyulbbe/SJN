@@ -244,8 +244,9 @@ test('타일은 텍스처만 등록: 상품 소개·대표 설정 없이 목록�
   await checkDisplays(page, name, blue, true);
 });
 
-test('제품 사진이 작으면 흐리게 입체화된다고 안내하되 올리는 것은 막지 않는다', async ({ page }) => {
-  const hint = '작은 사진은 흐리게 입체화돼요. 1000px 이상을 권해요';
+test('작은 제품 사진도 안내 없이 올라가고 한꺼번에 올린 여러 장이 모두 추가된다', async ({ page }) => {
+  // The small-photo hint belonged to the removed 360° editor: no photo size is warned about any more.
+  const noHint = '작은 사진은 흐리게';
   const photo = async (name: string, width: number, height: number) => ({
     name,
     mimeType: 'image/png',
@@ -259,32 +260,24 @@ test('제품 사진이 작으면 흐리게 입체화된다고 안내하되 올�
   await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
   const upload = form.getByLabel('+ 제품 이미지 올리기', { exact: true });
   const photos = form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true });
-  // A big photo: nothing to say.
   await upload.setInputFiles(await photo('big.png', 1200, 900));
   await expect(photos).toHaveCount(1);
-  await expect(form.getByText(hint)).toHaveCount(0);
-  // Below 512 px on the short side: the hint names the photo and the size, and the photo is still added.
+  // Below 512 px on the short side: still added, and nothing is said about it.
   await upload.setInputFiles(await photo('small-toilet.png', 400, 300));
   await expect(photos).toHaveCount(2);
-  const notice = form.getByText(hint);
-  await expect(notice).toBeVisible();
-  await expect(notice).toContainText('small-toilet.png');
-  await expect(notice).toContainText('300px');
-  await expect(notice).not.toContainText('big.png');
-  await form.screenshot({ path: test.info().outputPath('small-photo-hint.png') });
-  // The next pick of big photos clears it. Several at once: only the small one is named.
-  await upload.setInputFiles([await photo('big-2.png', 1000, 1000)]);
-  await expect(photos).toHaveCount(3);
-  await expect(form.getByText(hint)).toHaveCount(0);
+  await expect(form.getByText(noHint)).toHaveCount(0);
+  await expect(form.getByText('360°')).toHaveCount(0);
+  await expect(form.getByRole('button', { name: /360°|입체화/ })).toHaveCount(0);
+  // Several at once: every one is added, each with its own direction name, up to the limit of six.
   await upload.setInputFiles([await photo('tiny-a.png', 100, 100), await photo('big-3.png', 2000, 1500)]);
-  await expect(photos).toHaveCount(5);
-  await expect(form.getByText(hint)).toContainText('tiny-a.png');
-  await expect(form.getByText(hint)).not.toContainText('big-3.png');
-  // Tile textures are not turned into 3D, so they get no hint.
+  await expect(photos).toHaveCount(4);
+  await expect(form.getByText(noHint)).toHaveCount(0);
+  await form.screenshot({ path: test.info().outputPath('small-photo-no-hint.png') });
+  // Tile textures are added as before.
   await form.getByLabel('카테고리', { exact: true }).selectOption('tile');
   await form
     .getByLabel('+ 타일 텍스처 올리기', { exact: true })
     .setInputFiles(await photo('tile.png', 64, 64));
   await expect(form.getByRole('img', { name: '타일 텍스처 1', exact: true })).toBeVisible();
-  await expect(form.getByText(hint)).toHaveCount(0);
+  await expect(form.getByText(noHint)).toHaveCount(0);
 });

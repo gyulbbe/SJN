@@ -81,6 +81,7 @@ async function checkMaterialAssets(ctx: Context, input: MaterialInput): Promise<
   ].filter(Boolean) as string[];
   if (images.some((id) => assets.get(id)?.kind === 'product-mesh'))
     throw invalid('제품 사진에는 이미지가 필요해요.');
+  // 읽기 전용 호환: 옛 360° 자재를 다시 저장해도 메시·입력 사진 참조가 올바른지만 본다(docs/product3d-removal.md).
   for (const view of input.views)
     if (view.product3d) {
       const mesh = assets.get(view.product3d.meshAssetId),

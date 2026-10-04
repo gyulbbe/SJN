@@ -791,6 +791,7 @@ export const projectSchema = z.union([legacyProjectSchema, projectV3Schema]);
 const quaternionSchema = z
   .tuple([number, number, number, number])
   .refine((value) => Math.abs(Math.hypot(...value) - 1) <= 0.001, '회전값은 정규화된 quaternion이어야 해요.');
+/** 읽기 전용 호환: 옛 360° 자재의 `views[].product3d`. 새로 쓰지 않고, 저장된 자재를 읽을 때만 쓴다(docs/product3d-removal.md). */
 export const product3dReferenceSchema = z
   .object({
     version: z.literal(1),
@@ -937,6 +938,7 @@ export const assetMetadataSchema = z.discriminatedUnion('kind', [
       .enum(['upload-preview', 'manual-alpha', 'ai-alpha', 'ai-multiview', 'ai-product3d', 'rectified'])
       .optional(),
   }),
+  // 읽기 전용 호환: 옛 360° 메시 자산의 종류. 새 메시는 만들지 않는다(업로드는 거절, docs/product3d-removal.md).
   z.object({ ...assetMetadataBase, kind: z.literal('product-mesh'), sourceAssetId: id }),
 ]);
 export const identifierSchema = id;

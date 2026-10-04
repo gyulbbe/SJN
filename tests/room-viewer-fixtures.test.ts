@@ -1,41 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
-import {
-  Box3,
-  Matrix4,
-  Mesh,
-  MeshPhysicalMaterial,
-  PerspectiveCamera,
-  Quaternion,
-  Texture,
-  Vector3,
-} from 'three';
+import { Box3, Mesh, PerspectiveCamera, Texture, Vector3 } from 'three';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
+  type AssetRecord,
   type FixtureInstance,
   type MaterialVersion,
+  type Product3dReference,
   type Scene,
 } from '../src/lib/types';
 import {
   buildViewerFixtures,
   chooseDirectionalPhoto,
-  createSavedProductGeometry,
   declaredProductDirection,
   ProductAssetCache,
 } from '../src/lib/room-viewer/fixtures';
-import { encodeProductMesh, makeProductMeshAsset } from '../src/lib/product3d/codec';
-import { createDefaultPose } from '../src/lib/product3d/pose';
-import { MIXED } from '../src/lib/product3d/mixed-color';
-import { icosphere } from './helpers/product3d-meshes';
-import { shadingNormals } from '../src/lib/product3d/mesh-cleanup';
-import { productSurface } from '../src/lib/product3d/shading';
-import { registerPainted } from '../src/lib/product3d/painted';
-import { poseDirection, poseForDirection } from '../src/lib/product3d/direction-pose';
 import type { ProductDirection } from '../src/lib/product-direction';
 import { roomPlacementSchema } from '../src/lib/room-validation';
-import type { Product3dReference, ProductMesh } from '../src/lib/product3d/state-types';
 
 function fixture(): FixtureInstance {
   return {
@@ -103,45 +85,14 @@ function material(): MaterialVersion {
     createdAt: 'test',
   };
 }
-/**
- * A box in TripoSR coordinates (+z up, photographed from +x): 1 deep (x), 2 wide (y), 4 tall (z).
- * Placed in a room it is 2 wide (x), 4 tall (y) and 1 deep (z), before the fit to its envelope.
- */
-function cube(): ProductMesh {
-  return {
-    positions: new Float32Array([
-      -0.5, -1, -2, -0.5, 1, -2, -0.5, 1, 2, -0.5, -1, 2, 0.5, -1, -2, 0.5, 1, -2, 0.5, 1, 2, 0.5, -1, 2,
-    ]),
-    colors: new Float32Array(24).fill(0.5),
-    indices: new Uint32Array([0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 3, 2, 6, 3, 6, 7]),
-  };
-}
-/**
- * The 360° editor's camera: on the side `azimuth` degrees from the photographed one (+y positive),
- * `elevation` degrees above the horizon, turned `roll` degrees about its view axis. The default
- * pose is `cameraAt(0, 10)`.
- */
-function cameraAt(azimuth: number, elevation = 0, roll = 0) {
-  const rad = (degrees: number) => (degrees * Math.PI) / 180;
-  const eye = new Vector3(
-    Math.cos(rad(elevation)) * Math.cos(rad(azimuth)),
-    Math.cos(rad(elevation)) * Math.sin(rad(azimuth)),
-    Math.sin(rad(elevation)),
-  );
-  const q = new Quaternion().setFromRotationMatrix(
-    new Matrix4().lookAt(eye, new Vector3(), new Vector3(0, 0, 1)),
-  );
-  return q
-    .multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), rad(roll)))
-    .toArray() as Product3dReference['pose']['cameraQuaternion'];
-}
+/** What a material saved with the removed 360° editor still carries on a view (docs/product3d-removal.md). */
 const reference = (): Product3dReference => ({
   version: 1,
   meshAssetId: 'mesh',
   inputAssetId: 'input',
   modelId: 'stored-model',
   modelRevision: 'stored-revision',
-  pose: { objectQuaternion: [0, 0, 0, 1], cameraQuaternion: cameraAt(0), zoom: 1 },
+  pose: { objectQuaternion: [0, 0, 0, 1], cameraQuaternion: [0, 0, 0, 1], zoom: 1 },
 });
 function fakeImage(cache: ProductAssetCache) {
   return vi.spyOn(cache, 'image').mockImplementation(async () => ({
@@ -373,351 +324,75 @@ describe('room viewer immutable physical fixtures', () => {
     expect(value).toEqual(original);
     result.dispose();
   });
-  it('loads and shares an immutable saved mesh once, without reading its PNG or invoking AI', async () => {
-    const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
-    const reader = vi.fn(async () => mesh),
-      cache = new ProductAssetCache(reader);
-    const m = material();
+  it('shows a view saved with the removed 360° editor as its flat capture and reads no mesh', async () => {
+    const reader = vi.fn(async () => undefined),
+      cache = new ProductAssetCache(reader),
+      images = fakeImage(cache),
+      assets = vi.spyOn(cache, 'asset'),
+      m = material();
     m.views[0].product3d = reference();
+    m.views.push({ assetId: 'side', direction: '오른쪽', anchor: { x: 0.5, y: 1 }, product3d: reference() });
     const value = scene(),
       original = structuredClone(value);
-    const a = await buildViewerFixtures(value, { m }, reader, cache),
-      b = await buildViewerFixtures(value, { m }, reader, cache);
-    expect(reader).toHaveBeenCalledTimes(1);
-    expect(reader).toHaveBeenCalledWith('mesh');
-    expect(a.group.children[0].userData.representation).toBe('saved-product-mesh');
-    const box = new Box3().setFromObject(a.group);
-    expect(box.min.y).toBeCloseTo(0);
-    expect(box.getSize(new Vector3()).toArray()).toEqual([400, 800, 200]);
+    const result = await buildViewerFixtures(value, { m }, reader, cache);
+    // Only the pictures are read (the capture of each view): never the mesh or the input photo.
+    expect(images.mock.calls.map(([id]) => id).sort()).toEqual(['photo', 'side']);
+    expect(assets).not.toHaveBeenCalled();
+    expect(reader).not.toHaveBeenCalled();
+    const object = result.group.children[0];
+    expect(object.userData.representation).toBe('directional-photo-planes');
+    expect(result.notices.some((n) => n.severity === 'error')).toBe(false);
+    expect(result.notices.some((n) => n.message.includes('저장된 입체'))).toBe(false);
+    const front = new Box3().setFromObject(object.children[0].children[0]);
+    expect(front.min.y).toBeCloseTo(0);
+    expect(front.getSize(new Vector3()).toArray().map(Math.round)).toEqual([400, 800, 0]);
+    // The older 오른쪽 view turns up for the camera that sees the product facing right, like any photo.
+    const camera = new PerspectiveCamera();
+    camera.position.set(-4000, 100, 1200);
+    result.updateView(camera);
+    expect(object.children[0].children.map((plane) => plane.visible)).toEqual([false, true]);
     expect(value).toEqual(original);
-    a.dispose();
-    expect(cache.diagnostics.meshes).toBe(1);
-    b.dispose();
+    expect(m.views[0].product3d).toEqual(reference());
+    result.dispose();
     cache.dispose();
-    expect(cache.diagnostics.assets).toBe(0);
-    expect(cache.diagnostics.meshes).toBe(0);
   });
-  it('applies inverse captured camera and object rotation once, ignoring inspection zoom', () => {
-    const f = fixture(),
-      m = cube(),
-      r = reference();
-    // The camera stands on the product's right side and the product was turned a quarter turn about
-    // its up axis to face it: as seen, the product faces the viewer again.
-    r.pose.cameraQuaternion = cameraAt(90);
-    r.pose.objectQuaternion = new Quaternion()
-      .setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2)
-      .toArray() as Product3dReference['pose']['objectQuaternion'];
-    r.pose.zoom = 3;
-    const g = createSavedProductGeometry(m, r, f);
-    const size = g.boundingBox!.getSize(new Vector3());
-    expect(size.toArray().map((v) => Math.round(v * 1e6) / 1e6)).toEqual([400, 800, 200]);
-    expect(m.positions[0]).toBe(-0.5);
-    g.dispose();
-  });
-  describe('stands the product level, however the 360° editor looked at it', () => {
-    const placed = (pose: Product3dReference['pose']) => {
-      const g = createSavedProductGeometry(cube(), { ...reference(), pose }, fixture());
-      const p = g.getAttribute('position');
-      const corners = Array.from({ length: p.count }, (_, i) => new Vector3(p.getX(i), p.getY(i), p.getZ(i)));
-      g.dispose();
-      return corners;
-    };
-    // Corners 0–3 are the back face of the TripoSR box (mesh x −0.5), 4–7 the photographed front.
-    it('does not lean it by the default camera looking down 10° (base and top stay horizontal)', () => {
-      const corners = placed(createDefaultPose());
-      const bottom = [corners[0], corners[1], corners[4], corners[5]],
-        top = [corners[2], corners[3], corners[6], corners[7]];
-      for (const corner of bottom) expect(corner.y).toBeCloseTo(0, 6);
-      for (const corner of top) expect(corner.y).toBeCloseTo(800, 6);
-      // The photographed face is upright: its four corners share one depth.
-      for (const corner of corners.slice(4)) expect(corner.z).toBeCloseTo(corners[4].z, 6);
-      expect(corners[4].z).toBeGreaterThan(corners[0].z);
-    });
-    it('gives the same product from any look-down angle, including straight above', () => {
-      const level = placed({ ...createDefaultPose(), cameraQuaternion: cameraAt(0, 0) });
-      for (const elevation of [10, 45, 80, -30]) {
-        const other = placed({ ...createDefaultPose(), cameraQuaternion: cameraAt(0, elevation) });
-        other.forEach((corner, i) => expect(corner.distanceTo(level[i])).toBeLessThan(1e-3));
-      }
-    });
-    it('keeps the side of the product the camera stood on, and the roll it had', () => {
-      // From the product's right side the photographed face turns 90° away from the viewer.
-      const right = placed({ ...createDefaultPose(), cameraQuaternion: cameraAt(90, 10) });
-      const faceX = right.slice(4).map((c) => c.x);
-      expect(Math.max(...faceX) - Math.min(...faceX)).toBeCloseTo(0, 6);
-      // A camera rolled 10° shows the product leaning 10° in the picture, and so does the room.
-      const rolled = placed({ ...createDefaultPose(), cameraQuaternion: cameraAt(0, 10, 10) });
-      const lean = (corners: Vector3[]) =>
-        (Math.atan2(corners[6].x - corners[5].x, corners[6].y - corners[5].y) * 180) / Math.PI;
-      expect(Math.abs(lean(rolled))).toBeCloseTo(10, 4);
-      expect(Math.abs(lean(placed(createDefaultPose())))).toBeCloseTo(0, 6);
-    });
-  });
-  it('uses visible alpha bounds and selected anchor, not the full transparent PNG as the physical box', () => {
+  it('uses visible alpha bounds and the selected anchor, not the full transparent PNG, as the physical size', async () => {
     const f = fixture();
     f.roomPlacement!.contentBounds = { left: 0.1, right: 0.9, top: 0.1, bottom: 0.9 };
     f.anchor = { x: 0.5, y: 0.9 };
-    const g = createSavedProductGeometry(cube(), reference(), f);
-    expect(g.boundingBox!.min.y).toBeCloseTo(0);
-    expect(g.boundingBox!.max.y).toBeCloseTo(800);
-    expect(g.boundingBox!.min.x).toBeCloseTo(-200);
-    g.dispose();
-  });
-  it('shows a view saved with lighting correction as lit base colours, and older views unchanged', async () => {
-    const shadedCube = cube();
-    shadedCube.colors = new Float32Array(24).map((_, i) => 0.35 + (Math.floor(i / 3) % 4) * 0.18);
-    // Distinct vertex colours (a neutral grey's channels may differ in the fourth decimal).
-    const unique = (g: ReturnType<typeof createSavedProductGeometry>) => {
-      const colors = g.getAttribute('color').array as Float32Array;
-      const seen = new Set<string>();
-      for (let i = 0; i < colors.length; i += 3)
-        seen.add([colors[i], colors[i + 1], colors[i + 2]].map((c) => c.toFixed(3)).join());
-      return seen.size;
-    };
-    const baked = createSavedProductGeometry(shadedCube, reference(), fixture());
-    const lit = createSavedProductGeometry(shadedCube, { ...reference(), shading: 'lit' }, fixture());
-    expect(unique(baked)).toBeGreaterThan(1);
-    expect(unique(lit)).toBe(1);
-    baked.dispose();
-    lit.dispose();
-    const f = fixture();
-    const m = material();
-    m.views[0].product3d = { ...reference(), shading: 'lit' };
-    const mesh = await makeProductMeshAsset(shadedCube, 'mesh', 'input');
-    const result = await buildViewerFixtures(scene([f]), { m }, async () => mesh);
-    const kinds = new Set<string>();
-    result.group.traverse((node) => {
-      if (node instanceof Mesh) kinds.add((node.material as { type: string }).type);
-    });
-    expect(kinds).toEqual(new Set(['MeshStandardMaterial']));
-  });
-  it('shows a view saved as mixed with the same colours and normals as the editor, lit by the room', async () => {
-    // A closed mesh with a shape (an ellipsoid as big as the box of cube()), turned by a pose that is
-    // not the identity. (The box's faces are not wound alike, so its smoothed normals are noise.)
-    const ball = icosphere(2);
-    const mesh: ProductMesh = {
-      positions: ball.positions.map((n, i) => n * [0.5, 1, 2][i % 3]),
-      indices: ball.indices,
-      colors: new Float32Array(ball.positions.length).map((_, i) => 0.3 + (Math.floor(i / 3) % 5) * 0.12),
-    };
-    const turned = {
-      ...reference(),
-      shading: 'mixed' as const,
-      pose: {
-        ...reference().pose,
-        objectQuaternion: [0.1, 0.2, 0.3, Math.sqrt(1 - 0.14)] as [number, number, number, number],
-      },
-    };
-    const g = createSavedProductGeometry(mesh, turned, fixture());
-    // One colour calculation (productSurface) for every consumer: the geometry's colours are the
-    // surface's, converted to the linear buffer the room draws.
-    const surface = productSurface('mixed', mesh);
-    const colors = g.getAttribute('color').array as Float32Array;
-    const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-    for (let i = 0; i < colors.length; i++) expect(colors[i]).toBeCloseTo(linear(surface.colors[i]), 4);
-    // Its normals are the smoothed ones, turned with the mesh: the same as smoothing the turned mesh.
-    const normals = g.getAttribute('normal').array as Float32Array;
-    const again = shadingNormals(g.getAttribute('position').array as Float32Array, mesh.indices, {
-      iterations: MIXED.normalIterations,
-    });
-    for (let i = 0; i < normals.length; i++) expect(normals[i]).toBeCloseTo(again[i], 4);
-    g.dispose();
-    // The lit saves keep their own normals (40 rounds), turned the same way.
-    const lit = createSavedProductGeometry(mesh, { ...turned, shading: 'lit' }, fixture());
-    const litNormals = lit.getAttribute('normal').array as Float32Array;
-    const litAgain = shadingNormals(lit.getAttribute('position').array as Float32Array, mesh.indices);
-    for (let i = 0; i < litNormals.length; i++) expect(litNormals[i]).toBeCloseTo(litAgain[i], 4);
-    lit.dispose();
-    // In the room it is drawn lit.
-    const f = fixture();
-    const m = material();
-    m.views[0].product3d = { ...reference(), shading: 'mixed' };
-    const asset = await makeProductMeshAsset(mesh, 'mesh', 'input');
-    const result = await buildViewerFixtures(scene([f]), { m }, async () => asset);
-    const kinds = new Set<string>();
-    result.group.traverse((node) => {
-      if (node instanceof Mesh) kinds.add((node.material as { type: string }).type);
-    });
-    expect(kinds).toEqual(new Set(['MeshStandardMaterial']));
+    const cache = new ProductAssetCache(async () => undefined);
+    fakeImage(cache);
+    const result = await buildViewerFixtures(scene([f]), { m: material() }, async () => undefined, cache);
+    const box = new Box3().setFromObject(result.group, true);
+    // The visible 80 % is 400 × 800, so the whole picture is 500 × 1000; the anchor (90 % down) is the foot.
+    expect(box.getSize(new Vector3()).x).toBeCloseTo(500, 4);
+    expect(box.getSize(new Vector3()).y).toBeCloseTo(1000, 4);
+    expect(box.min.y).toBeCloseTo(-100, 4);
+    expect(box.max.y).toBeCloseTo(900, 4);
     result.dispose();
+    cache.dispose();
   });
-  it('draws a saved view with a fit in the proportions of the material\u2019s size, and follows a corrected size', async () => {
-    const asset = await makeProductMeshAsset(cube(), 'mesh', 'input');
-    const depthOf = async (depthMm: number, fit: Product3dReference['fit']) => {
-      const f = fixture();
-      const m = material();
-      m.depthMm = depthMm;
-      m.views[0].product3d = { ...reference(), ...(fit ? { fit } : {}) };
-      const result = await buildViewerFixtures(scene([f]), { m }, async () => asset);
-      const box = new Box3().setFromObject(result.group, true);
-      result.dispose();
-      return box.max.z - box.min.z;
-    };
-    const fit = { upright: [0, 0, 0, 1] as [number, number, number, number], front: 0, size: true };
-    // The envelope is 400 wide × 800 high; the box is 1 deep, 2 wide, 4 tall: a quarter as deep as it is tall.
-    const plain = await depthOf(400, undefined);
-    // With the size (400 wide × 800 high × 400 deep) it is half as deep as it is tall, and 800 deep makes it as deep.
-    const half = await depthOf(400, fit);
-    const full = await depthOf(800, fit);
-    expect(half / plain).toBeGreaterThan(1.9);
-    expect(half / plain).toBeLessThan(2.1);
-    expect(full / half).toBeGreaterThan(1.9);
-    expect(full / half).toBeLessThan(2.1);
-    // A size that is not a size (the tile default 9 mm) leaves the mesh as it was.
-    expect(await depthOf(9, fit)).toBeCloseTo(plain, 4);
-    // A fit that asks nothing of the size leaves it, too.
-    expect(await depthOf(800, { ...fit, size: false })).toBeCloseTo(plain, 4);
-  });
-  it('draws a saved view with the photo colours from the photo, and falls back to its own colours with a notice when the photo cannot be read', async () => {
-    const asset = await makeProductMeshAsset(cube(), 'mesh', 'input');
-    const f = fixture();
-    const m = material();
-    m.views[0].product3d = {
-      ...reference(),
-      photoCamera: { azimuth: 0, elevation: 0, distance: 1.9, focal: 2.75, shift: [0, 0], iou: 0.97 },
-    };
-    // The reader gives the mesh asset for every id, so the "input photo" is not an image here.
-    const result = await buildViewerFixtures(scene([f]), { m }, async () => asset);
-    expect(result.notices.some((n) => n.message.includes('사진 색을 입히지 않았어요'))).toBe(true);
-    expect(result.notices.some((n) => n.severity === 'error')).toBe(false);
-    let drawn = 0;
-    result.group.traverse((node) => {
-      if (node instanceof Mesh) drawn++;
-    });
-    expect(drawn).toBe(1);
-    result.dispose();
-    // Older saves have no camera: no photo is read and nothing is said.
-    const plain = material();
-    plain.views[0].product3d = reference();
-    const older = await buildViewerFixtures(scene([fixture()]), { m: plain }, async () => asset);
-    expect(older.notices.some((n) => n.message.includes('사진 색'))).toBe(false);
-    older.dispose();
-  });
-  it('draws a ceramic product with a glaze only when it was saved with one, and everything else as before', async () => {
-    const asset = await makeProductMeshAsset(cube(), 'mesh', 'input');
-    const typeOf = async (category: MaterialVersion['category'], gloss?: 'light' | 'normal' | 'none') => {
-      const m = material();
-      m.category = category;
-      m.views[0].product3d = { ...reference(), shading: 'mixed', ...(gloss ? { gloss } : {}) };
-      const result = await buildViewerFixtures(scene([fixture()]), { m }, async () => asset);
-      let found:
-        { type: string; roughness: number; shadow: boolean; compiled: boolean; key: string } | undefined;
-      result.group.traverse((node) => {
-        if (!(node instanceof Mesh)) return;
-        const surface = node.material as MeshPhysicalMaterial;
-        found = {
-          type: surface.type,
-          roughness: surface.roughness,
-          shadow: node.castShadow && node.receiveShadow,
-          compiled:
-            typeof surface.onBeforeCompile === 'function' && surface.onBeforeCompile.toString().length > 50,
-          key: surface.customProgramCacheKey(),
-        };
-      });
-      result.dispose();
-      return found!;
-    };
-    const matte = await typeOf('basin');
-    expect(matte.type).toBe('MeshStandardMaterial');
-    expect(matte.roughness).toBe(0.5);
-    // Ceramic with a glaze: a physical material with the room's colour correction and tone mapping
-    // (the same program key as the matte lit one) and the shadows of every product.
-    for (const category of ['toilet', 'basin', 'bath'] as const)
-      for (const gloss of ['light', 'normal'] as const) {
-        const glazed = await typeOf(category, gloss);
-        expect(glazed.type).toBe('MeshPhysicalMaterial');
-        expect(glazed.roughness).toBeLessThan(0.5);
-        expect(glazed.shadow).toBe(true);
-        expect(glazed.compiled).toBe(true);
-        expect(glazed.key).toBe(matte.key);
-      }
-    // No glaze saved, or 'none': matte (older saves).
-    expect((await typeOf('basin', 'none')).type).toBe('MeshStandardMaterial');
-    // A category that is not ceramic keeps the matte material whatever was saved.
-    for (const category of ['vanity', 'faucet', 'mirror'] as const) {
-      const other = await typeOf(category, 'normal');
-      expect(other.type).toBe('MeshStandardMaterial');
-      expect(other.roughness).toBe(0.5);
-    }
-  });
-  it('draws the original colours of a mesh that carries the photo’s, and the same colours of a mesh that does not', () => {
-    const mesh = cube();
-    const plainColours = createSavedProductGeometry(mesh, reference(), fixture()).getAttribute('color')
-      .array as Float32Array;
-    expect(plainColours[0]).toBeCloseTo(0.214, 3); // sRGB 0.5 in the linear buffer
-    const painted: ProductMesh = { ...mesh };
-    registerPainted(painted, {
-      colors: new Float32Array(mesh.colors.length).fill(1),
-      weight: new Float32Array(mesh.colors.length / 3).fill(1),
-    });
-    const colours = createSavedProductGeometry(painted, reference(), fixture()).getAttribute('color')
-      .array as Float32Array;
-    expect(colours[0]).toBeCloseTo(1, 4);
-  });
-  it('stands a saved mesh on its wall by the way its pose faces: side against the wall for 정면, back against it for 오른쪽', async () => {
-    const build = async (face: 'left' | 'right' | 'back', name: ProductDirection) => {
-      const f = fixture();
-      f.roomPlacement!.face = face;
-      f.roomPlacement!.v = 0.5;
-      f.anchor.y = 0.5;
-      const m = material();
-      m.views[0].product3d = { ...reference(), pose: poseForDirection(createDefaultPose(), name) };
-      m.views[0].direction = name;
-      const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
-      const result = await buildViewerFixtures(scene([f]), { m }, async () => mesh);
-      const box = new Box3().setFromObject(result.group, true);
-      result.dispose();
-      return box;
-    };
-    // The pose faces the front (a front photo): 400 wide across the room, its side on the left wall,
-    // centred on its place along the wall (z 1200), as high as the anchor says.
-    const front = await build('left', '정면');
-    expect(front.min.x).toBeCloseTo(-1200, 4);
-    expect(front.max.x).toBeCloseTo(-800, 4);
-    expect(front.min.z).toBeCloseTo(1100, 4);
-    expect(front.max.z).toBeCloseTo(1300, 4);
-    expect((front.min.y + front.max.y) / 2).toBeCloseTo(1200, 4);
-    // The pose faces right (a right photo): it looks into the room with its back on the wall.
-    const right = await build('left', '오른쪽');
-    expect(right.min.x).toBeCloseTo(-1200, 4);
-    expect(right.max.x).toBeCloseTo(-1000, 4);
-    expect(right.min.z).toBeCloseTo(1000, 4);
-    expect(right.max.z).toBeCloseTo(1400, 4);
-    // The right wall, mirrored: a left photo looks into the room.
-    const left = await build('right', '왼쪽');
-    expect(left.min.x).toBeCloseTo(1000, 4);
-    expect(left.max.x).toBeCloseTo(1200, 4);
-    // The back wall: a front photo has its back on it; x stays the anchor's.
-    const back = await build('back', '정면');
-    expect(back.min.z).toBeCloseTo(0, 4);
-    expect(back.max.z).toBeCloseTo(200, 4);
-    expect((back.min.x + back.max.x) / 2).toBeCloseTo(0, 4);
-  });
-  it('reports malformed saved mesh without an automatic replacement or data write', async () => {
-    const m = material();
-    m.views[0].product3d = reference();
-    const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
-    mesh.blob = new Blob(['bad']);
-    const result = await buildViewerFixtures(scene(), { m }, async () => mesh);
+  it('reports a product photo that cannot be read instead of drawing nothing quietly', async () => {
+    const result = await buildViewerFixtures(scene(), { m: material() }, async () => undefined);
     expect(result.group.children).toHaveLength(0);
+    expect(result.notices).toHaveLength(1);
     expect(result.notices[0].severity).toBe('error');
-    expect(result.notices[0].message).toContain('손상');
     result.dispose();
   });
   it('late asset completion after closing cannot revive the cache', async () => {
-    let finish!: (value: Awaited<ReturnType<typeof makeProductMeshAsset>>) => void;
+    let finish!: (value: AssetRecord) => void;
     const cache = new ProductAssetCache(
         () =>
           new Promise((resolve) => {
             finish = resolve;
           }),
       ),
-      task = cache.mesh('mesh');
+      task = cache.asset('photo');
     cache.dispose();
-    finish(await makeProductMeshAsset(cube(), 'mesh', 'input'));
+    finish({} as AssetRecord);
     await expect(task).rejects.toThrow('닫혔');
     expect(cache.diagnostics.pending).toBe(0);
-    expect(cache.diagnostics.meshes).toBe(0);
+    expect(cache.diagnostics.assets).toBe(0);
   });
   it('keeps a single PNG physically fixed when camera turns and records its restriction', async () => {
     const reader = vi.fn(async () => undefined),
@@ -781,36 +456,6 @@ describe('room viewer immutable physical fixtures', () => {
   });
 });
 
-const actualMeshDirectory = 'test-results/front-alignment-toilet/photograph';
-describe('previously saved actual TripoSR geometry (no new inference)', () => {
-  it.skipIf(!existsSync(`${actualMeshDirectory}/mesh-positions.bin`))(
-    'decodes the real toilet arrays and mounts their selected pose with finite bounds',
-    async () => {
-      const floats = (name: string) => {
-        const b = readFileSync(`${actualMeshDirectory}/mesh-${name}.bin`);
-        return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
-      };
-      const b = readFileSync(`${actualMeshDirectory}/mesh-indices.bin`),
-        mesh = {
-          positions: floats('positions'),
-          colors: floats('colors'),
-          indices: new Uint32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)),
-        };
-      expect(mesh.positions.length / 3).toBeGreaterThan(50000);
-      expect(encodeProductMesh(mesh).size).toBeGreaterThan(1000000);
-      const ref = reference();
-      ref.pose = createDefaultPose();
-      const g = createSavedProductGeometry(mesh, ref, fixture()),
-        box = g.boundingBox!;
-      expect([...box.min.toArray(), ...box.max.toArray()].every(Number.isFinite)).toBe(true);
-      expect(box.min.y).toBeCloseTo(0, 3);
-      expect(box.getSize(new Vector3()).x).toBeLessThanOrEqual(400.001);
-      expect(box.getSize(new Vector3()).y).toBeLessThanOrEqual(800.001);
-      g.dispose();
-    },
-  );
-});
-
 describe('angle names decide the way a product stands on its face', () => {
   const half = DEFAULT_ROOM.widthMm / 2;
   const placed = (face: 'left' | 'right' | 'back' | 'floor', u = 0.5) => {
@@ -821,13 +466,6 @@ describe('angle names decide the way a product stands on its face', () => {
     f.anchor.y = face === 'floor' ? 1 : 0.5;
     return f;
   };
-  const meshBuild = async (f: FixtureInstance, name: ProductDirection = '정면') => {
-    const m = material();
-    m.views[0].direction = name;
-    m.views[0].product3d = { ...reference(), pose: poseForDirection(createDefaultPose(), name) };
-    const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
-    return buildViewerFixtures(scene([f]), { m }, async () => mesh);
-  };
   const photoBuild = async (f: FixtureInstance, name: ProductDirection = '정면') => {
     const m = material();
     m.views[0].direction = name;
@@ -837,13 +475,12 @@ describe('angle names decide the way a product stands on its face', () => {
   };
   const bounds = (group: Parameters<Box3['setFromObject']>[0]) => new Box3().setFromObject(group, true);
 
-  it('no product is turned for its wall any more: every flat photo and mesh has rotation 0', async () => {
-    for (const face of ['left', 'right', 'back', 'floor'] as const)
-      for (const build of [meshBuild, photoBuild]) {
-        const result = await build(placed(face));
-        expect(result.group.children[0].rotation.y).toBe(0);
-        result.dispose();
-      }
+  it('no product is turned for its wall any more: every flat photo has rotation 0', async () => {
+    for (const face of ['left', 'right', 'back', 'floor'] as const) {
+      const result = await photoBuild(placed(face));
+      expect(result.group.children[0].rotation.y).toBe(0);
+      result.dispose();
+    }
   });
 
   it('a flat 정면 photo on the left wall stands facing the front with its edge on the wall', async () => {
@@ -889,62 +526,17 @@ describe('angle names decide the way a product stands on its face', () => {
     floor.dispose();
   });
 
-  it('name × wall: a mesh has its side or its back on the wall, never inside it, never off it', async () => {
-    // 정면·뒤: 400 wide across the room, 200 deep; 오른쪽·왼쪽: 200 across, 400 along the wall.
-    const across = { 정면: 400, 뒤: 400, 오른쪽: 200, 왼쪽: 200 } as const;
+  it('name × wall: a flat photo has its edge on the wall for every name, never inside it, never off it', async () => {
     for (const name of ['정면', '오른쪽', '왼쪽', '뒤'] as const) {
-      const left = bounds((await meshBuild(placed('left'), name)).group);
+      const left = bounds((await photoBuild(placed('left'), name)).group);
       expect(left.min.x).toBeCloseTo(-half, 4);
-      expect(left.getSize(new Vector3()).x).toBeCloseTo(across[name], 4);
+      expect(left.getSize(new Vector3()).x).toBeCloseTo(400, 4);
       expect((left.min.z + left.max.z) / 2).toBeCloseTo(1200, 4);
-      const right = bounds((await meshBuild(placed('right'), name)).group);
+      const right = bounds((await photoBuild(placed('right'), name)).group);
       expect(right.max.x).toBeCloseTo(half, 4);
-      expect(right.getSize(new Vector3()).x).toBeCloseTo(across[name], 4);
-      const back = bounds((await meshBuild(placed('back'), name)).group);
-      expect(back.min.z).toBeCloseTo(0, 4);
+      const back = bounds((await photoBuild(placed('back'), name)).group);
+      expect(back.min.z).toBeCloseTo(1, 4);
       expect((back.min.x + back.max.x) / 2).toBeCloseTo(0, 4);
-      expect(back.getSize(new Vector3()).x).toBeCloseTo(across[name], 4);
-    }
-  });
-
-  it('a saved 3D product on the floor touches it, whatever its anchor says', async () => {
-    const onFloor = await meshBuild(placed('floor'));
-    const b = bounds(onFloor.group);
-    expect(b.min.y).toBeCloseTo(0, 6);
-    expect((b.min.z + b.max.z) / 2).toBeCloseTo(1200, 4);
-    onFloor.dispose();
-    // The anchor is a place in the 2D picture: at the foot (1), a little above it, in the middle of
-    // the product, at its top. The lowest point is on the floor in every case (within 0.5 mm).
-    for (const y of [1, 0.9875, 0.95, 0.9, 0.5, 0]) {
-      const f = placed('floor');
-      f.anchor.y = y;
-      const built = await meshBuild(f);
-      expect(bounds(built.group).min.y, `anchor y ${y}`).toBeCloseTo(0, 3);
-      built.dispose();
-    }
-  });
-
-  it('a tilted or turned 3D product rests on its lowest point, not on its anchor', async () => {
-    for (const roll of [-14, 9, 22]) {
-      for (const turn of [0, 30]) {
-        const f = placed('floor');
-        f.anchor.y = 0.95;
-        f.rotation = turn;
-        const m = material();
-        m.views[0].product3d = {
-          ...reference(),
-          pose: {
-            ...reference().pose,
-            objectQuaternion: new Quaternion()
-              .setFromAxisAngle(new Vector3(1, 0, 0), (roll * Math.PI) / 180)
-              .toArray() as [number, number, number, number],
-          },
-        };
-        const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
-        const built = await buildViewerFixtures(scene([f]), { m }, async () => mesh);
-        expect(bounds(built.group).min.y, `roll ${roll}° turn ${turn}°`).toBeCloseTo(0, 3);
-        built.dispose();
-      }
     }
   });
 
@@ -961,24 +553,22 @@ describe('angle names decide the way a product stands on its face', () => {
     sunk.dispose();
   });
 
-  it("a 3D product on a wall is not grounded: its height is the anchor's", async () => {
+  it("a flat photo on a wall is not grounded: its height is the anchor's", async () => {
     const f = placed('left');
     f.anchor.y = 0.5;
-    const built = await meshBuild(f);
-    const b = bounds(built.group);
-    expect(b.min.y).toBeGreaterThan(100);
+    const built = await photoBuild(f);
+    expect(bounds(built.group).min.y).toBeGreaterThan(100);
     built.dispose();
   });
 
   it('says so when the product reaches beyond the room, and leaves the source alone', async () => {
-    // At the very front of the left wall the product's 400 along the wall reach past the open front.
-    const f = placed('left', 0);
+    // On the floor at the very edge of the left wall, half of the product's 400 width is outside it.
+    const f = placed('floor', 0);
     const value = scene([f]),
       original = structuredClone(value);
-    const m = material();
-    m.views[0].product3d = reference();
-    const mesh = await makeProductMeshAsset(cube(), 'mesh', 'input');
-    const result = await buildViewerFixtures(value, { m }, async () => mesh);
+    const cache = new ProductAssetCache(async () => undefined);
+    fakeImage(cache);
+    const result = await buildViewerFixtures(value, { m: material() }, async () => undefined, cache);
     expect(result.notices.some((n) => n.message.includes('방 밖'))).toBe(true);
     expect(value).toEqual(original);
     result.dispose();
@@ -1018,13 +608,5 @@ describe('angle names decide the way a product stands on its face', () => {
     // Into the room from the left wall, as its own orientation says.
     expect(result.group.children[0].rotation.y).toBeCloseTo(Math.PI / 2, 9);
     result.dispose();
-  });
-
-  it('a default-pose 3D product faces the front exactly: the level camera has no look-down lean', () => {
-    const pose = createDefaultPose();
-    const direction = poseDirection(pose);
-    expect(direction.angle).toBeCloseTo(0, 9);
-    const faced = poseForDirection(pose, '오른쪽');
-    expect(poseDirection(faced).angle).toBeCloseTo(90, 6);
   });
 });

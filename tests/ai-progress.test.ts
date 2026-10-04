@@ -10,11 +10,8 @@ import {
   mogeLoadEvent,
   modelProgressLabel,
   modelProgressValueText,
-  PRODUCT3D_LOAD,
-  product3dLoadEvent,
   type ModelLoadSpec,
 } from '../src/lib/ai-progress';
-import { PRODUCT3D_FILES } from '../src/lib/product3d/model';
 
 const spec: ModelLoadSpec = {
   steps: [
@@ -130,19 +127,33 @@ describe('createModelLoadTracker', () => {
   });
 
   it('splits multi-part models by file size', () => {
+    const files = { encoder: { bytes: 600 }, backbone: { bytes: 1400 } };
+    const total = files.encoder.bytes + files.backbone.bytes;
+    const multi: ModelLoadSpec = {
+      steps: [
+        { key: 'checking', weight: 1 },
+        { key: 'runtime', weight: 3 },
+        ...(Object.keys(files) as (keyof typeof files)[]).flatMap((part) => {
+          const share = files[part].bytes / total;
+          return [
+            { key: `download:${part}`, weight: 90 * share, bytes: files[part].bytes },
+            { key: `initialize:${part}`, weight: 6 * share },
+          ];
+        }),
+      ],
+    };
     const c = clock();
-    const tracker = createModelLoadTracker(PRODUCT3D_LOAD, c.now);
+    const tracker = createModelLoadTracker(multi, c.now);
     tracker.update({ phase: 'runtime' });
     c.advance(200);
-    const encoder = PRODUCT3D_FILES.encoder.bytes;
+    const encoder = files.encoder.bytes;
     tracker.update({ phase: 'download', part: 'encoder', loaded: encoder, total: encoder });
     c.advance(200);
-    const total = Object.values(PRODUCT3D_FILES).reduce((sum, file) => sum + file.bytes, 0);
     const afterEncoder = tracker.update({ phase: 'initialize', part: 'encoder' })!;
     expect(afterEncoder.percent).toBeCloseTo(1 + 3 + (90 * encoder) / total, 0);
     c.advance(200);
     const backbone = tracker.update({ phase: 'download', part: 'backbone', loaded: 0 })!;
-    expect(backbone.totalBytes).toBe(PRODUCT3D_FILES.backbone.bytes);
+    expect(backbone.totalBytes).toBe(files.backbone.bytes);
   });
 });
 
@@ -163,18 +174,6 @@ describe('adapters', () => {
     );
     expect(backgroundRemovalLoadEvent({ stage: 'initializing', message: 'm', retry: true }).retry).toBe(true);
     expect(backgroundRemovalLoadEvent({ stage: 'processing', message: 'm' }).phase).toBe('ready');
-  });
-
-  it('keeps product 3D loading open between inference steps until the last model', () => {
-    expect(product3dLoadEvent({ stage: 'encoding', message: 'm' })).toBeUndefined();
-    expect(product3dLoadEvent({ stage: 'reconstructing', message: 'm' })).toBeUndefined();
-    expect(product3dLoadEvent({ stage: 'initializing', message: 'm', part: 'decoder' })).toMatchObject({
-      phase: 'initialize',
-      part: 'decoder',
-    });
-    expect(product3dLoadEvent({ stage: 'geometry', message: 'm', completed: 1, total: 4 })?.phase).toBe(
-      'ready',
-    );
   });
 
   it('maps MoGe stages and the DeepLab spec covers the bundled bytes', () => {

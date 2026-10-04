@@ -2,7 +2,7 @@
  * Measures the per-product refinement experiment (docs/flux-product-refine-results-*.md), no AI call:
  * the local BiRefNet (the cached model in tmp/background-model, served from disk) cuts out each FLUX
  * result and each 3D crop; the cut-out's silhouette is compared with the 3D silhouette
- * (tests/flux-product-crops-browser.ts) in the model input's pixels:
+ * (the crops recorded by the removed tests/flux-product-crops-browser.ts, see docs/product3d-removal.md) in the model input's pixels:
  *   iou          plain overlap of the two silhouettes
  *   alignedIou   the same after the best shift of ±SHIFT px (what the room composite would do)
  *   area         the result's area as a share of the 3D silhouette's

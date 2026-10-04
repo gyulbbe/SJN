@@ -283,7 +283,6 @@ try {
         !closed.contextLost ||
         closed.preparedScenes !== 0 ||
         closed.productCache.assets ||
-        closed.productCache.meshes ||
         closed.productCache.textures ||
         closed.tileCache.tileAtlases
       )
