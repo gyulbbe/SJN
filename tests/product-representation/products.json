@@ -1,0 +1,42 @@
+{
+  "bear-toilet": {
+    "name": "평면 곰 변기",
+    "category": "toilet",
+    "width": 370,
+    "height": 660,
+    "depth": 640,
+    "install": "floor",
+    "second": "왼쪽",
+    "color": "#c3c2c4"
+  },
+  "smart-toilet": {
+    "name": "평면 스마트 변기",
+    "category": "toilet",
+    "width": 400,
+    "height": 520,
+    "depth": 700,
+    "install": "floor",
+    "second": "왼쪽",
+    "color": "#eeeded"
+  },
+  "bathtub": {
+    "name": "평면 사각 욕조",
+    "category": "bath",
+    "width": 1700,
+    "height": 560,
+    "depth": 750,
+    "install": "floor",
+    "second": "왼쪽",
+    "color": "#f1f1f1"
+  },
+  "basin": {
+    "name": "평면 벽걸이 세면대",
+    "category": "basin",
+    "width": 560,
+    "height": 560,
+    "depth": 440,
+    "install": "wall",
+    "second": "오른쪽",
+    "color": "#ececee"
+  }
+}
