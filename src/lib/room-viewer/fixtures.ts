@@ -1,21 +1,13 @@
 import {
   Box3,
-  BufferAttribute,
-  BufferGeometry,
   Camera,
   CanvasTexture,
-  Color,
   DoubleSide,
   Group,
-  Matrix3,
-  Matrix4,
   Mesh,
   MeshBasicMaterial,
-  MeshPhysicalMaterial,
-  MeshStandardMaterial,
   Object3D,
   PlaneGeometry,
-  Quaternion,
   SRGBColorSpace,
   Vector3,
   Vector4,
@@ -27,14 +19,6 @@ import type { RoomDimensions } from '../room-types';
 import { TONE_MAPPING_GLSL } from '../render/realistic-lighting';
 import type { RoomFace, RoomPlacement, ProductBounds } from '../room-types';
 import type { AssetRecord, ColorAdjust, FixtureInstance, MaterialVersion, Scene } from '../types';
-import { decodeProductMesh } from '../product3d/codec';
-import { levelCameraQuaternion, validatePose } from '../product3d/pose';
-import { isLitShading, productSurface } from '../product3d/shading';
-import { decodeProductPhoto } from '../product3d/input-cutout';
-import { GLAZE, glossFor } from '../product3d/glaze';
-import { preparePaintedMesh, prepareFittedMesh, prepareProductSurface } from '../product3d/surface';
-import type { ProductGloss } from '../product3d/glaze';
-import type { Product3dReference, ProductMesh } from '../product3d/state-types';
 import { createTemplateModel, disposeTemplateModel } from '../reconstruction/templates';
 import { reconstructionModelTransform } from '../reconstruction/projection';
 import {
@@ -59,7 +43,6 @@ type DecodedImage = { texture: Texture; bounds: ProductBounds; aspect: number; c
 /** One cache per viewer, shared by Before and every After. No asset writes, inference, or object URLs. */
 export class ProductAssetCache {
   private assets = new Map<string, Promise<AssetRecord>>();
-  private meshes = new Map<string, Promise<ProductMesh>>();
   private images = new Map<string, Promise<DecodedImage>>();
   private disposed = false;
   private pending = 0;
@@ -67,7 +50,6 @@ export class ProductAssetCache {
   get diagnostics() {
     return {
       assets: this.assets.size,
-      meshes: this.meshes.size,
       textures: this.images.size,
       pending: this.pending,
       disposed: this.disposed,
@@ -91,20 +73,6 @@ export class ProductAssetCache {
           this.pending--;
         });
       this.assets.set(id, task);
-    }
-    return task;
-  }
-  mesh(id: string): Promise<ProductMesh> {
-    this.assertOpen();
-    let task = this.meshes.get(id);
-    if (!task) {
-      task = this.asset(id).then(async (asset) => {
-        if (asset.kind !== 'product-mesh') throw new Error('저장된 입체 자산의 종류가 올바르지 않아요.');
-        const mesh = await decodeProductMesh(asset.blob);
-        this.assertOpen();
-        return mesh;
-      });
-      this.meshes.set(id, task);
     }
     return task;
   }
@@ -177,7 +145,6 @@ export class ProductAssetCache {
         () => {},
       );
     this.images.clear();
-    this.meshes.clear();
     this.assets.clear();
   }
 }
@@ -302,8 +269,7 @@ function visibleBounds(root: Object3D): Box3 {
 }
 /**
  * A flat photo floating or sinking by less than this (mm) because of where its anchor sits is put
- * on the floor; a bigger gap is taken to be what the anchor was set to. (A saved 3D product is
- * always put on the floor: see `grounded` below.)
+ * on the floor; a bigger gap is taken to be what the anchor was set to.
  */
 const FLOOR_SNAP_MM = 20;
 const FLOOR_SNAP_SHARE = 0.05;
@@ -312,19 +278,10 @@ const FLOOR_SNAP_SHARE = 0.05;
  * meets a wall touches the wall's inner face (nothing inside the wall, nothing floating off it), a
  * product on a side wall stands centred on its place along the wall, one on the floor centred on
  * its place and on the floor. Its height on a wall and its place across the back wall are the
- * anchor's, as in the 2D editor. `gap` keeps a flat photo a hair off the back wall. `grounded` (a
- * saved 3D product on the floor): its lowest point is on the floor whatever the anchor says. The
- * anchor is a place in the 2D picture; it must not float a toilet or sink half a basin, and a
- * product turned or tilted a little by its pose rests on its lowest corner. Returns whether it then
- * reaches beyond the room.
+ * anchor's, as in the 2D editor. `gap` keeps a flat photo a hair off the back wall. Returns whether
+ * it then reaches beyond the room.
  */
-function seatProduct(
-  product: Group,
-  room: RoomDimensions,
-  face: RoomFace,
-  gap: number,
-  grounded = false,
-): boolean {
+function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: number): boolean {
   const box = visibleBounds(product);
   if (box.isEmpty()) return false;
   const wall = room.widthMm / 2;
@@ -336,7 +293,7 @@ function seatProduct(
     move.z = product.position.z - (box.min.z + box.max.z) / 2;
   if (face === 'floor') {
     const snap = Math.max(FLOOR_SNAP_MM, (box.max.y - box.min.y) * FLOOR_SNAP_SHARE);
-    if (grounded || Math.abs(box.min.y) <= snap) move.y = -box.min.y;
+    if (Math.abs(box.min.y) <= snap) move.y = -box.min.y;
   }
   // Tiny moves are rounding only: leave the anchor's exact place alone.
   for (const axis of ['x', 'y', 'z'] as const)
@@ -383,7 +340,7 @@ function checkBounds(bounds: ProductBounds) {
 /** Same linear adjustment as the editor, without screen-space occlusion or a second output conversion. */
 function applyColor(material: Material, color: ColorAdjust) {
   const adjustment = new Vector4(color.exposure, color.contrast, color.saturation, color.warmth);
-  // Photo planes and original-colour meshes are unlit on purpose; only lit models are tone mapped.
+  // Photo planes are unlit on purpose; only lit models (the standard models) are tone mapped.
   const lit = !(material instanceof MeshBasicMaterial);
   material.onBeforeCompile = (shader) => {
     shader.uniforms.sjnViewerFixtureColor = { value: adjustment };
@@ -417,91 +374,6 @@ function prepareModel(group: Group, fixture: FixtureInstance) {
   for (const material of materials) applyColor(material, fixture.color);
   group.name = fixture.name;
   group.userData.fixtureId = fixture.id;
-}
-
-/**
- * The material of a lit saved product: the matte one as before, or for ceramic with a glaze (see
- * product3d/glaze.ts) a physical one with a lower roughness and a thin clear coat. The room's own
- * environment (see render/realistic-lighting.ts) is what it reflects, and the colour correction and
- * tone mapping of applyColor are added to either, so shadows and colour work as they did.
- */
-export function litProductMaterial(gloss: ProductGloss) {
-  if (gloss === 'none')
-    return new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.5, metalness: 0 });
-  const glaze = GLAZE[gloss].room;
-  return new MeshPhysicalMaterial({
-    vertexColors: true,
-    side: DoubleSide,
-    metalness: 0,
-    roughness: glaze.roughness,
-    clearcoat: glaze.clearcoat,
-    clearcoatRoughness: glaze.clearcoatRoughness,
-  });
-}
-
-/** Uniformly fits the selected PNG pose into its W×H envelope; depth is the saved mesh ratio. */
-export function createSavedProductGeometry(
-  mesh: ProductMesh,
-  reference: Product3dReference,
-  fixture: FixtureInstance,
-): BufferGeometry {
-  const p = checkPlacement(fixture);
-  checkBounds(p.contentBounds);
-  const pose = validatePose(reference.pose);
-  // The product as the 360° editor showed it, standing level: the camera's side and roll are kept,
-  // its look-down angle is not (see levelCameraQuaternion).
-  const orientation = levelCameraQuaternion(new Quaternion(...pose.cameraQuaternion))
-    .invert()
-    .multiply(new Quaternion(...pose.objectQuaternion))
-    .normalize();
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(new Float32Array(mesh.positions), 3));
-  geometry.setIndex(new BufferAttribute(new Uint32Array(mesh.indices), 1));
-  geometry.computeBoundingBox();
-  const center = geometry.boundingBox!.getCenter(new Vector3());
-  geometry.translate(-center.x, -center.y, -center.z);
-  geometry.applyQuaternion(orientation);
-  geometry.computeBoundingBox();
-  const box = geometry.boundingBox!,
-    size = box.getSize(new Vector3());
-  if (![size.x, size.y, size.z].every(Number.isFinite) || size.x < 1e-8 || size.y < 1e-8) {
-    geometry.dispose();
-    throw new Error('선택한 자세의 입체 형상 크기가 올바르지 않아요.');
-  }
-  const scale = Math.min(p.widthMm / size.x, p.heightMm / size.y) * p.scale;
-  const bounds = p.contentBounds;
-  const ax = (fixture.anchor.x - bounds.left) / (bounds.right - bounds.left);
-  const ay = (fixture.anchor.y - bounds.top) / (bounds.bottom - bounds.top);
-  geometry.translate(
-    -box.min.x - size.x * ax,
-    -box.max.y + size.y * ay,
-    p.face === 'floor' ? -(box.min.z + box.max.z) / 2 : -box.min.z,
-  );
-  geometry.scale(scale, scale, scale);
-  // A view saved with lighting correction ('lit', 'mixed') shows its colours lit by the room, like
-  // the editor: the same colour calculation (productSurface), here with the mesh turned as saved.
-  // (The original colours too: they carry the photo's where it was put on.)
-  const surface = productSurface(reference.shading ?? 'baked', mesh);
-  const source = surface.colors;
-  const colors = new Float32Array(source.length),
-    color = new Color();
-  for (let i = 0; i < colors.length; i += 3) {
-    color.setRGB(source[i], source[i + 1], source[i + 2], SRGBColorSpace);
-    colors[i] = color.r;
-    colors[i + 1] = color.g;
-    colors[i + 2] = color.b;
-  }
-  geometry.setAttribute('color', new BufferAttribute(colors, 3));
-  if (surface.normals) {
-    // Turning the mesh turns its smoothed normals the same way (the scaling does not change them).
-    const normals = new BufferAttribute(new Float32Array(surface.normals), 3);
-    normals.applyNormalMatrix(
-      new Matrix3().getNormalMatrix(new Matrix4().makeRotationFromQuaternion(orientation)),
-    );
-    geometry.setAttribute('normal', normals);
-  } else geometry.computeVertexNormals();
-  geometry.computeBoundingBox();
-  return geometry;
 }
 
 function planeGeometry(
@@ -604,140 +476,90 @@ export async function buildViewerFixtures(
         if (!selected) throw new Error('선택했던 제품 사진을 찾을 수 없어요.');
         product = new Group();
         product.position.copy(roomFacePoint(room, p.face, p.u, p.v));
-        // No turn for the wall: the photo's angle name decides which way the product looks (a 3D
-        // product by its saved pose, a flat photo as in 2D), then seatProduct stands it on its face.
+        // No turn for the wall: the photo's angle name decides which way the product looks (as in 2D),
+        // then seatProduct stands it on its face.
         const content = new Group();
         content.rotation.z = (-fixture.rotation * Math.PI) / 180;
         product.add(content);
-        if (selected.product3d) {
-          if (selected.product3d.version !== 1) throw new Error('지원하지 않는 제품 입체 데이터 버전이에요.');
-          // A view saved with a fit draws the mesh as its product is: the material's real size, the
-          // mirror symmetry and the front (see fit.ts). The saved mesh is left as it was made, so a
-          // material whose size is corrected later follows.
-          let source = await cache.mesh(selected.product3d.meshAssetId);
-          // A view saved with the photo's colours on it draws them: the input photo is read back and
-          // laid over the mesh through the saved camera (the saved mesh itself is untouched).
-          const photoCamera = selected.product3d.photoCamera;
-          if (photoCamera) {
-            const inputAssetId = selected.product3d.inputAssetId;
-            const painted = await preparePaintedMesh(
-              source,
-              async () => decodeProductPhoto((await cache.asset(inputAssetId)).blob),
-              photoCamera,
-            );
-            if (painted.status === 'ok') source = painted.mesh;
-            else notice(fixture, painted.message);
-          }
-          const mesh = await prepareFittedMesh(source, selected.product3d.fit, {
-            widthMm: material.widthMm,
-            depthMm: material.depthMm,
-            heightMm: material.heightMm,
-          });
-          // The colours of a lit view are worked out off the main thread first (and kept per mesh),
-          // so the room does not stop for them.
-          if (isLitShading(selected.product3d.shading))
-            await prepareProductSurface(selected.product3d.shading!, mesh);
-          const geometry = createSavedProductGeometry(mesh, selected.product3d, fixture);
-          content.add(
-            new Mesh(
-              geometry,
-              isLitShading(selected.product3d.shading)
-                ? litProductMaterial(glossFor(material.category, selected.product3d.gloss))
-                : new MeshBasicMaterial({ vertexColors: true, side: DoubleSide, toneMapped: false }),
-            ),
-          );
-          product.userData.representation = 'saved-product-mesh';
-          notice(
-            fixture,
-            '저장된 입체 형상·선택 사진 자세를 사용해요. 폭·높이에 비율을 유지해 맞추며 깊이는 저장 형상의 비율이에요.',
-          );
-        } else {
-          // A photo shows its product facing its name's direction. The AI export picks among the
-          // photos that keep the footprint (3D poses included); the viewer switches only between
-          // flat photos.
-          const names = material.views.map(nameOf);
-          const base = declaredProductDirection(selected.direction);
-          const choices = material.views
-            .map((view, index) => ({ view, index }))
-            .filter(
-              ({ view, index }) =>
-                index === fixture.viewIndex ||
-                (base !== undefined && (options.exportAngles || !view.product3d)),
-            );
-          const footprint = photoFootprint(p, p.contentBounds, p.imageAspect, fixture.anchor);
-          const planes = new Map<number, Mesh>();
-          for (const { view, index } of choices) {
-            try {
-              const image = await cache.image(view.assetId);
-              // A photo that would change the product's width, height or anchor is not used.
-              if (
-                options.exportAngles &&
-                index !== fixture.viewIndex &&
-                !sameFootprint(footprint, photoFootprint(p, image.bounds, image.aspect, view.anchor))
-              )
-                continue;
-              const plane = new Mesh(
-                planeGeometry(
-                  fixture,
-                  image,
-                  index === fixture.viewIndex,
-                  index === fixture.viewIndex ? fixture.anchor : view.anchor,
-                ),
-                new MeshBasicMaterial({
-                  map: image.texture,
-                  side: DoubleSide,
-                  alphaTest: 0.04,
-                  transparent: false,
-                  toneMapped: false,
-                }),
-              );
-              // Every flat photo stands facing the room's front, as in 2D. The AI export keeps all of
-              // them so (same footprint); in the viewer a photo of another direction turns to face
-              // the camera that would see its product that way (base − its direction).
-              const angle = photoViewAngle(view);
-              plane.rotation.y =
-                options.exportAngles || base === undefined || angle === undefined
-                  ? 0
-                  : ((base - angle) * Math.PI) / 180;
-              plane.visible = index === fixture.viewIndex;
-              plane.userData.viewIndex = index;
-              planes.set(index, plane);
-              content.add(plane);
-            } catch (error) {
-              if (index === fixture.viewIndex) throw error;
-              notice(
+        // A photo shows its product facing its name's direction. The AI export picks among the
+        // photos that keep the footprint; the viewer turns a plane to the camera that would see
+        // its product that way. An older 360° view is its stored capture, a flat photo like the others.
+        const names = material.views.map(nameOf);
+        const base = declaredProductDirection(selected.direction);
+        const choices = material.views
+          .map((view, index) => ({ view, index }))
+          .filter(({ index }) => index === fixture.viewIndex || base !== undefined);
+        const footprint = photoFootprint(p, p.contentBounds, p.imageAspect, fixture.anchor);
+        const planes = new Map<number, Mesh>();
+        for (const { view, index } of choices) {
+          try {
+            const image = await cache.image(view.assetId);
+            // A photo that would change the product's width, height or anchor is not used.
+            if (
+              options.exportAngles &&
+              index !== fixture.viewIndex &&
+              !sameFootprint(footprint, photoFootprint(p, image.bounds, image.aspect, view.anchor))
+            )
+              continue;
+            const plane = new Mesh(
+              planeGeometry(
                 fixture,
-                `방향 사진 일부를 읽지 못했어요: ${error instanceof Error ? error.message : String(error)}`,
-                'error',
-              );
-            }
+                image,
+                index === fixture.viewIndex,
+                index === fixture.viewIndex ? fixture.anchor : view.anchor,
+              ),
+              new MeshBasicMaterial({
+                map: image.texture,
+                side: DoubleSide,
+                alphaTest: 0.04,
+                transparent: false,
+                toneMapped: false,
+              }),
+            );
+            // Every flat photo stands facing the room's front, as in 2D. The AI export keeps all of
+            // them so (same footprint); in the viewer a photo of another direction turns to face
+            // the camera that would see its product that way (base − its direction).
+            const angle = photoViewAngle(view);
+            plane.rotation.y =
+              options.exportAngles || base === undefined || angle === undefined
+                ? 0
+                : ((base - angle) * Math.PI) / 180;
+            plane.visible = index === fixture.viewIndex;
+            plane.userData.viewIndex = index;
+            planes.set(index, plane);
+            content.add(plane);
+          } catch (error) {
+            if (index === fixture.viewIndex) throw error;
+            notice(
+              fixture,
+              `방향 사진 일부를 읽지 못했어요: ${error instanceof Error ? error.message : String(error)}`,
+              'error',
+            );
           }
-          const target = product;
-          update.push((camera) => {
-            target.updateMatrixWorld(true);
-            const point = camera.getWorldPosition(new Vector3());
-            target.worldToLocal(point);
-            const azimuth = degrees(Math.atan2(point.x, point.z)),
-              elevation = degrees(Math.atan2(point.y, Math.hypot(point.x, point.z)));
-            const index = options.exportAngles
-              ? chooseExportPhoto(names, fixture.viewIndex, azimuth, elevation, new Set(planes.keys()))
-              : chooseDirectionalPhoto(material.views, fixture.viewIndex, azimuth, elevation);
-            const actual = planes.has(index) ? index : fixture.viewIndex;
-            for (const [i, plane] of planes) plane.visible = i === actual;
-          });
-          product.userData.representation =
-            planes.size > 1 ? 'directional-photo-planes' : 'fixed-photo-plane';
-          notice(
-            fixture,
-            planes.size > 1
-              ? '2D 제품·각도 표현 제한: 정면·왼쪽·오른쪽·뒤 사진만 설치 위치의 고정 평면으로 전환해요. 실제 입체가 아니며 위·아래에서는 선택 사진을 유지해요.'
-              : '2D 제품·각도 표현 제한: 선택 사진을 설치 위치의 고정 평면으로 표시해요. 옆에서는 얇게 보이고 뒷면은 같은 사진이라 실제 제품 뒷면이 아니에요.',
-          );
         }
+        const target = product;
+        update.push((camera) => {
+          target.updateMatrixWorld(true);
+          const point = camera.getWorldPosition(new Vector3());
+          target.worldToLocal(point);
+          const azimuth = degrees(Math.atan2(point.x, point.z)),
+            elevation = degrees(Math.atan2(point.y, Math.hypot(point.x, point.z)));
+          const index = options.exportAngles
+            ? chooseExportPhoto(names, fixture.viewIndex, azimuth, elevation, new Set(planes.keys()))
+            : chooseDirectionalPhoto(material.views, fixture.viewIndex, azimuth, elevation);
+          const actual = planes.has(index) ? index : fixture.viewIndex;
+          for (const [i, plane] of planes) plane.visible = i === actual;
+        });
+        product.userData.representation = planes.size > 1 ? 'directional-photo-planes' : 'fixed-photo-plane';
+        notice(
+          fixture,
+          planes.size > 1
+            ? '2D 제품·각도 표현 제한: 정면·왼쪽·오른쪽·뒤 사진만 설치 위치의 고정 평면으로 전환해요. 실제 입체가 아니며 위·아래에서는 선택 사진을 유지해요.'
+            : '2D 제품·각도 표현 제한: 선택 사진을 설치 위치의 고정 평면으로 표시해요. 옆에서는 얇게 보이고 뒷면은 같은 사진이라 실제 제품 뒷면이 아니에요.',
+        );
       }
       if (!fixture.reconstruction) {
-        const flat = product.userData.representation !== 'saved-product-mesh';
-        if (seatProduct(product, room, p.face, flat && p.face === 'back' ? 1 : 0, !flat))
+        if (seatProduct(product, room, p.face, p.face === 'back' ? 1 : 0))
           notice(fixture, '제품이 방 밖으로 나가요. 위치나 크기, 각도 방향을 확인해 주세요.');
         else {
           const direction = readProductDirection(
