@@ -3,7 +3,14 @@ import { roomSurfaceAreaM2 } from '@/lib/room-surface-areas';
 import type { RoomFace } from '@/lib/room-types';
 import { applyFixtureView, prepareFixtureView } from '@/lib/fixture-view';
 import { getPlacementViewIndex } from '@/lib/material-images';
-import { findFreeSlot, fixtureDepthMm, slotBox, slotObstacles } from '@/lib/room-slot';
+import { findFreeSlot, fixtureSlotBox, slotObstacles } from '@/lib/room-slot';
+import {
+  canShowAsStandardModel,
+  isStandardModelOfPhoto,
+  readPhotoColor,
+  showAsPhoto,
+  showAsStandardModel,
+} from '@/lib/standard-model-view';
 import {
   describeProductFacing,
   directionSuitsFace,
@@ -19,11 +26,24 @@ import { parseRangeInput, stepRangeValue } from '@/lib/range-input';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import ReconstructionProperties from '@/components/reconstruction/reconstruction-properties';
 import { useRepositories } from '@/components/repository-context';
-import { DEFAULT_COLOR, type ColorAdjust, type MaterialVersion } from '@/lib/types';
+import { DEFAULT_COLOR, type ColorAdjust, type MaterialVersion, type Scene } from '@/lib/types';
 import { useEditingCapabilities } from './editing-capabilities';
 import { AssetImage } from '../materials/asset-image';
 import styles from './inspector-angles.module.css';
 import PhotoLightingControl from './photo-lighting-control';
+import StandardModelSwitch from './standard-model-switch';
+/**
+ * A new installation face for a fixture. A standard model also moves its base: the floor is 0, a wall
+ * is where its `v` puts its lower edge (the sync on every change keeps the two together afterwards).
+ */
+function setFace(scene: Scene, id: string, face: RoomFace) {
+  const product = scene.fixtures.find((item) => item.id === id);
+  if (!product?.roomPlacement) return;
+  product.roomPlacement.face = face;
+  if (product.reconstruction?.version === 2 && scene.room)
+    product.reconstruction.baseHeightMm =
+      face === 'floor' ? 0 : (1 - product.roomPlacement.v) * scene.room.heightMm;
+}
 export function Range({
   label,
   value,
@@ -128,6 +148,10 @@ export default function Inspector({
   // What the editor did on its own for the selected product: switched its photo with a new face, or
   // put a copy on top of another product because the face was full.
   const [viewNotice, setViewNotice] = useState('');
+  // The standard-model switch: reading the photo's colour, what the switch did, why it could not.
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelNotice, setModelNotice] = useState('');
+  const [modelError, setModelError] = useState('');
   // Which surface's settings were last copied to every surface; the notice hides once another is selected.
   const [tileShared, setTileShared] = useState<{ surfaceId: string; count: number } | null>(null);
   const viewRequest = useRef(0);
@@ -138,6 +162,9 @@ export default function Inspector({
     setPendingView(null);
     setViewError('');
     setViewNotice('');
+    setModelBusy(false);
+    setModelNotice('');
+    setModelError('');
     const cancel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       requests.current++;
@@ -155,6 +182,14 @@ export default function Inspector({
   const surface = s.surfaces.find((x) => x.id === st.selection);
   const fixture = s.fixtures.find((x) => x.id === st.selection);
   const material = materials[surface?.materialVersionId || fixture?.materialVersionId || ''];
+  // A photo product shown as its standard model, and whether the switch is offered for the fixture.
+  const modelOn = !!fixture && isStandardModelOfPhoto(fixture, material);
+  // (Not in the Before of a photo comparison: there the models are reconstructions, edited below.)
+  const modelSwitch =
+    st.editing !== 'before' &&
+    !!s.room &&
+    !!fixture &&
+    (modelOn || canShowAsStandardModel(fixture, material));
   // The photo's angle name is the direction the product faces; say where that is on this face, and
   // warn (never block) when the name does not suit the face.
   const facing = (() => {
@@ -254,10 +289,7 @@ export default function Inspector({
     const view =
       pick && !pick.missing && pick.index !== selected.viewIndex ? material.views[pick.index] : undefined;
     if (!pick || !view || !project) {
-      useEditor.getState().change((scene) => {
-        const product = scene.fixtures.find((item) => item.id === selected.id);
-        if (product?.roomPlacement) product.roomPlacement.face = face;
-      });
+      useEditor.getState().change((scene) => setFace(scene, selected.id, face));
       return;
     }
     setPendingView(pick.index);
@@ -291,14 +323,71 @@ export default function Inspector({
     } catch (error) {
       // The face still changes; only the photo could not be read.
       if (stillThere()) {
-        useEditor.getState().change((scene) => {
-          const product = scene.fixtures.find((item) => item.id === selected.id);
-          if (product?.roomPlacement) product.roomPlacement.face = face;
-        });
+        useEditor.getState().change((scene) => setFace(scene, selected.id, face));
         setViewError(error instanceof Error ? error.message : '제품 방향 이미지를 불러오지 못했어요.');
       }
     } finally {
       if (viewRequest.current === request) setPendingView(null);
+    }
+  }
+  /**
+   * The standard-model switch. On: the photo's colour is read first (the model takes it), then the
+   * fixture gets its model in one scene change. Off: only the model goes, the photo is still there.
+   * Either way one undo puts it back. A locked product and a draft keep their look.
+   */
+  async function toggleStandardModel(on: boolean) {
+    const request = ++viewRequest.current;
+    setModelNotice('');
+    setModelError('');
+    const captured = useEditor.getState();
+    const project = captured.project;
+    const selected =
+      project &&
+      getEditingScene(project, captured.editing).fixtures.find((item) => item.id === captured.selection);
+    const product = selected && materials[selected.materialVersionId];
+    if (!writable || !project || !selected || !product || selected.locked || captured.draft) return;
+    if (!on) {
+      useEditor.getState().change((scene) => void showAsPhoto(scene, selected.id, product));
+      setModelNotice('사진으로 돌아왔어요.');
+      return;
+    }
+    if (!canShowAsStandardModel(selected, product)) return;
+    setModelBusy(true);
+    const stillThere = () => {
+      const current = useEditor.getState();
+      if (
+        viewRequest.current !== request ||
+        current.project?.id !== project.id ||
+        current.project.editRevision !== project.editRevision ||
+        current.project.activeDesignId !== project.activeDesignId ||
+        current.selection !== selected.id ||
+        current.editing !== captured.editing ||
+        current.draft
+      )
+        return false;
+      const found = getEditingScene(current.project, current.editing).fixtures.find(
+        (item) => item.id === selected.id,
+      );
+      return !!found && !found.locked && found.materialVersionId === selected.materialVersionId;
+    };
+    try {
+      // The model's colour is the photo's; a photo that cannot be read leaves the material's colour.
+      let color: string | undefined;
+      try {
+        const view = product.views[selected.viewIndex];
+        const asset = view ? await repositories.assets.get(view.assetId) : undefined;
+        if (asset && asset.kind !== 'product-mesh') color = await readPhotoColor(asset.blob);
+      } catch {
+        color = undefined;
+      }
+      if (!stillThere()) return;
+      useEditor.getState().change((scene) => void showAsStandardModel(scene, selected.id, product, color));
+      setModelNotice('표준 모형은 일반 모양이라 제품 생김새는 사라져요. 끄면 사진으로 돌아와요.');
+    } catch (error) {
+      if (stillThere())
+        setModelError(error instanceof Error ? error.message : '표준 모형으로 바꾸지 못했어요.');
+    } finally {
+      if (viewRequest.current === request) setModelBusy(false);
     }
   }
   const changeSurface = (fn: (v: NonNullable<typeof surface>) => void, preview = false) => {
@@ -555,51 +644,79 @@ export default function Inspector({
           <>
             <section className="property-section">
               <h4>{fixture.name}</h4>
+              {modelSwitch && (
+                <StandardModelSwitch
+                  model={modelOn ? fixture.reconstruction : undefined}
+                  disabled={!writable || fixture.locked || !!st.draft}
+                  busy={modelBusy}
+                  notice={modelNotice}
+                  error={modelError}
+                  onToggle={(on) => void toggleStandardModel(on)}
+                  onModel={(edit, preview) =>
+                    changeFixture((v) => {
+                      if (v.reconstruction) edit(v.reconstruction);
+                    }, preview)
+                  }
+                  onModelCommit={st.commit}
+                />
+              )}
               <div className={styles.heading}>
                 <span>제품 각도</span>
                 <span className={styles.count}>{material?.views.length ?? 0}개 사진</span>
               </div>
-              <p className={styles.hint}>사진을 누르면 현재 배치의 각도만 바뀌어요.</p>
-              <div
-                role="group"
-                aria-label="제품 촬영 방향"
-                aria-busy={pendingView !== null}
-                className={styles.grid}
-              >
-                {material?.views.map((view, index) => {
-                  const selected = fixture.viewIndex === index;
-                  const pending = pendingView === index;
-                  const name = view.direction || `각도 ${index + 1}`;
-                  return (
-                    <button
-                      key={`${index}:${view.assetId}`}
-                      type="button"
-                      className={`${styles.angle} ${selected ? styles.selected : ''}`}
-                      data-testid={`fixture-view-${index}`}
-                      aria-label={`${name} 각도 선택`}
-                      aria-pressed={selected}
-                      aria-busy={pending}
-                      disabled={fixture.locked || !!st.draft}
-                      onClick={() => void changeFixtureView(index)}
-                    >
-                      <span className={styles.image}>
-                        <AssetImage
-                          assetId={view.assetId}
-                          alt={`${name} 제품 사진`}
-                          className={styles.photo}
-                        />
-                      </span>
-                      <span className={styles.caption}>
-                        <span className={styles.name}>{name}</span>
-                        <span className={`${styles.state} ${pending ? styles.pending : ''}`}>
-                          {pending ? '불러오는 중…' : selected ? '사용 중' : '선택'}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              {!material?.views.length && <p className={styles.hint}>등록된 각도 사진이 없어요.</p>}
+              {modelOn ? (
+                <p className={styles.hint} data-testid="standard-model-angle-hint">
+                  표준 모형으로 보는 동안에는 각도 사진을 고를 수 없어요. 끄면 ‘
+                  {readProductDirection(material?.views[fixture.viewIndex]?.direction).name}’ 사진으로
+                  돌아와요.
+                </p>
+              ) : (
+                <>
+                  <p className={styles.hint}>사진을 누르면 현재 배치의 각도만 바뀌어요.</p>
+                  <div
+                    role="group"
+                    aria-label="제품 촬영 방향"
+                    aria-busy={pendingView !== null}
+                    className={styles.grid}
+                  >
+                    {material?.views.map((view, index) => {
+                      const selected = fixture.viewIndex === index;
+                      const pending = pendingView === index;
+                      const name = view.direction || `각도 ${index + 1}`;
+                      return (
+                        <button
+                          key={`${index}:${view.assetId}`}
+                          type="button"
+                          className={`${styles.angle} ${selected ? styles.selected : ''}`}
+                          data-testid={`fixture-view-${index}`}
+                          aria-label={`${name} 각도 선택`}
+                          aria-pressed={selected}
+                          aria-busy={pending}
+                          disabled={fixture.locked || !!st.draft}
+                          onClick={() => void changeFixtureView(index)}
+                        >
+                          <span className={styles.image}>
+                            <AssetImage
+                              assetId={view.assetId}
+                              alt={`${name} 제품 사진`}
+                              className={styles.photo}
+                            />
+                          </span>
+                          <span className={styles.caption}>
+                            <span className={styles.name}>{name}</span>
+                            <span className={`${styles.state} ${pending ? styles.pending : ''}`}>
+                              {pending ? '불러오는 중…' : selected ? '사용 중' : '선택'}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+              {!modelOn && !material?.views.length && (
+                <p className={styles.hint}>등록된 각도 사진이 없어요.</p>
+              )}
               {pendingView !== null && (
                 <p role="status" className="muted" style={{ fontSize: 12, marginTop: 8 }}>
                   선택한 각도 사진을 준비하고 있어요…
@@ -625,16 +742,13 @@ export default function Inspector({
                   onClick={() => {
                     if (!writable) return;
                     // A copy goes to the free place nearest the original on the same face, not on top of it.
+                    const ownBox = fixtureSlotBox(fixture, materials);
                     const slot =
-                      fixture.roomPlacement && s.room
+                      fixture.roomPlacement && s.room && ownBox
                         ? findFreeSlot(
                             s.room,
                             fixture.roomPlacement.face,
-                            slotBox(
-                              fixture.roomPlacement,
-                              fixture.anchor,
-                              fixtureDepthMm(fixture, materials),
-                            ),
+                            ownBox,
                             slotObstacles(s, fixture.roomPlacement.face, materials),
                             { defaultSlot: { u: fixture.roomPlacement.u, v: fixture.roomPlacement.v } },
                           )
@@ -710,7 +824,7 @@ export default function Inspector({
                   marginTop: 16,
                 }}
               >
-                {fixture.reconstruction?.version !== 2 && (
+                {(fixture.reconstruction?.version !== 2 || modelOn) && (
                   <>
                     {fixture.roomPlacement ? (
                       <>
@@ -787,10 +901,20 @@ export default function Inspector({
                           }
                           onCommit={st.commit}
                         />
-                        <p className="muted" style={{ fontSize: 11 }}>
-                          등록 규격 {fixture.roomPlacement.widthMm} × {fixture.roomPlacement.heightMm}mm에
-                          이미지 비율을 맞춘 2D 배치예요. 위치에 따라 원근 크기가 바뀌어요.
-                        </p>
+                        {modelOn && fixture.reconstruction ? (
+                          <p className="muted" style={{ fontSize: 11 }}>
+                            등록 규격 {fixture.reconstruction.widthMm} × {fixture.reconstruction.heightMm} ×{' '}
+                            {fixture.reconstruction.depthMm}mm로 세워요.{' '}
+                            {fixture.roomPlacement.face === 'floor'
+                              ? '위치는 모형의 가운데 기준이에요.'
+                              : '세로 위치는 모형의 아래쪽 가장자리 기준이에요.'}
+                          </p>
+                        ) : (
+                          <p className="muted" style={{ fontSize: 11 }}>
+                            등록 규격 {fixture.roomPlacement.widthMm} × {fixture.roomPlacement.heightMm}mm에
+                            이미지 비율을 맞춘 2D 배치예요. 위치에 따라 원근 크기가 바뀌어요.
+                          </p>
+                        )}
                       </>
                     ) : (
                       <>
@@ -810,16 +934,18 @@ export default function Inspector({
                         />
                       </>
                     )}
-                    <Range
-                      label="이미지 평면 회전"
-                      value={fixture.rotation}
-                      min={-180}
-                      max={180}
-                      step={1}
-                      unit="°"
-                      onChange={(n) => changeFixture((v) => (v.rotation = n), true)}
-                      onCommit={st.commit}
-                    />
+                    {!modelOn && (
+                      <Range
+                        label="이미지 평면 회전"
+                        value={fixture.rotation}
+                        min={-180}
+                        max={180}
+                        step={1}
+                        unit="°"
+                        onChange={(n) => changeFixture((v) => (v.rotation = n), true)}
+                        onCommit={st.commit}
+                      />
+                    )}
                     <div className="field-grid">
                       {inputNumber(
                         fixture.roomPlacement ? '면 가로 위치 (%)' : '기준점 가로 (%)',

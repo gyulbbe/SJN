@@ -17,6 +17,7 @@ import { projectV3Schema } from '../storage/validation';
 import { projectReferences, StorageNotFoundError } from '../repositories/references';
 import type { Repositories, RepositoryOperations } from '../repositories/contracts';
 import { getRepositoryUserId } from '../repositories';
+import { standardModelKind } from '../standard-model-view';
 import {
   placementToMaterialVersion,
   publicPlacementSchema,
@@ -87,7 +88,17 @@ function validateDraft(value: unknown): GuestDraft {
   if (projectComparisons(doc).length)
     throw new Error('사진으로 만든 비교 공간은 로그인한 뒤 사용할 수 있어요.');
   for (const scene of projectScenes(doc)) {
-    if (!scene.room || scene.backgroundAssetId || scene.fixtures.some((fixture) => fixture.reconstruction))
+    // A model made by a photo reconstruction is not allowed here; a catalog product the person
+    // switched to its standard model ("표준 모형으로 보기") is: its material is a public one.
+    const reconstructed = scene.fixtures.some(
+      (fixture) =>
+        fixture.reconstruction &&
+        !(
+          fixture.reconstruction.version === 2 &&
+          standardModelKind(draft.versions[fixture.materialVersionId]) === fixture.reconstruction.kind
+        ),
+    );
+    if (!scene.room || scene.backgroundAssetId || reconstructed)
       throw new Error('체험에서는 직접 만든 빈 공간만 사용할 수 있어요.');
     for (const id of [scene.originalAssetId, scene.previewAssetId]) {
       const recipe = draft.roomAssets[id];

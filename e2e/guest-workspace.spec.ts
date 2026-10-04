@@ -162,11 +162,46 @@ test('게스트가 자재를 배치·실행 취소하고 새로고침해도 보�
   await page.screenshot({ path: 'test-results/guest-workspace-desktop.png', fullPage: true });
 });
 
+test('게스트도 제품을 표준 모형으로 볼 수 있고 새로고침해도 유지하며 금액은 그대로다', async ({ page }) => {
+  await create(page);
+  await place(page);
+  const total = await page.getByTestId('usage-total').innerText();
+  const toggle = page.getByRole('switch', { name: '표준 모형으로 보기' });
+  await toggle.click();
+  await expect
+    .poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].reconstruction?.kind)
+    .toBe('basin');
+  // The model is a view of the same catalog product: the amount does not change.
+  await expect(page.getByTestId('usage-total')).toHaveText(total);
+  const shown = getActiveDesign(await draft(page))!.scene.fixtures[0];
+  expect(shown.reconstruction).toMatchObject({
+    version: 2,
+    basinVariant: 'wall',
+    widthMm: 600,
+    heightMm: 450,
+  });
+  // The draft is read back whole after a reload (a model made by a photo reconstruction would be refused).
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
+  await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
+  expect(getActiveDesign(await draft(page))!.scene.fixtures[0].reconstruction?.kind).toBe('basin');
+  await page.keyboard.press('Control+z');
+  await expect
+    .poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].reconstruction)
+    .toBeUndefined();
+  expect(guestWrites()).toEqual([]);
+});
+
 test('모의 Google 왕복 후 여러 시안·수정 견적·비교 선택을 본인 프로젝트로 한 번만 저장한다', async ({
   page,
 }) => {
   await create(page);
   await place(page);
+  // A product shown as its standard model goes to the account with the draft like any other.
+  await page.getByRole('switch', { name: '표준 모형으로 보기' }).click();
+  await expect
+    .poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].reconstruction?.kind)
+    .toBe('basin');
   const price = page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true });
   await price.fill('175000');
   await price.press('Enter');
@@ -344,14 +379,18 @@ test('체험 자재 패널에서 사이즈 분류를 열어 선택하고 해제�
   const toggle = catalog.getByRole('button', { name: /^사이즈/ });
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  const size = catalog.getByRole('group', { name: '사이즈' }).getByRole('checkbox', { name: '600X600', exact: true });
+  const size = catalog
+    .getByRole('group', { name: '사이즈' })
+    .getByRole('checkbox', { name: '600X600', exact: true });
   await size.check();
   await expect(toggle).toHaveAccessibleName('사이즈 1개 선택');
   await expect(catalog.locator('button.material-tile').filter({ hasText: '체험 그레이 타일' })).toBeVisible();
   await catalog.screenshot({ path: 'test-results/facets/editor-1440-open.png', animations: 'disabled' });
   // Fixtures have no 600X600 option, so the tile-only choice is ignored there.
   await page.getByRole('button', { name: '위생도기', exact: true }).click();
-  await expect(catalog.locator('button.material-tile').filter({ hasText: '체험 벽걸이 세면대' })).toBeVisible();
+  await expect(
+    catalog.locator('button.material-tile').filter({ hasText: '체험 벽걸이 세면대' }),
+  ).toBeVisible();
   await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
   await size.uncheck();
   await expect(toggle).toHaveAccessibleName('사이즈');
