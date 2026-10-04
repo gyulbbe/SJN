@@ -9,7 +9,7 @@ SJN에서 사용자가 완성한 After 공간이 CG가 아니라 실제 촬영�
 `AGENTS.md`, `.agents/skills/sjn-workflow/SKILL.md`와 references의 프로젝트 설명·개발 환경 문서, 설치된 `node_modules/next/dist/docs/`의 관련 문서, 현재 git 상태를 먼저 본다. 이미 수정된 파일을 초기화하지 않는다. 다음 문서도 읽는다.
 
 - `docs/room-viewer-renderer-contract-20260914.md`, `docs/room-viewer-results-20260914.md`
-- `docs/design-render-verification.md`, `docs/room-dimensions.md`, `docs/product3d-editor.md`
+- `docs/design-render-verification.md`, `docs/room-dimensions.md`
 
 아래는 2026-09-24에 코드에서 확인한 구조다. 작업 전에 실제 코드와 다시 대조한다.
 

@@ -18,7 +18,7 @@ export interface AngleNameSelectProps {
 /**
  * The angle name is picked from the closed list, never typed. The name is the direction the
  * product faces in that photo, seen from the front of the room; the rooms and the AI conversion
- * follow it. Picking a name here never rotates a product (the 360° editor turns it on its own).
+ * follow it. Picking a name here only renames the photo.
  */
 export function AngleNameSelect({
   value,

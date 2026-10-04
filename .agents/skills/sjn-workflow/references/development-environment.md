@@ -19,7 +19,7 @@ Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [pack
 
 vinext 개발 서버는 클라이언트 모듈을 동적 import로 받아 Next 개발 서버보다 하이드레이션이 늦다(홈 기준 0.3~2초). 서버에서 먼저 그려지는 공개 화면의 버튼은 하이드레이션 전까지 비활성으로 두고(`GuestHome`), e2e는 활성화를 기다린 뒤 누른다.
 
-개발 서버(vinext)는 1MB를 넘는 업로드를 기본 한도(`serverActions.bodySizeLimit`)로 413으로 막는다. 입체 메시(수 MB)나 큰 사진을 실제로 저장해 보는 확인(예: 360° 입체화 자동 저장)에서만 `next.config.ts`에 `experimental: { serverActions: { bodySizeLimit: '40mb' } }`를 임시로 넣고 서버를 다시 띄운 뒤, 끝나면 반드시 되돌린다(커밋 금지). 운영 Workers에서도 그런지는 확인하지 못했다.
+개발 서버(vinext)는 1MB를 넘는 업로드를 기본 한도(`serverActions.bodySizeLimit`)로 413으로 막는다. 큰 사진(1MB 초과)을 실제로 저장해 보는 확인에서만 `next.config.ts`에 `experimental: { serverActions: { bodySizeLimit: '40mb' } }`를 임시로 넣고 서버를 다시 띄운 뒤, 끝나면 반드시 되돌린다(커밋 금지). 운영 Workers에서도 그런지는 확인하지 못했다.
 
 [dev-local](../../../../scripts/dev-local.mjs)는 `APP_ENV=development`, `SJN_DEV_BINDINGS=1`을 설정한다. [Vite 설정](../../../../vite.config.ts)이 이를 보고 `wrangler.dev.jsonc`와 `persistState.path=.wrangler/development`를 선택한다. 개발용 DB/R2에는 `remote:false`가 명시돼 있다. 기본 빌드 설정과 개발 설정을 섞지 않는다. 기존 `.wrangler/state`나 origin별 IndexedDB 자료는 삭제·자동 이전하지 않는다.
 
@@ -69,6 +69,6 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 
 Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는 `/api/export/photoreal`(제품 하나씩 다듬는 실험 C는 별도 라우트 `/api/export/photoreal/product`)의 `@cf/black-forest-labs/flux-2-klein-4b`다. 같은 `AI` 바인딩을 사용하고 `sjn-gateway`는 Gemma만 거치며(FLUX는 multipart 스트림이라 게이트웨이 미사용), 활성 로그인이 필요하다. 기본 개발 설정과 Next Node에는 AI 바인딩이 없다. 기본 개발 서버 시작만으로 원격 프록시를 연결하지 않도록 `wrangler.dev.jsonc`에서 AI를 제외했다. 실제 Workers AI 검증은 별도 승인된 원격 AI 바인딩 설정에서 실행한다. **로컬 D1/R2라는 사실은 AI가 로컬이라는 뜻이 아니다.** 명시적 AI 실행은 Cloudflare 사진 전송·사용량을 발생시킨다. 로그인·DB 준비·문서 갱신만으로 AI를 실행하지 않는다.
 
-체험 중에는 사진 업로드·AI 실행·진단 아카이브를 시작하지 않는다. MoGe·DeepLab·배경 제거·제품 입체화는 로그인한 기능의 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
+체험 중에는 사진 업로드·AI 실행·진단 아카이브를 시작하지 않는다. MoGe·DeepLab·배경 제거는 로그인한 기능의 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
 
 `deploy:vinext`는 실제 배포다. 현재 확인한 실배포에는 소스의 R2 바인딩과 공개 인증 URL이 반영되어 있다. 이후 소스 변경을 Worker에 반영하려면 검증된 산출물로 배포해야 하며, 누락된 Better Auth secret(과 선택한 경우 Google 두 값)은 배포만으로 생성되지 않는다. main 푸시는 Cloudflare 자동 배포로 이어진다(2026-09-23 푸시 약 80초 뒤 새 배포 확인). 아이디 로그인 코드는 0007 컬럼이 있는 DB에서만 준비 검사를 통과한다. 이 문서 갱신에서는 원격 설정·DB·배포를 변경하지 않았다. 원격 sjn과 로컬 개발 DB는 2026-09-17 사용자 승인 후 0001~0006 적용을 완료했다. 이후 운영 DB 변경은 대상과 미적용 목록을 확인해 별도로 승인된 범위에서 진행한다. 로컬 개발 DB 적용과 원격 DB 적용은 다른 작업이다. 자세한 Google/secret/배포 준비는 [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 따른다.

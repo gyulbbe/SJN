@@ -51,7 +51,7 @@ npx wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc --persis
 | 위치 | 내용 |
 | --- | --- |
 | D1 | Google 회원·세션·역할·상태/revision·관리자 감사, 프로젝트 목록/revision, 자재 불변 버전·분류·참조·재시도·정리 |
-| 비공개 R2 | 원본/가공 이미지, 제품 메시, Before·시안·이력을 포함한 프로젝트 JSON |
+| 비공개 R2 | 원본/가공 이미지, 옛 360° 제품 메시(읽기 전용, 새로 만들지 않음), Before·시안·이력을 포함한 프로젝트 JSON |
 | 브라우저 IndexedDB | 기존 로컬 자료, 본인 계정의 미저장 복구본·캐시. 로그인만으로 자동 업로드하지 않음 |
 | 같은 탭 sessionStorage | `/try` 임시 초안·배치·빈 방 재생성 정보. 이미지 바이트·개인 자료·익명 D1/R2 쓰기 없음 |
 

@@ -50,8 +50,7 @@ type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: s
  * The conversion method, chosen in the dialog: the current one (the model repaints the whole
  * render), experiment A/B (the model repaints the room without fixtures, bare or with grey
  * stand-ins, and ours go back on top) or experiment C (A, and each product repainted on its own).
- * C is the default when the room has a product it can repaint (a saved 3D product or a standard
- * model); with none, C would only be A, so the current one stays the default. This browser
+ * C is the default when the room has a product it can repaint (a standard model); with none, C would only be A, so the current one stays the default. This browser
  * remembers the choice, "current" too (a convenience only: unreadable storage means the default).
  */
 type FluxMethod = 'current' | FluxRoomMode | 'refine';
