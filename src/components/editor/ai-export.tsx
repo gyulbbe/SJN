@@ -158,6 +158,11 @@ export default function AiExport({
     prepare: (composite: boolean) => Promise<AiPreview>;
     /** How many placed products the per-product export would repaint (one request each). */
     refinable?: number;
+    /**
+     * Whether the dialog opens on the per-product export: some product it can repaint is a standard
+     * model a photo reconstruction made. Products the person switched to a model do not count.
+     */
+    refineByDefault?: boolean;
   };
   filename: string;
   userId?: string | null;
@@ -181,7 +186,7 @@ export default function AiExport({
   const [marginKept, setMarginKept] = useState(false);
   // Only scenes drawn in the room can be composited.
   const [method, setMethod] = useState<FluxMethod>(() =>
-    room ? (savedMethod() ?? (room.refinable ? 'refine' : 'current')) : 'current',
+    room ? (savedMethod() ?? (room.refineByDefault ? 'refine' : 'current')) : 'current',
   );
   const refining = !!room && method === 'refine';
   // The per-product export sends the room empty, as experiment A does.

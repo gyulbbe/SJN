@@ -260,7 +260,12 @@ test('실험 C · 제품별 다듬기: 방은 빈 채로 한 번, 제품은 하�
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
   const methods = dialog.getByRole('group', { name: '변환 방식' });
   await expect(methods.getByRole('radio')).toHaveCount(4);
-  // The room has a product C can repaint, so C is the method the dialog opens with (nothing chosen yet).
+  // The only product C can repaint is a photo product the person switched to its model ("표준 모형으로 보기";
+  // the stored fixture below is that, a photo material with a model), so the dialog opens on the
+  // whole-room conversion (nothing chosen yet). A model a photo reconstruction made would open it on C
+  // (tests/standard-model-view.test.ts); C is picked here.
+  await expect(methods.getByRole('radio', { name: '지금 방식', exact: true })).toBeChecked();
+  await methods.getByText('실험 C · 제품별 다듬기', { exact: true }).click();
   await expect(methods.getByRole('radio', { name: '실험 C · 제품별 다듬기', exact: true })).toBeChecked();
   // What one click costs is said before the click: one product, so a request for it and one for the room.
   const note = dialog.getByTestId('flux-composite-note');

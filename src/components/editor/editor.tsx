@@ -1383,8 +1383,12 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       ? {
           aspect: aiAfter.imageWidth / aiAfter.imageHeight,
           prepare: prepareAiPreview,
-          // How many placed products the per-product export would repaint (one request each).
+          // How many placed products the per-product export would repaint (one request each), and
+          // whether any of them is a reconstruction's model (the dialog then opens on that method).
           refinable: refineTargets({ scene: aiAfter, materials }).slice(0, REFINE_MAX_PRODUCTS).length,
+          refineByDefault: refineTargets({ scene: aiAfter, materials })
+            .slice(0, REFINE_MAX_PRODUCTS)
+            .some((target) => !target.fromPhoto),
         }
       : undefined;
   async function exportImage() {
