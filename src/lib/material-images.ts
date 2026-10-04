@@ -1,3 +1,5 @@
+import { readProductDirection, suitingDirection, type ProductDirection } from './product-direction';
+import type { RoomFace } from './room-types';
 import type { MaterialInput, MaterialVersion } from './types';
 
 type MaterialImages = Pick<
@@ -12,6 +14,25 @@ export function getPreferredProductViewIndex(material: Pick<MaterialVersion, 'vi
     FRONT_NAMES.has(view.direction.trim().normalize('NFKC').toLowerCase()),
   );
   return front >= 0 ? front : material.views.length ? 0 : -1;
+}
+
+/**
+ * The photo to place a product with on `face`: the one whose angle name suits the face (왼쪽 벽
+ * → 오른쪽, 오른쪽 벽 → 왼쪽, 정면 벽 → 정면, see suitingDirection), else the usual one (정면 first,
+ * then the first photo) with `missing` saying which name was wanted. The floor takes any, so it
+ * keeps the usual one. Only the first placement and a face change use this; a saved fixture's
+ * viewIndex is never rewritten from it.
+ */
+export function getPlacementViewIndex(
+  material: Pick<MaterialVersion, 'views'>,
+  face: RoomFace,
+): { index: number; missing?: ProductDirection } {
+  const wanted = suitingDirection(face);
+  if (wanted) {
+    const index = material.views.findIndex((view) => readProductDirection(view.direction).name === wanted);
+    if (index >= 0) return { index };
+  }
+  return { index: getPreferredProductViewIndex(material), ...(wanted ? { missing: wanted } : {}) };
 }
 
 /** Catalog/usage preview policy. Never use this to rewrite an existing fixture's saved viewIndex. */
