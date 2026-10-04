@@ -3,11 +3,12 @@ import type { FluxInputLayout } from './contract';
 /**
  * Material colour in a FLUX result, without AI: each wall and floor of the result is compared with
  * the render it was made from, and where the model kept the framing its colour is moved back to
- * the render's. Hue and saturation move (Lab a*, b* mean shift); lightness moves only for light
- * tiles the model dimmed, and only part of the way. Shading and texture stay the model's, and no
- * render pixel is pasted. Fixtures, glass, the ceiling and anything outside the
- * room's faces keep the model's pixels exactly. Plain RGBA arrays, so the same code runs in the
- * page and in node checks.
+ * the render's. Hue and saturation move (Lab a*, b* mean shift). Lightness is left to the model
+ * while it stays within what a photograph's light would do (LIGHTNESS_BAND); the part of a face's
+ * lightness change beyond that goes back, so a charcoal tile the model lit up to mid grey is
+ * charcoal again. Shading and texture stay the model's, and no render pixel is pasted. Fixtures,
+ * glass, the ceiling and anything outside the room's faces keep the model's pixels exactly. Plain
+ * RGBA arrays, so the same code runs in the page and in node checks.
  */
 export type Pixels = { width: number; height: number; data: Uint8ClampedArray | Uint8Array };
 export type FaceRegion = { key: string; kind: 'wall' | 'floor' };
@@ -36,33 +37,77 @@ export const MIN_REGION_SHARE = 0.01;
 export const STATS_INSET = 3;
 /** The correction fades in over this many result pixels next to fixtures and unchecked areas. */
 export const FADE_PX = 2;
+/**
+ * The lightness correction fades in over this many pixels next to fixtures the model drew itself
+ * (smoothly): a lightness step shows more than a colour one, and where the model's fixture is not
+ * exactly where the render's is, a short fade leaves hard-edged light patches (4 is a compromise
+ * from 2, 5 and 9 tried on the charcoal room; 5 and 9 left a soft glow).
+ */
+export const FADE_L_PX = 4;
 /** Larger shifts are the model painting another material; the correction stops here. */
 export const MAX_SHIFT_AB = 30;
 /**
- * Light tiles (render L* above this) that the model dimmed get part of their lightness back: a
- * white wall rendered darker and slightly warm reads as beige next to white fixtures (stage 3).
- * Never darkens: a brighter photographic result keeps its light.
+ * Light tiles (render L* above this) that the model dimmed get half of the dimming back, at most
+ * LIGHT_TILE_MAX_L: a white wall rendered darker and slightly warm reads as beige next to white
+ * fixtures (stage 3). This holds inside LIGHTNESS_BAND too.
  */
 export const LIGHT_TILE_L = 70;
 export const LIGHTNESS_SHARE = 0.5;
-export const MAX_SHIFT_L = 10;
+export const LIGHT_TILE_MAX_L = 10;
+/**
+ * How far a face's mean L* may differ from the render's and still count as the photograph's light
+ * (exposure, a lamp, the sun): the model's lightness is kept there. Saved results: normal ones
+ * move mean L* by up to about ±8 (see docs/flux-material-color-results-20261004.md).
+ */
+export const LIGHTNESS_BAND = 8;
+/** The share of the change beyond the band that is taken back (the rest stays the model's). */
+export const LIGHTNESS_RETURN = 0.9;
+/**
+ * Largest lightness move of the correction. Farther than this the model drew another material
+ * (as MAX_SHIFT_AB for colour); the render's dark tiles lit to mid grey are +25…+44.
+ */
+export const MAX_SHIFT_L = 50;
+/**
+ * A face whose mean L* moved this far (either way) in the model's result gets a warning: the tile
+ * reads as another tone (charcoal → mid grey). Saved normal results move up to about 17 on mid
+ * floors and rooms the model lit, and 25–44 on dark tiles.
+ */
+export const LIGHTNESS_WARNING_L = 20;
+/**
+ * After the correction a face still this far from the render's L* is reported as not matching
+ * ("밝기는 원본과 달라요"). What the rules leave by design is LIGHTNESS_BAND plus the share not taken
+ * back (13.6 for the largest change MAX_SHIFT_L reaches); this is a little above that, so it speaks
+ * only where the correction could not bring the face back (a change past MAX_SHIFT_L).
+ */
+export const LIGHTNESS_RESIDUAL_L = 14;
 /**
  * Warning threshold on the colour change of a face (ΔE2000 with lightness held equal, so the
  * model's photographic light is not counted). The ten saved results stay below 5.
  */
 export const COLOR_WARNING_DE = 6;
+/** Whether the model made a face much lighter or darker than the render's tile. */
+export function lightnessWarning(
+  change: Pick<FaceChange, 'lightnessDelta'>,
+): 'lighter' | 'darker' | undefined {
+  if (change.lightnessDelta > LIGHTNESS_WARNING_L) return 'lighter';
+  if (change.lightnessDelta < -LIGHTNESS_WARNING_L) return 'darker';
+}
 /**
  * A light near-grey tile (white walls) that gained a warm cast reads as beige long before the
  * ΔE threshold: stage-3 walls went from C* 2.4 to 3.9–4.7 with b* +1.5–2.1 and looked beige.
  * The 2026-09-25 stone walls, which lost warmth instead, are not flagged.
  */
-export function isColorWarning(change: FaceChange): boolean {
+export function isColorShiftWarning(change: FaceChange): boolean {
   if (change.colorDeltaE > COLOR_WARNING_DE) return true;
   const [L, a, b] = change.reference,
     [, a1, b1] = change.result;
   const chroma = Math.hypot(a, b),
     gained = Math.hypot(a1, b1) - chroma;
   return L > LIGHT_TILE_L && chroma < 4 && b1 - b >= 1.2 && gained >= 1.2;
+}
+/** A face to warn about: its colour moved (isColorShiftWarning) or its lightness (lightnessWarning). */
+export function isColorWarning(change: FaceChange): boolean {
+  return isColorShiftWarning(change) || lightnessWarning(change) !== undefined;
 }
 
 // ---------- colour ----------
@@ -444,6 +489,8 @@ export type FaceChange = {
   deltaE: number;
   /** ΔE2000 with the result's lightness set to the render's: the colour change alone. */
   colorDeltaE: number;
+  /** The result's mean L* minus the render's: positive when the model made the face lighter. */
+  lightnessDelta: number;
   /** How the colour moved, for the warning text. */
   shift: 'warmer' | 'cooler' | 'more-saturated' | 'less-saturated' | 'hue';
 };
@@ -477,19 +524,88 @@ export function compareFaces(
       result: after.lab,
       deltaE: deltaE2000(source.lab, after.lab),
       colorDeltaE: deltaE2000(source.lab, held),
+      lightnessDelta: after.lab[0] - source.lab[0],
       shift: describeShift(source.lab, after.lab),
     });
   }
   return changes;
 }
 
+export type CorrectionOptions = {
+  /**
+   * The result has no fixtures where the mask has them (the composite's empty room, to which ours
+   * are added afterwards): the faces are corrected under the fixtures too, so the room's edge that
+   * shows around a fixture is as corrected as the rest. Otherwise the model drew fixtures there,
+   * not always where the render has them, and the correction stays off them.
+   */
+  underFixtures?: boolean;
+};
+/** The mask's labels with each fixture pixel given the face nearest to it (chamfer propagation). */
+function fillFixtures(mask: RegionMask): Uint8Array {
+  const { width, height, data } = mask;
+  const out = Uint8Array.from(data);
+  const reach = new Uint16Array(width * height);
+  const faceLabel = (label: number) => label > 0 && label !== FIXTURE_REGION;
+  for (let i = 0; i < data.length; i++) reach[i] = faceLabel(data[i]) ? 0 : 65535;
+  const relax = (i: number, j: number) => {
+    if (reach[j] !== 65535 && reach[j] + 1 < reach[i]) {
+      reach[i] = reach[j] + 1;
+      out[i] = out[j];
+    }
+  };
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (x > 0) relax(i, i - 1);
+      if (y > 0) {
+        relax(i, i - width);
+        if (x > 0) relax(i, i - width - 1);
+        if (x < width - 1) relax(i, i - width + 1);
+      }
+    }
+  for (let y = height - 1; y >= 0; y--)
+    for (let x = width - 1; x >= 0; x--) {
+      const i = y * width + x;
+      if (x < width - 1) relax(i, i + 1);
+      if (y < height - 1) {
+        relax(i, i + width);
+        if (x < width - 1) relax(i, i + width + 1);
+        if (x > 0) relax(i, i + width - 1);
+      }
+    }
+  // Only fixture pixels take a face; unchecked pixels (ceiling, backdrop) stay as they were.
+  for (let i = 0; i < data.length; i++) if (data[i] !== FIXTURE_REGION) out[i] = data[i];
+  return out;
+}
+
 /**
- * Moves each face's mean a*, b* in `result` to the render's (capped at MAX_SHIFT_AB), faded in
- * over FADE_PX next to fixtures and unchecked areas, and lightly smoothed across face seams.
- * Fixture, glass and unchecked pixels are returned unchanged.
+ * The lightness a face gets back (L* units, positive = lighter) when the model's mean L* is
+ * `result[0]` and the render's is `reference[0]`: nothing inside LIGHTNESS_BAND, LIGHTNESS_RETURN of
+ * what lies beyond it (at most MAX_SHIFT_L), either way. A light tile (render L* above LIGHT_TILE_L)
+ * the model dimmed gets at least half of the dimming back, at most LIGHT_TILE_MAX_L.
  */
-export function correctFaces(result: Pixels, mask: RegionMask, changes: FaceChange[]): Pixels {
+export function lightnessReturn(reference: Lab, result: Lab): number {
+  const missing = reference[0] - result[0];
+  let back = Math.min(MAX_SHIFT_L, Math.max(0, Math.abs(missing) - LIGHTNESS_BAND) * LIGHTNESS_RETURN);
+  back *= Math.sign(missing);
+  if (reference[0] > LIGHT_TILE_L && missing > 0)
+    back = Math.max(back, Math.min(LIGHT_TILE_MAX_L, missing * LIGHTNESS_SHARE));
+  return back;
+}
+/**
+ * Moves each face's mean a*, b* in `result` to the render's (capped at MAX_SHIFT_AB) and its
+ * lightness back by `lightnessReturn` (an L* addition: the face's own light and texture stay), faded
+ * in over FADE_PX (FADE_L_PX for lightness) next to fixtures and unchecked areas, and lightly
+ * smoothed across face seams. Fixture, glass and unchecked pixels are returned unchanged.
+ */
+export function correctFaces(
+  result: Pixels,
+  mask: RegionMask,
+  changes: FaceChange[],
+  options: CorrectionOptions = {},
+): Pixels {
   const { width, height } = result;
+  const labels = options.underFixtures ? fillFixtures(mask) : mask.data;
   const shifts = new Map<number, [number, number, number]>();
   for (const change of changes) {
     let da = change.reference[1] - change.result[1],
@@ -499,26 +615,33 @@ export function correctFaces(result: Pixels, mask: RegionMask, changes: FaceChan
       da *= MAX_SHIFT_AB / size;
       db *= MAX_SHIFT_AB / size;
     }
-    const dimmed = change.reference[0] - change.result[0];
-    const dL =
-      change.reference[0] > LIGHT_TILE_L && dimmed > 0 ? Math.min(MAX_SHIFT_L, dimmed * LIGHTNESS_SHARE) : 0;
+    // Never past white or black.
+    const from = change.result[0];
+    const dL = Math.min(100, Math.max(0, from + lightnessReturn(change.reference, change.result))) - from;
     shifts.set(change.region, [da, db, dL]);
   }
-  const open = distanceTo(mask, (label) => !label || label === FIXTURE_REGION || !shifts.has(label));
+  const open = distanceTo(
+    { ...mask, data: labels },
+    (label) => !label || label === FIXTURE_REGION || !shifts.has(label),
+  );
   const fieldA = new Float32Array(width * height),
     fieldB = new Float32Array(width * height),
-    fieldL = new Float32Array(width * height);
-  for (let i = 0; i < mask.data.length; i++) {
-    const shift = shifts.get(mask.data[i]);
+    fieldL = new Float32Array(width * height),
+    valid = new Float32Array(width * height);
+  for (let i = 0; i < labels.length; i++) {
+    const shift = shifts.get(labels[i]);
     if (!shift) continue;
-    const k = Math.min(1, Math.max(0, (open[i] - 1) / FADE_PX));
-    fieldA[i] = shift[0] * k;
-    fieldB[i] = shift[1] * k;
-    fieldL[i] = shift[2] * k;
+    fieldA[i] = shift[0];
+    fieldB[i] = shift[1];
+    fieldL[i] = shift[2];
+    valid[i] = 1;
   }
-  // A 5×5 box blur softens face seams; checked pixels only, so nothing leaks into fixtures.
+  // A 5×5 box blur softens face seams. It averages over corrected pixels only, so the correction
+  // does not thin out toward a fixture (that is the fade's job, and a 2 px one); nothing leaks into
+  // fixtures or unchecked areas.
   const blur = (field: Float32Array) => {
     const horizontal = new Float32Array(field.length),
+      weight = new Float32Array(field.length),
       out = new Float32Array(field.length);
     for (let y = 0; y < height; y++)
       for (let x = 0; x < width; x++) {
@@ -528,9 +651,10 @@ export function correctFaces(result: Pixels, mask: RegionMask, changes: FaceChan
           const px = x + k;
           if (px < 0 || px >= width) continue;
           sum += field[y * width + px];
-          n++;
+          n += valid[y * width + px];
         }
-        horizontal[y * width + x] = sum / n;
+        horizontal[y * width + x] = sum;
+        weight[y * width + x] = n;
       }
     for (let y = 0; y < height; y++)
       for (let x = 0; x < width; x++) {
@@ -540,9 +664,9 @@ export function correctFaces(result: Pixels, mask: RegionMask, changes: FaceChan
           const py = y + k;
           if (py < 0 || py >= height) continue;
           sum += horizontal[py * width + x];
-          n++;
+          n += weight[py * width + x];
         }
-        out[y * width + x] = sum / n;
+        out[y * width + x] = n ? sum / n : 0;
       }
     return out;
   };
@@ -550,12 +674,14 @@ export function correctFaces(result: Pixels, mask: RegionMask, changes: FaceChan
     smoothB = blur(fieldB),
     smoothL = blur(fieldL);
   const out = new Uint8ClampedArray(result.data);
-  for (let i = 0; i < mask.data.length; i++) {
-    if (!shifts.has(mask.data[i])) continue;
-    const da = smoothA[i],
-      db = smoothB[i],
-      dL = smoothL[i];
-    if (Math.abs(da) < 0.05 && Math.abs(db) < 0.05 && dL < 0.05) continue;
+  for (let i = 0; i < labels.length; i++) {
+    if (!shifts.has(labels[i])) continue;
+    const k = Math.min(1, Math.max(0, (open[i] - 1) / FADE_PX));
+    const kL = Math.min(1, Math.max(0, (open[i] - 1) / FADE_L_PX));
+    const da = smoothA[i] * k,
+      db = smoothB[i] * k,
+      dL = smoothL[i] * (kL * kL * (3 - 2 * kL));
+    if (Math.abs(da) < 0.05 && Math.abs(db) < 0.05 && Math.abs(dL) < 0.05) continue;
     const o = i * 4;
     const [L, a, b] = rgbToLab(result.data[o], result.data[o + 1], result.data[o + 2]);
     const [r, g, bl] = labToRgb(L + dL, a + da, b + db);
@@ -576,6 +702,8 @@ export type ColorReview = {
   corrected?: Pixels;
   /** Face changes left after the correction. */
   residual?: FaceChange[];
+  /** Faces whose lightness is still more than LIGHTNESS_RESIDUAL_L from the render's after the correction. */
+  unmatched: FaceChange[];
 };
 /**
  * Checks and corrects one FLUX result against the render it was made from. `capture` is the render
@@ -592,19 +720,22 @@ export function reviewResultColors(input: {
    * Given, the faces are compared there (the search's score is still reported).
    */
   alignment?: { dx: number; dy: number };
+  /** See CorrectionOptions.underFixtures: the composite's empty room. */
+  underFixtures?: boolean;
 }): ColorReview {
   const size = { width: input.result.width, height: input.result.height };
   const reference = projectCapture(input.capture, input.layout, size);
   const referenceMask = projectMask(input.mask, input.layout, size);
   const searched = framing(reference, input.result);
   const frame = input.alignment ? { ...searched, ...input.alignment, aligned: true } : searched;
-  if (!frame.aligned) return { framing: frame, changes: [], warnings: [] };
+  if (!frame.aligned) return { framing: frame, changes: [], warnings: [], unmatched: [] };
   const resultMask = shiftMask(referenceMask, frame.dx, frame.dy);
   const changes = compareFaces(reference, input.result, referenceMask, resultMask);
   // No tiled wall or floor large enough to compare (an empty room): nothing to say or change.
-  if (!changes.length) return { framing: frame, changes, warnings: [] };
+  if (!changes.length) return { framing: frame, changes, warnings: [], unmatched: [] };
   const warnings = changes.filter(isColorWarning);
-  const corrected = correctFaces(input.result, resultMask, changes);
+  const corrected = correctFaces(input.result, resultMask, changes, { underFixtures: input.underFixtures });
   const residual = compareFaces(reference, corrected, referenceMask, resultMask);
-  return { framing: frame, changes, warnings, corrected, residual };
+  const unmatched = residual.filter((change) => Math.abs(change.lightnessDelta) > LIGHTNESS_RESIDUAL_L);
+  return { framing: frame, changes, warnings, corrected, residual, unmatched };
 }

@@ -30,6 +30,7 @@ const warm: FaceChange = {
   result: [75, 1, 4.5],
   deltaE: 12,
   colorDeltaE: 2.4,
+  lightnessDelta: -13,
   shift: 'warmer',
 };
 
@@ -324,5 +325,103 @@ describe('the composite export (fixtures composited on the model empty room)', (
       '벽·바닥 색을 원래 자재 색에 맞췄어요. 제품은 3D 렌더를 제자리에 그대로 올렸어요.',
       'AI 확인을 하지 못했어요. 한도',
     ]);
+  });
+});
+
+describe('lightness in the colour notice', () => {
+  // The 2026-10-04 charcoal room: the model drew the wall tile mid grey (render L* 34 → 62.5).
+  const charcoal: FaceChange = {
+    region: 2,
+    kind: 'wall',
+    reference: [34, -0.9, -2.6],
+    result: [62.5, -0.8, -2.4],
+    deltaE: 15,
+    colorDeltaE: 0.3,
+    lightnessDelta: 28.5,
+    shift: 'warmer',
+  };
+  const floorDarker: FaceChange = {
+    ...charcoal,
+    region: 3,
+    kind: 'floor',
+    reference: [75, 0, 1],
+    result: [48, 0, 1],
+    lightnessDelta: -27,
+  };
+  const TAIL = '명암·질감과 제품·유리는 AI 결과 그대로예요.';
+
+  it('warns about a much lighter or darker tile in the original colours, without asking for a retry', () => {
+    const notices = fluxResultNotices({
+      products,
+      colors: { status: 'corrected', warnings: [charcoal, floorDarker] },
+      corrected: false,
+      showTiles: true,
+    });
+    expect(notices.warnings).toEqual([
+      {
+        key: 'color',
+        lines: [
+          '벽 타일이 원본보다 훨씬 밝게 바뀌었을 수 있어요.',
+          '바닥 타일이 원본보다 훨씬 어둡게 바뀌었을 수 있어요.',
+        ],
+      },
+    ]);
+    expect(notices.suggestRetry).toBe(false);
+  });
+
+  it('says what it did when the lightness was put back, and does not claim a plain match', () => {
+    const lightened = fluxResultNotices({
+      products,
+      colors: { status: 'corrected', warnings: [charcoal] },
+      corrected: true,
+      showTiles: true,
+    });
+    expect(lightened.infos[0].text).toBe(
+      `벽 타일이 원본보다 훨씬 밝게 바뀌어 원래 자재 색·밝기 쪽으로 되돌렸어요. ${TAIL}`,
+    );
+    // A colour change and a lightness change together: both are named.
+    const both = fluxResultNotices({
+      products,
+      colors: { status: 'corrected', warnings: [warm, { ...charcoal, region: 1, kind: 'floor' }] },
+      corrected: true,
+      showTiles: true,
+    });
+    expect(both.infos[0].text).toBe(
+      `벽 타일 색이 원본보다 따뜻하게(노랗게), 바닥 타일이 원본보다 훨씬 밝게 바뀌어 원래 자재 색·밝기 쪽으로 되돌렸어요. ${TAIL}`,
+    );
+    // Nothing to say about lightness: the colour-only text is unchanged.
+    expect(
+      fluxResultNotices({
+        products,
+        colors: { status: 'corrected', warnings: [warm] },
+        corrected: true,
+        showTiles: true,
+      }).infos[0].text,
+    ).toBe(`벽 타일 색이 원본보다 따뜻하게(노랗게) 바뀌어 원래 자재 색으로 맞췄어요. ${TAIL}`);
+  });
+
+  it('says the lightness is not the original when the correction could not bring it back', () => {
+    const left: FaceChange = { ...charcoal, lightnessDelta: 29, result: [63, -0.9, -2.6] };
+    const notices = fluxResultNotices({
+      products,
+      colors: { status: 'corrected', warnings: [charcoal], unmatched: [left] },
+      corrected: true,
+      showTiles: true,
+    });
+    expect(notices.infos[0].text).toBe(
+      `색은 원래 자재 색에 맞췄지만 벽 타일 밝기는 원본과 달라요(더 밝아요). ${TAIL}`,
+    );
+    expect(notices.infos[0].text).not.toContain('맞췄어요');
+    // In the composite the products are ours: the tail changes, the claim stays honest.
+    const composite = fluxResultNotices({
+      products,
+      colors: { status: 'corrected', warnings: [charcoal], unmatched: [{ ...left, lightnessDelta: -25 }] },
+      corrected: true,
+      showTiles: true,
+      composite: { shifted: false },
+    });
+    expect(composite.infos[0].text).toBe(
+      '색은 원래 자재 색에 맞췄지만 벽 타일 밝기는 원본과 달라요(더 어두워요). 제품은 3D 렌더를 제자리에 그대로 올렸어요.',
+    );
   });
 });

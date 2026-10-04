@@ -951,3 +951,80 @@ test('composite export (chosen in the dialog): the room goes out empty, our prod
   expect(productCalls).toBe(0);
   expect(errors).toEqual([]);
 });
+
+test('a wall the model drew much darker is put back; the AI colours warn about the lightness', async ({
+  page,
+}, testInfo) => {
+  const conversions: string[] = [];
+  // The mock model answers with the input at result size, drawn a lot darker: the lightness case
+  // (a charcoal tile drawn mid grey, the other way round), colour untouched.
+  await page.route('**/api/export/photoreal', async (route) => {
+    const req = route.request();
+    const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
+      headers: { 'content-type': req.headers()['content-type'] },
+    }).formData();
+    const input = Buffer.from(await (form.get('image') as Blob).arrayBuffer());
+    const { width, height } = await sharp(input).metadata();
+    conversions.push('dark');
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: await sharp(input)
+        .resize(width! * 2, height! * 2)
+        .linear(0.55, 0)
+        .png()
+        .toBuffer(),
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
+  await seedTestTiles(page);
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: '공간 크기 설정', exact: true })
+    .getByRole('button', { name: '공간 만들기', exact: true })
+    .click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  await page.getByRole('button', { name: '벽 타일', exact: true }).click();
+  await page.locator('button.material-tile').filter({ hasText: '클라우드 화이트' }).click();
+  await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  const note = dialog.getByTestId('flux-color-note');
+  // The shown (corrected) result says what it did, not that the colours "match".
+  await expect(note).toContainText(
+    /^벽 타일이 원본보다 훨씬 어둡게.* 바뀌어 원래 자재 색·밝기 쪽으로 되돌렸어요/,
+    { timeout: 30000 },
+  );
+  const wall = () =>
+    result.evaluate(async (element) => {
+      const image = element as HTMLImageElement;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const [r, g, b] = context.getImageData(
+        Math.round(canvas.width * 0.5),
+        Math.round(canvas.height * 0.4),
+        1,
+        1,
+      ).data;
+      return (r + g + b) / 3;
+    });
+  const corrected = await wall();
+  await dialog.getByRole('button', { name: 'AI 원본 색 보기', exact: true }).click();
+  const raw = await wall();
+  // The darkened wall comes back a good part of the way, never past the render's own light.
+  expect(corrected).toBeGreaterThan(raw + 25);
+  const warning = dialog.getByRole('alert');
+  await expect(warning).toContainText('벽 타일이 원본보다 훨씬 어둡게 바뀌었을 수 있어요.');
+  await page.screenshot({ path: testInfo.outputPath('flux-lightness-original.png') });
+  expect(conversions).toEqual(['dark']);
+});

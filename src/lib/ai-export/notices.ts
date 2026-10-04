@@ -1,4 +1,4 @@
-import type { FaceChange } from './color';
+import { isColorShiftWarning, lightnessWarning, type FaceChange } from './color';
 import {
   FLUX_LARGE_EXTRAS,
   type FluxCheckResult,
@@ -182,12 +182,44 @@ const SHIFT_WORDS: Record<FaceChange['shift'], string> = {
   'less-saturated': '옅게',
   hue: '다른 색으로',
 };
-/** One phrase per surface kind: the face that changed most. */
+const KIND_WORDS = { wall: '벽', floor: '바닥' } as const;
+/** One phrase per surface kind for a colour that moved: the face that changed most. */
 export function colorChangeLines(warnings: FaceChange[]) {
   return (['wall', 'floor'] as const).flatMap((kind) => {
-    const worst = warnings.filter((w) => w.kind === kind).sort((a, b) => b.colorDeltaE - a.colorDeltaE)[0];
+    const worst = warnings
+      .filter((w) => w.kind === kind && isColorShiftWarning(w))
+      .sort((a, b) => b.colorDeltaE - a.colorDeltaE)[0];
     return worst
-      ? [{ kind, text: `${kind === 'wall' ? '벽' : '바닥'} 타일 색이 원본보다 ${SHIFT_WORDS[worst.shift]}` }]
+      ? [{ kind, text: `${KIND_WORDS[kind]} 타일 색이 원본보다 ${SHIFT_WORDS[worst.shift]}` }]
+      : [];
+  });
+}
+/** One phrase per surface kind for a lightness that moved a lot: the face that moved most. */
+export function lightnessChangeLines(warnings: FaceChange[]) {
+  return (['wall', 'floor'] as const).flatMap((kind) => {
+    const worst = warnings
+      .filter((w) => w.kind === kind && lightnessWarning(w))
+      .sort((a, b) => Math.abs(b.lightnessDelta) - Math.abs(a.lightnessDelta))[0];
+    return worst
+      ? [
+          {
+            kind,
+            text: `${KIND_WORDS[kind]} 타일이 원본보다 훨씬 ${worst.lightnessDelta > 0 ? '밝게' : '어둡게'}`,
+          },
+        ]
+      : [];
+  });
+}
+/** Faces whose lightness is still off after the correction, one phrase per surface kind. */
+function unmatchedLightnessLines(unmatched: FaceChange[]) {
+  return (['wall', 'floor'] as const).flatMap((kind) => {
+    const worst = unmatched
+      .filter((w) => w.kind === kind)
+      .sort((a, b) => Math.abs(b.lightnessDelta) - Math.abs(a.lightnessDelta))[0];
+    return worst
+      ? [
+          `${KIND_WORDS[kind]} 타일 밝기는 원본과 달라요(${worst.lightnessDelta > 0 ? '더 밝아요' : '더 어두워요'})`,
+        ]
       : [];
   });
 }
@@ -200,7 +232,15 @@ export type FluxNoticeInput = {
     | { status: 'checking' }
     | { status: 'done'; reading: FluxCheckReading }
     | { status: 'failed'; message: string };
-  colors?: { status: 'corrected'; warnings: FaceChange[] } | { status: 'reframed' } | { status: 'failed' };
+  colors?:
+    | {
+        status: 'corrected';
+        warnings: FaceChange[];
+        /** Faces whose lightness the correction could not bring close to the render's (ColorReview.unmatched). */
+        unmatched?: FaceChange[];
+      }
+    | { status: 'reframed' }
+    | { status: 'failed' };
   /** Whether the colour-corrected result is on screen (else the model's own colours). */
   corrected: boolean;
   /** Tile-layout answers are shown only when they proved reliable enough. */
@@ -296,22 +336,30 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
       });
   }
   if (colors?.status === 'corrected') {
+    const shifted = colorChangeLines(colors.warnings),
+      lightened = lightnessChangeLines(colors.warnings),
+      unmatched = unmatchedLightnessLines(colors.unmatched ?? []);
     if (!input.corrected && colors.warnings.length)
       warnings.push({
         key: 'color',
-        lines: colorChangeLines(colors.warnings).map((line) => `${line.text} 바뀌었을 수 있어요.`),
+        lines: [...shifted, ...lightened].map((line) => `${line.text} 바뀌었을 수 있어요.`),
       });
-    else
+    else {
+      const tail = '명암·질감과 제품·유리는 AI 결과 그대로예요.';
+      // "Matched" only when it is true: a face whose lightness is still far from the render's is said so.
       infos.unshift({
         key: 'color',
         text: !input.corrected
           ? 'AI 원본 색이에요. 벽·바닥 색이 원본과 크게 다르지 않아요.'
-          : colors.warnings.length
-            ? `${colorChangeLines(colors.warnings)
-                .map((line) => line.text)
-                .join(', ')} 바뀌어 원래 자재 색으로 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.`
-            : '벽·바닥 색을 원래 자재 색에 맞췄어요. 명암·질감과 제품·유리는 AI 결과 그대로예요.',
+          : unmatched.length
+            ? `색은 원래 자재 색에 맞췄지만 ${unmatched.join(', ')}. ${tail}`
+            : lightened.length
+              ? `${[...shifted, ...lightened].map((line) => line.text).join(', ')} 바뀌어 원래 자재 색·밝기 쪽으로 되돌렸어요. ${tail}`
+              : shifted.length
+                ? `${shifted.map((line) => line.text).join(', ')} 바뀌어 원래 자재 색으로 맞췄어요. ${tail}`
+                : `벽·바닥 색을 원래 자재 색에 맞췄어요. ${tail}`,
       });
+    }
     // In the composite the products are ours, not the model's (the per-product export: repainted
     // one by one, or the render where that did not hold).
     if (composite && infos[0]?.key === 'color')

@@ -448,7 +448,11 @@ export default function AiExport({
           !composed.review.framing.aligned
             ? { status: 'reframed' }
             : correctedUrl
-              ? { status: 'corrected', warnings: composed.review.warnings }
+              ? {
+                  status: 'corrected',
+                  warnings: composed.review.warnings,
+                  unmatched: composed.review.unmatched,
+                }
               : undefined,
         );
       } else {
@@ -468,7 +472,7 @@ export default function AiExport({
             state.current.urls.push(correctedUrl);
             if (!live.current) return;
             setResult((previous) => (previous.url === url ? { ...previous, correctedUrl } : previous));
-            setColors({ status: 'corrected', warnings: review.warnings });
+            setColors({ status: 'corrected', warnings: review.warnings, unmatched: review.unmatched });
           }
         } catch {
           if (live.current) setColors({ status: 'failed' });
@@ -559,9 +563,9 @@ export default function AiExport({
       <p className={styles.note}>
         {room ? '버튼을 누를 때 아래 미리보기 시점 그대로의' : '버튼을 누를 때의'} 현재 After 이미지와 배치한
         제품의 종류·위치·크기·색 정보를 Cloudflare로 보내 변환해요. 결과가 나오면 배치한 제품이 그대로 있는지,
-        배치하지 않은 물건이 생겼는지 AI(Gemma)로 한 번 더 확인하고, 벽·바닥 색은 원래 자재 색에 맞춰 보여
-        줘요(추가 요청 없음). 다시 만들 때마다 다른 결과가 나오고 두 요청의 사용량이 새로 발생해요. 그래도
-        AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해 주세요.
+        배치하지 않은 물건이 생겼는지 AI(Gemma)로 한 번 더 확인하고, 벽·바닥 색은 원래 자재 색에 맞추고 밝기가
+        크게 달라지면 그것도 되돌려 보여 줘요(추가 요청 없음). 다시 만들 때마다 다른 결과가 나오고 두 요청의
+        사용량이 새로 발생해요. 그래도 AI가 자재나 제품을 바꿀 수 있으니 원본과 비교해 주세요.
       </p>
       {room && (
         <>

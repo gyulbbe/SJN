@@ -5,10 +5,18 @@ import {
   deltaE2000,
   FIXTURE_REGION,
   framing,
+  isColorShiftWarning,
   isColorWarning,
+  LIGHTNESS_BAND,
+  LIGHTNESS_RESIDUAL_L,
+  LIGHTNESS_RETURN,
   LIGHTNESS_SHARE,
+  lightnessReturn,
+  lightnessWarning,
+  LIGHT_TILE_MAX_L,
   labToRgb,
   MAX_SHIFT_AB,
+  MAX_SHIFT_L,
   projectCapture,
   rgbToLab,
   reviewResultColors,
@@ -255,7 +263,7 @@ describe('face colours', () => {
 });
 
 describe('white tiles', () => {
-  it('gives a dimmed light tile half its lightness back, and never darkens a brighter result', () => {
+  it('gives a dimmed light tile half its lightness back, and keeps a slightly brighter result as it is', () => {
     const reference = room({ wall: WHITE, floor: GREY });
     const dim = ([r, g, b]: Rgb): Rgb => {
       const [L, a, bb] = rgbToLab(Math.round(r), Math.round(g), Math.round(b));
@@ -266,8 +274,12 @@ describe('white tiles', () => {
     const lifted = meanLab(corrected, 1)[0] - meanLab(dimmed, 1)[0];
     expect(lifted).toBeGreaterThan(12 * LIGHTNESS_SHARE * 0.85);
     expect(lifted).toBeLessThan(12 * LIGHTNESS_SHARE * 1.05);
-    // The dark floor (below the light-tile line) keeps the model's lightness.
-    expect(Math.abs(meanLab(corrected, 3)[0] - meanLab(dimmed, 3)[0])).toBeLessThan(0.6);
+    // The mid grey floor (below the light-tile line) dimmed by the same 12 gets only what lies beyond
+    // the photograph band: (12 − LIGHTNESS_BAND) × LIGHTNESS_RETURN.
+    expect(meanLab(corrected, 3)[0] - meanLab(dimmed, 3)[0]).toBeCloseTo(
+      (12 - LIGHTNESS_BAND) * LIGHTNESS_RETURN,
+      0,
+    );
     const brighter = room({ wall: WHITE, floor: GREY }, warm(0));
     const kept = correctFaces(brighter, mask, compareFaces(reference, brighter, mask, mask));
     expect(Math.abs(meanLab(kept, 1)[0] - meanLab(brighter, 1)[0])).toBeLessThan(0.3);
@@ -281,6 +293,7 @@ describe('white tiles', () => {
       result,
       deltaE: deltaE2000(reference, result),
       colorDeltaE: deltaE2000(reference, [reference[0], result[1], result[2]]),
+      lightnessDelta: result[0] - reference[0],
       shift: 'warmer' as const,
     });
     // Measured faces: stage-3 white walls, and a 2026-09-25 stone wall.
@@ -290,6 +303,166 @@ describe('white tiles', () => {
     expect(isColorWarning(change([42.2, 0, 3.6], [49.1, 0.8, -1.5]))).toBe(false);
     // Any tile whose colour moved far.
     expect(isColorWarning(change([60, 10, 20], [60, -5, 5]))).toBe(true);
+  });
+
+  it("warns about a tile drawn much lighter or darker, not about the photograph's light", () => {
+    const change = (reference: [number, number, number], result: [number, number, number]) => ({
+      region: 1,
+      kind: 'wall' as const,
+      reference,
+      result,
+      deltaE: deltaE2000(reference, result),
+      colorDeltaE: deltaE2000(reference, [reference[0], result[1], result[2]]),
+      lightnessDelta: result[0] - reference[0],
+      shift: 'warmer' as const,
+    });
+    // Measured faces (2026-09-27 saved results, the 2026-10-04 charcoal room): charcoal and
+    // terrazzo walls lit up to mid grey by 24–44; a mid grey floor lit by 11–17; a light wall by ±7.
+    const charcoal = change([34, -0.9, -2.6], [62.5, -0.8, -2.4]);
+    expect(lightnessWarning(charcoal)).toBe('lighter');
+    expect(isColorWarning(charcoal)).toBe(true);
+    expect(isColorShiftWarning(charcoal)).toBe(false);
+    expect(lightnessWarning(change([39.8, 0, 3.6], [64, 0.1, 3.8]))).toBe('lighter');
+    expect(lightnessWarning(change([75, 0, 2], [52, 0, 2]))).toBe('darker');
+    for (const [from, to] of [
+      [53.4, 68.3],
+      [53.6, 70.2],
+      [47.7, 61.9],
+      [84.4, 79],
+      [75.2, 82.3],
+      // The 2026-09-25 stone wall that went from 72.4 to 53.8 and the stage-3 white wall (87.7 → 72.5).
+      [72.4, 53.8],
+      [87.7, 72.5],
+    ])
+      expect(lightnessWarning(change([from, 0, 2], [to, 0, 2]))).toBeUndefined();
+  });
+});
+
+describe('lightness', () => {
+  it('returns nothing inside the photograph band and most of what lies beyond it, either way', () => {
+    const ref = (L: number): [number, number, number] => [L, 0, 2];
+    // Inside the band the model's light stays; dark tiles lit and mid tiles darkened both come back.
+    expect(lightnessReturn(ref(40), ref(40 + LIGHTNESS_BAND))).toBeCloseTo(0, 9);
+    expect(lightnessReturn(ref(40), ref(40 - LIGHTNESS_BAND))).toBeCloseTo(0, 9);
+    expect(lightnessReturn(ref(40), ref(40 + 5))).toBeCloseTo(0, 9);
+    expect(lightnessReturn(ref(40), ref(40 + 46))).toBeCloseTo(-(46 - LIGHTNESS_BAND) * LIGHTNESS_RETURN, 6);
+    expect(lightnessReturn(ref(60), ref(60 - 20))).toBeCloseTo((20 - LIGHTNESS_BAND) * LIGHTNESS_RETURN, 6);
+    // Never more than MAX_SHIFT_L: farther than that the model drew another material.
+    expect(lightnessReturn(ref(20), ref(95))).toBe(-MAX_SHIFT_L);
+    // The stage-3 rule is kept: a light tile the model dimmed gets half back (at most LIGHT_TILE_MAX_L) even inside the band.
+    expect(lightnessReturn(ref(87.7), ref(87.7 - 15.2))).toBeCloseTo(
+      Math.max((15.2 - LIGHTNESS_BAND) * LIGHTNESS_RETURN, 15.2 * LIGHTNESS_SHARE),
+      6,
+    );
+    expect(lightnessReturn(ref(84), ref(84 - 5))).toBeCloseTo(5 * LIGHTNESS_SHARE, 6);
+    expect(lightnessReturn(ref(84), ref(84 - 14))).toBeCloseTo(LIGHT_TILE_MAX_L * 0.7, 6);
+  });
+
+  const dark: Rgb = [48, 49, 52],
+    mid: Rgb = [146, 147, 150];
+  /** Lightness set by a Lab addition: the model's brighter (or darker) light on a whole face. */
+  const lit =
+    (amount: number) =>
+    ([r, g, b]: Rgb): Rgb => {
+      const [L, a, bb] = rgbToLab(Math.round(r), Math.round(g), Math.round(b));
+      return labToRgb(L + amount, a, bb);
+    };
+
+  it('puts a charcoal wall the model lit by 46 back near charcoal, keeps its light, texture and fixtures', () => {
+    const reference = room({ wall: dark, floor: GREY });
+    const result = room({ wall: dark, floor: GREY }, lit(46));
+    const changes = compareFaces(reference, result, mask, mask);
+    expect(changes.find((c) => c.region === 1)!.lightnessDelta).toBeGreaterThan(40);
+    const corrected = correctFaces(result, mask, changes);
+    for (const region of [1, 2]) {
+      const target = meanLab(reference, region)[0],
+        before = meanLab(result, region)[0],
+        after = meanLab(corrected, region)[0];
+      expect(before - target).toBeGreaterThan(40);
+      // What is left is the band and what the return keeps: about LIGHTNESS_BAND + 10% of the rest,
+      // and a little more over this small face, where the 4 px fade next to the ceiling strip and the
+      // face edges keeps part of the model's light (the whole face is averaged here, not its interior).
+      expect(after - target).toBeGreaterThan(LIGHTNESS_BAND - 2);
+      expect(after - target).toBeLessThan(
+        LIGHTNESS_BAND + (46 - LIGHTNESS_BAND) * (1 - LIGHTNESS_RETURN) + 5,
+      );
+    }
+    // The floor, lit by the same 46, comes back the same way.
+    expect(meanLab(result, 3)[0] - meanLab(corrected, 3)[0]).toBeGreaterThan(25);
+    for (let i = 0; i < mask.data.length; i++)
+      if (mask.data[i] === 0 || mask.data[i] === FIXTURE_REGION)
+        expect([...corrected.data.subarray(i * 4, i * 4 + 4)]).toEqual([
+          ...result.data.subarray(i * 4, i * 4 + 4),
+        ]);
+    // Grout lines survive: the texture's contrast (and the light's own gradient) are the model's.
+    const tile = (60 * W + 30) * 4,
+      grout = (60 * W + 40) * 4;
+    const contrast = (image: Pixels) =>
+      rgbToLab(image.data[tile], image.data[tile + 1], image.data[tile + 2])[0] -
+      rgbToLab(image.data[grout], image.data[grout + 1], image.data[grout + 2])[0];
+    expect(contrast(corrected)).toBeCloseTo(contrast(result), 0);
+  });
+
+  it("puts back a mid wall the model darkened a lot, and leaves a few L* of the photograph's light alone", () => {
+    const reference = room({ wall: mid, floor: GREY });
+    const darker = room({ wall: mid, floor: GREY }, lit(-30));
+    const back = correctFaces(darker, mask, compareFaces(reference, darker, mask, mask));
+    expect(meanLab(back, 1)[0] - meanLab(darker, 1)[0]).toBeGreaterThan(
+      (30 - LIGHTNESS_BAND) * LIGHTNESS_RETURN - 1.5,
+    );
+    for (const amount of [5, -5]) {
+      const alike = room({ wall: mid, floor: GREY }, lit(amount));
+      const same = correctFaces(alike, mask, compareFaces(reference, alike, mask, mask));
+      expect(Math.abs(meanLab(same, 1)[0] - meanLab(alike, 1)[0])).toBeLessThan(0.5);
+      expect(Math.abs(meanLab(same, 2)[0] - meanLab(alike, 2)[0])).toBeLessThan(0.5);
+    }
+  });
+
+  it("corrects the model's empty room under the fixtures when the fixtures are put on afterwards", () => {
+    const reference = room({ wall: dark, floor: GREY });
+    const result = room({ wall: dark, floor: GREY }, lit(40));
+    const changes = compareFaces(reference, result, mask, mask);
+    const around = correctFaces(result, mask, changes);
+    const under = correctFaces(result, mask, changes, { underFixtures: true });
+    const at = (image: Pixels, x: number, y: number) =>
+      rgbToLab(...(image.data.subarray((y * W + x) * 4, (y * W + x) * 4 + 3) as unknown as Rgb))[0];
+    // A wall pixel two px beside the fixture (x 150..189, y 80..139): the fade leaves it nearly alone.
+    expect(at(result, 148, 100) - at(around, 148, 100)).toBeLessThan(12);
+    expect(at(result, 148, 100) - at(under, 148, 100)).toBeGreaterThan(25);
+    // Inside the fixture: only the empty-room correction touches it. Unchecked pixels never change.
+    expect(at(around, 170, 100)).toBe(at(result, 170, 100));
+    expect(at(result, 170, 100) - at(under, 170, 100)).toBeGreaterThan(25);
+    for (let i = 0; i < mask.data.length; i++)
+      if (mask.data[i] === 0)
+        expect([...under.data.subarray(i * 4, i * 4 + 4)]).toEqual([
+          ...result.data.subarray(i * 4, i * 4 + 4),
+        ]);
+  });
+
+  it("reports a face the correction cannot bring close to the render's lightness", () => {
+    const capture = room({ wall: dark, floor: GREY });
+    const layout = fluxInputLayout(W, H);
+    const size = { width: layout.width * 2, height: layout.height * 2 };
+    const asked = (amount: number) =>
+      reviewResultColors({
+        capture,
+        mask,
+        layout,
+        result: projectCapture(room({ wall: dark, floor: GREY }, lit(amount)), layout, size),
+      });
+    const lit46 = asked(46);
+    expect(lit46.warnings.map((w) => w.kind)).toContain('wall');
+    expect(lit46.unmatched).toEqual([]);
+    for (const face of lit46.residual!)
+      expect(Math.abs(face.lightnessDelta)).toBeLessThanOrEqual(LIGHTNESS_RESIDUAL_L);
+    // Far past MAX_SHIFT_L: the part the correction cannot take back stays.
+    const lit90 = asked(90);
+    expect(lit90.unmatched.map((w) => w.kind)).toContain('wall');
+    for (const face of lit90.unmatched) expect(face.lightnessDelta).toBeGreaterThan(LIGHTNESS_RESIDUAL_L);
+    // A result lit like a photograph is neither warned about nor reported.
+    const gentle = asked(6);
+    expect(gentle.warnings).toEqual([]);
+    expect(gentle.unmatched).toEqual([]);
   });
 });
 

@@ -445,6 +445,9 @@ export function composeFluxResult(input: {
     mask,
     layout,
     result,
+    // The model's room has no fixtures: ours go on after the colour is corrected, so the room is
+    // corrected under them too and no uncorrected edge shows around them.
+    underFixtures: true,
     ...(measured && !offFloor ? { alignment: { dx: 0, dy: Math.round(floor.offset * toResult) } } : {}),
   });
   const shifted = measured ? offFloor : !review.framing.aligned;
