@@ -3,6 +3,10 @@
 // Usage: node tests/product-representation/build-project.mjs [name]
 import { session, BASE, ROOT, d1 } from './lib.mjs';
 const label = process.argv[2] ?? 'R1';
+// --model: switch every product to its standard model right after placing it ("표준 모형으로 보기").
+const model = process.argv.includes('--model');
+// --roundtrip: switch each product on and then off again (the photo must come back exactly).
+const roundtrip = process.argv.includes('--roundtrip');
 const items = [
   { name: '평면 사각 욕조', face: '바닥', u: 50, v: 20 },
   { name: '평면 곰 변기', face: '바닥', u: 28, v: 66 },
@@ -57,6 +61,16 @@ try {
       await input.fill(String(val));
       await input.blur();
       await page.waitForTimeout(800);
+    }
+    if (model || roundtrip) {
+      const toggle = page.getByRole('switch', { name: '표준 모형으로 보기' });
+      await toggle.click();
+      await page.getByTestId('standard-model-notice').waitFor();
+      await page.waitForTimeout(1200);
+      if (roundtrip) {
+        await toggle.click();
+        await page.waitForTimeout(1500);
+      }
     }
     const notice = await page
       .getByTestId('auto-detection-notice')
