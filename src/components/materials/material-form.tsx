@@ -4,16 +4,6 @@ import { useState, useRef, useEffect, type ChangeEvent, type FormEvent } from 'r
 import { getRepositories } from '@/lib/repositories';
 import { importImage, makeAsset } from '@/lib/images';
 import type { BackgroundRemovalResult } from '@/lib/background-removal/types';
-import type { Product3dApplication } from '@/lib/product3d/types';
-import {
-  prepareProductReplacement,
-  replaceProductPhoto,
-  addProductPhoto,
-  renameProductPhoto,
-  removeProductPhoto,
-  productViewName,
-  MAX_PRODUCT_VIEWS,
-} from '@/lib/product3d/apply';
 import { defaultMaterialPricing, QUOTE_UNIT_LABELS } from '@/lib/quote';
 import { packagingCoverage } from '@/lib/material-usage';
 import type { MaterialPricing, QuoteUnit } from '@/lib/quote-types';
@@ -27,14 +17,11 @@ import {
 import { AssetImage, useAsset } from './asset-image';
 import { ImagePreparer } from './image-preparer';
 import { BackgroundRemovalTest } from './background-removal-test';
-import { Product3dEditor } from './product3d-editor';
 import { AngleNameSelect } from './angle-name-input';
-import { nextProductDirection } from '@/lib/product-direction';
+import { MAX_PRODUCT_VIEWS, nextProductDirection, productViewName } from '@/lib/product-direction';
 import { useAccess } from '@/components/app-provider';
 import { useFileDrop } from '@/components/use-file-drop';
 import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
-import { readPhotoSizes, smallPhotoNotice } from '@/lib/image-size-hint';
-import { validProductSize } from '@/lib/product3d/fit';
 import { useSharedCatalogAdmin } from './shared-access';
 import styles from './materials.module.css';
 import CatalogSelect from './catalog-select';
@@ -250,13 +237,6 @@ export function MaterialForm({
     index: number;
     targetAssetId?: string;
   }>();
-  const [productEditor, setProductEditor] = useState<{
-    assetId: string;
-    direction: string;
-    index: number;
-    blob?: Blob;
-    inputSourceAssetId?: string;
-  }>();
   const set = <K extends keyof MaterialInput>(key: K, value: MaterialInput[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
   const setPricing = <K extends keyof MaterialPricing>(key: K, value: MaterialPricing[K]) =>
@@ -315,11 +295,6 @@ export function MaterialForm({
     setUploading(true);
     setError('');
     try {
-      // A product photo that is small comes out soft as a 3D model: say so at the pick, and add it anyway.
-      if (target === 'view')
-        setUploadNotice(
-          [pick.notice, smallPhotoNotice(await readPhotoSizes(pick.files))].filter(Boolean).join(' '),
-        );
       for (const file of pick.files) {
         const { preview } = await importImage(
           file,
@@ -381,8 +356,8 @@ export function MaterialForm({
     setView(index, { assetId: asset.id, product3d: undefined });
   };
 
-  const currentEdit = useRef({ form, productEditor, writable, isAdmin });
-  currentEdit.current = { form, productEditor, writable, isAdmin };
+  const currentEdit = useRef({ form, writable, isAdmin });
+  currentEdit.current = { form, writable, isAdmin };
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -390,78 +365,14 @@ export function MaterialForm({
       alive.current = false;
     };
   }, []);
-  const applyProductResult = async (result: Product3dApplication, mode: 'add' | 'replace', name: string) => {
-    const direction = productViewName(name);
-    const target = productEditor;
-    const assertCurrent = () => {
-      const current = currentEdit.current;
-      if (!alive.current || !current.writable || (current.form.scope === 'shared' && !current.isAdmin))
-        throw new Error('현재 이 자재를 저장할 수 없어요. 편집 권한을 확인해 주세요.');
-      if (
-        !target ||
-        current.productEditor?.assetId !== target.assetId ||
-        current.productEditor.index !== target.index ||
-        current.form.views[target.index]?.assetId !== target.assetId
-      )
-        throw new Error('선택한 제품 사진이 바뀌었어요. 결과 창을 다시 열어 주세요.');
-    };
-    assertCurrent();
-    if (mode === 'add' && currentEdit.current.form.views.length >= MAX_PRODUCT_VIEWS)
-      throw new Error(
-        `자재 하나에 각도 사진은 방향마다 한 장, 최대 ${MAX_PRODUCT_VIEWS}장까지 저장할 수 있어요.`,
-      );
-    const replacement = await prepareProductReplacement(
-      result,
-      getRepositories().assets,
-      form.installation,
-      assertCurrent,
-    );
-    assertCurrent();
-    const current = currentEdit.current.form;
-    const next =
-      mode === 'add'
-        ? addProductPhoto(current, target!.index, target!.assetId, replacement, direction)
-        : renameProductPhoto(
-            replaceProductPhoto(current, target!.index, target!.assetId, replacement),
-            target!.index,
-            direction,
-          );
-    const index = mode === 'add' ? next.views.length - 1 : target!.index;
-    const view = next.views[index];
-    const editor = { index, assetId: view.assetId, direction: view.direction };
-    // Update both refs immediately so a following interaction sees the committed form draft.
-    currentEdit.current = { ...currentEdit.current, form: next, productEditor: editor };
-    setForm(next);
-    setProductEditor(editor);
-  };
-
-  const editAngle = (action: 'select' | 'rename' | 'delete', index: number, name = '') => {
+  const removeView = (index: number) => {
     const current = currentEdit.current;
-    if (
-      !alive.current ||
-      (action !== 'select' && (!current.writable || (current.form.scope === 'shared' && !current.isAdmin)))
-    )
+    if (!alive.current || !current.writable || (current.form.scope === 'shared' && !current.isAdmin))
       throw new Error('이 자재의 편집 권한이 없어요.');
     if (!current.form.views[index]) throw new Error('선택한 각도 사진을 찾을 수 없어요.');
-    let next = current.form;
-    let selectedIndex = current.productEditor?.index;
-    if (action === 'rename') next = renameProductPhoto(next, index, name);
-    if (action === 'delete') {
-      next = removeProductPhoto(next, index);
-      if (selectedIndex !== undefined) {
-        if (selectedIndex === index) selectedIndex = Math.min(index, next.views.length - 1);
-        else if (selectedIndex > index) selectedIndex--;
-      }
-    }
-    if (action === 'select') selectedIndex = index;
-    const selected = selectedIndex !== undefined ? next.views[selectedIndex] : undefined;
-    const editor =
-      selected && selectedIndex !== undefined
-        ? { index: selectedIndex, assetId: selected.assetId, direction: selected.direction }
-        : undefined;
-    currentEdit.current = { ...current, form: next, productEditor: editor };
+    const next = { ...current.form, views: current.form.views.filter((_, i) => i !== index) };
+    currentEdit.current = { ...current, form: next };
     setForm(next);
-    setProductEditor(editor);
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -592,6 +503,7 @@ export function MaterialForm({
                 assetId: view.assetId,
                 direction: productViewName(view.direction),
                 anchor: view.anchor,
+                // Read-only compatibility: an older 360° material keeps its stored reference (docs/product3d-removal.md).
                 ...(view.product3d ? { product3d: view.product3d } : {}),
               })),
       };
@@ -607,12 +519,6 @@ export function MaterialForm({
     }
   };
 
-  // A product's depth is what its 3D model's front-to-back proportion is fitted to (see product3d/fit.ts).
-  const sizeMissing = !validProductSize({
-    widthMm: form.widthMm,
-    depthMm: form.depthMm,
-    heightMm: form.heightMm,
-  });
   const uploadInput = (target: 'texture' | 'view', label: string) => (
     <label className={styles.uploadButton}>
       {label}
@@ -744,23 +650,9 @@ export function MaterialForm({
                   step=".1"
                   required
                   value={form.depthMm}
-                  aria-describedby={form.category !== 'tile' ? 'material-depth-hint' : undefined}
                   onChange={(event) => set('depthMm', Number(event.target.value))}
                 />
               </label>
-              {form.category !== 'tile' && (
-                <small
-                  id="material-depth-hint"
-                  className={sizeMissing ? styles.error : 'muted'}
-                  style={{ gridColumn: '1 / -1' }}
-                  role="status"
-                  data-testid="material-depth-hint"
-                >
-                  {sizeMissing
-                    ? '깊이를 꼭 입력해 주세요(10~5000mm). 9mm는 타일 기본값이라 입체 제품의 앞뒤 비율에 쓰지 않아요.'
-                    : '360° 입체 제품의 앞뒤 비율을 가로·깊이·높이에 맞춰 보여 줘요.'}
-                </small>
-              )}
             </div>
             <label className="field">
               설명
@@ -917,7 +809,7 @@ export function MaterialForm({
                   <div className={styles.note}>
                     2D 이미지 배치 · 이미지 평면 회전을 지원해요.
                     <br />
-                    360° 편집기에서 여러 각도 사진을 저장해 공간에서 골라 쓸 수 있어요.
+                    방향별 사진을 등록하면 공간에서 방향에 맞는 사진을 골라 써요.
                   </div>
                 </div>
                 <div
@@ -955,24 +847,13 @@ export function MaterialForm({
                       <button
                         type="button"
                         className="btn"
-                        disabled={busy || uploading || !!backgroundTest || !!productEditor}
+                        disabled={busy || uploading || !!backgroundTest}
                         aria-label={`${view.direction} 사진 AI 배경 제거 테스트`}
                         onClick={() =>
                           setBackgroundTest({ assetId: view.assetId, direction: view.direction, index })
                         }
                       >
                         AI 배경 제거 테스트
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={busy || uploading || !!backgroundTest || !!productEditor}
-                        aria-label={`${view.direction} 사진 ${view.product3d ? '360° 각도 편집' : 'AI 360° 입체화'}`}
-                        onClick={() =>
-                          setProductEditor({ assetId: view.assetId, direction: view.direction, index })
-                        }
-                      >
-                        {view.product3d ? '360° 각도 편집' : 'AI 360° 입체화'}
                       </button>
                       <div className={styles.toolbar}>
                         <button
@@ -984,7 +865,7 @@ export function MaterialForm({
                                 `‘${view.direction || '이 각도'}’ 사진을 삭제할까요? 다른 각도는 유지돼요.`,
                               )
                             )
-                              editAngle('delete', index);
+                              removeView(index);
                           }}
                         >
                           제외
@@ -1188,42 +1069,8 @@ export function MaterialForm({
         <BackgroundRemovalTest
           {...backgroundTest}
           onApply={applyBackgroundResult}
-          onCreateProduct3d={(result) => {
-            setProductEditor({
-              ...backgroundTest,
-              assetId: backgroundTest.targetAssetId ?? backgroundTest.assetId,
-              inputSourceAssetId: backgroundTest.assetId,
-              blob: result.blob,
-            });
-            setBackgroundTest(undefined);
-          }}
           canApply={writable && (form.scope !== 'shared' || isAdmin)}
           onClose={() => setBackgroundTest(undefined)}
-        />
-      )}
-      {productEditor && (
-        <Product3dEditor
-          {...productEditor}
-          product3d={productEditor.blob ? undefined : form.views[productEditor.index]?.product3d}
-          views={form.views}
-          selectedViewIndex={productEditor.index}
-          onSelectView={(index) => editAngle('select', index)}
-          onRenameView={(index, name) => editAngle('rename', index, name)}
-          onDeleteView={(index) => editAngle('delete', index)}
-          onApply={applyProductResult}
-          onRemoveBackground={(sourceId) => {
-            setBackgroundTest({
-              index: productEditor.index,
-              assetId: sourceId,
-              targetAssetId: productEditor.assetId,
-              direction: productEditor.direction,
-            });
-            setProductEditor(undefined);
-          }}
-          canApply={writable && (form.scope !== 'shared' || isAdmin)}
-          size={{ widthMm: form.widthMm, depthMm: form.depthMm, heightMm: form.heightMm }}
-          category={form.category}
-          onClose={() => setProductEditor(undefined)}
         />
       )}
       {preparing && (

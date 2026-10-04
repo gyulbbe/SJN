@@ -17,14 +17,12 @@ export function BackgroundRemovalTest({
   assetId,
   direction,
   onApply,
-  onCreateProduct3d,
   canApply = true,
   onClose,
 }: {
   assetId: string;
   direction: string;
   onApply: (result: BackgroundRemovalResult) => Promise<void>;
-  onCreateProduct3d?: (result: BackgroundRemovalResult) => void;
   canApply?: boolean;
   onClose: () => void;
 }) {
@@ -460,21 +458,7 @@ export function BackgroundRemovalTest({
             ? '투명 PNG를 제품 사진에 적용하고 있어요…'
             : '배경색은 미리보기에만 사용해요. 업로드하면 선택한 방향의 사진만 교체해요.'}
         </span>
-        <div className={styles.footerActions} style={onCreateProduct3d ? { flexWrap: 'wrap' } : undefined}>
-          {onCreateProduct3d && (
-            <button
-              type="button"
-              className="btn"
-              disabled={!result || busy || applying || !canApply}
-              onClick={() => {
-                if (!result || applyingRef.current) return;
-                clientRef.current?.dispose();
-                onCreateProduct3d(result);
-              }}
-            >
-              360° 입체화
-            </button>
-          )}
+        <div className={styles.footerActions}>
           <button type="button" className="btn" disabled={!result || busy || applying} onClick={download}>
             투명 PNG 다운로드
           </button>

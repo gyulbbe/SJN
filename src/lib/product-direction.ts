@@ -15,6 +15,14 @@ export const MAX_PRODUCT_VIEWS = PRODUCT_DIRECTIONS.length;
 export const isProductDirection = (value: unknown): value is ProductDirection =>
   typeof value === 'string' && (PRODUCT_DIRECTIONS as readonly string[]).includes(value);
 
+/** An angle name is one of the closed list, never typed. */
+export function productViewName(name: string) {
+  const value = name.trim();
+  if (!isProductDirection(value))
+    throw new Error(`각도 이름은 목록에서 골라 주세요(${PRODUCT_DIRECTIONS.join(' · ')}).`);
+  return value;
+}
+
 /** Names saved before the closed list, read as their nearest direction. */
 const LEGACY: Record<string, ProductDirection> = {
   front: '정면',

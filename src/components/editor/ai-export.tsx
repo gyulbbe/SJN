@@ -133,7 +133,7 @@ const chipClass = (checked: boolean) =>
 /** What the per-product export is and what one click of it costs, said before the click. */
 function refineNote(products: number) {
   if (!products)
-    return '실험: 다듬을 제품이 없어요(입체 제품이나 표준 모형이 아닌 제품과 유리·거울은 3D 렌더 그대로예요). 빈 방만 AI로 변환하고 제품은 3D 렌더를 올려요(실험 A와 같아요).';
+    return '실험: 다듬을 제품이 없어요(표준 모형이 아닌 제품과 유리·거울은 3D 렌더 그대로예요). 빈 방만 AI로 변환하고 제품은 3D 렌더를 올려요(실험 A와 같아요).';
   const estimate = refineEstimate(products);
   return `실험: 빈 방은 AI에 보내고, 제품은 하나씩 크게 잘라 따로 AI로 다듬은 뒤 같은 자리·크기에 올려요. 지금 배치에서 다듬을 제품은 ${products}개라 AI 요청이 ${estimate.calls}회(제품 ${products} + 빈 방 1) 나가고 최대 약 ${estimate.neurons}뉴런(추정)이 들어요. 지금 방식은 1회·약 110뉴런이에요. 처음 한 번은 제품 윤곽을 따는 모델(약 98MB)을 받아요. 모양이 달라진 제품은 3D 렌더로 두고 알려 드려요. 사진에 없는 옆·뒤 면은 AI의 추측이에요.`;
 }

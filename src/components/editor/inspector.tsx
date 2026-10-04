@@ -660,8 +660,8 @@ export default function Inspector({
                                 ) : (
                                   facing.fitName && (
                                     <p style={{ marginTop: 4 }}>
-                                      이 제품에는 ‘{facing.fitName}’ 각도 사진이 없어요. 자재 편집에서 360°
-                                      각도를 추가하면 바꿀 수 있어요.
+                                      이 제품에는 ‘{facing.fitName}’ 각도 사진이 없어요. 자재 편집에서 방향별
+                                      사진을 추가하면 바꿀 수 있어요.
                                     </p>
                                   )
                                 )}
