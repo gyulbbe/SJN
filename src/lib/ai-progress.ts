@@ -1,8 +1,6 @@
 import type { BackgroundRemovalProgress } from './background-removal/types';
-import type { Product3dProgress } from './product3d/types';
 import type { MogeProgress } from './reconstruction/moge-browser/protocol';
 import { BACKGROUND_MODEL_FILES } from './background-removal/model';
-import { PRODUCT3D_FILES } from './product3d/model';
 import { MOGE_ARTIFACT } from './reconstruction/moge-browser/artifact';
 
 /**
@@ -19,7 +17,7 @@ export type ModelLoadEvent = {
   total?: number;
   source?: 'network' | 'cache';
   message?: string;
-  /** Multi-part models (360° product): which file this event belongs to. */
+  /** Multi-part models: which file this event belongs to. */
   part?: string;
   /** Backend fallback restart: keep the current percentage and continue in the remaining span. */
   retry?: boolean;
@@ -167,7 +165,7 @@ export function createModelLoadTracker(spec: ModelLoadSpec, now: () => number = 
 export type ModelLoadTracker = ReturnType<typeof createModelLoadTracker>;
 
 // Step weights come from measured stage times (docs/ai-background-removal.md,
-// docs/product3d-validation.md, docs/reconstruction-cloud-browser-results-20260916.md): first
+// docs/reconstruction-cloud-browser-results-20260916.md): first
 // downloads dominate (27–42 s for 98 MB, ~31 s first MoGe run) while runtime import and session
 // creation take 2–5 s together.
 export const BACKGROUND_REMOVAL_LOAD: ModelLoadSpec = {
@@ -176,20 +174,6 @@ export const BACKGROUND_REMOVAL_LOAD: ModelLoadSpec = {
     { key: 'runtime', weight: 4 },
     { key: 'download', weight: 85, bytes: BACKGROUND_MODEL_FILES.fp16.bytes },
     { key: 'initialize', weight: 10 },
-  ],
-};
-const product3dBytes = Object.values(PRODUCT3D_FILES).reduce((sum, file) => sum + file.bytes, 0);
-export const PRODUCT3D_LOAD: ModelLoadSpec = {
-  steps: [
-    { key: 'checking', weight: 1 },
-    { key: 'runtime', weight: 3 },
-    ...(Object.keys(PRODUCT3D_FILES) as (keyof typeof PRODUCT3D_FILES)[]).flatMap((part) => {
-      const share = PRODUCT3D_FILES[part].bytes / product3dBytes;
-      return [
-        { key: `download:${part}`, weight: 90 * share, bytes: PRODUCT3D_FILES[part].bytes },
-        { key: `initialize:${part}`, weight: 6 * share },
-      ];
-    }),
   ],
 };
 export const MOGE_LOAD: ModelLoadSpec = {
@@ -229,35 +213,6 @@ export function backgroundRemovalLoadEvent(progress: BackgroundRemovalProgress):
       return { ...base, phase: 'initialize' };
     default:
       return { ...base, phase: 'ready' };
-  }
-}
-
-/** Only geometry/coloring end the loading: encoder and backbone load in between inference runs. */
-export function product3dLoadEvent(progress: Product3dProgress): ModelLoadEvent | undefined {
-  const base = { message: progress.message, retry: progress.retry, cacheNotice: progress.cacheNotice };
-  switch (progress.stage) {
-    case 'checking':
-      return { ...base, phase: 'checking' };
-    case 'loading-runtime':
-      return { ...base, phase: 'runtime' };
-    case 'download':
-      return {
-        ...base,
-        phase: 'download',
-        part: progress.part,
-        loaded: progress.loadedBytes,
-        total: progress.totalBytes,
-        source: progress.source ?? 'network',
-      };
-    case 'initializing':
-      return progress.part
-        ? { ...base, phase: 'initialize', part: progress.part }
-        : { ...base, phase: 'checking' };
-    case 'geometry':
-    case 'coloring':
-      return { ...base, phase: 'ready' };
-    default:
-      return undefined;
   }
 }
 

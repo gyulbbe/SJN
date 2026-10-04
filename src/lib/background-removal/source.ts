@@ -10,8 +10,9 @@ export async function resolveBackgroundRemovalInput(
   const selected = await assets.get(assetId);
   if (selected.kind === 'product-mesh') throw new Error('배경 제거에는 제품 사진이 필요해요.');
   if (selected.kind === 'original') return { asset: selected, sourceLabel: '업로드 원본' };
+  // Read-only compatibility: the flat capture of an older 360° material (docs/product3d-removal.md).
   if (selected.derivation === 'ai-product3d')
-    return { asset: selected, sourceLabel: '360° 편집으로 만든 제품 사진' };
+    return { asset: selected, sourceLabel: '옛 360° 편집으로 만든 제품 사진' };
   if (selected.derivation === 'ai-multiview')
     return { asset: selected, sourceLabel: 'AI로 생성한 방향 사진' };
   if (selected.derivation === 'ai-alpha')

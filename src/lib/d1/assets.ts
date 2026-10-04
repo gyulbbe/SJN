@@ -1,5 +1,4 @@
 import { assetMetadataSchema, identifierSchema } from '../storage/validation';
-import { decodeProductMesh, PRODUCT_MESH_MIME } from '../product3d/codec';
 import {
   assetAssertion,
   dataOwnerId,
@@ -77,15 +76,9 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
     if (source.kind === 'product-mesh') throw invalid('파생 자산의 원본은 이미지여야 해요.');
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
-  let format: { mime: string; width?: number; height?: number };
-  if (input.kind === 'product-mesh') {
-    try {
-      await decodeProductMesh(new Blob([bytes], { type: PRODUCT_MESH_MIME }));
-    } catch {
-      throw invalid('입체 데이터가 손상됐거나 지원하지 않는 형식이에요.');
-    }
-    format = { mime: PRODUCT_MESH_MIME };
-  } else format = validateD1Image(bytes);
+  // The 360° editor is gone: an older mesh asset is only read (docs/product3d-removal.md), never made.
+  if (input.kind === 'product-mesh') throw invalid('360° 입체 형상은 더 이상 저장하지 않아요.');
+  const format = validateD1Image(bytes);
   // Metadata is server-derived. A claimed MIME never chooses the decoder or response Content-Type.
   const contentHash = await hash(bytes);
   const metadata = { ...input, ...format, ownerId: dataOwnerId(ctx), size: bytes.length, createdAt: stamp() };

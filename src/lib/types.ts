@@ -1,6 +1,5 @@
 import type { RoomViewState } from './room-viewer/view-state';
 import type { WallFeatureV1 } from './wall-features';
-import type { Product3dReference } from './product3d/state-types';
 import type { MaterialUsageState } from './material-usage-types';
 import type { ReconstructionReview, ReconstructionStandardOptions } from './reconstruction/types';
 import type { RoomDefinition, RoomFace, RoomPlacement } from './room-types';
@@ -82,6 +81,35 @@ export type MaterialCategory =
   | 'wallCabinet'
   | 'lowPartition'
   | 'showerCurtain';
+/**
+ * Read-only compatibility: what a material saved with the removed 360° editor still carries (the
+ * stored shape is checked by product3dReferenceSchema). Nothing writes it any more and nothing
+ * opens the mesh it points at; the view's `assetId` is the flat capture shown instead
+ * (docs/product3d-removal.md).
+ */
+export interface Product3dReference {
+  version: 1;
+  meshAssetId: string;
+  inputAssetId: string;
+  pose: {
+    objectQuaternion: [number, number, number, number];
+    cameraQuaternion: [number, number, number, number];
+    zoom: number;
+  };
+  modelId: string;
+  modelRevision: string;
+  shading?: 'mixed' | 'lit' | 'baked';
+  fit?: { upright: [number, number, number, number]; front: number; mirror?: number; size: boolean };
+  photoCamera?: {
+    azimuth: number;
+    elevation: number;
+    distance: number;
+    focal: number;
+    shift: [number, number];
+    iou: number;
+  };
+  gloss?: 'none' | 'light' | 'normal';
+}
 export type MaterialVersion = {
   catalog?: import('./catalog/contract').CatalogSelection;
   composition?: string;
@@ -118,6 +146,7 @@ export type MaterialVersion = {
     assetId: string;
     direction: string;
     anchor: Point;
+    /** Read-only compatibility: an older 360° material (docs/product3d-removal.md). `assetId` is its flat capture. */
     product3d?: Product3dReference;
     directionWas?: string;
   }[];
