@@ -2,6 +2,26 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-05 — 4방향 고정 시점(90° 간격)과 시점마다 맞는 사진을 2D로 보여 주기
+
+- 문제: 제품이 방향별 평면 사진이 되어 자유롭게 도는 3D는 의미가 없었다. 위·옆에서 보면 사진 판이 선만 남았고, 옆 사진은 정면 폭으로 그려져 AI 변환이 거의 쓰지 못했으며(발자국이 다르다고 걸렀다), 오른쪽에서 본 그림에 "왼쪽 벽 쪽을 본다"고 쓰는 문구도 있었다.
+- 만든 것(규칙은 [방 크기](room-dimensions.md)의 **네 방향 시점**, [FLUX 변환](flux-export.md)의 돌리기·제품 방향)
+  - 시점 제한(`view-state.ts`의 `FOUR_DIRECTION_VIEWS`, `snapRoomView`, `snapFluxOrbit`): AI 입력 시점 선택기는 끌기·위에서/옆에서·↑↓를 없애고 왼쪽/오른쪽 90°·←→·정면으로만 남겼다. 공간 둘러보기는 위·아래 90° 버튼·방 안 시점을 숨기고 ↑↓ 키를 막았다. 저장된 시점이 네 방향이 아니면 열 때 가장 가까운 방향으로 연다(저장 데이터는 사람이 바꿀 때까지 그대로, 스키마 변경 없음). 코드는 지우지 않았고 상수 하나로 되돌린다. 사진 시점 보기(source-photo)와 편집기 가운데 3D 방 화면은 바꾸지 않았다.
+  - 사진 선택(`choosePhotoForView`, `room-viewer/view-photo.ts`): 공간 둘러보기와 AI 입력이 같은 함수를 쓴다. 고른 사진 이름 `base`에서 시점 방위 θ를 뺀 이름의 사진(16칸 표를 단위 테스트로 고정), 없으면 가장 가까운 등록 사진(같은 거리면 고른 사진, 좌우 뒤집기 없음), 위·아래는 쓰지 않는다. 대체되면 해당 화면의 공간 둘러보기 알림과 AI 변환 창에 알린다.
+  - 사진 판(`room-viewer/fixtures.ts`): 모든 판이 카메라를 보고(수직축 회전만), 크기는 정면·뒤=가로×높이, 왼쪽·오른쪽=깊이×높이(`photoPlaneSize`, 깊이가 없으면 가로로 그리고 알림). 접지·벽에 닿는 쪽·가운데 맞춤은 화면마다 다시 잡는다. `sameFootprint`·방위 25°·위아래 35° 규칙과 `exportAngles`의 효과는 없앴다(옵션은 호환용으로 남김).
+  - AI 문구(`describeFixture`의 방위 인자, `facingPhrase`): 제품 방향을 카메라 기준 "the camera / the right side of the picture / the left side of the picture / away from the camera"로 쓰고 벽 이름은 쓰지 않는다.
+- **확인**
+  - 단위: 전체 vitest 239개 파일·3,467개 통과(이전 3,433개). 새 `four-direction-views`(가장 가까운 방향·카메라 방위(위·아래 포함)·저장된 임의 시점 스냅·사진 시점은 그대로·90° 순서), `flux-photo-angle`을 다시 씀(16칸 표·대체 규칙·위아래 제외·불러올 수 있는 사진만·알림 문구), `room-viewer-fixtures`(카메라를 향한 회전·접지 유지·옆 사진 깊이 크기·대체 알림), `flux-scene`·`flux-prompt`(네 시점 × 네 방향 문구, 벽 이름 없음), `flux-view`. typecheck(`npm run typecheck`)·eslint 통과, 바꾼 파일 Prettier 통과. `next-env.d.ts`는 되돌렸다.
+  - e2e(기본 config, 모두 통과): flux-export 8개, room-viewer 7개(user01 실제 보정 보고서 테스트 1개는 `SJN_VIEWER_REAL_REPORT=1`일 때만 도는 건너뜀 테스트라 돌리지 않았다), 새 four-view-photos 1개(색이 다른 사진으로 오른쪽 사진을 고른 제품이 오른쪽 화면에서 정면 사진이 됨·없는 방향의 대체 알림을 AI 변환 창과 공간 둘러보기에서 확인), 그리고 editor·flux-refine·standard-model-switch·guest-workspace·material-images·room-fixtures 36개. 의도한 변경으로 깨진 기존 e2e는 새 규칙에 맞게 고쳤다: room-viewer의 위·아래 90°·방 안 시점 사용 부분(왼쪽/오른쪽으로, 방 안 시점 테스트는 "네 방향만" 테스트로 교체)과 flux-export의 끌기·위에서/옆에서·↑↓·터치 끌기 부분(끌어도 시점이 안 바뀜을 확인).
+  - 실제 화면(AI 호출 없음, `tests/product-representation/`의 `capture-views.mjs`·`sheet-four-views.mjs`): 이전 시험의 제품 4종 방(Q1, 사진 2장씩)과 방향별 사진 4장짜리 시험 변기 3개(정면·오른쪽·왼쪽을 골라 놓음, `make-sides.mjs`·`register-sided.mjs`)를 넣은 방(S1)을 네 방향으로 캡처했다. 시점마다 표의 사진이 보이고(오른쪽 사진의 변기는 오른쪽 화면에서 정면 사진, 뒤 화면에서는 왼쪽 사진), 옆 사진이 깊이(640mm)만큼 넓게 그려지며(정면 370mm보다 넓다), 바닥 제품이 네 화면 모두 바닥에 닿고 벽 세면대는 벽에 붙어 있다. 사진이 모자란 욕조·세면대는 대체 사진과 알림이 나온다. 이미지: `test-results/product-representation/report/11-four-views-Q1.png`, `12-four-views-S1.png`.
+  - **AI 변환(사용자 승인, FLUX 4·Gemma 4 상한, 모두 사용)**: S1을 지금 방식으로 정면·오른쪽에서 seed 2개씩 변환했다(`ai-run.mjs`, `AI_CAP_FLUX`·`AI_CAP_GEMMA`·`AI_LEDGER`로 상한 4/4, 장부 8줄). 방 윤곽·제품 위치·크기가 입력대로 유지됐고, 오른쪽 시점의 결과는 Gemma 확인이 모두 "배치한 제품 5개가 모두 보여요"였다. 정면 시점은 두 번 모두 "배치한 제품이 바뀌었을 수 있어요"(시험용 그림 변기가 AI에 의해 실제 변기 모양으로 다시 그려짐)로 나왔다. 이미지: `13-ai-four-view-S1.png`. 개발 서버에 AI 바인딩이 없어 처음 한 번은 앱이 503으로 막아 모델을 부르지 않았다(`ledger-fourview-refused-attempt.jsonl`에만 남김, 청구 없음). 이후 `wrangler.dev.jsonc`에 원격 AI 바인딩을 임시로 붙여 돌렸다가 되돌렸고 커밋하지 않았다. 프로젝트 만들기의 1MB 업로드 한도(413) 때문에 `next.config.ts`의 `serverActions.bodySizeLimit`도 임시로 올렸다가 되돌렸다(커밋하지 않음).
+- 알아 둘 점
+  - 2D 편집기는 고른 사진을 등록한 가로로 그대로 그린다(이번에 바꾸지 않았다). 옆 사진을 고른 제품은 2D와 3D에서 폭이 다를 수 있다.
+  - 면 이름(타일 면 문장, "on the back wall", 결과 확인의 벽 이름)은 방 기준 이름 그대로다. 정면 외 시점에서는 그림에서의 위치와 다를 수 있다.
+  - 편집기 가운데 3D 방 화면(`RoomCanvasWorkspace`)은 네 방향으로 제한하지 않았다(여기서 위에서 본 시점을 저장해도 공간 둘러보기는 가까운 방향으로 연다).
+  - 좌우 사진을 뒤집어 대신 쓰지 않으므로 사진이 한 장뿐인 제품은 어느 방향에서도 그 사진이다(방향마다 안내가 나온다).
+  - `tests/*-browser.ts`(실제 브라우저 실험 도구)의 `exportAngles` 비교 스크립트는 돌리지 않았다. 옵션이 호환용으로 남아 있어 컴파일은 되지만 비교 결과의 뜻은 달라졌다.
+
 ## 2026-10-05 — 직접 등록한 제품에 "표준 모형으로 보기" 켜고 끄기(선택형, B2)
 
 - 문제: 평면 사진 판은 위·옆에서 선만 남아 AI 변환 입력에서 제품이 사라지고 AI가 없던 물건을 그린다. 표준 모형은 모든 시점에서 입체였고 지금 방식 변환이 가장 안정적이었다([비교 결과](product-representation-results-20261004.md)). 그래서 제품마다 사용자가 켜고 끄게 했다(기본 꺼짐).
