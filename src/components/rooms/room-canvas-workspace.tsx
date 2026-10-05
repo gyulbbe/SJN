@@ -7,7 +7,13 @@ import type { AssetReader } from '@/lib/render/compositor';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
 import { RoomViewerRenderer } from '@/lib/room-viewer/renderer';
-import { normalizeRoomView, resetRoomView, rotateRoomView } from '@/lib/room-viewer/view-state';
+import {
+  FOUR_DIRECTION_VIEWS,
+  normalizeRoomView,
+  resetRoomView,
+  rotateRoomView,
+  snapRoomView,
+} from '@/lib/room-viewer/view-state';
 import { useEditingCapabilities } from '../editor/editing-capabilities';
 
 /** The same world renderer used for comparison/export, with installation-plane editing. */
@@ -29,7 +35,8 @@ export default function RoomCanvasWorkspace({
   const scene = st.draft ?? (st.project ? getEditingScene(st.project, st.editing) : undefined);
   const context = st.project ? projectDesignPreviewRoomContext(st.project) : undefined;
   const before = st.editing === 'before' ? scene : context?.beforeScene;
-  const view = normalizeRoomView(st.project?.roomView);
+  // Drawn from the front, right, back or left only; the saved view is left as it is until the person turns it.
+  const view = snapRoomView(st.project?.roomView);
   const lighting = st.project ? projectPhotoLight(st.project) : undefined;
   const stage = useRef<HTMLDivElement>(null),
     mount = useRef<HTMLDivElement>(null);
@@ -224,7 +231,7 @@ export default function RoomCanvasWorkspace({
     };
   }, []);
   function updateView(next: typeof view) {
-    const normalized = normalizeRoomView(next);
+    const normalized = snapRoomView(next);
     if (writable) st.setRoomView(normalized);
     else if (st.project) useEditor.setState({ project: { ...st.project, roomView: normalized } });
   }
@@ -372,7 +379,10 @@ export default function RoomCanvasWorkspace({
         )}
       </div>
       <div className="workspace-toolbar" style={{ flexWrap: 'wrap' }}>
-        {(['left', 'right', 'up', 'down'] as const).map((direction, index) => (
+        {(FOUR_DIRECTION_VIEWS
+          ? (['left', 'right'] as const)
+          : (['left', 'right', 'up', 'down'] as const)
+        ).map((direction, index) => (
           <button
             className="btn small"
             key={direction}
