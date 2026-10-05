@@ -213,3 +213,18 @@ describe('the AI input picks one of the four sides', () => {
     expect(camera(orbit(88, 10))).toEqual(camera(orbit(90)));
   });
 });
+
+describe('the editor centre view follows the limit and keeps the stored view', () => {
+  it('shows a stored top-down or slanted view as the nearest side, and leaves the stored value alone', () => {
+    for (const q of [tilt(-90), tilt(90), turn(30).multiply(tilt(-20)), turn(120)]) {
+      const stored = viewOf(q);
+      const before = structuredClone(stored);
+      const shown = snapRoomView(stored);
+      expect(stored).toEqual(before);
+      expect(snapQuarter(cameraQuarterAzimuth(new Quaternion(...shown.quaternion)))).toBe(
+        snapQuarter(cameraQuarterAzimuth(q)),
+      );
+      expect(snapRoomView(shown)).toEqual(shown);
+    }
+  });
+});
