@@ -1,18 +1,24 @@
 // Builds the R1 study room through the editor UI: the default room (2400 x 2400 x 2400 mm), grey wall
 // tiles, light floor tiles, and the four flat-photo products at explicit places.
 // Usage: node tests/product-representation/build-project.mjs [name]
+import { readFileSync } from 'node:fs';
 import { session, BASE, ROOT, d1 } from './lib.mjs';
 const label = process.argv[2] ?? 'R1';
 // --model: switch every product to its standard model right after placing it ("표준 모형으로 보기").
 const model = process.argv.includes('--model');
 // --roundtrip: switch each product on and then off again (the photo must come back exactly).
 const roundtrip = process.argv.includes('--roundtrip');
-const items = [
-  { name: '평면 사각 욕조', face: '바닥', u: 50, v: 20 },
-  { name: '평면 곰 변기', face: '바닥', u: 28, v: 66 },
-  { name: '평면 스마트 변기', face: '바닥', u: 72, v: 66 },
-  { name: '평면 벽걸이 세면대', face: '왼쪽 벽', u: 50, v: 55 },
-];
+// --items file.json: another set of products [{ name, face, u, v, angle? }] (angle: the photo to use, e.g. '오른쪽').
+const itemsFile = process.argv.indexOf('--items');
+const items =
+  itemsFile > 0
+    ? JSON.parse(readFileSync(process.argv[itemsFile + 1], 'utf8'))
+    : [
+        { name: '평면 사각 욕조', face: '바닥', u: 50, v: 20 },
+        { name: '평면 곰 변기', face: '바닥', u: 28, v: 66 },
+        { name: '평면 스마트 변기', face: '바닥', u: 72, v: 66 },
+        { name: '평면 벽걸이 세면대', face: '왼쪽 벽', u: 50, v: 55 },
+      ];
 const s = await session();
 const { page } = s;
 const shot = (n) => page.screenshot({ path: `${ROOT}/shots/${label}-${n}.png` });
@@ -40,6 +46,10 @@ try {
     await page.waitForTimeout(3000);
     if (it.face !== '바닥') {
       await page.getByLabel('제품 설치 면', { exact: true }).selectOption({ label: it.face });
+      await page.waitForTimeout(1500);
+    }
+    if (it.angle) {
+      await page.getByLabel(`${it.angle} 각도 선택`, { exact: true }).click();
       await page.waitForTimeout(1500);
     }
     for (const [labs, val] of [

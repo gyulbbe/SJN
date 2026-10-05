@@ -1,16 +1,20 @@
 // One AI conversion from the export dialog for one project / method / view, with a fixed seed. Real,
 // billed Workers AI calls: every /api/export/photoreal* request is counted in a ledger and refused
-// beyond the approved caps (FLUX 20, Gemma 10). Saves the dialog's images and text, and every request
+// beyond the approved caps (default FLUX 20, Gemma 10; AI_CAP_FLUX / AI_CAP_GEMMA / AI_LEDGER per task). Saves the dialog's images and text, and every request
 // image and answer of the run, under test-results/product-representation/ai/<label>/.
-// Usage: node tests/product-representation/ai-run.mjs <label> <project id> <지금 방식|실험 C · 제품별 다듬기> <정면|위에서|오른쪽> [seed]
+// Usage: node tests/product-representation/ai-run.mjs <label> <project id> <지금 방식|실험 C · 제품별 다듬기> <정면|오른쪽|뒤|왼쪽> [seed]
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { session, BASE, ROOT } from './lib.mjs';
 const [label, id, method = '지금 방식', view = '정면', seedArg = '424242'] = process.argv.slice(2);
 const SEED = Number(seedArg);
-const CAP = { flux: 20, gemma: 10 };
+// The approved caps and their ledger can be set per task (AI_CAP_FLUX, AI_CAP_GEMMA, AI_LEDGER).
+const CAP = {
+  flux: Number(process.env.AI_CAP_FLUX ?? 20),
+  gemma: Number(process.env.AI_CAP_GEMMA ?? 10),
+};
 const out = `${ROOT}/ai/${label}`;
 mkdirSync(out, { recursive: true });
-const ledgerFile = `${ROOT}/ai/ledger.jsonl`;
+const ledgerFile = process.env.AI_LEDGER ?? `${ROOT}/ai/ledger.jsonl`;
 const ledger = () =>
   existsSync(ledgerFile)
     ? readFileSync(ledgerFile, 'utf8')
@@ -27,7 +31,12 @@ const count = () => {
 };
 const kindOf = (url) => (/\/photoreal\/check/.test(url) ? 'gemma' : 'flux');
 const tag = `${method.replace(/[^가-힣A-Za-z0-9]+/g, '_')}-${view}`;
-const TURNS = { 정면: [], 오른쪽: ['오른쪽으로 90° 돌리기'], 위에서: ['위에서 보기'] };
+const TURNS = {
+  정면: [],
+  오른쪽: ['오른쪽으로 90° 돌리기'],
+  뒤: ['오른쪽으로 90° 돌리기', '오른쪽으로 90° 돌리기'],
+  왼쪽: ['왼쪽으로 90° 돌리기'],
+};
 const t0 = Date.now();
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a);
 const before = count();

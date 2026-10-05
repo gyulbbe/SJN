@@ -1,16 +1,16 @@
-// The AI input picture of a project from each view (front, right side, top), straight from the export
-// dialog's "AI 입력 시점" preview (the same render, camera and photo choice the conversion sends). No AI call.
+// The AI input picture of a project from each of the four views (정면, 오른쪽, 뒤, 왼쪽), straight from the
+// export dialog's "AI 입력 시점" preview (the same render, camera and photo choice the conversion sends). No AI
+// call. Also writes the stand-in notes the dialog shows ("뒤 화면: … 사진이 없어 … 사진을 썼어요").
 // Usage: node tests/product-representation/capture-views.mjs <label> <project id> [view ...]
-import { mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { session, BASE, ROOT } from './lib.mjs';
 const [label, id, ...rest] = process.argv.slice(2);
-const views = rest.length ? rest : ['정면', '오른쪽', '위에서'];
+const views = rest.length ? rest : ['정면', '오른쪽', '뒤', '왼쪽'];
 const TURNS = {
   정면: [],
   오른쪽: ['오른쪽으로 90° 돌리기'],
+  뒤: ['오른쪽으로 90° 돌리기', '오른쪽으로 90° 돌리기'],
   왼쪽: ['왼쪽으로 90° 돌리기'],
-  위에서: ['위에서 보기'],
-  '오른쪽 위': ['오른쪽으로 90° 돌리기', '위에서 보기'],
 };
 mkdirSync(`${ROOT}/views`, { recursive: true });
 const s = await session();
@@ -37,7 +37,12 @@ try {
       .locator('canvas')
       .first()
       .screenshot({ path: `${ROOT}/views/${label}-${view}.png` });
-    console.log(label, view, 'readout:', readout);
+    const notes = await dialog
+      .getByTestId('flux-view-notes')
+      .innerText()
+      .catch(() => '');
+    console.log(label, view, 'readout:', readout, '| notes:', notes.replace(/\n/g, ' / '));
+    appendFileSync(`${ROOT}/views/${label}-notes.txt`, `${view}: ${notes.replace(/\n/g, ' / ')}\n`);
   }
 } finally {
   await s.close();
