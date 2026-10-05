@@ -208,7 +208,8 @@ const FLOOR_SNAP_SHARE = 0.05;
  * meets a wall touches the wall's inner face (nothing inside the wall, nothing floating off it), a
  * product on a side wall stands centred on its place along the wall, one on the floor centred on
  * its place and on the floor. Its height on a wall and its place across the back wall are the
- * anchor's, as in the 2D editor. `gap` keeps a flat photo a hair off the back wall. Returns whether
+ * anchor's, as in the 2D editor. `gap` keeps a flat photo a hair off its wall: a photo that turns to
+ * face a side wall would otherwise lie exactly on it, and a click would pick the wall, not the product. Returns whether
  * it then reaches beyond the room.
  */
 function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: number): boolean {
@@ -216,8 +217,8 @@ function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: 
   if (box.isEmpty()) return false;
   const wall = room.widthMm / 2;
   const move = new Vector3();
-  if (face === 'left') move.x = -wall - box.min.x;
-  else if (face === 'right') move.x = wall - box.max.x;
+  if (face === 'left') move.x = -wall + gap - box.min.x;
+  else if (face === 'right') move.x = wall - gap - box.max.x;
   else if (face === 'back') move.z = gap - box.min.z;
   if (face === 'left' || face === 'right' || face === 'floor')
     move.z = product.position.z - (box.min.z + box.max.z) / 2;
@@ -453,7 +454,10 @@ export async function buildViewerFixtures(
         // along the wall changes); the first stand is the front's, as in 2D.
         const target = product,
           base = product.position.clone(),
-          gap = p.face === 'back' ? 1 : 0;
+          back = p.face === 'back' ? 1 : 0;
+        // A photo turned to face a side wall lies on it: keep it a hair off (see seatProduct).
+        const gapAt = (quarter: number) =>
+          back || ((p.face === 'left' || p.face === 'right') && Math.abs(quarter) === 90) ? 1 : 0;
         const stands = new Map<string, Vector3>();
         const standAt = (index: number, quarter: number) => {
           for (const [i, plane] of planes) {
@@ -465,7 +469,7 @@ export async function buildViewerFixtures(
           let beyond = false;
           if (!place) {
             target.position.copy(base);
-            beyond = seatProduct(target, room, p.face, gap);
+            beyond = seatProduct(target, room, p.face, gapAt(quarter));
             place = target.position.clone();
             stands.set(key, place);
           } else target.position.copy(place);

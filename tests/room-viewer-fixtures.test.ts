@@ -598,6 +598,21 @@ describe('angle names decide the way a product stands on its face', () => {
     floor.dispose();
   });
 
+  it('a photo turned to face a side wall stays a hair off it, so a click picks the product, not the wall', async () => {
+    // The camera sits in the room on the other side: the left wall is seen from the right (90), the right wall from the left (−90).
+    for (const [face, camera, inner] of [
+      ['left', 90, -half + 1],
+      ['right', -90, half - 1],
+    ] as const) {
+      const result = await photoBuild(placed(face), '정면');
+      result.updateView(cameraOn(camera));
+      const b = bounds(result.group);
+      expect(b.min.x).toBeCloseTo(inner, 6);
+      expect(b.max.x).toBeCloseTo(inner, 6);
+      result.dispose();
+    }
+  });
+
   it('name × wall: a flat photo has its edge on the wall for every name, never inside it, never off it', async () => {
     for (const name of ['정면', '오른쪽', '왼쪽', '뒤'] as const) {
       // What it shows across: the side photos show the depth (200), the front and back the width.
