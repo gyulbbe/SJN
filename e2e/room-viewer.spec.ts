@@ -250,7 +250,8 @@ test('공간 둘러보기 실제 90도 회전·동기 비교·현재 각도 출�
   expect(await viewState(page)).toEqual(previewState);
 
   const latencies: number[] = [];
-  for (let i = 0; i < 50; i++) latencies.push(await action(page, labels[i % 2 ? 'up' : 'right']));
+  // Right, right, left, ... (the four sides only): ends on a side other than the front.
+  for (let i = 0; i < 50; i++) latencies.push(await action(page, labels[i % 3 === 2 ? 'left' : 'right']));
   const finalView = await viewState(page);
   const saved = await waitSavedView(page, finalView);
   expect(saved.editRevision).toBe(source.editRevision);
@@ -778,14 +779,35 @@ test('네 방향만: 위·아래·방 안 시점이 없고, 끌어도 돌지 않
 }, info) => {
   const requests = observeRequests(page);
   await start(page);
-  // The editor's own room stage can still look from above; save such a view, then open the viewer.
-  await page.getByRole('button', { name: '위로 90°', exact: true }).click();
-  await expect.poll(async () => (await storedProject(page)).roomView?.quaternion).not.toEqual([0, 0, 0, 1]);
+  // A view saved by the earlier version could look from above or between two sides: store one that
+  // does (from above, then a quarter to the right), then open the viewer.
+  const stored = await storedProject(page);
+  const free = rotateRoomView(rotateRoomView(defaultRoomView(), 'up'), 'right');
+  await page.evaluate(
+    async ({ document, roomView }) => {
+      const response = await fetch('/api/d1/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'save',
+          document: { ...document, roomView },
+          expectedStorageRevision: document.storageRevision,
+        }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+    },
+    { document: stored, roomView: free },
+  );
+  await page.reload();
+  await ready(page);
+  await expect.poll(async () => (await storedProject(page)).roomView).toEqual(free);
   const saved = (await storedProject(page)).roomView!;
   await opened(page);
-  // It opens on the front, level: the side the picture's bottom named (data not rewritten yet).
-  expect(await viewState(page)).toEqual(defaultRoomView());
-  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('정면');
+  // It opens on the nearest side, level (here the right: the heading of that tilted view), and the
+  // stored view is not rewritten yet.
+  const opening = rotateRoomView(defaultRoomView(), 'right');
+  expect(await viewState(page)).toEqual(opening);
+  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('오른쪽');
   expect((await storedProject(page)).roomView).toEqual(saved);
   // Left and right only; no up, down or in-room view.
   for (const name of [
@@ -802,7 +824,7 @@ test('네 방향만: 위·아래·방 안 시점이 없고, 끌어도 돌지 않
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(300);
-  expect(await viewState(page)).toEqual(defaultRoomView());
+  expect(await viewState(page)).toEqual(opening);
   const seen: string[] = [];
   for (let i = 0; i < 4; i++) {
     const frame = Number(await viewport(page).getAttribute('data-frame'));
@@ -812,7 +834,7 @@ test('네 방향만: 위·아래·방 안 시점이 없고, 끌어도 돌지 않
       .toBeGreaterThan(frame);
     seen.push((await viewer(page).getByTestId('room-view-direction').textContent()) ?? '');
   }
-  expect(seen).toEqual(['오른쪽', '뒤쪽', '왼쪽', '정면']);
+  expect(seen).toEqual(['뒤쪽', '왼쪽', '정면', '오른쪽']);
   // Dragging moves the picture; it never turns it (the turn stays the same, only the pan changes).
   const turned = await viewState(page);
   const box = (await viewport(page).boundingBox())!;
@@ -833,7 +855,8 @@ test('네 방향만: 위·아래·방 안 시점이 없고, 끌어도 돌지 않
   await ready(page);
   await opened(page);
   expect(await viewState(page)).toEqual(left);
-  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('왼쪽');
+  // A quarter to the left of the right is the front.
+  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('정면');
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await viewer(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('four-direction-390.png') });
