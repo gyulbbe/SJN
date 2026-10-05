@@ -1,7 +1,13 @@
 import type { RoomDimensions } from '../room-types';
 import { validateRoomDimensions } from '../room-geometry';
 import type { Scene } from '../types';
-import { defaultRoomView, type RoomOrbit, type RoomViewState } from '../room-viewer/view-state';
+import {
+  defaultRoomView,
+  FOUR_DIRECTION_VIEWS,
+  snapQuarter,
+  type RoomOrbit,
+  type RoomViewState,
+} from '../room-viewer/view-state';
 
 /**
  * Where the AI conversion looks from: a camera outside the room circling its centre (the room
@@ -49,19 +55,30 @@ export function clampFluxOrbit(orbit: RoomOrbit): RoomOrbit {
 }
 
 /**
+ * The AI input looks from one of the four sides only (see FOUR_DIRECTION_VIEWS): the nearest of the
+ * front, right, back and left, level. Anything else (above, between two sides) becomes it.
+ */
+export function snapFluxOrbit(orbit: RoomOrbit): RoomOrbit {
+  const current = clampFluxOrbit(orbit);
+  if (!FOUR_DIRECTION_VIEWS) return current;
+  return { azimuth: snapQuarter(current.azimuth), elevation: 0 };
+}
+
+/**
  * The buttons and arrow keys: left and right go to the next quarter that way (0 → 90 → 180 → 270;
  * from an in-between angle, to the nearest quarter past it), "top" straight down and "side" level
- * (keeping the heading), "front" back to the start.
+ * (keeping the heading), "front" back to the start. With the four-side limit on, "top" and "side"
+ * have nothing to do (the screens leave their buttons out) and every result is one of the four.
  */
 export function turnFluxOrbit(orbit: RoomOrbit, turn: FluxTurn): RoomOrbit {
   const current = clampFluxOrbit(orbit);
   if (turn === 'front') return { ...FLUX_FRONT };
-  if (turn === 'top') return { azimuth: current.azimuth, elevation: 90 };
-  if (turn === 'side') return { azimuth: current.azimuth, elevation: 0 };
+  if (turn === 'top') return snapFluxOrbit({ azimuth: current.azimuth, elevation: 90 });
+  if (turn === 'side') return snapFluxOrbit({ azimuth: current.azimuth, elevation: 0 });
   const quarter = current.azimuth / FLUX_TURN;
   // A hair's tolerance, so 89.999° is treated as the quarter it shows as.
   const next = turn === 'right' ? Math.floor(quarter + 1e-6) + 1 : Math.ceil(quarter - 1e-6) - 1;
-  return clampFluxOrbit({ azimuth: next * FLUX_TURN, elevation: current.elevation });
+  return snapFluxOrbit({ azimuth: next * FLUX_TURN, elevation: current.elevation });
 }
 
 /** The camera for a direction: the room viewer's AI orbit, fitted tightly around the room. */

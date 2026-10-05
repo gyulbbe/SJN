@@ -23,13 +23,14 @@ import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-con
 import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
 import {
   clampRoomEye,
+  FOUR_DIRECTION_VIEWS,
   moveRoomEye,
   resetRoomView,
   roomEyeView,
   ROOM_EYE_DEFAULT_SHIFT,
   ROOM_EYE_FOV,
+  snapRoomView,
   sourceRoomViewAvailable,
-  normalizeRoomView,
   rotateRoomView,
   roomViewLabel,
   roomViewViewport,
@@ -53,12 +54,20 @@ type Props = {
   onDesign: (id: string) => void;
   onClose: () => void;
 };
-const directionButtons = [
+/**
+ * The viewer looks from the front, right, back or left only (FOUR_DIRECTION_VIEWS): there are no
+ * up and down turns and no in-room eye, only left and right, 90° at a time. Turn the limit off in
+ * view-state.ts to get the old controls back.
+ */
+const allDirectionButtons = [
   ['left', '왼쪽 90°', ArrowLeft],
   ['right', '오른쪽 90°', ArrowRight],
   ['up', '위로 90°', ArrowUp],
   ['down', '아래로 90°', ArrowDown],
 ] as const;
+const directionButtons = allDirectionButtons.filter(
+  ([direction]) => !FOUR_DIRECTION_VIEWS || direction === 'left' || direction === 'right',
+);
 /** Inside the room the same buttons turn the head a little and shift the frame (verticals stay upright). */
 const eyeDirectionLabels = {
   left: '왼쪽 15°',
@@ -101,7 +110,9 @@ export default function RoomViewer({
   const host = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const [renderer, setRenderer] = useState<RoomViewerRenderer | null>(null);
-  const [view, setView] = useState(() => normalizeRoomView(project.roomView));
+  // A saved view that is not one of the four sides opens on the nearest one; the stored view is only
+  // replaced when the person then changes it.
+  const [view, setView] = useState(() => snapRoomView(project.roomView));
   const [requestedMode, setMode] = useState<Mode>(() => (guest ? 'after' : 'split'));
   const mode: Mode = guest ? 'after' : requestedMode;
   const [split, setSplit] = useState(0.5);
@@ -151,7 +162,7 @@ export default function RoomViewer({
   }, [box.width, box.height, displayAspect]);
   const update = useCallback(
     (next: RoomViewState) => {
-      const normalized = normalizeRoomView(next);
+      const normalized = snapRoomView(next);
       viewRef.current = normalized;
       setView(normalized);
       if (writable) onView(normalized);
@@ -162,7 +173,7 @@ export default function RoomViewer({
   useEffect(() => {
     // Shared workspace restore/adoption can change the camera while this dialog stays open.
     const id = requestAnimationFrame(() => {
-      const incoming = normalizeRoomView(JSON.parse(externalView));
+      const incoming = snapRoomView(JSON.parse(externalView));
       if (JSON.stringify(incoming) !== JSON.stringify(viewRef.current)) {
         viewRef.current = incoming;
         setView(incoming);
@@ -406,7 +417,7 @@ export default function RoomViewer({
               );
             })}
           </div>
-          {after.room && (
+          {after.room && !FOUR_DIRECTION_VIEWS && (
             <div className={styles.eye} role="group" aria-label="방 안 시점">
               {eyePresets.map(([preset, label]) => (
                 <button
@@ -554,7 +565,11 @@ export default function RoomViewer({
           ref={viewport}
           className={styles.viewport}
           role="group"
-          aria-label="공간 보기 · 방향키로 90도 회전, 드래그로 이동"
+          aria-label={
+            FOUR_DIRECTION_VIEWS
+              ? '공간 보기 · 방향키 ← →로 90도 회전, 드래그로 이동'
+              : '공간 보기 · 방향키로 90도 회전, 드래그로 이동'
+          }
           tabIndex={0}
           data-testid="room-view-viewport"
           data-view={JSON.stringify(view)}
@@ -563,7 +578,9 @@ export default function RoomViewer({
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget) return;
             const direction = (
-              { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' } as const
+              FOUR_DIRECTION_VIEWS
+                ? ({ ArrowLeft: 'left', ArrowRight: 'right' } as const)
+                : ({ ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' } as const)
             )[event.key as 'ArrowLeft'];
             if (direction) {
               event.preventDefault();

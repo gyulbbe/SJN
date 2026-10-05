@@ -553,11 +553,11 @@ test('the AI input is the outside view turned in the live 3D preview, its white 
   await page.getByRole('button', { name: '위생도기', exact: true }).click();
   await page.locator('button.material-tile').filter({ hasText: '확인할 세면대' }).click();
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
-  // An in-room view saved in the space viewer is not used: the AI view starts in front of the room.
+  // A view saved in the space viewer is not used: the AI view starts in front of the room.
   await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
   await page
-    .getByRole('group', { name: '방 안 시점', exact: true })
-    .getByRole('button', { name: '방 안 · 왼쪽 모서리', exact: true })
+    .getByRole('dialog', { name: '공간 둘러보기', exact: true })
+    .getByRole('button', { name: '왼쪽 90°', exact: true })
     .click();
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
   await page.getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
@@ -571,20 +571,16 @@ test('the AI input is the outside view turned in the live 3D preview, its white 
     elevation: Number(await preview.getAttribute('data-elevation')),
   });
   const button = (name: string) => picker.getByRole('button', { name, exact: true });
-  // Neither the in-room direction controls nor the fixed view chips are left; the saved in-room
-  // view is not used: the preview starts in front of the room.
+  // Neither the in-room direction controls nor the fixed view chips are left; the saved view is
+  // not used: the preview starts in front of the room.
   await expect(dialog.getByRole('button', { name: /5° 돌리기/ })).toHaveCount(0);
   await expect(dialog.getByRole('radio', { name: /방 안 ·|저장한 방 안 시점/ })).toHaveCount(0);
   await expect(preview.locator('canvas')).toHaveCount(1, { timeout: 30000 });
   await expect(readout).toHaveText('정면');
-  for (const name of [
-    '왼쪽으로 90° 돌리기',
-    '오른쪽으로 90° 돌리기',
-    '위에서 보기',
-    '옆에서 보기',
-    '정면으로',
-  ])
+  // Four sides only, 90° at a time: no view from above, no level-again button, no free drag.
+  for (const name of ['왼쪽으로 90° 돌리기', '오른쪽으로 90° 돌리기', '정면으로'])
     await expect(button(name)).toBeVisible();
+  for (const name of ['위에서 보기', '옆에서 보기']) await expect(button(name)).toHaveCount(0);
 
   // Buttons turn a quarter at a time around the room, and the view is named.
   const names: string[] = [];
@@ -595,26 +591,21 @@ test('the AI input is the outside view turned in the live 3D preview, its white 
   expect(names).toEqual(['오른쪽', '뒤', '왼쪽', '정면']);
   await button('왼쪽으로 90° 돌리기').click();
   expect(await orbit()).toEqual({ azimuth: -90, elevation: 0 });
-  await button('위에서 보기').click();
-  await expect(readout).toHaveText('위에서 · 왼쪽');
-  await button('옆에서 보기').click();
   await expect(readout).toHaveText('왼쪽');
   await button('정면으로').click();
-  await button('위에서 보기').click();
-  await expect(readout).toHaveText('위에서');
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: testInfo.outputPath('flux-view-top.png') });
-  await button('정면으로').click();
-  // Arrow keys do the same.
+  await expect(readout).toHaveText('정면');
+  // Arrow keys do the same; up and down do nothing.
   await preview.focus();
   await page.keyboard.press('ArrowRight');
   await expect(readout).toHaveText('오른쪽');
   await page.keyboard.press('ArrowUp');
-  await expect(readout).toHaveText('위에서 · 오른쪽');
   await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(200);
+  await expect(readout).toHaveText('오른쪽');
+  expect(await orbit()).toEqual({ azimuth: 90, elevation: 0 });
   await page.keyboard.press('ArrowLeft');
   await expect(readout).toHaveText('정면');
-  // Dragging reaches the angles in between: a quarter of the width is 45° around, a sixth 30° up.
+  // Dragging the picture changes neither the heading nor the height.
   const box = (await preview.boundingBox())!;
   const dragBy = async (dx: number, dy: number) => {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -623,13 +614,11 @@ test('the AI input is the outside view turned in the live 3D preview, its white 
     await page.mouse.up();
   };
   await dragBy(-box.width / 4, box.width / 6);
-  await expect(readout).toHaveText(/^오른쪽 4[4-6]° · 위 (29|30|31)°$/);
-  // Never from below the floor: dragging far up stops level.
-  await dragBy(0, -box.height / 2 + 4);
-  expect((await orbit()).elevation).toBe(0);
-  await expect(readout).toHaveText(/^오른쪽 4[4-6]°$/);
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: testInfo.outputPath('flux-view-between.png') });
+  await dragBy(box.width / 3, -box.height / 3);
+  await page.waitForTimeout(200);
+  expect(await orbit()).toEqual({ azimuth: 0, elevation: 0 });
+  await expect(readout).toHaveText('정면');
+  await page.screenshot({ path: testInfo.outputPath('flux-view-front.png') });
 
   // The chosen view is exactly what the AI receives.
   await button('정면으로').click();
@@ -725,19 +714,16 @@ test('the AI input is the outside view turned in the live 3D preview, its white 
   await expect(source).toBeVisible();
   await button('오른쪽으로 90° 돌리기').click();
   await expect(turned).toHaveCount(0);
-  await button('위에서 보기').click();
+  await button('왼쪽으로 90° 돌리기').click();
   await expect(turned).toBeVisible();
   await warning.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('flux-extras-warning.png') });
   // A narrow screen keeps the preview, its controls and every notice inside the dialog, and a
-  // touch drag on the preview turns the view without scrolling the dialog.
-  await button('옆에서 보기').click();
+  // touch drag on the preview does not turn the view.
   await page.setViewportSize({ width: 390, height: 844 });
   await preview.scrollIntoViewIfNeeded();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
-  const card = dialog.locator('.modal-card');
-  const scrolled = await card.evaluate((el) => el.scrollTop);
   const before = await orbit();
   const touch = (await preview.boundingBox())!;
   const cdp = await page.context().newCDPSession(page);
@@ -749,10 +735,7 @@ test('the AI input is the outside view turned in the live 3D preview, its white 
   for (let i = 1; i <= 6; i++)
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at(-6 * i, 6 * i) });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  const after = await orbit();
-  expect(after.azimuth).toBeGreaterThan(before.azimuth);
-  expect(after.elevation).toBeGreaterThan(before.elevation);
-  expect(await card.evaluate((el) => el.scrollTop)).toBe(scrolled);
+  expect(await orbit()).toEqual(before);
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await page.screenshot({ path: testInfo.outputPath('flux-view-390.png') });
   await warning.scrollIntoViewIfNeeded();

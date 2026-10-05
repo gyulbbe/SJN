@@ -167,7 +167,11 @@ test('공간 둘러보기 실제 90도 회전·동기 비교·현재 각도 출�
   const initialPreparationMs = await opened(page);
   await action(page, 'After');
   const initial = await image(page, info, 'front-after.png');
-  for (const direction of ['left', 'right', 'up', 'down'] as const) {
+  // Only the four sides: left and right, 90° at a time (there is no up or down).
+  for (const name of [labels.up, labels.down, '방 안 · 가운데', '방 안 · 왼쪽 모서리'])
+    await expect(viewer(page).getByRole('button', { name, exact: true })).toHaveCount(0);
+  await expect(viewer(page).getByRole('group', { name: '방 안 시점', exact: true })).toHaveCount(0);
+  for (const direction of ['left', 'right'] as const) {
     let expected = defaultRoomView();
     for (let i = 0; i < 4; i++) {
       await action(page, labels[direction]);
@@ -180,7 +184,7 @@ test('공간 둘러보기 실제 90도 회전·동기 비교·현재 각도 출�
     await action(page, labels[opposite[direction]]);
     expect(await viewState(page)).toEqual(defaultRoomView());
   }
-  const sequence: RoomViewDirection[] = ['up', 'left', 'down', 'right'];
+  const sequence: RoomViewDirection[] = ['left', 'left', 'right'];
   for (const direction of sequence) await action(page, labels[direction]);
   for (const direction of [...sequence].reverse()) await action(page, labels[opposite[direction]]);
   expect(await viewState(page)).toEqual(defaultRoomView());
@@ -308,7 +312,7 @@ test('빈 공간 Before After 정렬과 키보드 포커스·390px 터치·회�
   const before = await image(page);
   await action(page, 'After');
   expect(await pixelDifference(before, await image(page))).toBeLessThan(0.1);
-  await action(page, '위로 90°');
+  await action(page, '왼쪽 90°');
   await action(page, 'Before');
   const top = await image(page);
   await action(page, 'After');
@@ -330,7 +334,7 @@ test('빈 공간 Before After 정렬과 키보드 포커스·390px 터치·회�
   await opened(second);
   await expect(viewer(second)).not.toContainText('읽기 전용 · 시점은 이 창에서만 유지돼요.');
   const stored = await storedProject(second);
-  await action(second, '아래로 90°');
+  await action(second, '왼쪽 90°');
   expect(await viewState(second)).not.toEqual(stored.roomView);
   await second.setViewportSize({ width: 390, height: 844 });
   await expect(viewer(second)).toBeVisible();
@@ -419,7 +423,7 @@ test('보기 WebGL 시작 실패 재시도와 저장 실패에서도 기존 장�
   await image(page, info, 'save-failure-view-preserved.png');
   failViewSave = false;
   const frame = Number(await viewport(page).getAttribute('data-frame'));
-  await viewer(page).getByRole('button', { name: '위로 90°', exact: true }).click();
+  await viewer(page).getByRole('button', { name: '왼쪽 90°', exact: true }).click();
   await expect
     .poll(async () => Number(await viewport(page).getAttribute('data-frame')))
     .toBeGreaterThan(frame);
@@ -704,8 +708,8 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
     ['back', ['right']],
     ['left', ['right']],
     ['front', ['right']],
-    ['top', ['up']],
-    ['bottom', ['up', 'up']],
+    ['left-again', ['left']],
+    ['back-again', ['left', 'left']],
   ] as const) {
     for (const direction of steps) await action(page, labels[direction]);
     poses.push({ name, view: await viewState(page) });
@@ -716,7 +720,7 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
   await action(page, 'After');
   expect(await pixelDifference(front, await image(page))).toBeGreaterThan(2);
   await image(page, info, 'user01-empty-after.png');
-  await action(page, '위로 90°');
+  await action(page, '왼쪽 90°');
   await action(page, '나란히 비교');
   await image(page, info, 'user01-top-preview-comparison.png');
   const output = await download(page, info, 'png', 'compare', 'user01-top-comparison.png');
@@ -769,46 +773,70 @@ test('실제 저장 user01 사용자 보정 Before 여섯 설비를 같은 mm �
   );
 });
 
-test('방 안 시점: 프리셋·15° 회전·이동·저장 후 새로고침 유지·다운로드·390px·바깥 시점 복귀', async ({
+test('네 방향만: 위·아래·방 안 시점이 없고, 끌어도 돌지 않고, 저장된 다른 시점은 가까운 방향으로 열린다', async ({
   page,
 }, info) => {
   const requests = observeRequests(page);
   await start(page);
+  // The editor's own room stage can still look from above; save such a view, then open the viewer.
+  await page.getByRole('button', { name: '위로 90°', exact: true }).click();
+  await expect.poll(async () => (await storedProject(page)).roomView?.quaternion).not.toEqual([0, 0, 0, 1]);
+  const saved = (await storedProject(page)).roomView!;
   await opened(page);
-  await action(page, '방 안 · 가운데');
-  const center = await viewState(page);
-  expect(center.projection).toBe('room-eye');
-  expect(center.eye).toMatchObject({ yaw: 0, fov: 74 });
-  expect(center.eye!.position[1]).toBe(1500);
-  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('방 안 시점 · 정면');
-  // Inside the room the direction buttons turn the head in 15° steps.
-  await action(page, '오른쪽 15°');
-  expect((await viewState(page)).eye!.yaw).toBe(15);
-  await action(page, '앞으로');
-  const moved = await viewState(page);
-  expect(moved.eye!.position[2]).toBeLessThan(center.eye!.position[2]);
-  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('방 안 시점 · 오른쪽 15°');
-  await waitSavedView(page, moved);
-  const bytes = await download(page, info, 'png', 'after', 'room-eye-after.png');
-  const meta = await sharp(bytes).metadata();
-  expect(meta.width).toBe(4096);
+  // It opens on the front, level: the side the picture's bottom named (data not rewritten yet).
+  expect(await viewState(page)).toEqual(defaultRoomView());
+  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('정면');
+  expect((await storedProject(page)).roomView).toEqual(saved);
+  // Left and right only; no up, down or in-room view.
+  for (const name of [
+    '위로 90°',
+    '아래로 90°',
+    '방 안 · 가운데',
+    '방 안 · 왼쪽 모서리',
+    '방 안 · 오른쪽 모서리',
+  ])
+    await expect(viewer(page).getByRole('button', { name, exact: true })).toHaveCount(0);
+  await expect(viewer(page).getByRole('group', { name: '방 안 시점', exact: true })).toHaveCount(0);
+  // The keys: ← → turn a quarter, ↑ ↓ do nothing.
+  await viewport(page).focus();
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(300);
+  expect(await viewState(page)).toEqual(defaultRoomView());
+  const seen: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const frame = Number(await viewport(page).getAttribute('data-frame'));
+    await page.keyboard.press('ArrowRight');
+    await expect
+      .poll(async () => Number(await viewport(page).getAttribute('data-frame')))
+      .toBeGreaterThan(frame);
+    seen.push((await viewer(page).getByTestId('room-view-direction').textContent()) ?? '');
+  }
+  expect(seen).toEqual(['오른쪽', '뒤쪽', '왼쪽', '정면']);
+  // Dragging moves the picture; it never turns it (the turn stays the same, only the pan changes).
+  const turned = await viewState(page);
+  const box = (await viewport(page).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 90, { steps: 6 });
+  await page.mouse.up();
+  const dragged = await viewState(page);
+  expect(dragged.quaternion).toEqual(turned.quaternion);
+  expect(dragged.pan.x).toBeGreaterThan(turned.pan.x);
+  await action(page, '화면 맞춤');
+  await action(page, '왼쪽 90°');
+  const left = await viewState(page);
+  expect(await waitSavedView(page, left)).toBeTruthy();
   await viewer(page).getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
-
-  // A saved in-room view survives a reload exactly.
+  // The turned view is a plain turn about the vertical and survives a reload.
   await page.reload();
   await ready(page);
   await opened(page);
-  expect(await viewState(page)).toEqual(moved);
-  await action(page, '방 안 · 왼쪽 모서리');
-  expect((await viewState(page)).eye!.yaw).toBeGreaterThan(0);
-
+  expect(await viewState(page)).toEqual(left);
+  await expect(viewer(page).getByTestId('room-view-direction')).toHaveText('왼쪽');
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await viewer(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-  await viewer(page).getByRole('button', { name: '방 안 · 오른쪽 모서리', exact: true }).tap();
-  await expect.poll(async () => (await viewState(page)).eye?.yaw ?? 0).toBeLessThan(0);
-  await page.screenshot({ path: info.outputPath('room-eye-390.png') });
-  await viewer(page).getByRole('button', { name: '바깥 시점으로', exact: true }).tap();
-  await expect.poll(() => viewState(page)).toEqual(defaultRoomView());
+  await page.screenshot({ path: info.outputPath('four-direction-390.png') });
   expect(requests.errors).toEqual([]);
   expect(requests.forbidden).toEqual([]);
 });
@@ -817,7 +845,6 @@ test('고화질 다운로드: 여러 장 진행률·취소 1초 안 반응·창 
   const requests = observeRequests(page);
   await start(page);
   await opened(page);
-  await action(page, '방 안 · 가운데');
   await viewer(page).getByLabel('둘러보기 파일 형식', { exact: true }).selectOption('png');
   await viewer(page).getByLabel('둘러보기 출력 종류', { exact: true }).selectOption('after');
   const progress = viewer(page).getByTestId('room-export-progress');
@@ -898,7 +925,6 @@ test('사진 효과: 기본 켬·끄면 가장자리가 원본 그대로·다시
   const requests = observeRequests(page);
   await start(page);
   await opened(page);
-  await action(page, '방 안 · 가운데');
   const toggle = viewer(page).getByRole('checkbox', { name: '사진 효과', exact: true });
   await expect(toggle).toBeChecked();
   const corner = async (bytes: Buffer) => {

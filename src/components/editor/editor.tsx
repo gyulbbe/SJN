@@ -1260,15 +1260,12 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
    * The live 3D view the user turns in the dialog: the same renderer class, snapshot and photo
    * choice as the capture below, so its picture is the input's composition.
    */
-  async function prepareAiPreview(composite: boolean): Promise<AiPreview> {
+  async function prepareAiPreview(): Promise<AiPreview> {
     if (!st.project) throw new Error('내보낼 공간이 아직 준비되지 않았어요.');
     const { RoomViewerRenderer } = await import('@/lib/room-viewer/renderer');
     const renderer = new RoomViewerRenderer();
     try {
-      await renderer.setSnapshot(aiSnapshot(), assetReader, {
-        background: FLUX_BACKDROP,
-        ...(composite ? { exportAngles: true } : {}),
-      });
+      await renderer.setSnapshot(aiSnapshot(), assetReader, { background: FLUX_BACKDROP });
     } catch (error) {
       renderer.dispose();
       throw error;
@@ -1321,10 +1318,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       // The orbit fits this design's Before and After (as the dialog's preview does), so the other
       // designs need not be prepared. The composite export shows each product photo nearest the
       // camera's angle (this capture only).
-      await roomRenderer.setSnapshot(snapshot, assetReader, {
-        background: FLUX_BACKDROP,
-        ...(composite ? { exportAngles: true } : {}),
-      });
+      await roomRenderer.setSnapshot(snapshot, assetReader, { background: FLUX_BACKDROP });
       // One frame, no photo look: stage 3 found averaged samples made no difference to FLUX.
       const blob = await roomRenderer.export(view, { format: 'png', mode: 'after', longEdge: edge });
       const regions = roomRenderer.regionMask(
@@ -1364,6 +1358,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         regions,
         ...(visibleCeiling(regions) ? { ceiling: VIEWER_CEILING_COLOR } : {}),
         ...(view.projection === 'room-orbit' ? { cutaway: true } : {}),
+        // Which side the camera looks from, so the text says where a product faces as the image shows.
+        ...(view.projection === 'room-orbit' && view.orbit ? { azimuth: view.orbit.azimuth } : {}),
         // Same renderer, camera and pixel grid as the frame above.
         ...(layers ? { layers } : {}),
         ...(refined ? { refine: refined } : {}),

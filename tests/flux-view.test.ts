@@ -188,7 +188,7 @@ describe('the AI orbit camera', () => {
 });
 
 describe('turning a quarter at a time', () => {
-  it('goes front → right → back → left → front and back again; up is straight down, down is level', () => {
+  it('goes front → right → back → left → front and back again, always level (the four sides only)', () => {
     let orbit = FLUX_FRONT;
     const seen: string[] = [];
     for (let i = 0; i < 4; i++) {
@@ -198,10 +198,11 @@ describe('turning a quarter at a time', () => {
     expect(seen).toEqual(['90/오른쪽', '180/뒤', '-90/왼쪽', '0/정면']);
     expect(turnFluxOrbit(FLUX_FRONT, 'left')).toEqual({ azimuth: -90, elevation: 0 });
     expect(turnFluxOrbit({ azimuth: -90, elevation: 0 }, 'left')).toEqual({ azimuth: 180, elevation: 0 });
-    // From between two quarters, to the next quarter that way.
-    expect(turnFluxOrbit({ azimuth: 30, elevation: 20 }, 'right')).toEqual({ azimuth: 90, elevation: 20 });
-    expect(turnFluxOrbit({ azimuth: 30, elevation: 20 }, 'left')).toEqual({ azimuth: 0, elevation: 20 });
-    expect(turnFluxOrbit({ azimuth: 90, elevation: 0 }, 'top')).toEqual({ azimuth: 90, elevation: 90 });
+    // From between two quarters, to the next quarter that way, level (the earlier free views had a height).
+    expect(turnFluxOrbit({ azimuth: 30, elevation: 20 }, 'right')).toEqual({ azimuth: 90, elevation: 0 });
+    expect(turnFluxOrbit({ azimuth: 30, elevation: 20 }, 'left')).toEqual({ azimuth: 0, elevation: 0 });
+    // The removed above and side turns have nothing to do now: they stay level on the same side.
+    expect(turnFluxOrbit({ azimuth: 90, elevation: 0 }, 'top')).toEqual({ azimuth: 90, elevation: 0 });
     expect(turnFluxOrbit({ azimuth: 90, elevation: 90 }, 'side')).toEqual({ azimuth: 90, elevation: 0 });
     expect(turnFluxOrbit({ azimuth: 135, elevation: 45 }, 'front')).toEqual({ azimuth: 0, elevation: 0 });
   });

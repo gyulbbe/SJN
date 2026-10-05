@@ -385,6 +385,58 @@ export function rotateRoomView(input: RoomViewState, direction: RoomViewDirectio
   return view;
 }
 
+/**
+ * The space viewer and the AI input look at the room from one of four sides only: the front, the
+ * right, the back and the left, level, 90° apart. A product is then a flat photo facing the camera,
+ * so there is no free 3D to turn and nothing to see from above or below (2026-10-05). Turn it off to
+ * bring back the up/down turns, the in-room eye and the free drag of the AI picker: the code for
+ * them is still here, only the screens leave their controls out.
+ */
+export const FOUR_DIRECTION_VIEWS = true;
+/** The four sides, as the camera's azimuth: the front 0, the right 90, the back 180, the left −90. */
+export type RoomQuarter = 0 | 90 | 180 | -90;
+/** The nearest of the four sides to an azimuth (degrees, any range). Halfway goes clockwise. */
+export function snapQuarter(azimuth: number): RoomQuarter {
+  if (!Number.isFinite(azimuth)) return 0;
+  const steps = (((Math.round(azimuth / 90) % 4) + 4) % 4) as 0 | 1 | 2 | 3;
+  return ([0, 90, 180, -90] as const)[steps];
+}
+/**
+ * Which side a camera looks from, from its turn: the heading of the way it looks, so the room's
+ * front is 0 and the right wall 90. Looking steeply down or up the heading is undefined; then the
+ * way the picture's bottom (down) or top (up) points names the side, as in the AI orbit.
+ */
+export function cameraQuarterAzimuth(rotation: Quaternion): number {
+  const back = new Vector3(0, 0, 1).applyQuaternion(rotation);
+  const up = new Vector3(0, 1, 0).applyQuaternion(rotation);
+  const degrees = 180 / Math.PI;
+  if (Math.hypot(back.x, back.z) >= 0.5) return Math.atan2(back.x, back.z) * degrees;
+  return (back.y > 0 ? Math.atan2(-up.x, -up.z) : Math.atan2(up.x, up.z)) * degrees;
+}
+/**
+ * A view as the space viewer shows it: the nearest of the four sides, level. A saved view that
+ * looked from above, from between two sides or from inside the room opens on the side nearest to
+ * it; stored data is not changed (the viewer only writes a view the person then changes). A photo
+ * camera's own view ('source-photo') is left as it is, and so is everything when the limit is off.
+ */
+export function snapRoomView(input: unknown): RoomViewState {
+  const view = normalizeRoomView(input);
+  if (!FOUR_DIRECTION_VIEWS || (view.sourceCamera && view.projection === 'source-photo')) return view;
+  if (view.projection === 'room-orbit' && view.orbit)
+    return { ...view, orbit: { azimuth: snapQuarter(view.orbit.azimuth), elevation: 0 } };
+  const azimuth =
+    view.projection === 'room-eye' ? 0 : cameraQuarterAzimuth(new Quaternion(...view.quaternion));
+  const { eye: _eye, projection, ...rest } = view;
+  void _eye;
+  return {
+    ...rest,
+    ...(projection && projection !== 'room-eye' ? { projection } : {}),
+    quaternion: canonicalQuaternion(
+      new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), (snapQuarter(azimuth) * Math.PI) / 180),
+    ),
+  };
+}
+
 export function roomViewLabel(input: RoomViewState): string {
   const view = normalizeRoomView(input);
   if (view.projection === 'room-eye' && view.eye) {

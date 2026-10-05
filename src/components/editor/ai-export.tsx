@@ -19,7 +19,7 @@ import {
 import { fluxInputLayout, type FluxInputLayout } from '@/lib/ai-export/contract';
 import type { FluxCheckWall } from '@/lib/ai-export/check-contract';
 import { fluxResultNotices, readFluxCheck, type FluxNoticeInput } from '@/lib/ai-export/notices';
-import { FLUX_FRONT, fluxOrbitView } from '@/lib/ai-export/view';
+import { FLUX_FRONT, fluxOrbitView, snapFluxOrbit } from '@/lib/ai-export/view';
 import { restoreBackdrop } from '@/lib/ai-export/backdrop';
 import type { RoomOrbit, RoomViewState } from '@/lib/room-viewer/view-state';
 import AiViewPicker, { type AiPreview } from './ai-view-picker';
@@ -155,7 +155,7 @@ export default function AiExport({
    */
   room?: {
     aspect: number;
-    prepare: (composite: boolean) => Promise<AiPreview>;
+    prepare: () => Promise<AiPreview>;
     /** How many placed products the per-product export would repaint (one request each). */
     refinable?: number;
     /**
@@ -202,7 +202,7 @@ export default function AiExport({
   // A stable handle for the picker, so a store update does not rebuild its renderer.
   const prepareRef = useRef(room?.prepare);
   prepareRef.current = room?.prepare;
-  const prepare = useCallback((composite: boolean) => prepareRef.current!(composite), []);
+  const prepare = useCallback(() => prepareRef.current!(), []);
   const { wait, start: startWait, finish: finishWait } = useServerWait();
   const state = useRef<{
     image?: Blob;
@@ -281,7 +281,7 @@ export default function AiExport({
       if (!state.current.image) {
         startWait({ message: '변환할 After 이미지와 제품 정보를 준비하는 중이에요.' });
         // Exactly the picker's camera: the same view, fit and lens.
-        const captured = { ...orbit };
+        const captured = snapFluxOrbit(orbit);
         const source = await capture(room ? fluxOrbitView(captured) : undefined, !!mode, refining);
         setSent(room ? captured : undefined);
         const layers = mode ? source.layers : undefined;
@@ -316,6 +316,7 @@ export default function AiExport({
             boxes: source.boxes,
             ceiling: source.ceiling,
             cutaway: source.cutaway,
+            azimuth: source.azimuth,
           });
         } catch {
           grounding = undefined;
@@ -576,7 +577,6 @@ export default function AiExport({
           <AiViewPicker
             aspect={room.aspect}
             prepare={prepare}
-            composite={!!mode}
             orbit={orbit}
             onOrbit={setOrbit}
             locked={busy || disabled}
