@@ -42,7 +42,12 @@ export const FLUX_FIXTURE_FORMS = [
 ] as const;
 export const FLUX_FACES = ['floor', 'back', 'left', 'right'] as const;
 export const FLUX_FINISHES = ['matte', 'semi-gloss', 'glossy', 'polished', 'metal'] as const;
-/** Where a product faces in the room, from its photo's angle name (see product-direction.ts). */
+/**
+ * Where a product faces as image 0 shows it: from its photo's angle name (see product-direction.ts)
+ * and the side the camera looks from. `front` is towards the camera, `right` and `left` the
+ * picture's right and left, `back` away from the camera. From the room's front that is the same as
+ * the room's own directions.
+ */
 export const FLUX_FACINGS = ['front', 'right', 'left', 'back'] as const;
 export const FLUX_MAX_FIXTURES = 12;
 export const FLUX_MAX_SURFACES = 8;

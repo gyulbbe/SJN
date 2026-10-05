@@ -9,7 +9,12 @@ import {
   type Scene,
 } from '../types';
 import { finishAppearance } from '../render/finish';
-import { facingOfDirection, readProductDirection } from '../product-direction';
+import {
+  directionAngle,
+  facingOfDirection,
+  nearestHorizontalDirection,
+  readProductDirection,
+} from '../product-direction';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import { isStandardModelOfPhoto } from '../standard-model-view';
 import { hexToLinear, linearToHex } from '../reconstruction/photo-lighting';
@@ -115,6 +120,8 @@ export function describeFixture(
   fixture: FixtureInstance,
   material: MaterialVersion | undefined,
   captureBox: Box,
+  /** Which side the camera looks from (0 the front, 90 the right, 180 the back, −90 the left). */
+  azimuth = 0,
 ): FixtureDraft | undefined {
   const r = fixture.reconstruction;
   const kind = (
@@ -163,10 +170,14 @@ export function describeFixture(
       undefined;
   const color =
     r && HEX.test(r.color) ? r.color : material && HEX.test(material.color) ? material.color : undefined;
-  // A photo product faces where its angle name says (the same rule the 3D room uses).
-  const facing = r
+  // A photo product faces where its angle name says in the room (the same rule the 3D room uses);
+  // the text says it as the image shows it: a camera turned by `azimuth` sees a product that faces
+  // `base` facing `base − azimuth` (towards the camera when that is 0).
+  const base = r
     ? undefined
-    : facingOfDirection(readProductDirection(material?.views?.[fixture.viewIndex]?.direction).name);
+    : directionAngle(readProductDirection(material?.views?.[fixture.viewIndex]?.direction).name);
+  const facing =
+    base === undefined ? undefined : facingOfDirection(nearestHorizontalDirection(base - azimuth).name);
   return {
     id: fixture.id,
     kind,
@@ -280,6 +291,8 @@ export type FluxCaptureSource = {
   ceiling?: string;
   /** A view from outside with the near walls cut away and a plain backdrop (the orbit view). */
   cutaway?: boolean;
+  /** Which side that view looks from: 0 the front, 90 the right, 180 the back, −90 the left. */
+  azimuth?: number;
   /** The composite export: the same frame split into room and fixture layers. */
   layers?: RoomLayers;
   /**
@@ -393,6 +406,8 @@ export async function buildFluxGrounding(input: {
   ceiling?: string;
   /** An outside view with the near walls cut away: the prompt says so (FLUX_CUTAWAY_SENTENCE). */
   cutaway?: boolean;
+  /** Which side the view looks from (see describeFixture); the front when absent. */
+  azimuth?: number;
 }): Promise<FluxGrounding> {
   const { snapshot, reader, capture, layout, boxes } = input;
   const scene = snapshot.scene;
@@ -402,7 +417,12 @@ export async function buildFluxGrounding(input: {
     if (resolveBathRimFixture(scene, fixture).status === 'held') continue;
     const box = boxes ? boxes[fixture.id] : fixtureImageBox(fixture, aspect);
     if (!box) continue;
-    const draft = describeFixture(fixture, snapshot.materials[fixture.materialVersionId], box);
+    const draft = describeFixture(
+      fixture,
+      snapshot.materials[fixture.materialVersionId],
+      box,
+      input.azimuth ?? 0,
+    );
     if (draft && draft.area >= MIN_AREA) drafts.push(draft);
   }
   const ordered = orderFixtures(drafts).slice(0, FLUX_MAX_FIXTURES);

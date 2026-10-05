@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fluxInputLayout } from '../src/lib/ai-export/contract';
+import { facingPhrase } from '../src/lib/ai-export/prompt';
 import {
   describeFixture,
   finishCategory,
@@ -180,6 +181,10 @@ describe('describeFixture', () => {
     expect(facing('위')).toBeUndefined();
     expect(facing('아래')).toBeUndefined();
     expect(facing('오른쪽 측면')).toBe('right');
+    // From the front side (the default) a product facing right faces the picture's right.
+    expect(
+      describeFixture(placed('floor'), product({ views: [view('오른쪽')] }), [0.3, 0.3, 0.4, 0.6], 0)?.facing,
+    ).toBe('right');
     // A standard model has its own orientation: nothing is said about it.
     expect(
       describeFixture(
@@ -200,6 +205,51 @@ describe('describeFixture', () => {
         [0.2, 0.5, 0.3, 0.6],
       )?.facing,
     ).toBeUndefined();
+  });
+  it('says where a product faces as the camera on each of the four sides sees it', () => {
+    const placed: FixtureInstance = {
+      ...base,
+      roomPlacement: {
+        face: 'floor',
+        u: 0.5,
+        v: 0.5,
+        scale: 1,
+        widthMm: 380,
+        heightMm: 720,
+        imageAspect: 0.5,
+        contentBounds: { left: 0, right: 1, top: 0, bottom: 1 },
+      },
+    };
+    const sees = (direction: string, azimuth: number) =>
+      describeFixture(
+        placed,
+        product({ views: [{ assetId: 'photo', direction, anchor: { x: 0.5, y: 1 } }] }),
+        [0.3, 0.3, 0.4, 0.6],
+        azimuth,
+      )?.facing;
+    // Rows: how the product stands (its photo's name); columns: the camera on the front, the right,
+    // the back, the left. A product facing right, seen from the right, faces the camera.
+    const table: Record<string, (string | undefined)[]> = {
+      정면: ['front', 'left', 'back', 'right'],
+      오른쪽: ['right', 'front', 'left', 'back'],
+      뒤: ['back', 'right', 'front', 'left'],
+      왼쪽: ['left', 'back', 'right', 'front'],
+    };
+    for (const [direction, seen] of Object.entries(table))
+      expect([0, 90, 180, -90].map((azimuth) => sees(direction, azimuth))).toEqual(seen);
+    // The sentence the model reads matches: from the right a toilet that faces right faces the camera.
+    expect(facingPhrase('floor', sees('오른쪽', 90)!)).toBe('the camera');
+    expect(facingPhrase('floor', sees('오른쪽', 0)!)).toBe('the right side of the picture');
+    expect(facingPhrase('floor', sees('오른쪽', -90)!)).toBe('away from the camera');
+    // Never the left wall for a camera on the right: the wording has no wall in it at all.
+    for (const azimuth of [0, 90, 180, -90])
+      for (const direction of Object.keys(table))
+        expect(facingPhrase('floor', sees(direction, azimuth)!)).not.toMatch(/wall/);
+    // A view from between two sides (never sent now) is read at its own angle, not rounded.
+    expect(sees('정면', 30)).toBe('front');
+    expect(sees('정면', 60)).toBe('left');
+    // 위 and 아래 still name nothing, from every side.
+    for (const azimuth of [0, 90, 180, -90]) expect(sees('위', azimuth)).toBeUndefined();
   });
   it('ignores tiles and unknown categories', () => {
     expect(describeFixture(base, product({ category: 'tile' }), [0, 0, 0.1, 0.1])).toBeUndefined();

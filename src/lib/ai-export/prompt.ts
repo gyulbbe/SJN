@@ -42,17 +42,17 @@ export const FLUX_KIND_PRIORITY: Record<FluxFixtureKind, number> = {
 };
 const FACE_WORDS = { floor: 'floor', back: 'back wall', left: 'left wall', right: 'right wall' } as const;
 /**
- * Where a fixture faces, said the way a photographer would: a product on a side wall that faces
- * the opposite wall faces into the room. Built from the same angle-name rule as the 3D room.
+ * Where a fixture faces, said from the camera's side: image 0 may be seen from any of the four
+ * sides of the room, and a wall's name (the room's own) is not where it appears in the picture, so
+ * the direction is said as the picture shows it. `facing` is already relative to the camera
+ * (describeFixture); the fixture's face does not change the words.
  */
-export function facingPhrase(face: FluxFixture['face'], facing: NonNullable<FluxFixture['facing']>): string {
-  if (face === 'left' && facing === 'right') return 'into the room, towards the right wall';
-  if (face === 'right' && facing === 'left') return 'into the room, towards the left wall';
+export function facingPhrase(_face: FluxFixture['face'], facing: NonNullable<FluxFixture['facing']>): string {
   return {
-    front: 'the camera, the open front of the room',
-    right: 'the right wall',
-    left: 'the left wall',
-    back: 'the back wall',
+    front: 'the camera',
+    right: 'the right side of the picture',
+    left: 'the left side of the picture',
+    back: 'away from the camera',
   }[facing];
 }
 

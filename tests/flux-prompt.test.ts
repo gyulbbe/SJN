@@ -254,20 +254,24 @@ describe('where a fixture faces (from the angle name of its photo)', () => {
     expect(plain).not.toContain('facing');
     const faced = buildFluxPrompt({ ...scene, fixtures: [{ ...basin, facing: 'right' }] });
     expect(faced).toContain(
-      'It must remain a washbasin in the same place, size and direction, facing into the room, towards the right wall.',
+      'It must remain a washbasin in the same place, size and direction, facing the right side of the picture.',
     );
     expect(faced).toBe(
       buildFluxPrompt(structuredClone({ ...scene, fixtures: [{ ...basin, facing: 'right' }] })),
     );
   });
 
-  it('says into the room for a side wall product that faces the opposite wall, else the plain direction', () => {
-    expect(facingPhrase('left', 'right')).toBe('into the room, towards the right wall');
-    expect(facingPhrase('right', 'left')).toBe('into the room, towards the left wall');
-    expect(facingPhrase('left', 'front')).toBe('the camera, the open front of the room');
-    expect(facingPhrase('back', 'front')).toBe('the camera, the open front of the room');
-    expect(facingPhrase('floor', 'back')).toBe('the back wall');
-    expect(facingPhrase('floor', 'left')).toBe('the left wall');
+  it('says the direction as the picture shows it, never by a wall, whatever the product stands on', () => {
+    // The picture may be seen from any of the four sides, where a wall's own name is not where it is
+    // drawn ("the left wall" from the right side is the far wall): so only the camera's terms.
+    for (const face of ['left', 'right', 'back', 'floor'] as const) {
+      expect(facingPhrase(face, 'front')).toBe('the camera');
+      expect(facingPhrase(face, 'right')).toBe('the right side of the picture');
+      expect(facingPhrase(face, 'left')).toBe('the left side of the picture');
+      expect(facingPhrase(face, 'back')).toBe('away from the camera');
+      for (const facing of ['front', 'right', 'left', 'back'] as const)
+        expect(facingPhrase(face, facing)).not.toMatch(/wall|open front|room/);
+    }
   });
 
   it('accepts the four directions in the schema, strictly, and still takes a fixture without one', () => {
