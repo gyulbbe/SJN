@@ -366,22 +366,32 @@ export class RoomViewerRenderer {
     this.tiles = new ViewerTileCache((id) => this.reader(id), this.maxOutputEdge);
     this.products = new ProductAssetCache((id) => this.reader(id));
   }
+  /**
+   * What the scenes say about their products and rooms, plus which product photo stood in for a
+   * missing direction in the last frame (it depends on the side the camera looks from).
+   */
   get notices(): readonly RoomViewerNotice[] {
-    return this._notices;
+    const prepared = this.prepared;
+    if (!prepared) return this._notices;
+    return [
+      ...this._notices,
+      ...prepared.before.fixtures.viewNotices().map((n) => ({ ...n, side: 'before' as const })),
+      ...prepared.after.fixtures.viewNotices().map((n) => ({ ...n, side: 'after' as const })),
+    ];
+  }
+  /** The photo stand-ins of one side's last frame, in plain words (empty before the first frame). */
+  viewNotes(side: 'before' | 'after'): string[] {
+    return (this.prepared?.[side].fixtures.viewNotices() ?? []).map((notice) => notice.message);
   }
   private assertOpen() {
     if (this.disposed) throw new Error('공간 둘러보기가 닫혔습니다.');
     if (this.lost || this.renderer.getContext().isContextLost())
       throw new Error('그래픽 연결이 끊겼습니다. 창을 닫고 공간 둘러보기를 다시 열어 주세요.');
   }
-  private async prepare(
-    scene: Scene,
-    materials: Record<string, MaterialVersion>,
-    exportAngles = false,
-  ): Promise<Prepared> {
+  private async prepare(scene: Scene, materials: Record<string, MaterialVersion>): Promise<Prepared> {
     const [surfacesResult, fixturesResult] = await Promise.allSettled([
       buildViewerSurfaces(scene, materials, this.tiles),
-      buildViewerFixtures(scene, materials, this.reader, this.products, { exportAngles }),
+      buildViewerFixtures(scene, materials, this.reader, this.products),
     ]);
     if (surfacesResult.status === 'rejected' || fixturesResult.status === 'rejected') {
       if (surfacesResult.status === 'fulfilled') surfacesResult.value.dispose();
@@ -487,7 +497,10 @@ export class RoomViewerRenderer {
     reader: Reader,
     options?: {
       fitScenes?: readonly Scene[];
-      /** The AI export: product photos follow the camera by angle (chooseExportPhoto). */
+      /**
+       * @deprecated No longer changes anything (2026-10-05): every view shows the photo of the
+       * direction it would see (view-photo.ts). Kept so older callers still compile.
+       */
       exportAngles?: boolean;
       /**
        * A plain colour around the room (CSS), untouched by the photo light and colour adjustment;
@@ -517,15 +530,13 @@ export class RoomViewerRenderer {
     )
       throw new Error('Before와 After의 공간 크기가 달라 같은 시점으로 비교할 수 없습니다.');
     this.reader = reader;
-    const exportAngles = !!options?.exportAngles;
-    const sceneKey = (scene: Scene) =>
-      roomViewerSceneKey(scene, snapshot.materials) + (exportAngles ? '|export-angles' : '');
+    const sceneKey = (scene: Scene) => roomViewerSceneKey(scene, snapshot.materials);
     const beforeKey = sceneKey(snapshot.beforeScene),
       afterKey = sceneKey(snapshot.scene);
     const get = (key: string, scene: Scene) => {
       let promise = this.scenes.get(key);
       if (!promise) {
-        promise = this.prepare(scene, snapshot.materials, exportAngles);
+        promise = this.prepare(scene, snapshot.materials);
         this.scenes.set(key, promise);
         const pending = promise;
         void pending.catch(() => {

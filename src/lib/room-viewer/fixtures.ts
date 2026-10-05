@@ -8,6 +8,7 @@ import {
   MeshBasicMaterial,
   Object3D,
   PlaneGeometry,
+  Quaternion,
   SRGBColorSpace,
   Vector3,
   Vector4,
@@ -28,6 +29,8 @@ import {
   readProductDirection,
   type ProductDirection,
 } from '../product-direction';
+import { choosePhotoForView, viewPhotoNote } from './view-photo';
+import { cameraQuarterAzimuth, snapQuarter } from './view-state';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import type { ReconstructionKind } from '../reconstruction/types';
 
@@ -155,107 +158,34 @@ const nameOf = (view: { direction: string }) => readProductDirection(view.direct
 export function declaredProductDirection(direction: string): number | undefined {
   return directionAngle(readProductDirection(direction).name);
 }
-const degrees = (radians: number) => (radians * 180) / Math.PI;
-const angularDistance = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180);
-/** Seen from steeper than this above or below, the camera looks at a product's top or underside. */
-const STEEP_DEGREES = 35;
-/**
- * The photo to show a fixed product for a camera: a photo shows its product facing its name's
- * direction (seen from the room's front), so a camera standing at azimuth θ around the product sees
- * a product that faces `base` facing `base − θ` relative to itself; the photo nearest that, within
- * 25°. From steeply above or below, or without a horizontal name, the selected photo stays.
- */
-export function chooseDirectionalPhoto(
-  views: MaterialVersion['views'],
-  selected: number,
-  localAzimuth: number,
-  elevation: number,
-): number {
-  const base = views[selected] ? declaredProductDirection(views[selected].direction) : undefined;
-  if (base === undefined || Math.abs(elevation) > STEEP_DEGREES) return selected;
-  const target = base - localAzimuth;
-  let index = selected,
-    distance = Infinity;
-  views.forEach((view, i) => {
-    const angle = declaredProductDirection(view.direction);
-    if (angle === undefined) return;
-    const delta = angularDistance(angle, target);
-    if (delta < distance && delta <= 25) {
-      index = i;
-      distance = delta;
-    }
-  });
-  return index;
-}
 
-/** A photo's horizontal angle for the AI export: its name's direction (none for 위 and 아래). */
+/** A photo's horizontal angle: its name's direction (none for 위 and 아래, which are not used). */
 export function photoViewAngle(view: MaterialVersion['views'][number]): number | undefined {
   return declaredProductDirection(view.direction);
 }
-/** The drawn product in a photo plane: content width × height (mm) and the anchor within it. */
-export type PhotoFootprint = { width: number; height: number; anchorX: number; anchorY: number };
-export function photoFootprint(
+/**
+ * The drawn picture of one product photo (mm, the whole image including its transparent margin).
+ * What a photo shows across is not the same for every photo: 정면 and 뒤 show the product's width,
+ * 왼쪽 and 오른쪽 its depth, so the photo's visible area (`bounds`) is fitted into width × height or
+ * depth × height, keeping its aspect. Without a depth the side photos use the width (`estimated`).
+ */
+export type PhotoPlaneSize = { width: number; height: number; across: 'width' | 'depth'; estimated: boolean };
+export function photoPlaneSize(
   placement: Pick<RoomPlacement, 'widthMm' | 'heightMm' | 'scale'>,
+  depthMm: number | undefined,
+  name: ProductDirection,
   bounds: ProductBounds,
   aspect: number,
-  anchor: { x: number; y: number },
-): PhotoFootprint {
-  const bw = bounds.right - bounds.left,
-    bh = bounds.bottom - bounds.top;
-  const width = Math.min(placement.widthMm / bw, (placement.heightMm * aspect) / bh) * placement.scale;
-  const height = width / aspect;
-  return {
-    width: width * bw,
-    height: height * bh,
-    anchorX: (anchor.x - bounds.left) / bw,
-    anchorY: (anchor.y - bounds.top) / bh,
-  };
-}
-/**
- * Whether another photo keeps the product's footprint (width, height within 5%, the anchor within
- * 2% of the content): only then may the AI export swap photos without moving or resizing it.
- */
-export function sameFootprint(a: PhotoFootprint, b: PhotoFootprint) {
-  return (
-    Math.abs(a.width - b.width) <= a.width * 0.05 &&
-    Math.abs(a.height - b.height) <= a.height * 0.05 &&
-    Math.abs(a.anchorX - b.anchorX) <= 0.02 &&
-    Math.abs(a.anchorY - b.anchorY) <= 0.02
-  );
-}
-/**
- * The AI export's photo for a camera direction: the usable photo whose direction is nearest to how
- * the camera sees the product (see chooseDirectionalPhoto). Seen from steeply above or below, the
- * 위 or 아래 photo when there is a usable one. The selected photo stays when it has no horizontal
- * name, or when it is the nearest; `usable` holds the photos that keep the footprint.
- */
-export function chooseExportPhoto(
-  names: readonly ProductDirection[],
-  selected: number,
-  localAzimuth: number,
-  elevation: number,
-  usable: ReadonlySet<number>,
-): number {
-  if (Math.abs(elevation) > STEEP_DEGREES) {
-    const wanted = elevation > 0 ? '위' : '아래';
-    const index = names.findIndex((name, i) => name === wanted && (i === selected || usable.has(i)));
-    return index >= 0 ? index : selected;
-  }
-  const base = directionAngle(names[selected] ?? '정면');
-  if (base === undefined) return selected;
-  const target = base - localAzimuth;
-  let index = selected,
-    distance = angularDistance(base, target);
-  names.forEach((name, i) => {
-    const angle = directionAngle(name);
-    if (angle === undefined || i === selected || !usable.has(i)) return;
-    const delta = angularDistance(angle, target);
-    if (delta < distance) {
-      index = i;
-      distance = delta;
-    }
-  });
-  return index;
+): PhotoPlaneSize {
+  const side = name === '왼쪽' || name === '오른쪽';
+  const known = typeof depthMm === 'number' && Number.isFinite(depthMm) && depthMm > 0;
+  const across = side && known ? depthMm : placement.widthMm;
+  const width =
+    Math.min(
+      across / (bounds.right - bounds.left),
+      (placement.heightMm * aspect) / (bounds.bottom - bounds.top),
+    ) * placement.scale;
+  return { width, height: width / aspect, across: side ? 'depth' : 'width', estimated: side && !known };
 }
 
 /** World bounds of what shows of a product (the visible meshes only), from their vertices. */
@@ -378,22 +308,19 @@ function prepareModel(group: Group, fixture: FixtureInstance) {
 
 function planeGeometry(
   fixture: FixtureInstance,
-  image: DecodedImage,
-  selected: boolean,
+  size: PhotoPlaneSize,
+  bounds: ProductBounds,
+  aspect: number,
   anchor: { x: number; y: number },
 ) {
-  const p = checkPlacement(fixture),
-    bounds = selected ? p.contentBounds : image.bounds;
+  const p = checkPlacement(fixture);
   checkBounds(bounds);
-  const aspect = selected ? p.imageAspect : image.aspect;
   if (!Number.isFinite(aspect) || aspect <= 0) throw new Error('제품 이미지 비율이 올바르지 않아요.');
-  const width =
-    Math.min(p.widthMm / (bounds.right - bounds.left), (p.heightMm * aspect) / (bounds.bottom - bounds.top)) *
-    p.scale;
-  const height = width / aspect;
-  return new PlaneGeometry(width, height).translate(
-    (0.5 - anchor.x) * width,
-    (anchor.y - 0.5) * height,
+  if (![size.width, size.height].every((n) => Number.isFinite(n) && n > 0))
+    throw new Error('제품 이미지 크기를 계산할 수 없어요.');
+  return new PlaneGeometry(size.width, size.height).translate(
+    (0.5 - anchor.x) * size.width,
+    (anchor.y - 0.5) * size.height,
     p.face === 'floor' ? 0 : 1,
   );
 }
@@ -404,12 +331,12 @@ export async function buildViewerFixtures(
   materials: Record<string, MaterialVersion>,
   reader: ViewerAssetReader,
   sharedCache?: ProductAssetCache,
-  /** `exportAngles`: the AI export's photo choice (chooseExportPhoto); the saved viewIndex is kept. */
-  options: { exportAngles?: boolean } = {},
 ) {
   const cache = sharedCache ?? new ProductAssetCache(reader);
   const group = new Group(),
     notices: ViewerFixtureNotice[] = [],
+    /** What the last frame's side shows in place of a missing direction, per fixture. */
+    viewNotices = new Map<string, ViewerFixtureNotice>(),
     update: ((camera: Camera) => void)[] = [];
   const notice = (
     fixture: FixtureInstance,
@@ -419,6 +346,7 @@ export async function buildViewerFixtures(
   const room = scene.room;
   for (const fixture of scene.fixtures) {
     let product: Group | undefined;
+    let reachesBeyond = false;
     try {
       if (!room) throw new Error('공간 크기와 설치면이 없어 3D 위치를 계산할 수 없어요.');
       const p = checkPlacement(fixture);
@@ -481,33 +409,25 @@ export async function buildViewerFixtures(
         const content = new Group();
         content.rotation.z = (-fixture.rotation * Math.PI) / 180;
         product.add(content);
-        // A photo shows its product facing its name's direction. The AI export picks among the
-        // photos that keep the footprint; the viewer turns a plane to the camera that would see
-        // its product that way. An older 360° view is its stored capture, a flat photo like the others.
-        const names = material.views.map(nameOf);
-        const base = declaredProductDirection(selected.direction);
-        const choices = material.views
-          .map((view, index) => ({ view, index }))
-          .filter(({ index }) => index === fixture.viewIndex || base !== undefined);
-        const footprint = photoFootprint(p, p.contentBounds, p.imageAspect, fixture.anchor);
+        // The viewer and the AI input look from one of four sides, and a product is a flat photo
+        // facing the camera: every photo of a horizontal direction gets its own plane (its size
+        // from what it shows across, see photoPlaneSize), and each side shows the photo of the
+        // direction it would see (see view-photo.ts). An older 360° view is its stored capture.
+        const directions = material.views.map((view) => view.direction);
         const planes = new Map<number, Mesh>();
-        for (const { view, index } of choices) {
+        let depthEstimated = false;
+        for (const [index, view] of material.views.entries()) {
+          // 위 and 아래 are not used from the four sides; the selected photo is, whatever its name.
+          if (index !== fixture.viewIndex && photoViewAngle(view) === undefined) continue;
           try {
             const image = await cache.image(view.assetId);
-            // A photo that would change the product's width, height or anchor is not used.
-            if (
-              options.exportAngles &&
-              index !== fixture.viewIndex &&
-              !sameFootprint(footprint, photoFootprint(p, image.bounds, image.aspect, view.anchor))
-            )
-              continue;
+            const own = index === fixture.viewIndex;
+            const bounds = own ? p.contentBounds : image.bounds,
+              aspect = own ? p.imageAspect : image.aspect;
+            const size = photoPlaneSize(p, material.depthMm, nameOf(view), bounds, aspect);
+            if (size.estimated) depthEstimated = true;
             const plane = new Mesh(
-              planeGeometry(
-                fixture,
-                image,
-                index === fixture.viewIndex,
-                index === fixture.viewIndex ? fixture.anchor : view.anchor,
-              ),
+              planeGeometry(fixture, size, bounds, aspect, own ? fixture.anchor : view.anchor),
               new MeshBasicMaterial({
                 map: image.texture,
                 side: DoubleSide,
@@ -516,15 +436,7 @@ export async function buildViewerFixtures(
                 toneMapped: false,
               }),
             );
-            // Every flat photo stands facing the room's front, as in 2D. The AI export keeps all of
-            // them so (same footprint); in the viewer a photo of another direction turns to face
-            // the camera that would see its product that way (base − its direction).
-            const angle = photoViewAngle(view);
-            plane.rotation.y =
-              options.exportAngles || base === undefined || angle === undefined
-                ? 0
-                : ((base - angle) * Math.PI) / 180;
-            plane.visible = index === fixture.viewIndex;
+            plane.visible = own;
             plane.userData.viewIndex = index;
             planes.set(index, plane);
             content.add(plane);
@@ -537,29 +449,60 @@ export async function buildViewerFixtures(
             );
           }
         }
-        const target = product;
-        update.push((camera) => {
+        // Standing on its face is decided per side (the plane turns to the camera, so its extent
+        // along the wall changes); the first stand is the front's, as in 2D.
+        const target = product,
+          base = product.position.clone(),
+          gap = p.face === 'back' ? 1 : 0;
+        const stands = new Map<string, Vector3>();
+        const standAt = (index: number, quarter: number) => {
+          for (const [i, plane] of planes) {
+            plane.visible = i === index;
+            plane.rotation.y = (quarter * Math.PI) / 180;
+          }
+          const key = `${index}:${quarter}`;
+          let place = stands.get(key);
+          let beyond = false;
+          if (!place) {
+            target.position.copy(base);
+            beyond = seatProduct(target, room, p.face, gap);
+            place = target.position.clone();
+            stands.set(key, place);
+          } else target.position.copy(place);
           target.updateMatrixWorld(true);
-          const point = camera.getWorldPosition(new Vector3());
-          target.worldToLocal(point);
-          const azimuth = degrees(Math.atan2(point.x, point.z)),
-            elevation = degrees(Math.atan2(point.y, Math.hypot(point.x, point.z)));
-          const index = options.exportAngles
-            ? chooseExportPhoto(names, fixture.viewIndex, azimuth, elevation, new Set(planes.keys()))
-            : chooseDirectionalPhoto(material.views, fixture.viewIndex, azimuth, elevation);
-          const actual = planes.has(index) ? index : fixture.viewIndex;
-          for (const [i, plane] of planes) plane.visible = i === actual;
+          return beyond;
+        };
+        reachesBeyond = standAt(fixture.viewIndex, 0);
+        const look = new Quaternion();
+        update.push((camera) => {
+          const quarter = snapQuarter(cameraQuarterAzimuth(camera.getWorldQuaternion(look)));
+          const photo = choosePhotoForView(directions, fixture.viewIndex, quarter, new Set(planes.keys()));
+          standAt(planes.has(photo.index) ? photo.index : fixture.viewIndex, quarter);
+          const message = viewPhotoNote(fixture.name, quarter, photo);
+          if (message)
+            viewNotices.set(fixture.id, {
+              id: fixture.id,
+              name: fixture.name,
+              message,
+              severity: 'limitation',
+            });
+          else viewNotices.delete(fixture.id);
         });
         product.userData.representation = planes.size > 1 ? 'directional-photo-planes' : 'fixed-photo-plane';
         notice(
           fixture,
           planes.size > 1
-            ? '2D 제품·각도 표현 제한: 정면·왼쪽·오른쪽·뒤 사진만 설치 위치의 고정 평면으로 전환해요. 실제 입체가 아니며 위·아래에서는 선택 사진을 유지해요.'
-            : '2D 제품·각도 표현 제한: 선택 사진을 설치 위치의 고정 평면으로 표시해요. 옆에서는 얇게 보이고 뒷면은 같은 사진이라 실제 제품 뒷면이 아니에요.',
+            ? '2D 제품·각도 표현 제한: 정면·왼쪽·오른쪽·뒤 사진을 화면 방향마다 카메라를 보는 평면으로 바꿔 보여요. 실제 입체가 아니며 위·아래에서는 볼 수 없어요.'
+            : '2D 제품·각도 표현 제한: 선택 사진 한 장을 카메라를 보는 평면으로 보여요. 다른 방향 사진이 없어 어느 방향에서든 같은 사진이고, 뒷면도 실제 제품 뒷면이 아니에요.',
         );
+        if (depthEstimated)
+          notice(
+            fixture,
+            '왼쪽·오른쪽 사진은 제품의 깊이로 그려야 하는데 자재에 깊이가 없어 가로 값으로 그렸어요. 자재에 깊이를 등록해 주세요.',
+          );
       }
       if (!fixture.reconstruction) {
-        if (seatProduct(product, room, p.face, p.face === 'back' ? 1 : 0))
+        if (reachesBeyond)
           notice(fixture, '제품이 방 밖으로 나가요. 위치나 크기, 각도 방향을 확인해 주세요.');
         else {
           const direction = readProductDirection(
@@ -568,7 +511,7 @@ export async function buildViewerFixtures(
           const suits = directionSuitsFace(p.face, direction);
           notice(
             fixture,
-            `‘${direction}’ 각도 사진을 쓰며 ${describeProductFacing(p.face, direction)} 방 기준으로 고정돼 카메라를 따라 돌지 않아요.${
+            `‘${direction}’ 각도 사진이 제품이 놓인 방향이에요(${describeProductFacing(p.face, direction)}). 화면을 돌리면 그 방향에서 보이는 사진으로 바뀌어요.${
               suits ? '' : ' 이 면에는 어울리는 각도가 아니에요.'
             }`,
           );
@@ -597,6 +540,10 @@ export async function buildViewerFixtures(
     notices,
     updateView(camera: Camera) {
       if (!disposed) for (const fn of update) fn(camera);
+    },
+    /** The photo stand-ins of the last updateView, in plain words. */
+    viewNotices(): ViewerFixtureNotice[] {
+      return [...viewNotices.values()];
     },
     dispose() {
       if (disposed) return;

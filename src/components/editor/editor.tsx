@@ -1275,6 +1275,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     return {
       canvas: renderer.canvas,
       render: (width, height, view) => void renderer.render(width, height, view, 'after'),
+      notes: () => renderer.viewNotes('after'),
       dispose: () => renderer.dispose(),
     };
   }

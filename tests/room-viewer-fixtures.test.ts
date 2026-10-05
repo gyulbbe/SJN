@@ -12,8 +12,8 @@ import {
 } from '../src/lib/types';
 import {
   buildViewerFixtures,
-  chooseDirectionalPhoto,
   declaredProductDirection,
+  photoPlaneSize,
   ProductAssetCache,
 } from '../src/lib/room-viewer/fixtures';
 import type { ProductDirection } from '../src/lib/product-direction';
@@ -94,6 +94,12 @@ const reference = (): Product3dReference => ({
   modelRevision: 'stored-revision',
   pose: { objectQuaternion: [0, 0, 0, 1], cameraQuaternion: [0, 0, 0, 1], zoom: 1 },
 });
+/** A camera on one of the four sides (0 the front, 90 the right, 180 the back, −90 the left), level. */
+function cameraOn(quarter: number) {
+  const camera = new PerspectiveCamera();
+  camera.quaternion.setFromAxisAngle(new Vector3(0, 1, 0), (quarter * Math.PI) / 180);
+  return camera;
+}
 function fakeImage(cache: ProductAssetCache) {
   return vi.spyOn(cache, 'image').mockImplementation(async () => ({
     texture: new Texture(),
@@ -346,10 +352,8 @@ describe('room viewer immutable physical fixtures', () => {
     const front = new Box3().setFromObject(object.children[0].children[0]);
     expect(front.min.y).toBeCloseTo(0);
     expect(front.getSize(new Vector3()).toArray().map(Math.round)).toEqual([400, 800, 0]);
-    // The older 오른쪽 view turns up for the camera that sees the product facing right, like any photo.
-    const camera = new PerspectiveCamera();
-    camera.position.set(-4000, 100, 1200);
-    result.updateView(camera);
+    // The older 오른쪽 view turns up for the side that sees the product facing right, like any photo.
+    result.updateView(cameraOn(-90));
     expect(object.children[0].children.map((plane) => plane.visible)).toEqual([false, true]);
     expect(value).toEqual(original);
     expect(m.views[0].product3d).toEqual(reference());
@@ -394,18 +398,23 @@ describe('room viewer immutable physical fixtures', () => {
     expect(cache.diagnostics.pending).toBe(0);
     expect(cache.diagnostics.assets).toBe(0);
   });
-  it('keeps a single PNG physically fixed when camera turns and records its restriction', async () => {
+  it('turns a single PNG to face each of the four sides, keeps its install point, and says so', async () => {
     const reader = vi.fn(async () => undefined),
       cache = new ProductAssetCache(reader);
     fakeImage(cache);
     const result = await buildViewerFixtures(scene(), { m: material() }, reader, cache),
       object = result.group.children[0],
+      plane = object.children[0].children[0],
       before = (object.updateMatrix(), object.matrix.clone());
-    const camera = new PerspectiveCamera();
-    camera.position.set(4000, 1200, 1200);
-    result.updateView(camera);
-    expect(object.quaternion.toArray()).toEqual([0, 0, 0, 1]);
-    expect(object.matrix.elements).toEqual(before.elements);
+    for (const quarter of [90, 180, -90, 0]) {
+      result.updateView(cameraOn(quarter));
+      // The plane faces the camera (about the vertical only); the product group stays where it is.
+      expect(plane.rotation.y).toBeCloseTo((quarter * Math.PI) / 180, 9);
+      expect(plane.rotation.x).toBe(0);
+      expect(object.quaternion.toArray()).toEqual([0, 0, 0, 1]);
+      expect(object.matrix.elements).toEqual(before.elements);
+      expect(plane.visible).toBe(true);
+    }
     expect(object.userData.representation).toBe('fixed-photo-plane');
     expect(result.notices[0].message).toContain('2D 제품');
     result.dispose();
@@ -421,24 +430,91 @@ describe('room viewer immutable physical fixtures', () => {
       { assetId: 'top', direction: '위', anchor: { x: 0.5, y: 1 } },
     );
     const result = await buildViewerFixtures(scene(), { m }, reader, cache);
-    expect(images).toHaveBeenCalledTimes(3);
-    const camera = new PerspectiveCamera();
-    // On the room's left (−x) the product that faces the front is seen facing right: the 오른쪽 photo.
-    camera.position.set(-4000, 100, 1200);
-    result.updateView(camera);
+    // The 위 photo is not used from the four sides, so it is not even read.
+    expect(images.mock.calls.map(([id]) => id).sort()).toEqual(['photo', 'side']);
+    // On the room's left (−90) the product that faces the front is seen facing right: the 오른쪽 photo.
+    result.updateView(cameraOn(-90));
     const planes = result.group.children[0].children[0].children;
-    expect(planes.map((plane) => plane.visible)).toEqual([false, true, false]);
-    // That photo turns to face the camera that sees it so (−90 about y); the install point stays.
-    expect(planes[1].rotation.y).toBeCloseTo(-Math.PI / 2, 9);
-    expect(planes[0].rotation.y).toBe(0);
+    expect(planes.map((plane) => plane.visible)).toEqual([false, true]);
+    // Every plane turns to face that camera (−90 about y); the install point stays.
+    expect(planes.map((plane) => plane.rotation.y)).toEqual([-Math.PI / 2, -Math.PI / 2]);
     expect(result.group.children[0].position.toArray()).toEqual([0, 0, 1200]);
-    // From the right it would need a 왼쪽 photo: there is none, the front stays. From above too.
-    camera.position.set(4000, 100, 1200);
-    result.updateView(camera);
-    expect(planes.map((plane) => plane.visible)).toEqual([true, false, false]);
-    camera.position.set(0, 6000, 1200);
-    result.updateView(camera);
-    expect(planes.map((plane) => plane.visible)).toEqual([true, false, false]);
+    expect(result.viewNotices()).toEqual([]);
+    // From the right it would need a 왼쪽 photo: there is none, the front stands in, and it says so.
+    result.updateView(cameraOn(90));
+    expect(planes.map((plane) => plane.visible)).toEqual([true, false]);
+    expect(result.viewNotices().map((n) => n.message)).toEqual([
+      '오른쪽 화면: 제품의 ‘왼쪽’ 사진이 없어 ‘정면’ 사진을 썼어요. 방향별 사진을 더 등록하면 더 자연스러워요.',
+    ]);
+    // From behind: no 뒤 photo either; the nearest registered one is the 오른쪽 (90° away, the front is 180°).
+    result.updateView(cameraOn(180));
+    expect(planes.map((plane) => plane.visible)).toEqual([false, true]);
+    expect(result.viewNotices()[0].message).toBe(
+      '뒤 화면: 제품의 ‘뒤’ 사진이 없어 ‘오른쪽’ 사진을 썼어요. 방향별 사진을 더 등록하면 더 자연스러워요.',
+    );
+    // Looking from above names the side the picture's bottom points to: the front here.
+    const above = new PerspectiveCamera();
+    above.quaternion.setFromAxisAngle(new Vector3(1, 0, 0), -Math.PI / 2);
+    result.updateView(above);
+    expect(planes.map((plane) => plane.visible)).toEqual([true, false]);
+    expect(planes[0].rotation.y).toBe(0);
+    // Back on the front, the stand-in note goes away.
+    result.updateView(cameraOn(0));
+    expect(result.viewNotices()).toEqual([]);
+    result.dispose();
+    cache.dispose();
+  });
+  it('draws a side photo as the product depth and the front and back photos as its width', () => {
+    const placement = { widthMm: 400, heightMm: 800, scale: 1 };
+    const whole = { left: 0, top: 0, right: 1, bottom: 1 };
+    // 정면 and 뒤 show the width: 400 across, the height binds nothing (aspect 0.5 → 400 wide, 800 high).
+    for (const name of ['정면', '뒤'] as const) {
+      const size = photoPlaneSize(placement, 200, name, whole, 0.5);
+      expect([size.width, size.height, size.across, size.estimated]).toEqual([400, 800, 'width', false]);
+    }
+    // 왼쪽 and 오른쪽 show the depth: 200 across.
+    for (const name of ['왼쪽', '오른쪽'] as const) {
+      const size = photoPlaneSize(placement, 200, name, whole, 0.5);
+      expect([size.width, size.height, size.across, size.estimated]).toEqual([200, 400, 'depth', false]);
+    }
+    // The height still fits: a tall narrow depth keeps the picture inside width × height.
+    expect(photoPlaneSize({ ...placement, heightMm: 300 }, 200, '오른쪽', whole, 0.5).height).toBe(300);
+    // Visible area with a margin: it is the content that is fitted, and the scale multiplies.
+    const margin = { left: 0.1, top: 0.1, right: 0.9, bottom: 0.9 };
+    expect(photoPlaneSize({ ...placement, scale: 2 }, 200, '오른쪽', margin, 0.5).width).toBeCloseTo(
+      (200 / 0.8) * 2,
+      9,
+    );
+    // No depth registered: the width stands in, flagged; the front photo is never flagged.
+    expect(photoPlaneSize(placement, undefined, '오른쪽', whole, 0.5)).toMatchObject({
+      width: 400,
+      across: 'depth',
+      estimated: true,
+    });
+    expect(photoPlaneSize(placement, undefined, '정면', whole, 0.5).estimated).toBe(false);
+  });
+  it('shows a side photo at the product depth in the room, with the stand held on the floor', async () => {
+    const reader = vi.fn(async () => undefined),
+      cache = new ProductAssetCache(reader);
+    fakeImage(cache);
+    const m = material();
+    m.views.push({ assetId: 'side', direction: '오른쪽', anchor: { x: 0.5, y: 1 } });
+    const result = await buildViewerFixtures(scene(), { m }, reader, cache);
+    const planes = result.group.children[0].children[0].children as Mesh[];
+    const size = (plane: Mesh) => new Box3().setFromObject(plane, true).getSize(new Vector3());
+    // The front camera sees the front photo at 400 wide; the side photo is 200 (the depth).
+    result.updateView(cameraOn(0));
+    expect(size(planes[0]).x).toBeCloseTo(400, 4);
+    // From the left the product that faces front shows its 오른쪽 photo: 200 across, and across
+    // the camera's depth (z), centred on its place, standing on the floor all the same.
+    result.updateView(cameraOn(-90));
+    const side = new Box3().setFromObject(planes[1], true);
+    expect(side.getSize(new Vector3()).z).toBeCloseTo(200, 4);
+    expect(side.getSize(new Vector3()).x).toBeCloseTo(0, 4);
+    expect((side.min.z + side.max.z) / 2).toBeCloseTo(1200, 4);
+    expect(side.min.y).toBeCloseTo(0, 4);
+    result.updateView(cameraOn(0));
+    expect(new Box3().setFromObject(planes[0], true).min.y).toBeCloseTo(0, 4);
     result.dispose();
     cache.dispose();
   });
@@ -451,8 +527,6 @@ describe('room viewer immutable physical fixtures', () => {
     expect(declaredProductDirection('오른쪽 측면')).toBe(90);
     expect(declaredProductDirection('왼쪽 사선')).toBe(-90);
     expect(declaredProductDirection('my 90 fancy')).toBe(0);
-    const views = material().views;
-    expect(chooseDirectionalPhoto(views, 0, 90, 0)).toBe(0);
   });
 });
 
@@ -493,9 +567,7 @@ describe('angle names decide the way a product stands on its face', () => {
     expect(b.min.z).toBeCloseTo(1200, 6);
     expect((b.min.y + b.max.y) / 2).toBeCloseTo(1200, 4);
     // 정면 does not suit the left wall: it says so, and says where the product looks.
-    const note = result.notices.find(
-      (n) => n.message.includes('각도 사진을 써요') || n.message.includes('각도 사진을 쓰며'),
-    );
+    const note = result.notices.find((n) => n.message.includes('각도 사진이 제품이 놓인 방향이에요'));
     expect(note?.message).toContain('‘정면’ 각도 사진');
     expect(note?.message).toContain('정면(열린 쪽)을 봐요');
     expect(note?.message).toContain('어울리는 각도가 아니에요');
@@ -506,7 +578,7 @@ describe('angle names decide the way a product stands on its face', () => {
     const result = await photoBuild(placed('left'), '오른쪽');
     const b = bounds(result.group.children[0]);
     expect(b.min.x).toBeCloseTo(-half, 6);
-    const note = result.notices.find((n) => n.message.includes('각도 사진을 쓰며'));
+    const note = result.notices.find((n) => n.message.includes('각도 사진이 제품이 놓인 방향이에요'));
     expect(note?.message).toContain('방 안쪽을 봐요');
     expect(note?.message).not.toContain('어울리는 각도가 아니에요');
     result.dispose();
@@ -528,9 +600,11 @@ describe('angle names decide the way a product stands on its face', () => {
 
   it('name × wall: a flat photo has its edge on the wall for every name, never inside it, never off it', async () => {
     for (const name of ['정면', '오른쪽', '왼쪽', '뒤'] as const) {
+      // What it shows across: the side photos show the depth (200), the front and back the width.
+      const across = name === '오른쪽' || name === '왼쪽' ? 200 : 400;
       const left = bounds((await photoBuild(placed('left'), name)).group);
       expect(left.min.x).toBeCloseTo(-half, 4);
-      expect(left.getSize(new Vector3()).x).toBeCloseTo(400, 4);
+      expect(left.getSize(new Vector3()).x).toBeCloseTo(across, 4);
       expect((left.min.z + left.max.z) / 2).toBeCloseTo(1200, 4);
       const right = bounds((await photoBuild(placed('right'), name)).group);
       expect(right.max.x).toBeCloseTo(half, 4);
