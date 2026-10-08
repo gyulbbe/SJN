@@ -101,16 +101,13 @@ test('자재 폼 제품 이미지는 여러 장을 한꺼번에 받고 이미지
   await drag(zone, [await png('1.png', '#d22828')], 'dragenter');
   await expect(zone).toHaveClass(/file-drop-active/);
   await zone.screenshot({ path: test.info().outputPath('product-images-dragging.png') });
-  await drag(zone, [
-    await png('1.png', '#d22828'),
-    await png('2.png', '#1eb450'),
-    await png('3.png', '#2d50d2'),
-  ]);
+  await drag(zone, [await png('1.png', '#d22828'), await png('2.png', '#1eb450')]);
   const images = form.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true });
-  await expect(images).toHaveCount(3);
+  await expect(images).toHaveCount(2);
   await expect(form.getByLabel('촬영 방향 1', { exact: true })).toHaveValue('정면');
-  await drag(zone, [await png('4.png', '#d22828'), text('memo.txt'), await png('5.png', '#1eb450')]);
-  await expect(images).toHaveCount(5);
+  await drag(zone, [await png('3.png', '#2d50d2'), text('memo.txt'), await png('4.png', '#d22828')]);
+  // A material has four directions at most (정면·왼쪽·오른쪽·뒤).
+  await expect(images).toHaveCount(4);
   await expect(form.getByText('이미지가 아닌 파일 1개는 빼고 올렸어요.', { exact: true })).toBeVisible();
   // Dropping somewhere else in the form is swallowed instead of opening the file in the tab.
   const prevented = await form.getByLabel('상품명').evaluate((element) => {
@@ -121,7 +118,11 @@ test('자재 폼 제품 이미지는 여러 장을 한꺼번에 받고 이미지
     return event.defaultPrevented;
   });
   expect(prevented).toBe(true);
-  await expect(images).toHaveCount(5);
+  await expect(images).toHaveCount(4);
+  // A fifth is refused with the room left said plainly.
+  await drag(zone, [await png('5.png', '#1eb450')]);
+  await expect(form.getByRole('alert')).toContainText('최대 4장까지 올릴 수 있어요');
+  await expect(images).toHaveCount(4);
 });
 
 test('자재 폼 타일 텍스처도 여러 장을 한꺼번에 끌어 놓을 수 있다', async ({ page }) => {

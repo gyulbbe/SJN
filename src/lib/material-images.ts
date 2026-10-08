@@ -1,4 +1,9 @@
-import { readProductDirection, suitingDirection, type ProductDirection } from './product-direction';
+import {
+  isRetiredDirection,
+  suitingDirection,
+  viewDirection,
+  type ProductDirection,
+} from './product-direction';
 import type { RoomFace } from './room-types';
 import type { MaterialInput, MaterialVersion } from './types';
 
@@ -8,12 +13,16 @@ type MaterialImages = Pick<
 >;
 const FRONT_NAMES = new Set(['정면', 'front', 'frontal']);
 
-/** Only exact names designate a front photo; e.g. "정면 30도" remains a separate angle. */
+/**
+ * Only exact names designate a front photo; e.g. "정면 30도" remains a separate angle. Without one it
+ * is the first photo that is not a retired 위·아래 one (those are never a direction photo), or none.
+ */
 export function getPreferredProductViewIndex(material: Pick<MaterialVersion, 'views'>): number {
   const front = material.views.findIndex((view) =>
     FRONT_NAMES.has(view.direction.trim().normalize('NFKC').toLowerCase()),
   );
-  return front >= 0 ? front : material.views.length ? 0 : -1;
+  if (front >= 0) return front;
+  return material.views.findIndex((view) => !isRetiredDirection(view.direction));
 }
 
 /**
@@ -29,30 +38,42 @@ export function getPlacementViewIndex(
 ): { index: number; missing?: ProductDirection } {
   const wanted = suitingDirection(face);
   if (wanted) {
-    const index = material.views.findIndex((view) => readProductDirection(view.direction).name === wanted);
+    const index = material.views.findIndex((view) => viewDirection(view.direction) === wanted);
     if (index >= 0) return { index };
   }
   return { index: getPreferredProductViewIndex(material), ...(wanted ? { missing: wanted } : {}) };
 }
 
-/** Catalog/usage preview policy. Never use this to rewrite an existing fixture's saved viewIndex. */
+/**
+ * The picture that stands for a material in the lists, the catalog and the usage panel. A tile shows
+ * its first texture. A product shows its 대표 이미지 (`coverAssetId`, optional) when there is one,
+ * else its 정면 photo, else its first direction photo; a retired 위·아래 photo is never used. Never
+ * use this to rewrite an existing fixture's saved viewIndex.
+ */
 export function getMaterialImageAssetId(material?: MaterialImages | null): string | undefined {
   if (!material) return undefined;
   if (material.category === 'tile') {
     if (material.textureAssetIds.length) return material.textureAssetIds[0];
-  } else if (material.views.length) {
-    return material.views[getPreferredProductViewIndex(material)]?.assetId;
+  } else {
+    if (material.coverAssetId) return material.coverAssetId;
+    const index = getPreferredProductViewIndex(material);
+    if (index >= 0) return material.views[index]?.assetId;
   }
   return material.coverAssetId || material.imageAssetIds?.[0];
 }
 
-/** New versions need no separate cover/gallery. Keep legacy-only images until a real placement image exists. */
+/**
+ * What a new version keeps of the older fields. The old photo gallery (`imageAssetIds`) is not
+ * kept once there is a placement image. The 대표 이미지 (`coverAssetId`) stays for a product and is
+ * dropped for a tile, and a retired 위·아래 photo is left out of a saved version (it was never shown
+ * as a direction photo; a stored version that has one keeps it until its material is saved again).
+ * Legacy-only images stay until a real placement image exists.
+ */
 export function stripLegacyMaterialImages<T extends MaterialInput>(input: T): T {
-  const hasPlacementImage =
-    input.category === 'tile' ? input.textureAssetIds.length > 0 : input.views.length > 0;
-  if (!hasPlacementImage) return { ...input };
-  const copy = { ...input };
-  delete copy.coverAssetId;
-  delete copy.imageAssetIds;
+  const views = input.views.filter((view) => !isRetiredDirection(view.direction));
+  const hasPlacementImage = input.category === 'tile' ? input.textureAssetIds.length > 0 : views.length > 0;
+  const copy = { ...input, views };
+  if (input.category === 'tile') delete copy.coverAssetId;
+  if (hasPlacementImage) delete copy.imageAssetIds;
   return copy;
 }

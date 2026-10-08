@@ -47,10 +47,12 @@ async function imageColor(locator: Locator, expected: number[]) {
     })
     .toEqual(expected);
 }
-async function noCoverControls(form: Locator) {
+/** A tile has no 대표 이미지 (it shows its texture); a product's is optional (see four-directions-cover.spec.ts). */
+async function noCoverControls(form: Locator, product = false) {
   await expect(form.getByRole('heading', { name: '상품 소개 이미지', exact: true })).toHaveCount(0);
+  if (product) return;
   await expect(form.getByRole('button', { name: /대표 이미지/ })).toHaveCount(0);
-  await expect(form.getByLabel('대표 이미지 올리기', { exact: true })).toHaveCount(0);
+  await expect(form.getByLabel(/대표 이미지 올리기/)).toHaveCount(0);
 }
 async function checkDisplays(page: Page, name: string, color: number[], tile = false, preferredView = 0) {
   const card = page.locator('article').filter({ hasText: name });
@@ -100,7 +102,7 @@ for (const hasFront of [true, false]) {
     const name = hasFront ? '정면 자동 표시 검증 제품' : '첫 사진 자동 표시 검증 제품';
     await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
     await form.getByLabel('상품명').fill(name);
-    await noCoverControls(form);
+    await noCoverControls(form, true);
     await expect(form.getByRole('heading', { name: '제품 이미지', exact: true })).toBeVisible();
     await form.getByRole('button', { name: '자재 등록', exact: true }).click();
     await expect(form.getByRole('alert')).toContainText(/제품 이미지|제품 사진/);
@@ -268,7 +270,7 @@ test('작은 제품 사진도 안내 없이 올라가고 한꺼번에 올린 여
   await expect(form.getByText(noHint)).toHaveCount(0);
   await expect(form.getByText('360°')).toHaveCount(0);
   await expect(form.getByRole('button', { name: /360°|입체화/ })).toHaveCount(0);
-  // Several at once: every one is added, each with its own direction name, up to the limit of six.
+  // Several at once: every one is added, each with its own direction name, up to the limit of four.
   await upload.setInputFiles([await photo('tiny-a.png', 100, 100), await photo('big-3.png', 2000, 1500)]);
   await expect(photos).toHaveCount(4);
   await expect(form.getByText(noHint)).toHaveCount(0);

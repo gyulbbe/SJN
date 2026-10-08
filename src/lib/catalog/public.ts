@@ -4,7 +4,7 @@ import { json, D1StorageError } from '@/lib/d1/http';
 import type { D1Bindings } from '@/lib/d1/types';
 import type { MaterialVersion } from '@/lib/types';
 import { getMaterialImageAssetId } from '@/lib/material-images';
-import { readMaterialViews } from '@/lib/product-direction';
+import { isRetiredDirection, readMaterialViews } from '@/lib/product-direction';
 import { identifierSchema } from '@/lib/storage/validation';
 export type PublicMaterial = {
   id: string;
@@ -25,11 +25,28 @@ export type PublicMaterial = {
 };
 const visible =
   "m.scope='shared' AND m.active=1 AND m.purpose='catalog' AND json_type(v.payload_json,'$.reconstruction') IS NULL";
+/**
+ * Every image a public version points at, the preferred one first. A retired 위·아래 photo is still
+ * listed (flagged `retired`) because the placement projection must keep the photo numbers; the
+ * public list leaves it out. A product's 대표 이미지 is one of them.
+ */
 function displayImages(v: MaterialVersion) {
-  const images =
+  const images: { id: string; label: string; retired?: boolean }[] =
     v.category === 'tile'
       ? v.textureAssetIds.map((id) => ({ id, label: '타일 텍스처' }))
-      : v.views.map((view) => ({ id: view.assetId, label: view.direction }));
+      : v.views.map((view) => ({
+          id: view.assetId,
+          label: view.direction,
+          ...(isRetiredDirection(view.direction) ? { retired: true } : {}),
+        }));
+  // (A material with no photo at all keeps the old cover-only listing below.)
+  if (
+    v.category !== 'tile' &&
+    v.coverAssetId &&
+    images.length &&
+    !images.some((image) => image.id === v.coverAssetId)
+  )
+    images.push({ id: v.coverAssetId, label: '대표 이미지' });
   const preferred = getMaterialImageAssetId(v);
   if (!images.length)
     for (const id of [v.coverAssetId, ...(v.imageAssetIds ?? [])])
@@ -40,7 +57,8 @@ const directDisplay = `(
   (json_extract(v.payload_json,'$.category')='tile' AND EXISTS(SELECT 1 FROM json_each(v.payload_json,'$.textureAssetIds') j WHERE j.value=a.id)) OR
   (json_extract(v.payload_json,'$.category')<>'tile' AND EXISTS(SELECT 1 FROM json_each(v.payload_json,'$.views') j WHERE json_extract(j.value,'$.assetId')=a.id)) OR
   (CASE WHEN json_extract(v.payload_json,'$.category')='tile' THEN coalesce(json_array_length(v.payload_json,'$.textureAssetIds'),0) ELSE coalesce(json_array_length(v.payload_json,'$.views'),0) END = 0 AND
-   (json_extract(v.payload_json,'$.coverAssetId')=a.id OR EXISTS(SELECT 1 FROM json_each(v.payload_json,'$.imageAssetIds') j WHERE j.value=a.id)))
+   (json_extract(v.payload_json,'$.coverAssetId')=a.id OR EXISTS(SELECT 1 FROM json_each(v.payload_json,'$.imageAssetIds') j WHERE j.value=a.id))) OR
+  (json_extract(v.payload_json,'$.category')<>'tile' AND json_extract(v.payload_json,'$.coverAssetId')=a.id)
 )`;
 export async function publicMaterials(env: D1Bindings): Promise<Response> {
   const rows = await env.DB.prepare(
@@ -73,7 +91,7 @@ export async function publicMaterials(env: D1Bindings): Promise<Response> {
     depthMm: v.depthMm,
     pricing: v.pricing,
     images: displayImages(v)
-      .filter((ref) => allowedImages.has(ref.id))
+      .filter((ref) => !ref.retired && allowedImages.has(ref.id))
       .map((ref) => ({ url: '/api/catalog/images?id=' + encodeURIComponent(ref.id), label: ref.label })),
   }));
   return json({ materials, catalog: await readCatalog(env.DB) });
@@ -196,7 +214,11 @@ export async function publicPlacement(env: D1Bindings, request: Request): Promis
         installation: v.installation,
         textureAssetIds,
         views,
-        ...(legacy && v.coverAssetId && allowed.has(v.coverAssetId) ? { coverAssetId: v.coverAssetId } : {}),
+        ...(v.category !== 'tile' && v.coverAssetId && allowed.has(v.coverAssetId)
+          ? { coverAssetId: v.coverAssetId }
+          : legacy && v.coverAssetId && allowed.has(v.coverAssetId)
+            ? { coverAssetId: v.coverAssetId }
+            : {}),
         ...(legacy && v.imageAssetIds
           ? { imageAssetIds: v.imageAssetIds.filter((id) => allowed.has(id)) }
           : {}),

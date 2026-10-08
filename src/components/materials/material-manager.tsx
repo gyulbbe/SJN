@@ -1,5 +1,6 @@
 'use client';
 import { getMaterialImageAssetId, stripLegacyMaterialImages } from '@/lib/material-images';
+import { isRetiredDirection } from '@/lib/product-direction';
 
 import Link from 'next/link';
 import AdminLinks from '@/components/admin/admin-links';
@@ -344,7 +345,7 @@ export default function MaterialManager() {
                     <span className="badge">
                       {row.version.category === 'tile'
                         ? `텍스처 ${row.version.textureAssetIds.length}장`
-                        : `2D · ${row.version.views.length}방향`}
+                        : `2D · ${row.version.views.filter((view) => !isRetiredDirection(view.direction)).length}방향`}
                     </span>
                     {!row.material.active && <span className="badge amber">비활성</span>}
                   </div>
@@ -484,7 +485,7 @@ export default function MaterialManager() {
                   <dd>
                     {detail.version.category === 'tile'
                       ? `렌더링 텍스처 ${detail.version.textureAssetIds.length}장`
-                      : `2D 제품 이미지 ${detail.version.views.length}방향`}
+                      : `2D 제품 이미지 ${detail.version.views.filter((view) => !isRetiredDirection(view.direction)).length}방향`}
                   </dd>
                 </dl>
                 <p>{detail.version.description || '등록된 설명이 없어요.'}</p>
@@ -498,7 +499,13 @@ export default function MaterialManager() {
                       assetId,
                       direction: `텍스처 ${i + 1}`,
                     }))
-                  : detail.version.views
+                  : [
+                      ...(detail.version.coverAssetId
+                        ? [{ assetId: detail.version.coverAssetId, direction: '대표 이미지' }]
+                        : []),
+                      // A retired 위·아래 photo is not shown as a direction photo.
+                      ...detail.version.views.filter((view) => !isRetiredDirection(view.direction)),
+                    ]
                 ).map((view, i) => (
                   <div key={`${view.assetId}-${i}`}>
                     <AssetImage assetId={view.assetId} alt={view.direction} />
