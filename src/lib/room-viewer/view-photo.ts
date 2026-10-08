@@ -1,7 +1,7 @@
 import {
   directionAngle,
   nearestHorizontalDirection,
-  readProductDirection,
+  viewDirection,
   type ProductDirection,
 } from '../product-direction';
 import { snapQuarter, type RoomQuarter } from './view-state';
@@ -21,8 +21,8 @@ import { snapQuarter, type RoomQuarter } from './view-state';
  *   뒤 (180°)             뒤      오른쪽  정면    왼쪽
  *
  * A direction with no photo is shown by the registered photo nearest to it (a photo is never mirrored
- * for another side: a logo or a print would read backwards). 위 and 아래 name no horizontal direction
- * and are not used from the four sides.
+ * for another side: a logo or a print would read backwards). A retired 위·아래 photo (saved before
+ * the list had four names) is not a direction photo and is never chosen.
  */
 
 /** The side a camera looks from, in plain words: 정면 · 오른쪽 · 뒤 · 왼쪽. */
@@ -34,7 +34,7 @@ export function roomSideName(azimuth: number): '정면' | '오른쪽' | '뒤' | 
 export type ViewPhoto = {
   /** The photo to show. */
   index: number;
-  /** The direction the camera should see (undefined when the selected photo names none: 위, 아래). */
+  /** The direction the camera should see (undefined when the selected photo is a retired 위·아래 one). */
   wanted?: ProductDirection;
   /** The shown photo's direction name. */
   used: ProductDirection;
@@ -58,17 +58,17 @@ export function choosePhotoForView(
   azimuth: number,
   available?: ReadonlySet<number>,
 ): ViewPhoto {
-  const names = directions.map((value) => readProductDirection(value).name);
-  const own = names[selected] ?? '정면';
+  const names = directions.map((value) => viewDirection(value));
+  const own = names[selected];
+  if (own === undefined) return { index: selected, used: '정면', exact: true };
   const base = directionAngle(own);
-  if (base === undefined) return { index: selected, used: own, exact: true };
   const wanted = nearestHorizontalDirection(base - snapQuarter(azimuth)).name;
   const target = directionAngle(wanted)!;
   let index = selected,
     best = distance(base, target);
   names.forEach((name, i) => {
+    if (name === undefined || i === selected || (available && !available.has(i))) return;
     const angle = directionAngle(name);
-    if (angle === undefined || i === selected || (available && !available.has(i))) return;
     const delta = distance(angle, target);
     // Strictly nearer wins; a tie keeps the selected photo, then the first of the equals.
     if (delta < best) {

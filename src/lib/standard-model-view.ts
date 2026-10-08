@@ -1,4 +1,4 @@
-import { directionAngle, readProductDirection } from './product-direction';
+import { viewDirectionAngle } from './product-direction';
 import { RECONSTRUCTION_DEFAULTS } from './reconstruction/types';
 import type { ProductBounds } from './room-types';
 import type { FixtureInstance, MaterialVersion, Scene } from './types';
@@ -179,7 +179,7 @@ export function showAsStandardModel(
     );
     placement.v = 1 - baseHeightMm / room;
   }
-  const facing = directionAngle(readProductDirection(material.views[fixture.viewIndex]?.direction).name);
+  const facing = viewDirectionAngle(material.views[fixture.viewIndex]?.direction);
   fixture.reconstruction = {
     version: 2,
     kind,

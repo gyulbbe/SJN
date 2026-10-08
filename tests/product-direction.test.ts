@@ -7,17 +7,21 @@ import {
   directionSuitsFace,
   facingOfDirection,
   isProductDirection,
+  isRetiredDirection,
   mismatchMessage,
   nearestHorizontalDirection,
   nextProductDirection,
   readMaterialViews,
   readProductDirection,
   suitingDirection,
+  viewDirection,
+  viewDirectionAngle,
 } from '../src/lib/product-direction';
 describe('the closed list of angle names', () => {
-  it('has the six names, in the list order, one photo each', () => {
-    expect([...PRODUCT_DIRECTIONS]).toEqual(['정면', '왼쪽', '오른쪽', '위', '아래', '뒤']);
-    expect(MAX_PRODUCT_VIEWS).toBe(6);
+  it('has the four names, in the list order, one photo each (no 위 or 아래)', () => {
+    expect([...PRODUCT_DIRECTIONS]).toEqual(['정면', '왼쪽', '오른쪽', '뒤']);
+    expect(MAX_PRODUCT_VIEWS).toBe(4);
+    for (const gone of ['위', '아래']) expect(isProductDirection(gone)).toBe(false);
     expect(PRODUCT_DIRECTIONS.every(isProductDirection)).toBe(true);
     for (const free of ['사선', '정면 ', '', 'front', '각도 1', 3, null, undefined])
       expect(isProductDirection(free)).toBe(false);
@@ -29,7 +33,6 @@ describe('the closed list of angle names', () => {
       ['왼쪽 측면', '왼쪽'],
       ['뒤에서', '뒤'],
       ['후면', '뒤'],
-      ['위에서', '위'],
       ['front', '정면'],
       ['left', '왼쪽'],
       ['right', '오른쪽'],
@@ -39,9 +42,25 @@ describe('the closed list of angle names', () => {
       [' 정면 ', '정면'],
       ['오른쪽', '오른쪽'],
     ];
-    for (const [old, now] of cases) expect(readProductDirection(old)).toEqual({ name: now, known: true });
+    for (const [old, now] of cases)
+      expect(readProductDirection(old)).toEqual({ name: now, known: true, retired: false });
     for (const old of ['사선', '원본 사진 방향', '공간 공통 카메라', '각도 1', '', '옆면 비스듬히'])
-      expect(readProductDirection(old)).toEqual({ name: '정면', known: false });
+      expect(readProductDirection(old)).toEqual({ name: '정면', known: false, retired: false });
+  });
+
+  it('reads the old 위·아래 names as retired: no direction, never a 정면 stand-in', () => {
+    for (const old of ['위', '아래', 'top', 'up', '위에서', 'bottom', 'down', '아래에서', ' 위 ', 'TOP']) {
+      expect(isRetiredDirection(old)).toBe(true);
+      expect(readProductDirection(old).retired).toBe(true);
+      expect(viewDirection(old)).toBeUndefined();
+      expect(viewDirectionAngle(old)).toBeUndefined();
+    }
+    for (const kept of ['정면', '왼쪽', '오른쪽', '뒤', 'front', '사선', '', undefined, null, 3]) {
+      expect(isRetiredDirection(kept)).toBe(false);
+      expect(readProductDirection(kept).retired).toBe(false);
+    }
+    expect(viewDirection('오른쪽 측면')).toBe('오른쪽');
+    expect(viewDirectionAngle('오른쪽')).toBe(90);
   });
 
   it('suggests the first direction not used yet, in the list order', () => {
@@ -49,19 +68,12 @@ describe('the closed list of angle names', () => {
     expect(nextProductDirection(['정면'])).toBe('왼쪽');
     expect(nextProductDirection(['정면', '왼쪽'])).toBe('오른쪽');
     expect(nextProductDirection(['정면', '오른쪽'])).toBe('왼쪽');
-    expect(nextProductDirection(['정면', '왼쪽', '오른쪽'])).toBe('위');
+    expect(nextProductDirection(['정면', '왼쪽', '오른쪽'])).toBe('뒤');
     expect(nextProductDirection([...PRODUCT_DIRECTIONS])).toBeUndefined();
   });
 
-  it('maps names to the angle the product faces; 위 and 아래 have none', () => {
-    expect(PRODUCT_DIRECTIONS.map((name) => directionAngle(name))).toEqual([
-      0,
-      -90,
-      90,
-      undefined,
-      undefined,
-      180,
-    ]);
+  it('maps names to the angle the product faces', () => {
+    expect(PRODUCT_DIRECTIONS.map((name) => directionAngle(name))).toEqual([0, -90, 90, 180]);
     expect(nearestHorizontalDirection(80).name).toBe('오른쪽');
     expect(nearestHorizontalDirection(-200).name).toBe('뒤');
     expect(nearestHorizontalDirection(-44).name).toBe('정면');
@@ -70,8 +82,6 @@ describe('the closed list of angle names', () => {
       'front',
       'left',
       'right',
-      undefined,
-      undefined,
       'back',
     ]);
   });
@@ -87,7 +97,7 @@ describe('names against the wall a product stands on', () => {
     expect(directionSuitsFace('left', '오른쪽')).toBe(true);
     expect(directionSuitsFace('left', '정면')).toBe(false);
     expect(directionSuitsFace('back', '정면')).toBe(true);
-    expect(directionSuitsFace('back', '위')).toBe(false);
+    expect(directionSuitsFace('back', '뒤')).toBe(false);
   });
 
   it('says where the product looks and warns, in words, only when it does not suit', () => {
@@ -97,7 +107,6 @@ describe('names against the wall a product stands on', () => {
     expect(describeProductFacing('floor', '정면')).toBe('정면(열린 쪽)을 봐요.');
     expect(describeProductFacing('left', '정면')).toBe('정면(열린 쪽)을 봐요.');
     expect(describeProductFacing('floor', '뒤')).toBe('뒤 벽 쪽을 봐요.');
-    expect(describeProductFacing('back', '위')).toMatch(/방향은 정하지 않아요/);
     expect(mismatchMessage('left', '오른쪽')).toBe('');
     expect(mismatchMessage('floor', '뒤')).toBe('');
     expect(mismatchMessage('left', '정면')).toBe(
@@ -133,6 +142,19 @@ describe('older stored material versions', () => {
     expect(readMaterialViews(version)).toBe(version);
     const none = { views: [] };
     expect(readMaterialViews(none)).toBe(none);
+  });
+
+  it('keeps a retired 위·아래 photo in its place and as stored, so the numbers after it do not move', () => {
+    const version = { views: [view('정면'), view('위', { assetId: 'top' }), view('아래'), view('뒤에서')] };
+    const read = readMaterialViews(version);
+    expect(read.views.map((v) => v.direction)).toEqual(['정면', '위', '아래', '뒤']);
+    expect(read.views[1]).toBe(version.views[1]);
+    expect(read.views.map((v) => (v as { directionWas?: string }).directionWas)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 
   it('does not flag a reconstruction material (internal, disposable)', () => {

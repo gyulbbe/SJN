@@ -24,9 +24,9 @@ import { createTemplateModel, disposeTemplateModel } from '../reconstruction/tem
 import { reconstructionModelTransform } from '../reconstruction/projection';
 import {
   describeProductFacing,
-  directionAngle,
   directionSuitsFace,
-  readProductDirection,
+  viewDirection,
+  viewDirectionAngle,
   type ProductDirection,
 } from '../product-direction';
 import { choosePhotoForView, viewPhotoNote } from './view-photo';
@@ -152,14 +152,12 @@ export class ProductAssetCache {
   }
 }
 
-/** The name of a photo's angle, as the closed list reads it. */
-const nameOf = (view: { direction: string }) => readProductDirection(view.direction).name;
-/** The horizontal direction (degrees) a photo shows its product facing; none for 위 and 아래. */
+/** The horizontal direction (degrees) a photo shows its product facing; none for a retired 위·아래 photo. */
 export function declaredProductDirection(direction: string): number | undefined {
-  return directionAngle(readProductDirection(direction).name);
+  return viewDirectionAngle(direction);
 }
 
-/** A photo's horizontal angle: its name's direction (none for 위 and 아래, which are not used). */
+/** A photo's horizontal angle: its name's direction (none for a retired 위·아래 photo, which is not used). */
 export function photoViewAngle(view: MaterialVersion['views'][number]): number | undefined {
   return declaredProductDirection(view.direction);
 }
@@ -348,6 +346,8 @@ export async function buildViewerFixtures(
   for (const fixture of scene.fixtures) {
     let product: Group | undefined;
     let reachesBeyond = false;
+    /** The photo the room shows for this product (the selected one, unless that is a retired 위·아래 photo). */
+    let shownIndex = fixture.viewIndex;
     try {
       if (!room) throw new Error('공간 크기와 설치면이 없어 3D 위치를 계산할 수 없어요.');
       const p = checkPlacement(fixture);
@@ -403,6 +403,17 @@ export async function buildViewerFixtures(
         if (!material) throw new Error('사용 당시 자재 버전을 찾을 수 없어요.');
         const selected = material.views[fixture.viewIndex];
         if (!selected) throw new Error('선택했던 제품 사진을 찾을 수 없어요.');
+        // A retired 위·아래 photo is never shown in the room: the 정면 photo (else the first direction
+        // photo) stands in for it, and a product with no direction photo at all cannot be drawn.
+        if (viewDirection(selected.direction) === undefined) {
+          const front = material.views.findIndex((view) => viewDirection(view.direction) === '정면');
+          shownIndex = front >= 0 ? front : material.views.findIndex((view) => viewDirection(view.direction));
+          if (shownIndex < 0) throw new Error('방 화면에 쓸 방향 사진이 없어요. 정면 사진을 등록해 주세요.');
+          notice(
+            fixture,
+            `고른 사진은 위·아래에서 찍은 사진이라 방 화면에 쓰이지 않아요. ‘${viewDirection(material.views[shownIndex].direction)}’ 사진으로 보여요.`,
+          );
+        }
         product = new Group();
         product.position.copy(roomFacePoint(room, p.face, p.u, p.v));
         // No turn for the wall: the photo's angle name decides which way the product looks (as in 2D),
@@ -418,14 +429,14 @@ export async function buildViewerFixtures(
         const planes = new Map<number, Mesh>();
         let depthEstimated = false;
         for (const [index, view] of material.views.entries()) {
-          // 위 and 아래 are not used from the four sides; the selected photo is, whatever its name.
-          if (index !== fixture.viewIndex && photoViewAngle(view) === undefined) continue;
+          // A retired 위·아래 photo is not used from the four sides, selected or not.
+          if (photoViewAngle(view) === undefined) continue;
           try {
             const image = await cache.image(view.assetId);
             const own = index === fixture.viewIndex;
             const bounds = own ? p.contentBounds : image.bounds,
               aspect = own ? p.imageAspect : image.aspect;
-            const size = photoPlaneSize(p, material.depthMm, nameOf(view), bounds, aspect);
+            const size = photoPlaneSize(p, material.depthMm, viewDirection(view.direction)!, bounds, aspect);
             if (size.estimated) depthEstimated = true;
             const plane = new Mesh(
               planeGeometry(fixture, size, bounds, aspect, own ? fixture.anchor : view.anchor),
@@ -437,12 +448,12 @@ export async function buildViewerFixtures(
                 toneMapped: false,
               }),
             );
-            plane.visible = own;
+            plane.visible = index === shownIndex;
             plane.userData.viewIndex = index;
             planes.set(index, plane);
             content.add(plane);
           } catch (error) {
-            if (index === fixture.viewIndex) throw error;
+            if (index === shownIndex) throw error;
             notice(
               fixture,
               `방향 사진 일부를 읽지 못했어요: ${error instanceof Error ? error.message : String(error)}`,
@@ -476,12 +487,12 @@ export async function buildViewerFixtures(
           target.updateMatrixWorld(true);
           return beyond;
         };
-        reachesBeyond = standAt(fixture.viewIndex, 0);
+        reachesBeyond = standAt(shownIndex, 0);
         const look = new Quaternion();
         update.push((camera) => {
           const quarter = snapQuarter(cameraQuarterAzimuth(camera.getWorldQuaternion(look)));
-          const photo = choosePhotoForView(directions, fixture.viewIndex, quarter, new Set(planes.keys()));
-          standAt(planes.has(photo.index) ? photo.index : fixture.viewIndex, quarter);
+          const photo = choosePhotoForView(directions, shownIndex, quarter, new Set(planes.keys()));
+          standAt(planes.has(photo.index) ? photo.index : shownIndex, quarter);
           const message = viewPhotoNote(fixture.name, quarter, photo);
           if (message)
             viewNotices.set(fixture.id, {
@@ -509,9 +520,8 @@ export async function buildViewerFixtures(
         if (reachesBeyond)
           notice(fixture, '제품이 방 밖으로 나가요. 위치나 크기, 각도 방향을 확인해 주세요.');
         else {
-          const direction = readProductDirection(
-            materials[fixture.materialVersionId]?.views[fixture.viewIndex]?.direction,
-          ).name;
+          const direction =
+            viewDirection(materials[fixture.materialVersionId]?.views[shownIndex]?.direction) ?? '정면';
           const suits = directionSuitsFace(p.face, direction);
           notice(
             fixture,

@@ -1016,6 +1016,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         : { index: getPreferredProductViewIndex(m), missing: undefined };
       const viewIndex = picked.index;
       const view = m.views[viewIndex];
+      if (!view)
+        throw new Error(
+          '이 제품은 방 화면에 쓸 방향 사진이 없어요. 자재 관리에서 정면 사진을 등록해 주세요.',
+        );
       const asset = await repositories.assets.get(view.assetId);
       if (asset.kind === 'product-mesh') throw new Error('제품 사진에는 이미지 자산이 필요해요.');
       if (

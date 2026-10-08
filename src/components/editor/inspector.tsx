@@ -17,6 +17,7 @@ import {
   mismatchMessage,
   readProductDirection,
   suitingDirection,
+  viewDirection,
 } from '@/lib/product-direction';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, CopyCheck, Trash2, Lock, Unlock, ArrowUp, ArrowDown, RotateCcw, X } from 'lucide-react';
@@ -195,13 +196,14 @@ export default function Inspector({
   const facing = (() => {
     const placement = fixture?.roomPlacement;
     const view = fixture && !fixture.reconstruction ? material?.views[fixture.viewIndex] : undefined;
-    if (!placement || !view) return undefined;
-    const name = readProductDirection(view.direction).name;
+    // A retired 위·아래 photo names no direction; the thumbnails below say it is not used in the room.
+    const name = view && viewDirection(view.direction);
+    if (!placement || !view || !name) return undefined;
     const warning = mismatchMessage(placement.face, name);
     const fitName = suitingDirection(placement.face);
     const fitIndex =
       warning && fitName
-        ? material.views.findIndex((other) => readProductDirection(other.direction).name === fitName)
+        ? material.views.findIndex((other) => viewDirection(other.direction) === fitName)
         : -1;
     return { name, text: describeProductFacing(placement.face, name), warning, fitName, fitIndex };
   })();
@@ -283,7 +285,7 @@ export default function Inspector({
       !captured.draft &&
       !selected.reconstruction &&
       face !== 'floor' &&
-      !directionSuitsFace(face, readProductDirection(showing.direction).name)
+      !(viewDirection(showing.direction) && directionSuitsFace(face, viewDirection(showing.direction)!))
         ? getPlacementViewIndex(material, face)
         : undefined;
     const view =
@@ -662,13 +664,14 @@ export default function Inspector({
               )}
               <div className={styles.heading}>
                 <span>제품 각도</span>
-                <span className={styles.count}>{material?.views.length ?? 0}개 사진</span>
+                <span className={styles.count}>
+                  {material?.views.filter((view) => viewDirection(view.direction)).length ?? 0}개 사진
+                </span>
               </div>
               {modelOn ? (
                 <p className={styles.hint} data-testid="standard-model-angle-hint">
                   표준 모형으로 보는 동안에는 각도 사진을 고를 수 없어요. 끄면 ‘
-                  {readProductDirection(material?.views[fixture.viewIndex]?.direction).name}’ 사진으로
-                  돌아와요.
+                  {viewDirection(material?.views[fixture.viewIndex]?.direction) ?? '정면'}’ 사진으로 돌아와요.
                 </p>
               ) : (
                 <>
@@ -680,6 +683,8 @@ export default function Inspector({
                     className={styles.grid}
                   >
                     {material?.views.map((view, index) => {
+                      // A retired 위·아래 photo is not shown as a direction photo.
+                      if (!viewDirection(view.direction)) return null;
                       const selected = fixture.viewIndex === index;
                       const pending = pendingView === index;
                       const name = view.direction || `각도 ${index + 1}`;
@@ -714,9 +719,17 @@ export default function Inspector({
                   </div>
                 </>
               )}
-              {!modelOn && !material?.views.length && (
+              {!modelOn && !material?.views.some((view) => viewDirection(view.direction)) && (
                 <p className={styles.hint}>등록된 각도 사진이 없어요.</p>
               )}
+              {!modelOn &&
+                material?.views[fixture.viewIndex] &&
+                !viewDirection(material.views[fixture.viewIndex].direction) && (
+                  <p className={styles.hint} data-testid="retired-view-hint">
+                    고른 사진은 위·아래에서 찍은 사진이라 방 화면에 쓰이지 않아요. 아래에서 방향 사진을 골라
+                    주세요.
+                  </p>
+                )}
               {pendingView !== null && (
                 <p role="status" className="muted" style={{ fontSize: 12, marginTop: 8 }}>
                   선택한 각도 사진을 준비하고 있어요…
