@@ -18,7 +18,12 @@ import { AssetImage, useAsset } from './asset-image';
 import { ImagePreparer } from './image-preparer';
 import { BackgroundRemovalTest } from './background-removal-test';
 import { AngleNameSelect } from './angle-name-input';
-import { MAX_PRODUCT_VIEWS, nextProductDirection, productViewName } from '@/lib/product-direction';
+import {
+  isRetiredDirection,
+  MAX_PRODUCT_VIEWS,
+  nextProductDirection,
+  productViewName,
+} from '@/lib/product-direction';
 import { useAccess } from '@/components/app-provider';
 import { useFileDrop } from '@/components/use-file-drop';
 import { IMAGE_UPLOAD_ACCEPT, pickImageFiles } from '@/lib/file-drop';
@@ -137,13 +142,15 @@ export function MaterialForm({
   const { writable, userId } = useAccess();
   const serverAdmin = useSharedCatalogAdmin();
   const isAdmin = serverAdmin;
+  const retiredCount = initial?.views.filter((view) => isRetiredDirection(view.direction)).length ?? 0;
   const [form, setForm] = useState<MaterialInput>(() =>
     initial
       ? {
           ...initial,
           pricing: { ...(initial.pricing ?? defaultMaterialPricing(initial.category)) },
           textureAssetIds: [...initial.textureAssetIds],
-          views: structuredClone(initial.views),
+          // A retired 위·아래 photo is not a direction photo; it is left out and the form says so.
+          views: structuredClone(initial.views.filter((view) => !isRetiredDirection(view.direction))),
         }
       : {
           ...defaults,
@@ -280,13 +287,17 @@ export function MaterialForm({
 
   // Textures and product photos take several images at once, picked or dropped. The limit is what a
   // material version can store (100 each).
-  const uploadFiles = async (incoming: File[], target: 'texture' | 'view') => {
+  const uploadFiles = async (incoming: File[], target: 'texture' | 'view' | 'cover') => {
     if (!incoming.length || !writable || uploading || busy) return;
-    const pick = pickImageFiles(incoming, {
-      multiple: true,
-      max: target === 'texture' ? MAX_TEXTURES : MAX_PRODUCT_VIEWS,
-      current: target === 'texture' ? form.textureAssetIds.length : form.views.length,
-    });
+    // The 대표 이미지 is one optional picture for the lists (no direction, no anchor, no cut-out).
+    const pick =
+      target === 'cover'
+        ? pickImageFiles(incoming, { multiple: false })
+        : pickImageFiles(incoming, {
+            multiple: true,
+            max: target === 'texture' ? MAX_TEXTURES : MAX_PRODUCT_VIEWS,
+            current: target === 'texture' ? form.textureAssetIds.length : form.views.length,
+          });
     setUploadNotice(pick.notice ?? '');
     if (pick.error) {
       setError(pick.error);
@@ -302,6 +313,7 @@ export function MaterialForm({
           getRepositories().assets,
         );
         setForm((current) => {
+          if (target === 'cover') return { ...current, coverAssetId: preview.id };
           if (target === 'texture')
             return { ...current, textureAssetIds: [...current.textureAssetIds, preview.id] };
           // The first photo is 정면; each next one takes the first direction not used yet.
@@ -326,7 +338,7 @@ export function MaterialForm({
       setUploading(false);
     }
   };
-  const upload = (event: ChangeEvent<HTMLInputElement>, target: 'texture' | 'view') => {
+  const upload = (event: ChangeEvent<HTMLInputElement>, target: 'texture' | 'view' | 'cover') => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     void uploadFiles(files, target);
@@ -496,6 +508,8 @@ export function MaterialForm({
         subcategoryName: catalogData.subcategories.find((o) => o.id === selection.subcategoryId)?.name ?? '',
         code: form.code.trim(),
         textureAssetIds: form.category === 'tile' ? form.textureAssetIds : [],
+        // The 대표 이미지 is for products; a tile shows its texture.
+        coverAssetId: form.category === 'tile' ? undefined : form.coverAssetId,
         views:
           form.category === 'tile'
             ? []
@@ -519,13 +533,13 @@ export function MaterialForm({
     }
   };
 
-  const uploadInput = (target: 'texture' | 'view', label: string) => (
+  const uploadInput = (target: 'texture' | 'view' | 'cover', label: string) => (
     <label className={styles.uploadButton}>
       {label}
       <input
         type="file"
         accept={IMAGE_UPLOAD_ACCEPT}
-        multiple
+        multiple={target !== 'cover'}
         onChange={(event) => upload(event, target)}
         disabled={uploading || busy}
         aria-label={label}
@@ -675,7 +689,7 @@ export function MaterialForm({
                 <p>
                   {form.category === 'tile'
                     ? '타일 한 장의 정면 사진을 등록하세요. 여러 장이 찍혔다면 사각형으로 한 장만 선택하고, 기울어진 사진은 네 점으로 보정할 수 있어요.'
-                    : '정면 사진이 있으면 먼저 보여주고, 없으면 첫 사진을 보여줘요. 배경은 AI 배경 제거로 지울 수 있어요.'}
+                    : '목록에는 대표 이미지가 있으면 그것을, 없으면 정면 사진을, 정면이 없으면 첫 사진을 보여줘요. 배경은 AI 배경 제거로 지울 수 있어요.'}
                 </p>
               </div>
             </div>
@@ -820,10 +834,30 @@ export function MaterialForm({
                 >
                   {uploadInput('view', '+ 제품 이미지 올리기')}
                   <span className="muted">
-                    정면·왼쪽·오른쪽·위·아래·뒤, 제품이 바라보는 방향마다 한 장씩 등록해요. 여러 장을 한꺼번에
+                    정면·왼쪽·오른쪽·뒤, 제품이 바라보는 방향마다 한 장씩 등록해요. 여러 장을 한꺼번에
                     선택하거나 이 줄에 끌어 놓을 수 있어요(최대 {MAX_PRODUCT_VIEWS}장).
                   </span>
                 </div>
+                <ul className={styles.note} data-testid="view-guide">
+                  <li>
+                    정면 사진 1장이면 시작할 수 있어요. 옆(왼쪽·오른쪽)·뒤 사진을 더 올리면 옆·뒤 화면이
+                    자연스러워져요.
+                  </li>
+                  <li>
+                    사진을 올리지 않은 방향에서는 다른 방향 사진이 대신 보여요. 모양이 달라 보이거나 어색할 수
+                    있어요.
+                  </li>
+                  <li>
+                    위·아래에서 찍은 사진은 방 화면에 쓰이지 않아요. 눈높이에서 약 10° 위에서 찍은 사진을 올려
+                    주세요. 위에서 찍은 사진은 대표 이미지로 쓰세요.
+                  </li>
+                </ul>
+                {retiredCount > 0 && (
+                  <p role="status" className={styles.note} data-testid="retired-views-notice">
+                    이 자재에는 위·아래에서 찍은 사진 {retiredCount}장이 있었어요. 방 화면에 쓰이지 않아서
+                    목록에서 뺐고, 저장하면 새 버전에서는 사라져요. 이전 프로젝트는 이전 버전 그대로 보여요.
+                  </p>
+                )}
                 <div className={styles.viewGrid} {...viewDrop.dropProps}>
                   {form.views.map((view, index) => (
                     <div key={`${view.assetId}-${index}`} className={styles.viewCard}>
@@ -874,6 +908,37 @@ export function MaterialForm({
                     </div>
                   ))}
                 </div>
+                <div className={`${styles.toolbar}`} data-testid="cover-row">
+                  {uploadInput(
+                    'cover',
+                    form.coverAssetId ? '대표 이미지 바꾸기' : '+ 대표 이미지 올리기(선택)',
+                  )}
+                  <span className="muted">
+                    자재 목록·카탈로그에 보이는 그림이에요. 방 화면에는 쓰이지 않아요. 올리지 않으면 정면
+                    사진이 보여요. 배경을 지우지 않은 연출 사진도 괜찮아요(JPG·PNG·WebP, 25MB 이하, 한 장).
+                  </span>
+                </div>
+                {form.coverAssetId && (
+                  <div className={styles.viewGrid}>
+                    <div className={styles.viewCard} data-testid="cover-card">
+                      <AssetImage
+                        assetId={form.coverAssetId}
+                        alt="대표 이미지"
+                        className={styles.coverImage}
+                      />
+                      <div className={styles.toolbar}>
+                        <button
+                          type="button"
+                          className={styles.textButton}
+                          disabled={busy || uploading}
+                          onClick={() => set('coverAssetId', undefined)}
+                        >
+                          대표 이미지 지우기
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {!form.views.length && (
                   <div className={styles.emptyAsset}>
                     아직 배치용 제품 이미지가 없어요.

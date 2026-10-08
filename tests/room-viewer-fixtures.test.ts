@@ -420,6 +420,55 @@ describe('room viewer immutable physical fixtures', () => {
     result.dispose();
     cache.dispose();
   });
+  it('never draws a retired 위·아래 photo: the 정면 photo stands in for a selected one, with a note', async () => {
+    const reader = vi.fn(async () => undefined),
+      cache = new ProductAssetCache(reader),
+      images = fakeImage(cache),
+      m = material();
+    // A version saved before 위 left the list: its photo numbers stay (the 위 photo is number 0).
+    m.views = [
+      { assetId: 'top', direction: '위', anchor: { x: 0.5, y: 1 } },
+      { assetId: 'photo', direction: '정면', anchor: { x: 0.5, y: 1 } },
+    ];
+    const f = fixture();
+    f.viewIndex = 0;
+    const result = await buildViewerFixtures(scene([f]), { m }, reader, cache);
+    expect(images.mock.calls.map(([id]) => id)).toEqual(['photo']);
+    const planes = result.group.children[0].children[0].children;
+    expect(planes).toHaveLength(1);
+    expect(planes[0].visible).toBe(true);
+    expect(
+      result.notices.some((n) => n.message.includes('위·아래에서 찍은 사진이라 방 화면에 쓰이지 않아요')),
+    ).toBe(true);
+    expect(result.notices.some((n) => n.severity === 'error')).toBe(false);
+    result.dispose();
+    cache.dispose();
+  });
+
+  it('says so, and draws nothing, for a product whose photos are all retired 위·아래 ones', async () => {
+    const reader = vi.fn(async () => undefined),
+      cache = new ProductAssetCache(reader),
+      images = fakeImage(cache),
+      m = material();
+    m.views = [
+      { assetId: 'top', direction: '위', anchor: { x: 0.5, y: 1 } },
+      { assetId: 'bottom', direction: '아래', anchor: { x: 0.5, y: 1 } },
+    ];
+    const f = fixture();
+    f.viewIndex = 1;
+    const result = await buildViewerFixtures(scene([f]), { m }, reader, cache);
+    expect(images).not.toHaveBeenCalled();
+    expect(result.group.children).toHaveLength(0);
+    expect(result.notices).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: '방 화면에 쓸 방향 사진이 없어요. 정면 사진을 등록해 주세요.',
+      }),
+    );
+    result.dispose();
+    cache.dispose();
+  });
+
   it('switches to the photo showing the product as that camera sees it, at the same install point', async () => {
     const reader = vi.fn(async () => undefined),
       cache = new ProductAssetCache(reader),

@@ -620,6 +620,12 @@
   width: 55px;
   color: #6f806b;
 }
+.coverImage {
+  align-self: center;
+  max-width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+}
 .viewCard > .toolbar {
   justify-content: space-between;
 }

@@ -899,8 +899,8 @@ describe('anonymous placement projections', () => {
     const view = (assetId: string, direction: string) => ({ assetId, direction, anchor: { x: 0.5, y: 1 } });
     const write = (views: ReturnType<typeof view>[]) =>
       call('materials', { operation: 'create', input: { ...material(one.id), views } });
-    // Writing is strict: the closed list, one photo per direction, at most six.
-    for (const bad of ['사선', '오른쪽 측면', 'front', '각도 1', '']) {
+    // Writing is strict: the closed list of four, one photo per direction. 위 and 아래 are gone.
+    for (const bad of ['사선', '오른쪽 측면', 'front', '각도 1', '', '위', '아래', 'top']) {
       const refused = await write([view(one.id, bad)]);
       expect(refused.status, bad).toBeGreaterThanOrEqual(400);
     }
@@ -949,6 +949,47 @@ describe('anonymous placement projections', () => {
       false,
     ]);
   });
+  it('shows a product 대표 이미지 first in the public list and placement, and never a retired 위·아래 photo in the list', async () => {
+    const front = await upload(admin, 'product');
+    const side = await upload(admin, 'product');
+    const top = await upload(admin, 'product');
+    const cover = await upload(admin, 'product');
+    const view = (assetId: string, direction: string) => ({ assetId, direction, anchor: { x: 0.5, y: 1 } });
+    const saved = await create({
+      ...material(front.id),
+      coverAssetId: cover.id,
+      imageAssetIds: undefined,
+      views: [view(front.id, '정면'), view(side.id, '오른쪽')],
+    });
+    // The 대표 이미지 is kept by the server (a product), and listed before the direction photos.
+    expect(saved.coverAssetId).toBe(cover.id);
+    const urls = (id: string) => '/api/catalog/images?id=' + id;
+    expect(
+      (await listPublic()).materials.find((row) => row.id === saved.materialId)?.images.map((i) => i.url),
+    ).toEqual([urls(cover.id), urls(front.id), urls(side.id)]);
+    expect((await image(cover.id)).status).toBe(200);
+    // A version saved before 위·아래 left the list: it keeps its photo numbers in the placement (so a
+    // saved viewIndex still names the same picture) but the public list does not show the retired one.
+    const stored = { ...saved, views: [view(front.id, '정면'), view(top.id, '위'), view(side.id, '오른쪽')] };
+    await env.DB.prepare('UPDATE d1_material_versions SET payload_json=? WHERE id=?')
+      .bind(JSON.stringify(stored), saved.id)
+      .run();
+    const listed = (await listPublic()).materials.find((row) => row.id === saved.materialId)!;
+    expect(listed.images.map((i) => i.url)).toEqual([urls(cover.id), urls(front.id), urls(side.id)]);
+    const result = await data(saved.materialId);
+    expect(publicPlacementSchema.safeParse(result).success).toBe(true);
+    expect(result.views.map((v) => v.assetId)).toEqual([front.id, top.id, side.id]);
+    expect(result.coverAssetId).toBe(cover.id);
+    // Saving it again writes the four-name list only: the client leaves the retired photo out.
+    const again = await call('materials', {
+      operation: 'update',
+      id: saved.materialId,
+      expectedVersionId: saved.id,
+      input: { ...material(front.id), views: [view(front.id, '정면'), view(side.id, '오른쪽')] },
+    });
+    expect(again.status).toBe(200);
+  });
+
   it('projects current placement dimensions, anchors and safe display metadata without nested private data', async () => {
     const original = await upload(admin, 'original');
     const shown = await upload(admin, 'product', original.id);
@@ -957,7 +998,7 @@ describe('anonymous placement projections', () => {
     // Historical payloads may contain mesh provenance and stale legacy image references.
     const stored = {
       ...version,
-      coverAssetId: hidden.id,
+      coverAssetId: undefined,
       imageAssetIds: [hidden.id],
       views: [
         {

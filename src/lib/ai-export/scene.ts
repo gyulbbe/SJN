@@ -9,12 +9,7 @@ import {
   type Scene,
 } from '../types';
 import { finishAppearance } from '../render/finish';
-import {
-  directionAngle,
-  facingOfDirection,
-  nearestHorizontalDirection,
-  readProductDirection,
-} from '../product-direction';
+import { facingOfDirection, nearestHorizontalDirection, viewDirectionAngle } from '../product-direction';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import { isStandardModelOfPhoto } from '../standard-model-view';
 import { hexToLinear, linearToHex } from '../reconstruction/photo-lighting';
@@ -173,9 +168,7 @@ export function describeFixture(
   // A photo product faces where its angle name says in the room (the same rule the 3D room uses);
   // the text says it as the image shows it: a camera turned by `azimuth` sees a product that faces
   // `base` facing `base − azimuth` (towards the camera when that is 0).
-  const base = r
-    ? undefined
-    : directionAngle(readProductDirection(material?.views?.[fixture.viewIndex]?.direction).name);
+  const base = r ? undefined : viewDirectionAngle(material?.views?.[fixture.viewIndex]?.direction);
   const facing =
     base === undefined ? undefined : facingOfDirection(nearestHorizontalDirection(base - azimuth).name);
   return {

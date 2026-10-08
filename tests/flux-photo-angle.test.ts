@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { photoViewAngle } from '../src/lib/room-viewer/fixtures';
 import { choosePhotoForView, roomSideName, viewPhotoNote } from '../src/lib/room-viewer/view-photo';
-import { PRODUCT_DIRECTIONS, type ProductDirection } from '../src/lib/product-direction';
+import { PRODUCT_DIRECTIONS } from '../src/lib/product-direction';
 
 const view = (direction: string) => ({ assetId: direction, direction, anchor: { x: 0.5, y: 1 } });
 const SIDES = [0, 90, 180, -90] as const;
@@ -104,18 +104,18 @@ describe('photos by side: the four-direction views', () => {
   });
 
   it('never uses 위 or 아래 from the four sides', () => {
-    const names: ProductDirection[] = ['정면', '위', '아래', '왼쪽'];
+    const names: string[] = ['정면', '위', '아래', '왼쪽'];
     for (const side of SIDES) {
       const photo = photos(names, 0, side);
       expect(['위', '아래']).not.toContain(names[photo.index]);
     }
-    // Even when it is the only other photo, and even when the product is 위: those stay as selected.
+    // Even when it is the only other photo; a selected retired photo has no direction and stays as selected.
     expect(photos(['정면', '위'], 0, 90).index).toBe(0);
     const above = photos(['위', '정면'], 0, 90);
     expect([above.index, above.exact]).toEqual([0, true]);
     expect(viewPhotoNote('변기', 90, above)).toBe('');
     // Every name of the closed list is read: an unknown one reads as 정면.
-    expect(PRODUCT_DIRECTIONS).toHaveLength(6);
+    expect(PRODUCT_DIRECTIONS).toHaveLength(4);
     expect(photos(['my 90 fancy', '오른쪽'], 0, 0).index).toBe(0);
   });
 });

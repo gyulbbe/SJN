@@ -3,6 +3,7 @@ import { openDB } from 'idb';
 import { describe, expect, it } from 'vitest';
 import {
   getMaterialImageAssetId,
+  getPlacementViewIndex,
   getPreferredProductViewIndex,
   stripLegacyMaterialImages,
 } from '../src/lib/material-images';
@@ -58,7 +59,6 @@ describe('material display image selection', () => {
     (name) => {
       const input = {
         ...material(),
-        coverAssetId: 'old-cover',
         imageAssetIds: ['old-gallery'],
         views: [view('왼쪽 측면'), view(name)],
       };
@@ -77,6 +77,33 @@ describe('material display image selection', () => {
     expect(getMaterialImageAssetId(input)).toBe(input.views[0].assetId);
     expect(getPreferredProductViewIndex(material())).toBe(-1);
   });
+  it('shows the 대표 이미지 of a product before any direction photo, and the 정면 photo without one', () => {
+    const input = { ...material(), views: [view('왼쪽'), view('정면')] };
+    expect(getMaterialImageAssetId(input)).toBe(input.views[1].assetId);
+    expect(getMaterialImageAssetId({ ...input, coverAssetId: 'cover' })).toBe('cover');
+    expect(getMaterialImageAssetId({ ...input, coverAssetId: '' })).toBe(input.views[1].assetId);
+    // No 정면: the first direction photo; no photo at all: nothing (as before).
+    const side = { ...material(), views: [view('오른쪽'), view('뒤')] };
+    expect(getMaterialImageAssetId(side)).toBe(side.views[0].assetId);
+    expect(getMaterialImageAssetId(material())).toBeUndefined();
+  });
+
+  it('never shows or places with a retired 위·아래 photo, and keeps the numbers of the photos', () => {
+    const input = { ...material(), views: [view('위'), view('아래'), view('오른쪽'), view('정면')] };
+    expect(getPreferredProductViewIndex(input)).toBe(3);
+    expect(getMaterialImageAssetId(input)).toBe(input.views[3].assetId);
+    expect(getPreferredProductViewIndex({ ...input, views: input.views.slice(0, 3) })).toBe(2);
+    // The wall picks the photo that suits it, skipping the retired ones; the stored order is untouched.
+    expect(getPlacementViewIndex(input, 'left').index).toBe(2);
+    expect(getPlacementViewIndex(input, 'back').index).toBe(3);
+    // Only retired photos: none to place with, and nothing to show.
+    const only = { ...material(), views: [view('위'), view('아래')] };
+    expect(getPreferredProductViewIndex(only)).toBe(-1);
+    expect(getPlacementViewIndex(only, 'floor').index).toBe(-1);
+    expect(getMaterialImageAssetId(only)).toBeUndefined();
+    expect(getMaterialImageAssetId({ ...only, coverAssetId: 'cover' })).toBe('cover');
+  });
+
   it('uses the first tile texture despite old cover/gallery or product-view metadata', () => {
     const input = {
       ...material(),
@@ -95,14 +122,22 @@ describe('material display image selection', () => {
     expect(getMaterialImageAssetId(material())).toBeUndefined();
     expect(getMaterialImageAssetId(undefined)).toBeUndefined();
   });
-  it('strips legacy fields from new versions without mutating old data or dropping a legacy-only image', () => {
+  it('keeps the 대표 이미지 of a product and drops the old gallery, retired photos and a tile cover', () => {
     const input = { ...material(), coverAssetId: 'cover', imageAssetIds: ['gallery'], views: [view('정면')] };
     const before = structuredClone(input);
     const stripped = stripLegacyMaterialImages(input);
-    expect(stripped).not.toHaveProperty('coverAssetId');
+    expect(stripped.coverAssetId).toBe('cover');
     expect(stripped).not.toHaveProperty('imageAssetIds');
     expect(stripped.views).toEqual(input.views);
     expect(input).toEqual(before);
+    // A retired 위·아래 photo is left out of the saved version; the others keep their order.
+    const withTop = { ...input, views: [view('정면'), view('위'), view('뒤')] };
+    expect(stripLegacyMaterialImages(withTop).views.map((v) => v.direction)).toEqual(['정면', '뒤']);
+    expect(withTop.views).toHaveLength(3);
+    // A tile shows its texture: no cover.
+    const tile = { ...input, category: 'tile' as const, views: [], textureAssetIds: ['t'] };
+    expect(stripLegacyMaterialImages(tile)).not.toHaveProperty('coverAssetId');
+    // Legacy-only images stay until a real placement image exists.
     const legacy = { ...input, views: [] };
     expect(stripLegacyMaterialImages(legacy)).toEqual(legacy);
   });
@@ -166,7 +201,8 @@ describe('material persistence without a separate cover/gallery', () => {
       ],
     };
     const first = await repos.materials.create(legacy);
-    expect(first).not.toHaveProperty('coverAssetId');
+    // The 대표 이미지 stays on a product's new version; the old gallery does not.
+    expect(first.coverAssetId).toBe(cover.id);
     expect(first).not.toHaveProperty('imageAssetIds');
     expect(legacy.coverAssetId).toBe(cover.id);
     // Emulate a version persisted before the cover/gallery fields became optional.
@@ -178,7 +214,7 @@ describe('material persistence without a separate cover/gallery', () => {
       stripLegacyMaterialImages(legacy),
       first.id,
     );
-    expect(second).not.toHaveProperty('coverAssetId');
+    expect(second.coverAssetId).toBe(cover.id);
     expect(second).not.toHaveProperty('imageAssetIds');
     expect((await repos.materials.getVersion(first.id)).coverAssetId).toBe(cover.id);
     expect(await repos.assets.removeUnused()).toBe(1);
