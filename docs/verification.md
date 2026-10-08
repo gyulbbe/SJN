@@ -2,6 +2,14 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-08 — 제품 방향 4개(위·아래 없앰)와 대표 이미지
+
+- 무엇: 방향 목록 `PRODUCT_DIRECTIONS`를 정면·왼쪽·오른쪽·뒤 4개로 줄였다(최대 4장). 위·아래로 저장돼 있던 사진은 `isRetiredDirection`으로 알아보고 방 화면·목록·속성 패널·자재 상세·공용 카탈로그 목록 어디에도 쓰지 않는다. 저장 데이터는 건드리지 않아(마이그레이션 없음) 사진 번호(`viewIndex`)가 밀리지 않고, 그 자재를 다시 저장하면 새 버전에서 빠진다(옛 프로젝트는 옛 버전 그대로). 위 사진을 고른 제품은 방 화면에서 정면(없으면 첫 방향) 사진으로 보이며 알리고, 방향 사진이 하나도 없으면 "방 화면에 쓸 방향 사진이 없어요. 정면 사진을 등록해 주세요"를 알리고 그리지 않는다.
+- 대표 이미지: 제품만, 선택, 한 장, JPG·PNG·WebP 25MB 이하, 배경 제거·기준점 없음. 저장은 예전에 쓰던 `coverAssetId`를 다시 쓴다(새 열·마이그레이션·프로젝트 스키마 변경 없음). 한 곳의 도우미 `getMaterialImageAssetId`가 대표 → 정면 → 첫 방향 사진 순으로 고르고 목록·카탈로그·관리·사용 내역·공용 카탈로그가 같이 쓴다. 방 화면에는 쓰지 않는다. 등록 폼에 대표 이미지 올리기·지우기와 안내 문구 3개를 넣었다.
+- 개발 DB(로컬 D1, 읽기만): 자재 버전 26개 중 위·아래 사진을 가진 것 0, 대표 값을 가진 것 0, 위·아래 사진을 고른 프로젝트 제품 0. 운영 DB는 조회·변경하지 않았다(미확인). 운영에서 대표 값이 남은 제품 자재가 있으면 그 그림이 대표로 보이기 시작하므로 `SELECT count(*) FROM d1_material_versions WHERE json_extract(payload_json,'$.coverAssetId') IS NOT NULL AND json_array_length(payload_json,'$.views')>0`로 먼저 센다.
+- 단위: 239개 파일·3,476개 통과. 새·고친 테스트: `product-direction`(4개 이름, 옛 위·아래 이름은 retired), `material-images`(대표 우선·위·아래 건너뜀·번호 유지·저장 때 빠짐), `room-viewer-fixtures`(위 사진을 고른 제품은 정면으로, 위·아래뿐이면 오류 알림), `d1-catalog`(대표 노출·옛 위·아래는 목록에 안 나오고 배치 번호는 유지·쓰기 때 4개 이름만), `flux-photo-angle`. typecheck·eslint·Prettier 통과.
+- e2e(기본 config, 모두 통과): 새 `four-directions-cover` 2개(선택 목록에 위·아래 없음·4장 제한·안내 문구·대표 이미지 올리고 지우면 목록 그림이 바뀜·옛 위·아래 사진이 있는 자재는 목록에 안 나오고 수정 저장하면 새 버전에서 빠지고 이전 버전은 그대로), material-images 5, four-view-photos 1, standard-model-switch 4, guest-workspace 14, room-viewer 7(1개는 원래 건너뜀), editor 10, flux-export 8, material-usage 5, flux-refine 2, room-fixtures 1, editor-four-view 1, editor-four-view-drag 1, file-drop 6. 고친 e2e: file-drop(5장 → 4장 제한), material-images(제품에는 대표 이미지 칸이 있고 타일에만 없음). upload-read-error는 이 PC에 Playwright 내장 브라우저가 없어 시작하지 못했고 Chrome 채널로 바꿔 돌리면 2개 통과한다(파일은 그대로).
+
 ## 2026-10-05 — 4방향 고정 시점(90° 간격)과 시점마다 맞는 사진을 2D로 보여 주기
 
 - 문제: 제품이 방향별 평면 사진이 되어 자유롭게 도는 3D는 의미가 없었다. 위·옆에서 보면 사진 판이 선만 남았고, 옆 사진은 정면 폭으로 그려져 AI 변환이 거의 쓰지 못했으며(발자국이 다르다고 걸렀다), 오른쪽에서 본 그림에 "왼쪽 벽 쪽을 본다"고 쓰는 문구도 있었다.
