@@ -620,6 +620,55 @@
   width: 55px;
   color: #6f806b;
 }
+.promptGuide {
+  border: 1px solid #e0e7de;
+  border-radius: 7px;
+  padding: 12px 15px;
+  margin: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.promptGuide > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.promptSteps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #5b665a;
+}
+ol.promptSteps {
+  list-style: decimal;
+}
+ul.promptSteps {
+  list-style: disc;
+}
+.promptPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.promptText {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.promptNotice {
+  font-size: 12px;
+  color: #8a5a00;
+}
+.promptCopy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 .coverImage {
   align-self: center;
   max-width: 100%;

@@ -18,7 +18,9 @@ import { AssetImage, useAsset } from './asset-image';
 import { ImagePreparer } from './image-preparer';
 import { BackgroundRemovalTest } from './background-removal-test';
 import { AngleNameSelect } from './angle-name-input';
+import { DirectionPhotoPrompts, DirectionPromptCopy, type PromptSource } from './direction-photo-prompts';
 import {
+  isProductDirection,
   isRetiredDirection,
   MAX_PRODUCT_VIEWS,
   nextProductDirection,
@@ -160,6 +162,8 @@ export function MaterialForm({
         },
   );
   const [packagingAcknowledged, setPackagingAcknowledged] = useState('');
+  // The features to keep, typed for the AI photo prompts only (not part of the material).
+  const [promptDetails, setPromptDetails] = useState('');
   const pricing = form.pricing ?? defaultMaterialPricing(form.category);
   const packaging = packagingCoverage(form.widthMm, form.heightMm, pricing);
   const packagingSignature = JSON.stringify([
@@ -533,6 +537,14 @@ export function MaterialForm({
     }
   };
 
+  const promptSource: PromptSource = {
+    category: form.category,
+    widthMm: form.widthMm,
+    heightMm: form.heightMm,
+    depthMm: form.depthMm,
+    installation: form.installation,
+    details: promptDetails,
+  };
   const uploadInput = (target: 'texture' | 'view' | 'cover', label: string) => (
     <label className={styles.uploadButton}>
       {label}
@@ -826,6 +838,7 @@ export function MaterialForm({
                     방향별 사진을 등록하면 공간에서 방향에 맞는 사진을 골라 써요.
                   </div>
                 </div>
+                <DirectionPhotoPrompts source={promptSource} onDetailsChange={setPromptDetails} />
                 <div
                   className={`${styles.toolbar}${viewDrop.dragging ? ' file-drop-active' : ''}`}
                   data-drop-label="여기에 놓으면 여러 장을 한꺼번에 올려요"
@@ -874,6 +887,9 @@ export function MaterialForm({
                         taken={form.views.filter((_, i) => i !== index).map((other) => other.direction)}
                         unreadName={view.directionWas}
                       />
+                      {isProductDirection(view.direction) && (
+                        <DirectionPromptCopy source={promptSource} direction={view.direction} />
+                      )}
                       <p className={styles.note}>
                         사진에서 {form.installation === 'wall' ? '벽 부착점' : '바닥 접점'}을 눌러 + 기준점을
                         맞추세요.
