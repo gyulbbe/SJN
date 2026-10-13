@@ -76,6 +76,8 @@ const FRONTS: Partial<Record<MaterialCategory, string>> = {
   showerCurtain: 'Its front is the side facing the room, away from the shower.',
 };
 export const productFrontSentence = (category: MaterialCategory) => FRONTS[category] ?? DEFAULT_FRONT;
+/** The kind's English name ("bathtub", "washbasin"). */
+export const productNoun = (category: MaterialCategory) => NAMES[category];
 
 const known = (value: number | undefined): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value > 0;
