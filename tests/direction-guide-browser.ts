@@ -158,8 +158,7 @@ try {
     let left = info.width,
       right = -1,
       top = info.height,
-      bottom = -1,
-      shadow = 0;
+      bottom = -1;
     for (let y = 0; y < info.height; y++)
       for (let x = 0; x < info.width; x++) {
         const i = (y * info.width + x) * 3;
@@ -170,10 +169,18 @@ try {
           top = Math.min(top, y);
           bottom = Math.max(bottom, y);
         }
-        if (v < 254 && v >= 230) shadow++;
       }
     const edge = Math.min(left, top, info.width - 1 - right, info.height - 1 - bottom);
     assert.ok(edge >= 4, `${guide.name} ${guide.direction}: margin ${edge}`);
+    // The shadow's faint tail lies just under the product: a floor product has one, a wall product none.
+    let tail = 0;
+    for (let y = bottom + 1; y < info.height; y++)
+      for (let x = left; x <= right; x++) {
+        const i = (y * info.width + x) * 3;
+        if ((data[i] + data[i + 1] + data[i + 2]) / 3 < 253) tail++;
+      }
+    if (guide.installation === 'floor') assert.ok(tail > 0, `${guide.name} ${guide.direction}: no shadow`);
+    else assert.equal(tail, 0, `${guide.name} ${guide.direction}: a wall product has no shadow`);
     const fill = Math.max((right - left + 1) / info.width, (bottom - top + 1) / info.height);
     assert.ok(fill > 0.85 && fill < 0.95, `${guide.name} ${guide.direction}: fills ${fill.toFixed(2)}`);
     report.push({
