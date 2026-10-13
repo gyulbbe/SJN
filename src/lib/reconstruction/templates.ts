@@ -12,6 +12,7 @@ import {
   CatmullRomCurve3,
   TubeGeometry,
   DirectionalLight,
+  DoubleSide,
   Group,
   Mesh,
   MeshStandardMaterial,
@@ -78,8 +79,16 @@ export function createTemplateModel({
   counterSupport,
   showerVariant,
   curtainHardware,
+  bathShape,
 }: Pick<TemplateOptions, 'kind' | 'color' | 'widthMm' | 'heightMm' | 'depthMm' | 'version'> &
-  ReconstructionStandardOptions & { face?: RoomFace }): Group {
+  ReconstructionStandardOptions & {
+    face?: RoomFace;
+    /**
+     * The bath's outline. Absent: the box-like built-in tub every saved bath has. 'oval': an oval
+     * freestanding tub, drawn only for the material form's direction-photo guides (never stored).
+     */
+    bathShape?: 'oval';
+  }): Group {
   if (kind === 'showerCurtain') {
     if (version !== 2) throw new Error('샤워 커튼은 표준 모형 v2에서 지원해요.');
     return createCurtainModel({ widthMm: w, heightMm: h, depthMm: d, color, curtainHardware });
@@ -392,6 +401,8 @@ export function createTemplateModel({
       else bowl(x, h * 0.82, d * 0.02, basinW, h * 0.12, basinD, white);
       faucet(x, h * 0.96, -d * 0.365, h * 0.12);
     }
+  } else if (kind === 'bath' && bathShape === 'oval') {
+    group.add(ovalBathMesh(w, h, d, ceramic));
   } else if (kind === 'bath') {
     // Old models retain exactly the original materials when this explicit option is absent.
     const lining = bathLiningColor
@@ -804,6 +815,100 @@ export function createTemplateModel({
   }
   group.updateMatrixWorld(true);
   return group;
+}
+
+/**
+ * A point on a stadium (two straight sides joined by half circles) of half-length `a` along x and
+ * half-width `b` along z, `t` going once round (0–1).
+ */
+function stadiumPoint(a: number, b: number, t: number): [number, number] {
+  const r = Math.min(a, b),
+    s = Math.max(a, b) - r;
+  const alongX = a >= b;
+  const perimeter = 4 * s + 2 * Math.PI * r;
+  let distance = t * perimeter;
+  let point: [number, number];
+  if (distance < 2 * s) point = [-s + distance, r];
+  else if ((distance -= 2 * s) < Math.PI * r) {
+    const q = -Math.PI / 2 + distance / r;
+    point = [s + r * Math.cos(q), -r * Math.sin(q)];
+  } else if ((distance -= Math.PI * r) < 2 * s) point = [s - distance, -r];
+  else {
+    const q = Math.PI / 2 + (distance - 2 * s) / r;
+    point = [-s + r * Math.cos(q), -r * Math.sin(q)];
+  }
+  return alongX ? point : [point[1], point[0]];
+}
+/**
+ * An oval freestanding bathtub, `w` long (x), `h` high and `d` deep (z), its base on y = 0: a wall
+ * that flares from a smaller foot to a thin lip, a flat rim, an inner wall curving down to a flat
+ * floor. The proportions are the 2026-10-13 trial guide's (a 1700 × 560 × 750 mm tub drawn from
+ * these rings turned into bathtubs in 8 of 8 answers; a straight-sided box turned into a storage bin).
+ * Each band is its own smooth strip, so the lip and the rim keep their edges.
+ */
+function ovalBathMesh(w: number, h: number, d: number, material: MeshStandardMaterial) {
+  const N = 96,
+    lip = h * 0.05,
+    rim = Math.min(w, d) * 0.0373,
+    floor = h * 0.268;
+  const positions: number[] = [],
+    indices: number[] = [];
+  const ring = (a: number, b: number, y: number) =>
+    Array.from({ length: N }, (_, i) => {
+      const [x, z] = stadiumPoint(a, b, i / N);
+      return [x, y, z];
+    });
+  const strip = (rings: number[][][]) => {
+    const offset = positions.length / 3;
+    for (const r of rings) for (const p of r) positions.push(...p);
+    for (let k = 0; k < rings.length - 1; k++)
+      for (let i = 0; i < N; i++) {
+        const j = (i + 1) % N,
+          a = offset + k * N;
+        indices.push(a + i, a + j, a + N + j, a + i, a + N + j, a + N + i);
+      }
+  };
+  const fan = (center: number[], edge: number[][]) => {
+    const offset = positions.length / 3;
+    positions.push(...center);
+    for (const p of edge) positions.push(...p);
+    for (let i = 0; i < N; i++) indices.push(offset, offset + 1 + i, offset + 1 + ((i + 1) % N));
+  };
+  // The outer wall flares from the foot (0.89 × 0.80 of the top) to just inside the lip.
+  const outer = (y: number) => {
+    const s = 1 - Math.pow(1 - Math.min(1, y / (h - lip)), 2.2);
+    return [w * 0.447 + (w * 0.495 - w * 0.447) * s, d * 0.4 + (d * 0.49 - d * 0.4) * s] as const;
+  };
+  const wall: number[][][] = [];
+  for (let k = 0; k <= 28; k++) {
+    const y = ((h - lip) * k) / 28;
+    wall.push(ring(...outer(y), y));
+  }
+  strip(wall);
+  const top = h - lip;
+  strip([ring(...outer(top), top), ring(w / 2, d / 2, top)]);
+  strip([ring(w / 2, d / 2, top), ring(w / 2, d / 2, h)]);
+  const ia = w / 2 - rim,
+    ib = d / 2 - rim;
+  strip([ring(w / 2, d / 2, h), ring(ia, ib, h)]);
+  // The inner wall curves down to a flat floor (0.66 × 0.45 of the top).
+  const inner: number[][][] = [];
+  for (let k = 0; k <= 16; k++) {
+    const t = k / 16,
+      f = 1 - Math.pow(t, 2.5);
+    inner.push(ring(w * 0.329 + (ia - w * 0.329) * f, d * 0.227 + (ib - d * 0.227) * f, h - (h - floor) * t));
+  }
+  strip(inner);
+  fan([0, floor, 0], inner[inner.length - 1]);
+  fan([0, 0, 0], wall[0]);
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  material.side = DoubleSide;
+  const mesh = new Mesh(geometry, material);
+  mesh.name = 'bath-oval';
+  return mesh;
 }
 
 export function disposeTemplateModel(model: Group) {
