@@ -16,6 +16,7 @@
 - 일반 Next 개발 서버에는 Workers AI 바인딩이 없으므로 연결 필요 오류를 표시한다. 실제 사용은 Workers 개발 서버 또는 Cloudflare 배포에서 한다.
 - POST `/api/export/photoreal/check`: 결과 확인(Gemma). 아래 [결과 확인](#결과-확인gemma)을 본다.
 - POST `/api/export/photoreal/product`: 제품 하나를 크게 잘라 사진처럼 다듬는 실험 C의 요청. 별도 계약이다. 아래 [실험: 제품별 다듬기](#실험-제품별-다듬기실험-c)를 본다.
+- POST `/api/materials/direction-photo`: 자재 폼의 "AI로 방향 사진 만들기"가 방향 사진 한 장을 만드는 요청. 별도 계약이다. 아래 [자재 방향 사진](#자재-방향-사진)을 본다.
 - 각 클릭은 변환 한 번과(배치한 제품이 있으면) 결과 확인 한 번만 요청한다. 자동 재시도나 창을 열 때 사전 AI 호출은 없다. 바인딩 직접 호출은 스스로 재시도하지 않는다.
 - 실패하면 응답 JSON의 `diagnostics`에 모델·단계(`provider-request`/`provider-response`)·상류 상태·요청 ID와 제공자 오류(자격 증명·이미지 데이터 제거, 길이 제한)를 남긴다. 프롬프트는 길이·설비 수만 남기고 문장은 남기지 않는다. 화면에는 지금처럼 요약 문구만 보인다.
 - 다시 만들기 버튼을 누르면 새로운 AI 요청(변환과 결과 확인)이 발생한다. 요청당 사용량은 기존 Gemma 등과 같은 계정 한도를 사용한다. 유료 플랜에서는 과금될 수 있다. 코드 자체가 요금제나 잔여 할당량을 검증하는 것은 아니다.
@@ -249,6 +250,20 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
 - **진행과 취소:** "제품 다듬기 n/N개"와 "제품 다듬기 취소"가 보인다. 취소하면 더 보내지 않고 윤곽 모델 작업을 정리한다(이미 보낸 요청은 사용량에 포함될 수 있다고 알린다). 지금 결과는 그대로다.
 - **한계:** 곰 얼굴 같은 작은 무늬는 이 해상도에서 보장되지 않는다(0단계: 눈·코·입이 모두 산 것은 6장 중 1장). 사진을 같이 주면 무늬는 낫지만 모양이 흔들린다. 무늬 문장을 넣은 뒤 추가 시험(곰 변기 4장)에서는 4장 모두 얼굴이 살았지만 표본이 작고, 같은 입력·같은 seed로 다시 불러도 결과가 달라서(모델이 재현되지 않는다) 확률로 읽어야 한다. 윤곽 겹침 0.90 기준에서 3개 제품 12장 중 8~9장이 쓰였고 3~4장은 3D 렌더로 되돌려졌다. 3D에 없는 구조(속이 막힌 욕조)는 AI가 채워 넣는다. 사진에 없는 옆·뒤 면은 AI의 추측이다. 겹친 제품은 그 부분이 3D 렌더다. 세면대·나무 수납장은 시험하지 못했다. 호출과 시간이 지금 방식보다 제품 수만큼 늘고, 처음에는 윤곽 모델을 받아야 한다.
 - **검증:** `npx vitest run tests/flux-refine.test.ts tests/flux-product-server.test.ts tests/flux-product-prompt.test.ts`(정렬·합성·실행·서버 계약·프롬프트), `npx playwright test e2e/flux-refine.spec.ts`(표준 모형 변기·모의 모델·윤곽 모델 대역). 0단계 결과 12장으로 크롭·합성을 다시 재던 도구(`tests/flux-product-crops-browser.ts`, `tests/flux-refine-browser.ts`)는 그 크롭이 저장된 3D 제품의 렌더였기 때문에 3D 제거와 함께 지웠다(커밋 0fe8748에 남아 있다). 실제 AI 호출은 자동 검증에 없다. 0단계에서 쓴 실제 호출은 [결과](flux-product-refine-results-20261003.md)에 있다.
+
+## 자재 방향 사진
+
+2026-10-13. 자재 폼의 "AI로 방향 사진 만들기"(욕조·변기·세면대)가 쓴다. 화면 흐름은 [자재 이미지](material-images.md), 시험 근거와 실제 호출 결과는 [방향 사진 결과](direction-photo-results-20261013.md)에 있다.
+
+- **라우트:** POST `/api/materials/direction-photo`([server](../src/lib/direction-photo/server.ts)). 다른 FLUX 라우트와 같은 `openFluxRequest`(동일 출처·로그인, 바인딩 없으면 503)·`readFluxForm`(본문 상한)·`readFluxPng`·`callFlux`를 쓴다.
+- **필드:** `guide`(PNG 한 장, image 0), `refs`(PNG 1~3장, 같은 이름으로 반복, images 1~3), `seed`(정수 0~2147483647), `spec`(JSON). `guide`·`seed`·`spec`은 정확히 한 번, `refs`는 1~3번이다. 그 밖의 필드(모델 선택, 자유 `prompt`, `input_image_N` 등)·중복은 추론 전에 400이다.
+- **이미지:** 모두 PNG, 한 변 128~496px, 16px 단위, 한 장 2MB 이하다. 본문은 4 × 2MB + 1KB + 4KB 이하다.
+- **`spec`**([contract](../src/lib/direction-photo/contract.ts), `strictObject`, 1KB 이하): `category`(bath·toilet·basin), `form`(그 종류의 모양 enum: oval-freestanding·rectangular / lid-closed·lid-open / wall-round·wall-rectangular·pedestal-round·pedestal-rectangular), `direction`(front·left·right·back), `installation`(floor·wall·embedded·suspended), `sizeMm`(가로·높이·깊이, 정수 10~10000). 종류에 없는 모양, 벽 제품의 back, 벽걸이 변기는 400이다. 자유 문자열은 없다.
+- **모델 입력:** `input_image_0`(가이드), `input_image_1`~`3`(사진), prompt, width·height(가이드의 2배, 최대 992), seed. 요청당 한 번 호출하고 재시도하지 않는다. AI Gateway는 거치지 않는다.
+- **프롬프트:** 서버가 `spec`과 사진 수로 결정적으로 쓴다(`buildDirectionPhotoPrompt`, [prompt](../src/lib/direction-photo/prompt.ts)).
+- **진단:** 실패하면 기존과 같은 `diagnostics`에 모델·단계·상류 상태·요청 ID와 프롬프트 길이·종류·방향·사진 수·가이드 크기만 남긴다. 프롬프트 문장과 이미지는 남기지 않는다.
+- **사용량(추정):** 입력 타일(가이드 1 + 사진 n) × 5.37 + 출력 타일(가이드의 2배, 512px 타일) × 26.05 뉴런. 496×192 가이드·사진 2장이면 약 68, 448×496이면 약 120뉴런이다.
+- **검증:** `npx vitest run tests/direction-photo-server.test.ts tests/direction-photo-prompt.test.ts`(필드·이미지·스키마 거부, 모델 입력, 한도 오류, 진단).
 
 ## 대기 표시
 

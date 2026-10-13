@@ -19,6 +19,7 @@ import { ImagePreparer } from './image-preparer';
 import { BackgroundRemovalTest } from './background-removal-test';
 import { AngleNameSelect } from './angle-name-input';
 import { DirectionPhotoPrompts, DirectionPromptCopy, type PromptSource } from './direction-photo-prompts';
+import { DirectionPhotoGenerator, type MadePhoto } from './direction-photo-generator';
 import {
   isProductDirection,
   isRetiredDirection,
@@ -370,6 +371,30 @@ export function MaterialForm({
     // Save new PNG bytes before changing the draft; existing assets and material versions stay intact.
     await assets.put(asset);
     setView(index, { assetId: asset.id, product3d: undefined });
+  };
+  // "AI로 방향 사진 만들기": each picked photo (its background taken off) goes into its direction's
+  // slot, replacing the photo there; the first reference photo can become the 대표 이미지.
+  const applyMadePhotos = async (photos: MadePhoto[], cover?: File) => {
+    if (!writable || (form.scope === 'shared' && !isAdmin))
+      throw new Error('이 자재의 편집 권한이 없어요. 편집 가능한 탭에서 다시 시도해 주세요.');
+    const assets = getRepositories().assets;
+    const made: { assetId: string; direction: string; anchor: Point }[] = [];
+    for (const photo of photos) {
+      const asset = await makeAsset(photo.blob, `AI ${photo.direction} 사진.png`, 'product');
+      asset.derivation = 'ai-alpha';
+      await assets.put(asset);
+      made.push({ assetId: asset.id, direction: photo.direction, anchor: photo.anchor });
+    }
+    const coverAssetId = cover ? (await importImage(cover, 'product', assets)).preview.id : undefined;
+    setForm((current) => {
+      const views = [...current.views];
+      for (const view of made) {
+        const at = views.findIndex((other) => other.direction === view.direction);
+        if (at >= 0) views[at] = view;
+        else if (views.length < MAX_PRODUCT_VIEWS) views.push(view);
+      }
+      return { ...current, views, ...(coverAssetId ? { coverAssetId } : {}) };
+    });
   };
 
   const currentEdit = useRef({ form, writable, isAdmin });
@@ -838,6 +863,18 @@ export function MaterialForm({
                     방향별 사진을 등록하면 공간에서 방향에 맞는 사진을 골라 써요.
                   </div>
                 </div>
+                <DirectionPhotoGenerator
+                  key={form.category}
+                  category={form.category}
+                  widthMm={form.widthMm}
+                  heightMm={form.heightMm}
+                  depthMm={form.depthMm}
+                  installation={form.installation}
+                  userId={userId}
+                  disabled={locked || (form.scope === 'shared' && !isAdmin)}
+                  hasCover={!!form.coverAssetId}
+                  onApply={applyMadePhotos}
+                />
                 <DirectionPhotoPrompts source={promptSource} onDetailsChange={setPromptDetails} />
                 <div
                   className={`${styles.toolbar}${viewDrop.dragging ? ' file-drop-active' : ''}`}

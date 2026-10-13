@@ -65,7 +65,7 @@ export async function prepareFluxImage(blob: Blob): Promise<Blob> {
   }
 }
 /** The model's picture from a FLUX route's answer, decoded and re-encoded as a real PNG. */
-async function readFluxAnswer(response: Response): Promise<Blob> {
+export async function readFluxAnswer(response: Response): Promise<Blob> {
   if (!response.ok) {
     const failure = await response.json().catch(() => null);
     // The status travels with the error: a spent limit or a refused login ends a whole run (refine-run).
