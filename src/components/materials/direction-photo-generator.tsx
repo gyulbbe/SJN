@@ -198,7 +198,6 @@ export function DirectionPhotoGenerator({
       current = false;
       clearTimeout(timer);
     };
-    // keep/drop only touch refs.
   }, [kind, shape, widthMm, heightMm, depthMm, installation, sized, wallToilet]);
 
   const addRefs = (event: ChangeEvent<HTMLInputElement>) => {
@@ -264,19 +263,6 @@ export function DirectionPhotoGenerator({
     ];
     setNotice('');
     setRunning({ done: 0, total: jobs.length });
-    setCandidates((current) => {
-      const next = { ...current };
-      for (const direction of directions) {
-        next[direction]?.forEach((candidate) => candidate.status === 'made' && drop(candidate.url));
-        delete next[direction];
-      }
-      return next;
-    });
-    setPicked((current) => {
-      const next = { ...current };
-      for (const direction of directions) delete next[direction];
-      return next;
-    });
     try {
       const outcomes = await runDirectionJobs({
         jobs,
@@ -301,8 +287,13 @@ export function DirectionPhotoGenerator({
         },
       });
       if (!alive.current) return;
+      // The new answers replace the directions' earlier ones only now (a cancelled run keeps them).
       setCandidates((current) => {
         const next = { ...current };
+        for (const direction of directions) {
+          next[direction]?.forEach((candidate) => candidate.status === 'made' && drop(candidate.url));
+          delete next[direction];
+        }
         for (const outcome of outcomes) {
           const list = (next[outcome.job.direction] ??= []);
           list[outcome.job.candidate] =
@@ -310,6 +301,11 @@ export function DirectionPhotoGenerator({
               ? { status: 'made', blob: outcome.image, url: keep(outcome.image) }
               : { status: 'failed', message: outcome.message };
         }
+        return next;
+      });
+      setPicked((current) => {
+        const next = { ...current };
+        for (const direction of directions) delete next[direction];
         return next;
       });
       setMadeWith(inputs);
@@ -320,10 +316,14 @@ export function DirectionPhotoGenerator({
             ? `만들지 못했어요. ${failed[0].status === 'failed' ? failed[0].message : ''}`
             : `${outcomes.length}장 중 ${failed.length}장을 만들지 못했어요. ${failed[0].status === 'failed' ? failed[0].message : ''}`,
         );
-    } catch {
+    } catch (error) {
       if (alive.current)
         setNotice(
-          '취소했어요. 이미 보낸 요청은 사용량에 포함될 수 있어요. 지금까지 만든 후보는 다시 만들어야 해요.',
+          abort.signal.aborted
+            ? '취소했어요. 이미 보낸 요청은 사용량에 포함될 수 있어요.'
+            : error instanceof Error
+              ? error.message
+              : '방향 사진을 만들지 못했어요.',
         );
     } finally {
       if (controller.current === abort) controller.current = null;
