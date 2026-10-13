@@ -3,7 +3,7 @@ import type { MaterialCategory, MaterialInput } from './types';
 
 /**
  * The text a person copies, with their own product photo, into an outside image generator to make
- * the 정면·왼쪽·오른쪽·뒤 photos this app wants (docs/material-images.md, "AI로 방향별 사진 만들기").
+ * the 정면·왼쪽·오른쪽·뒤 photos this app wants (docs/material-images.md, "외부 AI용 프롬프트 복사").
  * The app never calls the generator: it only writes the words. The words follow the app's rules:
  *
  * - A photo's name is the way the product faces in it (product-direction.ts): 정면 its front to the

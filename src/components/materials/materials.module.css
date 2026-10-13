@@ -669,6 +669,88 @@ ul.promptSteps {
   align-items: center;
   gap: 8px;
 }
+.aiRefRow,
+.aiCandidateRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.aiRef {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.aiRef img {
+  width: 120px;
+  height: 90px;
+  object-fit: contain;
+  background: #ffffff;
+  border: 1px solid #e0e7de;
+  border-radius: 6px;
+}
+.aiCheck {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.aiGuideRow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.aiGuide {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #5b665a;
+}
+.aiGuide img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  background: #ffffff;
+  border: 1px solid #e0e7de;
+  border-radius: 6px;
+}
+.aiCandidates {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.aiCandidate {
+  padding: 0;
+  border: 2px solid #e0e7de;
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: pointer;
+}
+.aiCandidate img {
+  display: block;
+  width: 150px;
+  height: 120px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.aiPicked {
+  border-color: #2f8a6b;
+  box-shadow: 0 0 0 2px #2f8a6b55;
+}
+@media (max-width: 620px) {
+  .aiGuideRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .aiCandidate img {
+    width: 120px;
+    height: 96px;
+  }
+}
 .coverImage {
   align-self: center;
   max-width: 100%;

@@ -45,7 +45,7 @@ test('자재 등록 폼에서 방향별 AI 사진 프롬프트를 복사한다: 
   await form.getByLabel('설치 방식', { exact: true }).selectOption('floor');
 
   const guide = form.getByTestId('direction-prompts');
-  await guide.getByText('AI로 방향별 사진 만들기', { exact: true }).click();
+  await guide.getByText('외부 AI용 프롬프트 복사', { exact: true }).click();
   await expect(guide.getByText('결과를 저장해 같은 이름의 방향으로 등록해요.')).toBeVisible();
   await expect(guide).toContainText(
     'AI로 만든 사진은 실제 제품과 다를 수 있어요. 실제 제품과 비교해 확인하세요.',

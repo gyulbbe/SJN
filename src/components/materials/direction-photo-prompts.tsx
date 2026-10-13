@@ -73,7 +73,7 @@ export function DirectionPromptCopy({
         <span role="status" className={styles.note}>
           {state === 'copied'
             ? '복사했어요'
-            : '복사하지 못했어요. 위 ‘AI로 방향별 사진 만들기’에서 글상자를 선택해 직접 복사해 주세요.'}
+            : '복사하지 못했어요. 위 ‘외부 AI용 프롬프트 복사’에서 글상자를 선택해 직접 복사해 주세요.'}
         </span>
       )}
     </div>
@@ -81,7 +81,7 @@ export function DirectionPromptCopy({
 }
 
 /**
- * "AI로 방향별 사진 만들기": how to make the 정면·왼쪽·오른쪽·뒤 photos with an outside image
+ * "외부 AI용 프롬프트 복사" (named "AI로 방향별 사진 만들기" until the app made the photos itself): how to make the 정면·왼쪽·오른쪽·뒤 photos with an outside image
  * generator from one photo the person has, and the prompt for each direction to copy (the app calls
  * no AI). The prompts follow the app's direction rules (src/lib/product-photo-prompt.ts).
  */
@@ -107,7 +107,7 @@ export function DirectionPhotoPrompts({
   };
   return (
     <details className={styles.promptGuide} data-testid="direction-prompts">
-      <summary>AI로 방향별 사진 만들기</summary>
+      <summary>외부 AI용 프롬프트 복사</summary>
       <p className={styles.note}>
         갖고 있는 제품 사진 한 장(사선·위에서 찍은 사진·연출 사진도 돼요)과 아래 프롬프트를 이미지 생성 AI에
         함께 넣으면, 이 앱의 방향 규칙에 맞는 정면·왼쪽·오른쪽·뒤 사진을 만들 수 있어요. 앱은 AI를 부르지 않고
