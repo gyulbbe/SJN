@@ -1,16 +1,19 @@
 // How closely each answer of a real run (tests/direction-photo-real/run.mjs) follows its guide: the
 // product's outline (everything not plain white, the faint shadow left out) is cut to its box, both
 // outlines are scaled to the same box, and their overlap (IoU) and the boxes' aspect ratios are compared.
-// The same measure is taken of the 2026-10-13 trial's answers when they are there. No AI call.
-// Usage: node tests/direction-photo-real/measure.mjs
+// The same measure is taken of the 2026-10-13 trial's answers when they are there (bath run only).
+// No AI call.
+// Usage: [AI_OUT=test-results/direction-photo-bear/baseline] node tests/direction-photo-real/measure.mjs
 import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
-const OUT = 'test-results/direction-photo-real';
+const OUT = process.env.AI_OUT ?? 'test-results/direction-photo-real';
 const TRIAL = 'test-results/product-representation/real/gen';
 const SIZE = 128;
 /** The outline as a SIZE × SIZE mask of its own box, its box's aspect, and how much of the frame it fills. */
-async function outline(file) {
+export async function outline(file) {
   const { data, info } = await sharp(file)
     .flatten({ background: '#ffffff' })
     .greyscale()
@@ -43,7 +46,7 @@ async function outline(file) {
     .toBuffer();
   return { mask, aspect: boxWidth / boxHeight, fill: Math.max(boxWidth / width, boxHeight / height) };
 }
-function iou(a, b) {
+export function iou(a, b) {
   let both = 0,
     either = 0;
   for (let i = 0; i < a.length; i++) {
@@ -54,9 +57,10 @@ function iou(a, b) {
   }
   return both / either;
 }
-const rows = [];
-async function compare(set, guideFile, answerFiles) {
+/** One row per answer: its outline against its guide's. */
+export async function compare(set, guideFile, answerFiles) {
   const guide = await outline(guideFile);
+  const rows = [];
   for (const file of answerFiles) {
     const answer = await outline(file);
     rows.push({
@@ -68,30 +72,39 @@ async function compare(set, guideFile, answerFiles) {
       fill: Number(answer.fill.toFixed(2)),
     });
   }
+  return rows;
 }
-const answers = readdirSync(`${OUT}/answers`).sort();
-for (const [direction, guide] of [
-  ['front', '정면'],
-  ['left', '왼쪽'],
-  ['back', '뒤'],
-])
-  await compare(
-    'real',
-    `${OUT}/guide-${guide}.png`,
-    answers.filter((name) => name.includes(`-${direction}-`)).map((name) => `${OUT}/answers/${name}`),
-  );
-if (existsSync(`${TRIAL}/guide3d-front-496x224.png`)) {
-  const trial = readdirSync(TRIAL);
-  await compare(
-    'trial',
-    `${TRIAL}/guide3d-front-496x224.png`,
-    trial.filter((name) => /^4b-guide-front-/.test(name)).map((name) => `${TRIAL}/${name}`),
-  );
-  await compare(
-    'trial',
-    `${TRIAL}/guide3d-left-432x496.png`,
-    trial.filter((name) => /^4b-guide-left-/.test(name)).map((name) => `${TRIAL}/${name}`),
-  );
+const NAMES = { front: '정면', left: '왼쪽', right: '오른쪽', back: '뒤' };
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  const rows = [];
+  const answers = readdirSync(`${OUT}/answers`).sort();
+  for (const [direction, guide] of Object.entries(NAMES)) {
+    const files = answers.filter((name) => name.includes(`-${direction}-`));
+    if (files.length && existsSync(`${OUT}/guide-${guide}.png`))
+      rows.push(
+        ...(await compare(
+          'real',
+          `${OUT}/guide-${guide}.png`,
+          files.map((name) => `${OUT}/answers/${name}`),
+        )),
+      );
+  }
+  if (!process.env.AI_OUT && existsSync(`${TRIAL}/guide3d-front-496x224.png`)) {
+    const trial = readdirSync(TRIAL);
+    rows.push(
+      ...(await compare(
+        'trial',
+        `${TRIAL}/guide3d-front-496x224.png`,
+        trial.filter((name) => /^4b-guide-front-/.test(name)).map((name) => `${TRIAL}/${name}`),
+      )),
+      ...(await compare(
+        'trial',
+        `${TRIAL}/guide3d-left-432x496.png`,
+        trial.filter((name) => /^4b-guide-left-/.test(name)).map((name) => `${TRIAL}/${name}`),
+      )),
+    );
+  }
+  console.table(rows);
+  writeFileSync(`${OUT}/measure.json`, JSON.stringify(rows, null, 2));
 }
-console.table(rows);
-writeFileSync(`${OUT}/measure.json`, JSON.stringify(rows, null, 2));
