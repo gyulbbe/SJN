@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { runDirectionPhoto } from '../src/lib/direction-photo/server';
 import { requestDirectionPhoto } from '../src/lib/direction-photo/client';
 import { buildDirectionPhotoPrompt } from '../src/lib/direction-photo/prompt';
-import type { DirectionPhotoSpec } from '../src/lib/direction-photo/contract';
+import { directionPhotoSizeOk, type DirectionPhotoSpec } from '../src/lib/direction-photo/contract';
 import { FLUX_MODEL } from '../src/lib/ai-export/contract';
 
 vi.mock('../src/lib/auth/d1', () => ({ getD1Actor: vi.fn() }));
@@ -122,6 +122,10 @@ describe('direction photo route', () => {
           }),
         ),
     ],
+    [
+      'a tile’s 9 mm depth left after switching the category',
+      (f: FormData) => f.set('spec', JSON.stringify({ ...spec, sizeMm: [600, 600, 9] })),
+    ],
     ['oversized facts', (f: FormData) => f.set('spec', JSON.stringify({ ...spec, pad: 'x'.repeat(2000) }))],
     [
       'a guide that is not a PNG',
@@ -131,6 +135,14 @@ describe('direction photo route', () => {
     const env = environment();
     await expect(runDirectionPhoto(await request(edit), env)).rejects.toMatchObject({ status: 400 });
     expect(env.AI.run).not.toHaveBeenCalled();
+  });
+
+  it('checks sizes on the page by the route’s own range', () => {
+    expect(directionPhotoSizeOk([1700, 560, 750])).toBe(true);
+    expect(directionPhotoSizeOk([600, 600, 9])).toBe(false);
+    expect(directionPhotoSizeOk([600, 600, 9.6])).toBe(true);
+    expect(directionPhotoSizeOk([10001, 560, 750])).toBe(false);
+    expect(directionPhotoSizeOk([Number.NaN, 560, 750])).toBe(false);
   });
 
   it('rejects four photos before inference', async () => {

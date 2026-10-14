@@ -46,7 +46,17 @@ const INSTALLATIONS = [
 export const standsOnFloor = (installation: MaterialInput['installation']) =>
   installation === 'floor' || installation === 'embedded';
 
-const mm = z.number().int().min(10).max(10000);
+/** The sizes the route takes, in whole mm (the form checks the same before drawing a guide). */
+export const DIRECTION_PHOTO_MIN_MM = 10;
+export const DIRECTION_PHOTO_MAX_MM = 10000;
+export const directionPhotoSizeOk = (sizeMm: readonly number[]) =>
+  sizeMm.every(
+    (value) =>
+      Number.isFinite(value) &&
+      Math.round(value) >= DIRECTION_PHOTO_MIN_MM &&
+      Math.round(value) <= DIRECTION_PHOTO_MAX_MM,
+  );
+const mm = z.number().int().min(DIRECTION_PHOTO_MIN_MM).max(DIRECTION_PHOTO_MAX_MM);
 /**
  * The request's facts: the kind and its shape, the direction, how it is installed and its size
  * (width × height × depth, mm). Nothing else, and no free text.
