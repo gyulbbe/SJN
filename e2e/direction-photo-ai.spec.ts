@@ -347,6 +347,20 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   await page.getByRole('button', { name: '자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
   await form.getByLabel('상품명').fill('AI 시험 욕조');
+  // A new material's size follows its category (the standard model's) until a size is typed.
+  const sizeIs = async (width: string, height: string, depth: string) => {
+    await expect(form.getByLabel('가로 (mm)', { exact: true })).toHaveValue(width);
+    await expect(form.getByLabel('높이 (mm)', { exact: true })).toHaveValue(height);
+    await expect(form.getByLabel('깊이 (mm)', { exact: true })).toHaveValue(depth);
+  };
+  await expect(form.getByLabel('두께 (mm)', { exact: true })).toHaveValue('9');
+  await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
+  await sizeIs('400', '750', '680');
+  await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
+  await sizeIs('600', '800', '480');
+  await form.getByLabel('가로 (mm)', { exact: true }).fill('450');
+  await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
+  await sizeIs('450', '800', '480');
   const generator = await openGenerator(form, ['1700', '560', '']);
   await expect(generator.getByTestId('ai-size-notice')).toContainText('가로·높이·깊이를 넣어 주세요.');
   await expect(generator.getByTestId('ai-guides')).toHaveCount(0);

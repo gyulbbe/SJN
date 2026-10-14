@@ -35,6 +35,11 @@ import styles from './materials.module.css';
 import CatalogSelect from './catalog-select';
 import { loadCatalog } from '@/lib/catalog/client';
 import {
+  RECONSTRUCTION_DEFAULTS,
+  reconstructionDefaults,
+  type ReconstructionKind,
+} from '@/lib/reconstruction/types';
+import {
   emptySelection,
   normalizeCatalogName,
   type CatalogData,
@@ -64,6 +69,21 @@ const defaults: MaterialInput = {
   defaultGroutColor: '#d5d1c9',
   defaultPattern: 'grid',
 };
+
+/**
+ * The size a new material starts at: a tile's, or the standard model's of its kind (a basin on the
+ * floor is a pedestal one). A faucet has no standard model and keeps the size it has.
+ */
+function startingSize(category: MaterialCategory, installation: MaterialInput['installation']) {
+  if (category === 'tile')
+    return { widthMm: defaults.widthMm, heightMm: defaults.heightMm, depthMm: defaults.depthMm };
+  if (!(category in RECONSTRUCTION_DEFAULTS)) return undefined;
+  const { widthMm, heightMm, depthMm } = reconstructionDefaults(
+    category as ReconstructionKind,
+    category === 'basin' && installation === 'floor' ? 'pedestal' : undefined,
+  );
+  return { widthMm, heightMm, depthMm };
+}
 
 function AnchorPicker({
   assetId,
@@ -162,6 +182,9 @@ export function MaterialForm({
           views: [],
         },
   );
+  // A new material's size follows its category until a size is typed (a tile's 600 × 600 × 9 left on
+  // a toilet drew a 9 mm deep guide for the AI direction photos). An existing one keeps its size.
+  const [sizeTyped, setSizeTyped] = useState(!!initial);
   const [packagingAcknowledged, setPackagingAcknowledged] = useState('');
   // The features to keep, typed for the AI photo prompts only (not part of the material).
   const [promptDetails, setPromptDetails] = useState('');
@@ -251,6 +274,10 @@ export function MaterialForm({
   }>();
   const set = <K extends keyof MaterialInput>(key: K, value: MaterialInput[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
+  const setSize = (key: 'widthMm' | 'heightMm' | 'depthMm', value: number) => {
+    setSizeTyped(true);
+    set(key, value);
+  };
   const setPricing = <K extends keyof MaterialPricing>(key: K, value: MaterialPricing[K]) =>
     setForm((current) => ({
       ...current,
@@ -265,6 +292,7 @@ export function MaterialForm({
           : currentPricing.unit === 'piece';
       return {
         ...current,
+        ...(!sizeTyped && startingSize(category, current.installation)),
         category,
         pricing:
           !supported && currentPricing.unitPrice === null
@@ -675,7 +703,7 @@ export function MaterialForm({
                   step=".1"
                   required
                   value={form.widthMm}
-                  onChange={(event) => set('widthMm', Number(event.target.value))}
+                  onChange={(event) => setSize('widthMm', Number(event.target.value))}
                 />
               </label>
               <label className="field">
@@ -688,7 +716,7 @@ export function MaterialForm({
                   step=".1"
                   required
                   value={form.heightMm}
-                  onChange={(event) => set('heightMm', Number(event.target.value))}
+                  onChange={(event) => setSize('heightMm', Number(event.target.value))}
                 />
               </label>
               <label className="field">
@@ -701,7 +729,7 @@ export function MaterialForm({
                   step=".1"
                   required
                   value={form.depthMm}
-                  onChange={(event) => set('depthMm', Number(event.target.value))}
+                  onChange={(event) => setSize('depthMm', Number(event.target.value))}
                 />
               </label>
             </div>
