@@ -11,6 +11,9 @@ import { PRODUCT_DIRECTIONS, type ProductDirection } from '@/lib/product-directi
 import type { MaterialCategory, MaterialInput, Point } from '@/lib/types';
 import {
   DIRECTION_PHOTO_FORMS,
+  DIRECTION_PHOTO_MAX_MM,
+  DIRECTION_PHOTO_MIN_MM,
+  directionPhotoSizeOk,
   directionPhotoView,
   isDirectionPhotoCategory,
   standsOnFloor,
@@ -120,7 +123,11 @@ export function DirectionPhotoGenerator({
   const forms = kind ? (DIRECTION_PHOTO_FORMS[kind] as readonly DirectionPhotoForm[]) : [];
   const shape: DirectionPhotoForm =
     chosen && forms.includes(chosen) ? chosen : defaultForm(kind ?? 'bath', installation);
-  const sized = widthMm > 0 && heightMm > 0 && depthMm > 0;
+  const entered = widthMm > 0 && heightMm > 0 && depthMm > 0;
+  // The route's own range: a size it would turn down (a tile's 9 mm depth left after switching the
+  // category) draws no guide and sends nothing.
+  const sized = directionPhotoSizeOk([widthMm, heightMm, depthMm]);
+  const sizeText = `가로 ${widthMm} × 높이 ${heightMm} × 깊이 ${depthMm}mm`;
   const wallToilet = kind === 'toilet' && !standsOnFloor(installation);
   const plan = planDirections({ installation, symmetric });
   const ready = refs.filter((ref) => ref.status === 'ready' && ref.onWhite);
@@ -482,7 +489,9 @@ export function DirectionPhotoGenerator({
       </div>
       {!sized && (
         <p role="status" className={styles.promptNotice} data-testid="ai-size-notice">
-          가로·높이·깊이를 넣어 주세요. 가이드 그림을 그 크기로 그려요.
+          {entered
+            ? `가로·높이·깊이는 ${DIRECTION_PHOTO_MIN_MM}~${DIRECTION_PHOTO_MAX_MM.toLocaleString('ko-KR')}mm로 넣어 주세요(지금 ${sizeText}). 이 제품의 실제 크기로 고쳐 주세요.`
+            : '가로·높이·깊이를 넣어 주세요. 가이드 그림을 그 크기로 그려요.'}
         </p>
       )}
       {wallToilet && (
@@ -511,6 +520,11 @@ export function DirectionPhotoGenerator({
             );
           })}
         </div>
+      )}
+      {guides && (
+        <p className={styles.note} data-testid="ai-guide-size">
+          {sizeText}로 그렸어요. 제품 크기와 다르면 위 크기 칸을 고쳐 주세요.
+        </p>
       )}
       {estimate && (
         <p className={styles.note} data-testid="ai-estimate">

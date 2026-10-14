@@ -353,8 +353,19 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   await addReference(generator);
   const make = generator.getByRole('button', { name: '방향 사진 만들기', exact: true });
   await expect(make).toBeDisabled();
+  // A tile's 9 mm depth left after switching the category: out of the route's range, so no guide.
+  await form.getByLabel('깊이 (mm)', { exact: true }).fill('9');
+  await expect(generator.getByTestId('ai-size-notice')).toContainText(
+    '10~10,000mm로 넣어 주세요(지금 가로 1700 × 높이 560 × 깊이 9mm)',
+  );
+  await expect(generator.getByTestId('ai-guides')).toHaveCount(0);
+  await expect(make).toBeDisabled();
   await form.getByLabel('깊이 (mm)', { exact: true }).fill('750');
   await expect(generator.getByTestId('ai-guides').getByRole('img')).toHaveCount(4, { timeout: 30000 });
+  await expect(generator.getByTestId('ai-size-notice')).toHaveCount(0);
+  await expect(generator.getByTestId('ai-guide-size')).toContainText(
+    '가로 1700 × 높이 560 × 깊이 750mm로 그렸어요.',
+  );
 
   // A spent limit: the two requests in flight fail, the other four are never sent.
   await make.click();
