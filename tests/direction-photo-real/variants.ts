@@ -2,7 +2,7 @@
  * Real, billed direction-photo calls outside the screen, the same seeds as another run, to compare one
  * change at a time (docs/direction-photo-results-20261013.md, "곰·스마트 변기 시험"). Two kinds:
  *
- * - `app`: the app as it is — its guide renderer (renderDirectionGuides) and photo preparation
+ * - `app`: the app as it is (a bath sends no photo angle since 2026-10-15) — its guide renderer (renderDirectionGuides) and photo preparation
  *   (prepareReferenceImage) in a real Chrome, its spec check and prompt (buildDirectionPhotoPrompt)
  *   for the product's settings below.
  * - `replay`: the very guides, photos and prompts a recorded run sent (REPLAY=<run folder>), so any
@@ -81,9 +81,9 @@ const PRODUCTS: Record<string, { spec: Omit<DirectionPhotoSpec, 'direction'>; ph
       form: 'oval-freestanding',
       installation: 'floor',
       sizeMm: [1700, 560, 750],
-      photoAngles: ['unknown', 'unknown'],
     },
-    photos: ['61-bathtub-3q-white.png', '55-bathtub-3q-top.webp'],
+    // The white catalogue photo only: the staged one needs the screen's background removal.
+    photos: ['61-bathtub-3q-white.png'],
   },
 };
 
