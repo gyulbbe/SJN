@@ -224,6 +224,8 @@ test('사진을 올리면 가이드 4장·후보를 만들고, 고른 사진이 
   await expect(guides).toContainText('왼쪽 · 후보 2장을 만들어요 · 방 화면에서 약 33% 작게 보여요');
   await expect(generator.getByRole('button', { name: '방향 사진 만들기', exact: true })).toBeDisabled();
   await addReference(generator);
+  // A bath's photos are not asked where they were taken from (only a toilet shaped like the product).
+  await expect(generator.getByLabel('참고 사진 1 찍은 각도', { exact: true })).toHaveCount(0);
   await expect(generator.getByTestId('ai-estimate')).toContainText('AI 요청 6회');
   await generator.screenshot({ path: info.outputPath('generator-guides.png') });
 
@@ -327,7 +329,7 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   app = await authenticatedApp(page);
   await installCutoutDouble(page);
   const sent: Sent[] = [];
-  let mode: 'quota' | 'payment' | 'wait' = 'quota';
+  let mode: 'quota' | 'payment' | 'wait' | 'answer' = 'quota';
   const waiting: (() => void)[] = [];
   await mockModel(page, sent, async () => {
     if (mode === 'quota')
@@ -340,6 +342,7 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
       };
     if (mode === 'payment')
       return { status: 402, json: { error: '결제 한도에 걸렸어요.', code: 'quota_exhausted' } };
+    if (mode === 'answer') return undefined;
     await new Promise<void>((resolve) => waiting.push(resolve));
     return { status: 499, json: { error: '취소' } };
   });
@@ -426,6 +429,48 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   );
   await expect(basin.getByTestId('ai-guides').getByRole('img')).toHaveCount(4);
   await basin.screenshot({ path: info.outputPath('generator-basin.png') });
+
+  // A toilet: its body and lid (a tankless one has no open lid), no 뒤, and both go with each request.
+  await form.getByLabel('카테고리', { exact: true }).selectOption('toilet');
+  await form.getByLabel('설치 방식', { exact: true }).selectOption('floor');
+  const toilet = form.getByTestId('ai-direction-photos');
+  await toilet.getByText('AI로 방향 사진 만들기', { exact: true }).click();
+  const body = toilet.getByLabel('변기 몸통', { exact: true });
+  const lid = toilet.getByLabel('변기 뚜껑', { exact: true });
+  await expect(body).toHaveValue('two-piece');
+  await expect(lid).toHaveValue('closed');
+  await expect(lid.locator('option')).toHaveText(['뚜껑 닫힘', '뚜껑 열림', '시트만(뚜껑 없음)']);
+  await body.selectOption('tankless');
+  await expect(lid.locator('option')).toHaveText(['뚜껑 닫힘', '시트만(뚜껑 없음)']);
+  await body.selectOption('one-piece');
+  await lid.selectOption('seat');
+  await expect(toilet.getByTestId('ai-guides')).toContainText(
+    '뒤 · 변기는 벽에 붙여 설치해서 뒤 사진을 만들지 않아요',
+    { timeout: 30000 },
+  );
+  await addReference(toilet);
+  const angle = toilet.getByLabel('참고 사진 1 찍은 각도', { exact: true });
+  await expect(angle).toHaveValue('unknown');
+  await angle.selectOption('front-right');
+  await expect(toilet.getByTestId('ai-estimate')).toContainText('AI 요청 4회');
+  mode = 'answer';
+  const before = sent.length;
+  await toilet.getByRole('button', { name: '방향 사진 만들기', exact: true }).click();
+  await expect(
+    toilet.getByRole('group', { name: '왼쪽 후보' }).getByRole('button', { name: /후보 \d$/ }),
+  ).toHaveCount(2, { timeout: 30000 });
+  const toiletSent = sent.slice(before);
+  expect(toiletSent.map((s) => s.spec.direction).sort()).toEqual(['front', 'front', 'left', 'left']);
+  for (const s of toiletSent)
+    expect(s.spec).toMatchObject({
+      category: 'toilet',
+      form: 'one-piece',
+      lid: 'seat',
+      installation: 'floor',
+      photoAngles: ['front-right'],
+    });
+  await expect(toilet.getByRole('group', { name: '뒤 후보' })).toHaveCount(0);
+  await toilet.screenshot({ path: info.outputPath('generator-toilet.png') });
   // A tile has no generator at all.
   await form.getByLabel('카테고리', { exact: true }).selectOption('tile');
   await expect(form.getByTestId('ai-direction-photos')).toHaveCount(0);

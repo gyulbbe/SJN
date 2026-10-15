@@ -1,12 +1,12 @@
-// Contact sheet of a real direction-photo run (tests/direction-photo-real/run.mjs): the two photos and
-// their cut-outs, the four guides, every answer by direction (from the ledger), and what went into the
-// slots (cut-out on a checkerboard, the anchor as a red cross). Writes test-results/direction-photo-real/sheet.png.
-// Usage: node tests/direction-photo-real/sheet.mjs
+// Contact sheet of a real direction-photo run (tests/direction-photo-real/run.mjs): the photos as sent
+// and their cut-outs, the four guides, every answer by direction (from the ledger), and what went into
+// the slots (cut-out on a checkerboard, the anchor as a red cross). Writes <run>/sheet.png.
+// Usage: [AI_OUT=test-results/direction-photo-bear/baseline] [AI_LEDGER=...] node tests/direction-photo-real/sheet.mjs
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import sharp from 'sharp';
 
-const OUT = 'test-results/direction-photo-real';
-const INPUT = 'test-results/product-representation/real/input';
+const OUT = process.env.AI_OUT ?? 'test-results/direction-photo-real';
+const LEDGER = process.env.AI_LEDGER ?? `${OUT}/ledger.jsonl`;
 const CELL = 300,
   LABEL = 26,
   GAP = 8;
@@ -71,26 +71,32 @@ async function tile(file, text, anchor) {
     .png()
     .toBuffer();
 }
-const ledger = readFileSync(`${OUT}/ledger.jsonl`, 'utf8')
+const ledger = readFileSync(LEDGER, 'utf8')
   .split('\n')
   .filter(Boolean)
-  .map((line) => JSON.parse(line));
+  .map((line) => JSON.parse(line))
+  .filter((row) => !row.run || row.run === OUT);
 const answers = readdirSync(`${OUT}/answers`).sort();
 const slots = existsSync(`${OUT}/slots.json`) ? JSON.parse(readFileSync(`${OUT}/slots.json`, 'utf8')) : [];
+const photos = readdirSync(OUT)
+  .filter((name) => /^(sent-ref|ref)-\d/.test(name))
+  .sort()
+  .map((name) => [
+    `${OUT}/${name}`,
+    name.startsWith('sent') ? `보낸 사진 ${name.match(/\d+/)[0]}` : `사진 ${name.match(/\d+/)[0]} 배경 지움`,
+  ]);
 const rows = [
-  [
-    [`${INPUT}/61-bathtub-3q-white.png`, '사진 1(흰 배경)'],
-    [`${INPUT}/55-bathtub-3q-top.webp`, '사진 2(연출 배경)'],
-    [`${OUT}/ref-1-cutout-on-white.png`, '사진 1 배경 지움'],
-    [`${OUT}/ref-2-cutout-on-white.png`, '사진 2 배경 지움'],
-  ],
-  ['정면', '왼쪽', '오른쪽', '뒤'].map((d) => [`${OUT}/guide-${d}.png`, `가이드 ${d}`]),
-];
-for (const direction of ['front', 'left', 'back']) {
+  photos,
+  ['정면', '왼쪽', '오른쪽', '뒤']
+    .filter((d) => existsSync(`${OUT}/guide-${d}.png`))
+    .map((d) => [`${OUT}/guide-${d}.png`, `가이드 ${d}`]),
+].filter((row) => row.length);
+for (const direction of ['front', 'left', 'right', 'back']) {
   const files = answers.filter((name) => name.includes(`-${direction}-`));
+  if (!files.length) continue;
   rows.push(
     files.map((name) => {
-      const n = Number(name.slice(0, 2));
+      const n = Number(name.split('-')[0]);
       const row = ledger.find((r) => r.n === n);
       return [
         `${OUT}/answers/${name}`,

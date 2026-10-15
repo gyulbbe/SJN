@@ -25,14 +25,25 @@ import {
   projectGuidePoint,
   type Vec3,
 } from './guide-geometry';
-import { standsOnFloor, type DirectionPhotoCategory, type DirectionPhotoForm } from './contract';
+import {
+  standsOnFloor,
+  type DirectionPhotoCategory,
+  type DirectionPhotoForm,
+  type DirectionPhotoLid,
+} from './contract';
 
 export type GuideInput = {
   category: DirectionPhotoCategory;
   form: DirectionPhotoForm;
+  /** A toilet's lid (closed when not said). */
+  lid?: DirectionPhotoLid;
   /** Width × height × depth (mm). */
   sizeMm: [number, number, number];
   installation: MaterialInput['installation'];
+};
+type GuideModelOptions = ReconstructionStandardOptions & {
+  bathShape?: 'oval';
+  toiletBody?: 'one-piece' | 'tankless';
 };
 export type DirectionGuide = {
   direction: ProductDirection;
@@ -44,17 +55,20 @@ export type DirectionGuide = {
   share: number;
 };
 
-/** The standard model's options that make each shape. */
-function modelOptions(form: DirectionPhotoForm): ReconstructionStandardOptions & { bathShape?: 'oval' } {
+/** The standard model's options that make each shape (a toilet: its body, and its lid or none). */
+function modelOptions(form: DirectionPhotoForm, lid: DirectionPhotoLid = 'closed'): GuideModelOptions {
   switch (form) {
     case 'oval-freestanding':
       return { bathShape: 'oval' };
     case 'rectangular':
       return {};
-    case 'lid-closed':
-      return { toiletLidState: 'closed' };
-    case 'lid-open':
-      return { toiletLidState: 'open' };
+    case 'two-piece':
+    case 'one-piece':
+    case 'tankless':
+      return {
+        ...(form !== 'two-piece' && { toiletBody: form }),
+        ...(lid !== 'seat' && { toiletLidState: lid }),
+      };
     default: {
       const [variant, shape] = form.split('-') as ['wall' | 'pedestal', 'round' | 'rectangular'];
       return { basinVariant: variant, basinShape: shape, bowlCount: 1 };
@@ -146,7 +160,7 @@ export async function renderDirectionGuides(
     depthMm,
     version: 2,
     face: standsOnFloor(input.installation) ? 'floor' : 'back',
-    ...modelOptions(input.form),
+    ...modelOptions(input.form, input.lid),
   });
   matteGrey(model);
   const scene = new Scene();

@@ -24,6 +24,16 @@ const spec: DirectionPhotoSpec = {
   installation: 'floor',
   sizeMm: [1700, 560, 750],
 };
+/** A one-piece toilet: its photos' angles go with it. */
+const twoPhotos: DirectionPhotoSpec = {
+  category: 'toilet',
+  form: 'one-piece',
+  lid: 'seat',
+  direction: 'left',
+  installation: 'floor',
+  sizeMm: [370, 660, 640],
+  photoAngles: ['front-right', 'unknown'],
+};
 async function request(edit?: (form: FormData) => void | Promise<void>, origin = 'https://sjn.example') {
   const form = new FormData();
   form.set('guide', blob(await png(432, 496)), 'guide.png');
@@ -58,7 +68,10 @@ describe('direction photo route', () => {
   it('sends the guide as image 0, the photos as images 1–n and the server’s prompt, once, at twice the guide', async () => {
     const env = environment();
     const result = await runDirectionPhoto(
-      await request(async (form) => form.append('refs', blob(await png(288, 496, '#dddddd')), 'photo-2.png')),
+      await request(async (form) => {
+        form.append('refs', blob(await png(288, 496, '#dddddd')), 'photo-2.png');
+        form.set('spec', JSON.stringify(twoPhotos));
+      }),
       env,
     );
     expect(result.status).toBe(200);
@@ -79,7 +92,8 @@ describe('direction photo route', () => {
       'height',
       'seed',
     ]);
-    expect(form.get('prompt')).toBe(buildDirectionPhotoPrompt(spec, 2));
+    expect(form.get('prompt')).toBe(buildDirectionPhotoPrompt(twoPhotos, 2));
+    expect(form.get('prompt')).toContain('Image 1 was taken from the front right of the product, from above');
     expect(form.get('width')).toBe('864');
     expect(form.get('height')).toBe('992');
     expect(form.get('seed')).toBe('3001');
@@ -125,6 +139,19 @@ describe('direction photo route', () => {
     [
       'a tile’s 9 mm depth left after switching the category',
       (f: FormData) => f.set('spec', JSON.stringify({ ...spec, sizeMm: [600, 600, 9] })),
+    ],
+    ['photo angles not one per photo', (f: FormData) => f.set('spec', JSON.stringify(twoPhotos))],
+    [
+      'photo angles on a bath',
+      (f: FormData) => f.set('spec', JSON.stringify({ ...spec, photoAngles: ['front'] })),
+    ],
+    [
+      'a toilet’s back',
+      (f: FormData) =>
+        f.set(
+          'spec',
+          JSON.stringify({ ...spec, category: 'toilet', form: 'one-piece', lid: 'seat', direction: 'back' }),
+        ),
     ],
     ['oversized facts', (f: FormData) => f.set('spec', JSON.stringify({ ...spec, pad: 'x'.repeat(2000) }))],
     [
