@@ -11,7 +11,7 @@
 // AI_BUDGET_NEURONS (default none), both counted across runs in the same ledger. A failed request
 // counts as spent. Nothing is saved to the material: the dialog is left without "자재 등록".
 //
-// Usage: [PRODUCT=bath|bear-toilet|smart-toilet] [FORM=lid-open] [AI_OUT=...] node tests/direction-photo-real/run.mjs
+// Usage: [PRODUCT=bath|bear-toilet|smart-toilet] [FORM=one-piece] [AI_OUT=...] node tests/direction-photo-real/run.mjs
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import sharp from 'sharp';
@@ -35,34 +35,39 @@ const PRODUCTS = {
     pick: ['정면', '왼쪽', '뒤'],
   },
   // The one-piece bear toilet (ears on the tank, a face printed on its front, the lever on its right
-  // side, a seat and no lid): not symmetric, so 오른쪽 is made, not turned over. The screen has no
-  // seat-only shape: the person tried 뚜껑 열림.
+  // side, a seat and no lid): not symmetric, so 오른쪽 is made, not turned over; a toilet has no 뒤.
+  // Its photo shows its front and right side from above. (The 2026-10-14 baseline was the harness's,
+  // with the screen's shapes then: two-piece, 뚜껑 열림.)
   'bear-toilet': {
-    out: 'test-results/direction-photo-bear/bear-baseline',
+    out: 'test-results/direction-photo-bear/bear-screen',
     ledger: 'test-results/direction-photo-bear/ledger.jsonl',
     name: '실제 AI 곰 변기(저장 안 함)',
     category: 'toilet',
     size: ['370', '660', '640'],
     installation: 'floor',
-    form: 'lid-open',
+    form: 'one-piece',
+    lid: 'seat',
     symmetric: false,
     photos: ['62-bear-toilet-3q.png'],
-    pick: ['정면', '왼쪽', '오른쪽', '뒤'],
+    angles: ['front-right'],
+    pick: ['정면', '왼쪽', '오른쪽'],
   },
   // A tankless smart toilet (a square body, a bidet seat with its lid closed, the button panel on its
   // right side): not symmetric either. Photos 53·52·60 are the same product from the front and the
   // sides, kept out of the request to judge the answers by.
   'smart-toilet': {
-    out: 'test-results/direction-photo-bear/smart-baseline',
+    out: 'test-results/direction-photo-bear/smart-screen',
     ledger: 'test-results/direction-photo-bear/ledger.jsonl',
     name: '실제 AI 스마트 변기(저장 안 함)',
     category: 'toilet',
     size: ['400', '520', '700'],
     installation: 'floor',
-    form: 'lid-closed',
+    form: 'tankless',
+    lid: 'closed',
     symmetric: false,
     photos: ['57-toilet-3q-small.png'],
-    pick: ['정면', '왼쪽', '오른쪽', '뒤'],
+    angles: ['front-right'],
+    pick: ['정면', '왼쪽', '오른쪽'],
   },
 };
 const product = PRODUCTS[process.env.PRODUCT ?? 'bath'];
@@ -97,12 +102,17 @@ const ledger = () =>
         .filter(Boolean)
         .map((line) => JSON.parse(line))
     : [];
+// The free allowance is daily (00:00 UTC): the cap and the budget count today's requests only; the
+// answers' numbers run on across the whole ledger.
+const today = new Date().toISOString().slice(0, 10);
 const spentRows = () => ledger().filter((row) => row.status !== 'refused');
-let sent = spentRows().length;
-let neurons = spentRows().reduce((sum, row) => sum + (row.neurons ?? 0), 0);
+const todays = () => spentRows().filter((row) => String(row.at).startsWith(today));
+let n = spentRows().length;
+let sent = todays().length;
+let neurons = todays().reduce((sum, row) => sum + (row.neurons ?? 0), 0);
 const t0 = Date.now();
 const log = (...a) => console.log(`[${((Date.now() - t0) / 1000).toFixed(0)}s]`, ...a);
-log(`ledger: ${sent} sent before (~${Math.round(neurons)} neurons), cap ${CAP} calls, budget ${BUDGET}`);
+log(`ledger: ${sent} sent today (~${Math.round(neurons)} neurons), cap ${CAP} calls, budget ${BUDGET}`);
 
 const s = await session();
 const { page, context } = s;
@@ -129,9 +139,10 @@ await context.route('**/api/materials/direction-photo', async (route) => {
       json: { error: `시험 상한(${CAP}회·예산 ${BUDGET}뉴런의 90%)에 걸려 보내지 않았어요.` },
     });
   }
-  const n = ++sent;
+  sent++;
+  const number = ++n;
   neurons += cost;
-  if (n === 1 || !existsSync(`${OUT}/request-spec.json`)) {
+  if (!existsSync(`${OUT}/request-spec.json`)) {
     writeFileSync(`${OUT}/request-spec.json`, JSON.stringify(spec, null, 2));
     for (const [index, ref] of refs.entries())
       writeFileSync(`${OUT}/sent-ref-${index + 1}.png`, Buffer.from(await ref.arrayBuffer()));
@@ -141,7 +152,7 @@ await context.route('**/api/materials/direction-photo', async (route) => {
   const started = Date.now();
   const row = {
     at: new Date().toISOString(),
-    n,
+    n: number,
     run: OUT,
     direction: spec.direction,
     seed,
@@ -165,12 +176,12 @@ await context.route('**/api/materials/direction-photo', async (route) => {
   if (response.ok()) {
     const meta = await sharp(body).metadata();
     row.size = [meta.width, meta.height];
-    writeFileSync(`${OUT}/answers/${String(n).padStart(2, '0')}-${spec.direction}-${seed}.png`, body);
+    writeFileSync(`${OUT}/answers/${String(number).padStart(3, '0')}-${spec.direction}-${seed}.png`, body);
   } else row.error = body.toString('utf8').slice(0, 400);
   appendFileSync(LEDGER, JSON.stringify(row) + '\n');
   log(
     'call',
-    n,
+    number,
     spec.direction,
     seed,
     row.status,
@@ -209,7 +220,11 @@ try {
   const generator = form.getByTestId('ai-direction-photos');
   await generator.getByText('AI로 방향 사진 만들기', { exact: true }).click();
   const shape = process.env.FORM ?? product.form;
-  if (shape) await generator.getByLabel('가이드 모양', { exact: true }).selectOption(shape);
+  if (shape)
+    await generator
+      .getByLabel(product.category === 'toilet' ? '변기 몸통' : '가이드 모양', { exact: true })
+      .selectOption(shape);
+  if (product.lid) await generator.getByLabel('변기 뚜껑', { exact: true }).selectOption(product.lid);
   const symmetric = generator.getByRole('checkbox', { name: /좌우 대칭 제품/ });
   if ((await symmetric.isChecked()) !== product.symmetric) await symmetric.click();
   await generator
@@ -219,6 +234,8 @@ try {
     await generator
       .getByRole('img', { name: `참고 사진 ${n + 1}(배경 지움)`, exact: true })
       .waitFor({ timeout: 180_000 });
+  for (const [n, angle] of (product.angles ?? []).entries())
+    await generator.getByLabel(`참고 사진 ${n + 1} 찍은 각도`, { exact: true }).selectOption(angle);
   for (const n of product.photos.keys())
     writeFileSync(
       `${OUT}/ref-${n + 1}-cutout-on-white.png`,
