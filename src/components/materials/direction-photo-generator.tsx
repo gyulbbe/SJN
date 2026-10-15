@@ -17,6 +17,7 @@ import {
   directionPhotoSizeOk,
   directionPhotoView,
   isDirectionPhotoCategory,
+  photoAngleTold,
   standsOnFloor,
   toiletLids,
   type DirectionPhotoCategory,
@@ -153,6 +154,8 @@ export function DirectionPhotoGenerator({
   const sizeText = `가로 ${widthMm} × 높이 ${heightMm} × 깊이 ${depthMm}mm`;
   const lid: DirectionPhotoLid | undefined =
     kind === 'toilet' ? (toiletLids(shape).includes(chosenLid) ? chosenLid : 'closed') : undefined;
+  // The photos' angles, asked and sent for a toilet shaped like the product only (contract.ts).
+  const anglesTold = !!kind && photoAngleTold(kind, shape);
   const wallToilet = kind === 'toilet' && !standsOnFloor(installation);
   const plan = planDirections({ category: kind, installation, symmetric });
   const ready = refs.filter((ref) => ref.status === 'ready' && ref.onWhite);
@@ -288,7 +291,7 @@ export function DirectionPhotoGenerator({
     controller.current = abort;
     const jobs = directionJobs(directions, DIRECTION_PHOTO_CANDIDATES, randomSeed);
     const photos = ready.map((ref) => ref.onWhite!);
-    const photoAngles = ready.map((ref) => ref.angle);
+    const photoAngles = anglesTold ? ready.map((ref) => ref.angle) : undefined;
     const sizeMm: [number, number, number] = [widthMm, heightMm, depthMm].map(Math.round) as [
       number,
       number,
@@ -309,7 +312,7 @@ export function DirectionPhotoGenerator({
             direction: directionPhotoView(job.direction),
             installation,
             sizeMm,
-            photoAngles,
+            ...(photoAngles && { photoAngles }),
           };
           return requestDirectionPhoto({
             guide: guideOf(job.direction)!.blob,
@@ -463,28 +466,30 @@ export function DirectionPhotoGenerator({
                   {ref.status === 'failed' ? ref.error : '배경을 지우는 중'}
                 </span>
               )}
-              <select
-                className="input"
-                aria-label={`참고 사진 ${index + 1} 찍은 각도`}
-                title="사진에서 제품의 앞이 향하는 쪽(방향 칸과 같은 이름)"
-                value={ref.angle}
-                disabled={!!running || !!applying}
-                onChange={(event) =>
-                  setRefs((current) =>
-                    current.map((item) =>
-                      item.id === ref.id
-                        ? { ...item, angle: event.target.value as DirectionPhotoPhotoAngle }
-                        : item,
-                    ),
-                  )
-                }
-              >
-                {DIRECTION_PHOTO_PHOTO_ANGLES.map((angle) => (
-                  <option key={angle} value={angle}>
-                    {PHOTO_ANGLE_LABELS[angle]}
-                  </option>
-                ))}
-              </select>
+              {anglesTold && (
+                <select
+                  className="input"
+                  aria-label={`참고 사진 ${index + 1} 찍은 각도`}
+                  title="사진에서 제품의 앞이 향하는 쪽(방향 칸과 같은 이름)"
+                  value={ref.angle}
+                  disabled={!!running || !!applying}
+                  onChange={(event) =>
+                    setRefs((current) =>
+                      current.map((item) =>
+                        item.id === ref.id
+                          ? { ...item, angle: event.target.value as DirectionPhotoPhotoAngle }
+                          : item,
+                      ),
+                    )
+                  }
+                >
+                  {DIRECTION_PHOTO_PHOTO_ANGLES.map((angle) => (
+                    <option key={angle} value={angle}>
+                      {PHOTO_ANGLE_LABELS[angle]}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button
                 type="button"
                 className={styles.textButton}
@@ -510,10 +515,10 @@ export function DirectionPhotoGenerator({
           첫 참고 사진을 대표 이미지로 쓰기
         </label>
       )}
-      {refs.length > 0 && (
+      {refs.length > 0 && anglesTold && (
         <p className={styles.note}>
-          찍은 각도는 사진에서 제품의 앞이 향하는 쪽이에요(방향 칸과 같은 이름). 알려 주면 AI가 사진의 각도를
-          베끼지 않고 가이드의 시점으로 그려요.
+          찍은 각도는 사진에서 제품의 앞이 향하는 쪽이에요(방향 칸과 같은 이름). 이 몸통은 가이드가 제품과
+          비슷해서 AI가 사진의 각도를 베끼기 쉬워요. 각도를 알려 주면 가이드의 시점으로 그려요.
         </p>
       )}
       <div className={styles.toolbar}>

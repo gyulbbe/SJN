@@ -17,16 +17,26 @@ const spec = (edit: Partial<DirectionPhotoSpec> = {}): DirectionPhotoSpec => ({
   direction: 'front',
   installation: 'floor',
   sizeMm: BATH,
-  photoAngles: ['unknown'],
   ...edit,
 });
-/** The prompt for this many photos, each of an unknown angle unless the spec says. */
+const onePiece = (edit: Partial<DirectionPhotoSpec> = {}) =>
+  spec({
+    category: 'toilet',
+    form: 'one-piece',
+    lid: 'seat',
+    sizeMm: [370, 660, 640],
+    photoAngles: ['unknown'],
+    ...edit,
+  });
+/** The prompt for this many photos (a spec with angles: each unknown unless it says). */
 const buildDirectionPhotoPrompt = (value: DirectionPhotoSpec, photos: number) =>
   buildPrompt(
     {
       ...value,
       photoAngles:
-        value.photoAngles.length === photos ? value.photoAngles : Array(Math.max(0, photos)).fill('unknown'),
+        !value.photoAngles || value.photoAngles.length === photos
+          ? value.photoAngles
+          : Array(Math.max(0, photos)).fill('unknown'),
     },
     photos,
   );
@@ -159,12 +169,15 @@ describe('direction photo prompt', () => {
     expect(photoAngleSentence(['left', 'front', 'right'], 'left')).toBe(
       "Image 1 was taken from the product's left side, image 2 from straight in front of the product and image 3 from the product's right side. Image 1 is close to the view to make; still keep the outline, the camera angle and the position exactly as in image 0, and do not copy the angle, the perspective or the framing of image 2 and image 3.",
     );
-    // It follows the photos' sentence, in every prompt.
-    const text = buildDirectionPhotoPrompt(spec({ direction: 'left', photoAngles: ['front-right'] }), 1);
+    // It follows the photos' sentence, for a toilet shaped like the product only.
+    const text = buildDirectionPhotoPrompt(onePiece({ direction: 'left', photoAngles: ['front-right'] }), 1);
     expect(text).toContain(
       'never for the shape, the camera angle or the position. Image 1 was taken from the front right of the product, from above:',
     );
-    expect(() => buildPrompt(spec({ photoAngles: ['front', 'left'] }), 1)).toThrow();
+    expect(() => buildPrompt(onePiece({ photoAngles: ['front', 'left'] }), 1)).toThrow();
+    // The bath's guide held its view without the sentence and lost it with it: none for a bath.
+    expect(buildDirectionPhotoPrompt(spec({ direction: 'left' }), 1)).not.toContain('was taken from');
+    expect(directionPhotoSpecSchema.safeParse(onePiece()).success).toBe(true);
   });
 
   it('gives the same text for the same spec, and none of it comes from the person', () => {
@@ -185,9 +198,11 @@ describe('direction photo prompt', () => {
       'a toilet’s back',
       { ...spec(), category: 'toilet', form: 'two-piece', lid: 'closed', direction: 'back' },
     ],
-    ['no photo angle', { ...spec(), photoAngles: [] }],
-    ['four photo angles', { ...spec(), photoAngles: ['front', 'front', 'left', 'right'] }],
-    ['a free photo angle', { ...spec(), photoAngles: ['from the top'] }],
+    ['photo angles on a bath', { ...spec(), photoAngles: ['front'] }],
+    ['a one-piece toilet without photo angles', { ...onePiece(), photoAngles: undefined }],
+    ['no photo angle', { ...onePiece(), photoAngles: [] }],
+    ['four photo angles', { ...onePiece(), photoAngles: ['front', 'front', 'left', 'right'] }],
+    ['a free photo angle', { ...onePiece(), photoAngles: ['from the top'] }],
     ['an unknown category', { ...spec(), category: 'vanity' }],
     ['a Korean direction', { ...spec(), direction: '정면' }],
     [

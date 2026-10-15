@@ -64,7 +64,8 @@ export async function runDirectionPhoto(
   const refs: Blob[] = [];
   for (const ref of form.getAll('refs'))
     refs.push((await readFluxPng(ref, '올바른 제품 사진 PNG를 전달해 주세요.')).blob);
-  if (spec.data.photoAngles.length !== refs.length) fail('참고 사진마다 찍은 각도를 보내 주세요.');
+  if (spec.data.photoAngles && spec.data.photoAngles.length !== refs.length)
+    fail('참고 사진마다 찍은 각도를 보내 주세요.');
   const prompt = buildDirectionPhotoPrompt(spec.data, refs.length);
   const model = new FormData();
   model.set('input_image_0', guide, 'guide.png');

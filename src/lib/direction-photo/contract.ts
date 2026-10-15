@@ -39,9 +39,10 @@ export const toiletLids = (form: DirectionPhotoForm): readonly DirectionPhotoLid
 
 /**
  * Where each photo was taken from, said as the slots name a photo: the way the product's front points
- * in it (front-right: between 정면 and 오른쪽, the product's front and right side seen). Told to the
- * model so it does not copy the photo's angle (it did in 9 of 10 answers with a guide shaped like the
- * product); 'unknown' still gets a sentence that the photo is not the view to make.
+ * in it (front-right: between 정면 and 오른쪽, the product's front and right side seen). Asked only for
+ * a one-piece or tankless toilet (photoAngleTold): with a guide shaped like the product the model
+ * copied the photo's angle in 9 of 10 answers, and the sentence brought the view back; the bath's
+ * guide held its view without it and lost it with it (4 of 4 answers, 2026-10-15).
  */
 export const DIRECTION_PHOTO_PHOTO_ANGLES = [
   'unknown',
@@ -52,6 +53,9 @@ export const DIRECTION_PHOTO_PHOTO_ANGLES = [
   'left',
 ] as const;
 export type DirectionPhotoPhotoAngle = (typeof DIRECTION_PHOTO_PHOTO_ANGLES)[number];
+/** Whether the photos' angles are asked for and told to the model: a toilet shaped like the product. */
+export const photoAngleTold = (category: DirectionPhotoCategory, form: DirectionPhotoForm) =>
+  category === 'toilet' && form !== 'two-piece';
 
 /** The direction on the wire (the app's names, in the camera's words). */
 export const DIRECTION_PHOTO_VIEWS = ['front', 'left', 'right', 'back'] as const;
@@ -87,8 +91,8 @@ export const directionPhotoSizeOk = (sizeMm: readonly number[]) =>
 const mm = z.number().int().min(DIRECTION_PHOTO_MIN_MM).max(DIRECTION_PHOTO_MAX_MM);
 /**
  * The request's facts: the kind and its shape (a toilet's lid too), the direction, how it is
- * installed, its size (width × height × depth, mm) and where each photo was taken from, in the
- * photos' order. Nothing else, and no free text.
+ * installed, its size (width × height × depth, mm) and, for a one-piece or tankless toilet only,
+ * where each photo was taken from in the photos' order. Nothing else, and no free text.
  */
 export const directionPhotoSpecSchema = z
   .strictObject({
@@ -98,13 +102,19 @@ export const directionPhotoSpecSchema = z
     direction: z.enum(DIRECTION_PHOTO_VIEWS),
     installation: z.enum(INSTALLATIONS),
     sizeMm: z.tuple([mm, mm, mm]),
-    photoAngles: z.array(z.enum(DIRECTION_PHOTO_PHOTO_ANGLES)).min(1).max(3),
+    photoAngles: z.array(z.enum(DIRECTION_PHOTO_PHOTO_ANGLES)).min(1).max(3).optional(),
   })
   .superRefine((spec, context) => {
     if (!(DIRECTION_PHOTO_FORMS[spec.category] as readonly string[]).includes(spec.form))
       context.addIssue({ code: 'custom', message: '제품 종류에 없는 형태예요.', path: ['form'] });
     if (spec.category === 'toilet' ? !spec.lid : spec.lid)
       context.addIssue({ code: 'custom', message: '뚜껑은 변기에만 정해요.', path: ['lid'] });
+    if (photoAngleTold(spec.category, spec.form) ? !spec.photoAngles : spec.photoAngles)
+      context.addIssue({
+        code: 'custom',
+        message: '찍은 각도는 일체형·비데 일체형 변기에만 보내요.',
+        path: ['photoAngles'],
+      });
     if (spec.category === 'toilet' && spec.lid && !toiletLids(spec.form).includes(spec.lid))
       context.addIssue({ code: 'custom', message: '이 몸통에 없는 뚜껑이에요.', path: ['lid'] });
     // A toilet stands against the wall, and its back came out as its front in nearly every trial.

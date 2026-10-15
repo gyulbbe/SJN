@@ -163,7 +163,8 @@ const BATH_OUTSIDE = 'Draw no hole, drain or overflow on the outside of the tub.
  */
 export function buildDirectionPhotoPrompt(spec: DirectionPhotoSpec, photos: number): string {
   if (!Number.isInteger(photos) || photos < 1 || photos > 3) throw new Error('참고 사진은 1~3장이에요.');
-  if (spec.photoAngles.length !== photos) throw new Error('참고 사진마다 찍은 각도가 있어야 해요.');
+  if (spec.photoAngles && spec.photoAngles.length !== photos)
+    throw new Error('참고 사진마다 찍은 각도가 있어야 해요.');
   const noun = productNoun(spec.category);
   const [w, h, d] = spec.sizeMm;
   const shadow = standsOnFloor(spec.installation)
@@ -181,7 +182,7 @@ export function buildDirectionPhotoPrompt(spec: DirectionPhotoSpec, photos: numb
     spec.category === 'bath' ? BATH_OUTSIDE : '',
     `The real ${noun} is about ${w} × ${h} × ${d} mm (width × height × depth).`,
     photosSentence,
-    photoAngleSentence(spec.photoAngles, spec.direction),
+    spec.photoAngles ? photoAngleSentence(spec.photoAngles, spec.direction) : '',
     `Turn image 0 into a photorealistic studio product photograph of that real ${noun}: pure white seamless background (#FFFFFF), soft even studio lighting, ${shadow}, no props, no floor texture, no text, no watermark.`,
   ]
     .filter(Boolean)

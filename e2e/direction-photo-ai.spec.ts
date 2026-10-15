@@ -224,10 +224,8 @@ test('사진을 올리면 가이드 4장·후보를 만들고, 고른 사진이 
   await expect(guides).toContainText('왼쪽 · 후보 2장을 만들어요 · 방 화면에서 약 33% 작게 보여요');
   await expect(generator.getByRole('button', { name: '방향 사진 만들기', exact: true })).toBeDisabled();
   await addReference(generator);
-  // Where the photo was taken from: told to the model, unknown until picked.
-  const angle = generator.getByLabel('참고 사진 1 찍은 각도', { exact: true });
-  await expect(angle).toHaveValue('unknown');
-  await angle.selectOption('front-right');
+  // A bath's photos are not asked where they were taken from (only a toilet shaped like the product).
+  await expect(generator.getByLabel('참고 사진 1 찍은 각도', { exact: true })).toHaveCount(0);
   await expect(generator.getByTestId('ai-estimate')).toContainText('AI 요청 6회');
   await generator.screenshot({ path: info.outputPath('generator-guides.png') });
 
@@ -256,7 +254,6 @@ test('사진을 올리면 가이드 4장·후보를 만들고, 고른 사진이 
       direction: s.spec.direction,
       installation: 'floor',
       sizeMm: [1700, 560, 750],
-      photoAngles: ['front-right'],
     });
     expect(s.guide).toEqual(s.spec.direction === 'left' ? [448, 496] : [496, 192]);
     for (const [w, h] of s.refs) {
@@ -452,7 +449,9 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
     { timeout: 30000 },
   );
   await addReference(toilet);
-  await toilet.getByLabel('참고 사진 1 찍은 각도', { exact: true }).selectOption('front-right');
+  const angle = toilet.getByLabel('참고 사진 1 찍은 각도', { exact: true });
+  await expect(angle).toHaveValue('unknown');
+  await angle.selectOption('front-right');
   await expect(toilet.getByTestId('ai-estimate')).toContainText('AI 요청 4회');
   mode = 'answer';
   const before = sent.length;
@@ -511,7 +510,6 @@ test('게스트는 자재 등록을 열 수 없고, 로그인 없이 보낸 요�
           direction: 'front',
           installation: 'floor',
           sizeMm: [1700, 560, 750],
-          photoAngles: ['unknown'],
         }),
       },
     });
