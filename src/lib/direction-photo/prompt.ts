@@ -66,9 +66,9 @@ const imageList = (indexes: number[]) => {
 };
 /**
  * Where the photos were taken from, and that their angle is not the one to make. With a guide shaped
- * like the product the model copied the photo's angle in 9 of 10 answers; this sentence, after the
- * photos', brought the view back (the bear toilet's sides 6 of 6, the tankless toilet's front and
- * sides 7 of 8 with the angle known; the angle unknown, 2 of 2 and 1 of 4).
+ * like the product the model copied the photo's angle in 10 of 12 answers; this sentence, after the
+ * photos', brought the view back (the angle known: the one-piece bear toilet's sides 3 of 4, the
+ * tankless toilet's front and left 11 of 12; unknown: 2 of 2 and 1 of 4). 2026-10-15 trial.
  */
 export function photoAngleSentence(
   angles: readonly DirectionPhotoPhotoAngle[],

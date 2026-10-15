@@ -41,8 +41,8 @@ export const toiletLids = (form: DirectionPhotoForm): readonly DirectionPhotoLid
  * Where each photo was taken from, said as the slots name a photo: the way the product's front points
  * in it (front-right: between 정면 and 오른쪽, the product's front and right side seen). Asked only for
  * a one-piece or tankless toilet (photoAngleTold): with a guide shaped like the product the model
- * copied the photo's angle in 9 of 10 answers, and the sentence brought the view back; the bath's
- * guide held its view without it and lost it with it (4 of 4 answers, 2026-10-15).
+ * copied the photo's angle in 10 of 12 answers, and the sentence brought the view back; the bath's
+ * guide held its narrow end without it (2 of 2) and lost it with it (4 of 4, 2026-10-15).
  */
 export const DIRECTION_PHOTO_PHOTO_ANGLES = [
   'unknown',
@@ -117,7 +117,7 @@ export const directionPhotoSpecSchema = z
       });
     if (spec.category === 'toilet' && spec.lid && !toiletLids(spec.form).includes(spec.lid))
       context.addIssue({ code: 'custom', message: '이 몸통에 없는 뚜껑이에요.', path: ['lid'] });
-    // A toilet stands against the wall, and its back came out as its front in nearly every trial.
+    // A toilet stands against the wall, and 17 of the trial's 19 backs came out as its front.
     if (spec.category === 'toilet' && spec.direction === 'back')
       context.addIssue({ code: 'custom', message: '변기는 뒤 사진을 만들지 않아요.', path: ['direction'] });
     // A wall product's back is against the wall: no room view shows it, so none is made.
