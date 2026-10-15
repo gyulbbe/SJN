@@ -32,6 +32,19 @@ describe('what a run makes', () => {
       });
   });
 
+  it('makes no 뒤 for a toilet, even on the floor (it stands against the wall)', () => {
+    expect(planDirections({ category: 'toilet', installation: 'floor', symmetric: false })).toEqual({
+      made: ['정면', '왼쪽', '오른쪽'],
+      mirrored: [],
+      skipped: [{ direction: '뒤', reason: '변기는 벽에 붙여 설치해서 뒤 사진을 만들지 않아요' }],
+    });
+    expect(planDirections({ category: 'bath', installation: 'floor', symmetric: true }).made).toEqual([
+      '정면',
+      '왼쪽',
+      '뒤',
+    ]);
+  });
+
   it('turns pixels over left to right, and twice gives the picture back', () => {
     const rgba = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
     expect([...mirrorRgba(rgba, 3, 2)]).toEqual([

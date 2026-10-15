@@ -1,6 +1,6 @@
 import { PRODUCT_DIRECTIONS, type ProductDirection } from '../product-direction';
 import type { Point } from '../types';
-import { standsOnFloor } from './contract';
+import { standsOnFloor, type DirectionPhotoCategory } from './contract';
 import type { MaterialInput } from '../types';
 
 /** Candidates made for each direction (the person picks one). */
@@ -18,16 +18,21 @@ export type DirectionPlan = {
 /**
  * Which photos a run makes. 정면 and 왼쪽 always; 오른쪽 from the model only when the product is not
  * the same on both sides (else it is the 왼쪽 photo turned over, which saves the calls); 뒤 only for
- * a product that stands on the floor (a wall product's back is against the wall: no view shows it).
+ * a product that stands on the floor (a wall product's back is against the wall: no view shows it),
+ * and not for a toilet (it stands against the wall, and its back came out as its front in nearly
+ * every trial answer).
  */
 export function planDirections(input: {
+  category?: DirectionPhotoCategory;
   installation: MaterialInput['installation'];
   symmetric: boolean;
 }): DirectionPlan {
   const plan: DirectionPlan = { made: ['정면', '왼쪽'], mirrored: [], skipped: [] };
   if (input.symmetric) plan.mirrored.push('오른쪽');
   else plan.made.push('오른쪽');
-  if (standsOnFloor(input.installation)) plan.made.push('뒤');
+  if (input.category === 'toilet')
+    plan.skipped.push({ direction: '뒤', reason: '변기는 벽에 붙여 설치해서 뒤 사진을 만들지 않아요' });
+  else if (standsOnFloor(input.installation)) plan.made.push('뒤');
   else plan.skipped.push({ direction: '뒤', reason: '벽에 거는 제품은 뒤 사진을 만들지 않아요' });
   // Keep the list's order (정면·왼쪽·오른쪽·뒤).
   plan.made.sort((a, b) => PRODUCT_DIRECTIONS.indexOf(a) - PRODUCT_DIRECTIONS.indexOf(b));

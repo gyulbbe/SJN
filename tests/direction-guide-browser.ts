@@ -32,6 +32,7 @@ type Case = {
   name: string;
   category: 'bath' | 'toilet' | 'basin';
   form: string;
+  lid?: 'closed' | 'open' | 'seat';
   sizeMm: [number, number, number];
   installation: 'floor' | 'wall';
 };
@@ -53,15 +54,33 @@ const cases: Case[] = [
   {
     name: 'toilet-closed',
     category: 'toilet',
-    form: 'lid-closed',
+    form: 'two-piece',
+    lid: 'closed',
     sizeMm: [380, 760, 700],
     installation: 'floor',
   },
   {
     name: 'toilet-open',
     category: 'toilet',
-    form: 'lid-open',
+    form: 'two-piece',
+    lid: 'open',
     sizeMm: [380, 760, 700],
+    installation: 'floor',
+  },
+  {
+    name: 'toilet-one-piece-seat',
+    category: 'toilet',
+    form: 'one-piece',
+    lid: 'seat',
+    sizeMm: [370, 660, 640],
+    installation: 'floor',
+  },
+  {
+    name: 'toilet-tankless-closed',
+    category: 'toilet',
+    form: 'tankless',
+    lid: 'closed',
+    sizeMm: [400, 520, 700],
     installation: 'floor',
   },
   {

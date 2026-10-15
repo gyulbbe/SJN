@@ -80,6 +80,7 @@ export function createTemplateModel({
   showerVariant,
   curtainHardware,
   bathShape,
+  toiletBody,
 }: Pick<TemplateOptions, 'kind' | 'color' | 'widthMm' | 'heightMm' | 'depthMm' | 'version'> &
   ReconstructionStandardOptions & {
     face?: RoomFace;
@@ -88,6 +89,13 @@ export function createTemplateModel({
      * freestanding tub, drawn only for the material form's direction-photo guides (never stored).
      */
     bathShape?: 'oval';
+    /**
+     * The toilet's body. Absent: the two-piece toilet every saved toilet has (a cistern on a bowl on
+     * a foot). 'one-piece': a skirted bowl and a cistern that rises from the floor in one piece.
+     * 'tankless': a low square body with the seat unit (a bidet's) at its back. Drawn only for the
+     * material form's direction-photo guides (never stored).
+     */
+    toiletBody?: 'one-piece' | 'tankless';
   }): Group {
   if (kind === 'showerCurtain') {
     if (version !== 2) throw new Error('샤워 커튼은 표준 모형 v2에서 지원해요.');
@@ -221,7 +229,51 @@ export function createTemplateModel({
     box(x, y + size * 0.86, z + size * 0.24, size * 0.14, size * 0.12, size * 0.62, chrome, true);
     box(x, y + size * 0.98, z - size * 0.03, size * 0.1, size * 0.035, size * 0.28, chrome, true);
   };
-  if (kind === 'toilet') {
+  if (kind === 'toilet' && toiletBody) {
+    // The guides' other bodies: the outline a person's toilet has, no flush handle (where it is
+    // differs from product to product; the photos show it).
+    const seat = new MeshStandardMaterial({
+      color: new Color(color).lerp(new Color('#ffffff'), 0.22),
+      roughness: 0.22,
+      metalness: 0.015,
+    });
+    if (toiletBody === 'one-piece') {
+      // A skirted bowl (no foot or trap to see), the cistern rising from the floor behind it.
+      const skirt = part(
+        new Mesh(new CylinderGeometry(0.5, 0.4, 1, 64, 1, true), ceramic),
+        0,
+        h * 0.285,
+        d * 0.06,
+      );
+      skirt.scale.set(w * 0.96, h * 0.57, d * 0.8);
+      bowl(0, h * 0.31, d * 0.13, w, h * 0.25, d * 0.73);
+      oval(0, h * 0.397, d * 0.16, w * 0.44, h * 0.012, d * 0.39, shaded);
+      rim(0, h * 0.568, d * 0.13, w * 1.01, d * 0.78, h * 0.033);
+      box(0, h * 0.5, -d * 0.33, w * 0.86, h, d * 0.34, ceramic, true);
+      rim(0, h * 0.596, d * 0.13, w * 0.99, d * 0.76, h * 0.025, seat);
+      if (toiletLidState === 'open') {
+        const lid = oval(0, h * 0.79, -d * 0.13, w * 0.92, h * 0.37, d * 0.045, seat);
+        lid.name = 'toilet-lid-open';
+      } else if (toiletLidState === 'closed') {
+        const lid = oval(0, h * 0.629, d * 0.13, w * 0.99, h * 0.041, d * 0.76, seat);
+        lid.name = 'toilet-lid-closed';
+      }
+    } else {
+      // A low rounded-square body, the seat unit (a bidet's) on its back, the lid in front of it. An
+      // open lid would stand above the unit: drawn as the seat alone.
+      box(0, h * 0.36, 0, w * 0.96, h * 0.72, d * 0.94, ceramic, true);
+      // The unit is a slab sloping down to the lid, not an upright box (which reads as a cistern).
+      const unit = box(0, h * 0.82, -d * 0.25, w * 0.92, h * 0.18, d * 0.46, seat, true);
+      unit.rotation.x = 0.16;
+      if (toiletLidState === 'closed') {
+        const lid = box(0, h * 0.745, d * 0.15, w * 0.9, h * 0.05, d * 0.64, seat, true);
+        lid.name = 'toilet-lid-closed';
+      } else {
+        oval(0, h * 0.722, d * 0.15, w * 0.62, h * 0.01, d * 0.46, shaded);
+        rim(0, h * 0.735, d * 0.15, w * 0.86, d * 0.6, h * 0.025, seat);
+      }
+    }
+  } else if (kind === 'toilet') {
     // Foot, tapered siphon support, bowl, seat, cistern and flush handle are independent silhouettes.
     oval(0, h * 0.045, d * 0.1, w * 0.67, h * 0.09, d * 0.59);
     const foot = part(

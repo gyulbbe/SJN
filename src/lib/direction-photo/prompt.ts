@@ -1,5 +1,12 @@
 import { productFrontSentence, productNoun } from '../product-photo-prompt';
-import { standsOnFloor, type DirectionPhotoForm, type DirectionPhotoSpec } from './contract';
+import {
+  standsOnFloor,
+  type DirectionPhotoForm,
+  type DirectionPhotoLid,
+  type DirectionPhotoPhotoAngle,
+  type DirectionPhotoSpec,
+  type DirectionPhotoView,
+} from './contract';
 
 /**
  * "AI로 방향 사진 만들기": the material form makes the 정면·왼쪽·오른쪽·뒤 photos of a product with
@@ -13,17 +20,78 @@ import { standsOnFloor, type DirectionPhotoForm, type DirectionPhotoSpec } from 
  * sentence here. Same spec, same text.
  */
 
-/** The product as image 0 shows it, with its article. */
-const FORM_NOUNS: Record<DirectionPhotoForm, string> = {
+/** The product as image 0 shows it, with its article (a toilet's from its body and lid). */
+const FORM_NOUNS: Record<Exclude<DirectionPhotoForm, 'two-piece' | 'one-piece' | 'tankless'>, string> = {
   'oval-freestanding': 'an oval freestanding bathtub with rounded ends',
   rectangular: 'a rectangular built-in bathtub',
-  'lid-closed': 'a floor-standing toilet with its lid closed',
-  'lid-open': 'a floor-standing toilet with its lid open',
   'wall-round': 'a wall-hung washbasin with a round bowl',
   'wall-rectangular': 'a wall-hung washbasin with a rectangular bowl',
   'pedestal-round': 'a pedestal washbasin with a round bowl',
   'pedestal-rectangular': 'a pedestal washbasin with a rectangular bowl',
 };
+
+const LID_WORDS: Record<DirectionPhotoLid, string> = {
+  closed: 'its lid closed',
+  open: 'its lid open',
+  seat: 'a seat and no lid',
+};
+/** The words the 2026-10-15 trial sent for each toilet guide. */
+function productInImageZero(spec: DirectionPhotoSpec): string {
+  const { form, lid = 'closed' } = spec;
+  if (form === 'tankless')
+    return `a tankless floor-standing toilet with its seat unit at the back and ${LID_WORDS[lid]}`;
+  if (form === 'one-piece') return `a one-piece floor-standing toilet with ${LID_WORDS[lid]}`;
+  if (form === 'two-piece') return `a floor-standing toilet with ${LID_WORDS[lid]}`;
+  return FORM_NOUNS[form];
+}
+
+/** Where a photo was taken from, in the camera's words. */
+const PHOTO_WHERE: Record<DirectionPhotoPhotoAngle, string> = {
+  unknown: 'another angle',
+  front: 'straight in front of the product',
+  'front-right': 'the front right of the product, from above',
+  'front-left': 'the front left of the product, from above',
+  right: "the product's right side",
+  left: "the product's left side",
+};
+/** The view a photo was taken from, when it is one the app makes. */
+const PHOTO_VIEW: Partial<Record<DirectionPhotoPhotoAngle, DirectionPhotoView>> = {
+  front: 'front',
+  right: 'right',
+  left: 'left',
+};
+const imageList = (indexes: number[]) => {
+  const names = indexes.map((index) => `image ${index + 1}`);
+  return names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+};
+/**
+ * Where the photos were taken from, and that their angle is not the one to make. With a guide shaped
+ * like the product the model copied the photo's angle in 9 of 10 answers; this sentence, after the
+ * photos', brought the view back (the bear toilet's sides 6 of 6, the tankless toilet's front and
+ * sides 7 of 8 with the angle known; the angle unknown, 2 of 2 and 1 of 4).
+ */
+export function photoAngleSentence(
+  angles: readonly DirectionPhotoPhotoAngle[],
+  view: DirectionPhotoView,
+): string {
+  const where = angles.map(
+    (angle, index) =>
+      `${index === 0 ? 'Image 1 was taken' : `image ${index + 1}`} from ${PHOTO_WHERE[angle]}`,
+  );
+  const list = where.length === 1 ? where[0] : `${where.slice(0, -1).join(', ')} and ${where.at(-1)}`;
+  const close = angles.flatMap((angle, index) => (PHOTO_VIEW[angle] === view ? [index] : []));
+  const others = angles.flatMap((angle, index) => (PHOTO_VIEW[angle] === view ? [] : [index]));
+  const keep = 'still keep the outline, the camera angle and the position exactly as in image 0';
+  const dontCopy = (indexes: number[]) =>
+    `do not copy the angle, the perspective or the framing of ${indexes.length === angles.length && indexes.length > 1 ? `images 1–${angles.length}` : imageList(indexes)}`;
+  if (!close.length)
+    return angles.length === 1
+      ? `${list}: that is not the view to make. Turn the product to the view of image 0 and ${dontCopy(others)}.`
+      : `${list}: none of them is the view to make. Turn the product to the view of image 0 and ${dontCopy(others)}.`;
+  if (!others.length) return `${list}, close to the view to make: ${keep}.`;
+  const closeList = imageList(close);
+  return `${list}. ${closeList[0].toUpperCase()}${closeList.slice(1)} ${close.length === 1 ? 'is' : 'are'} close to the view to make; ${keep}, and ${dontCopy(others)}.`;
+}
 
 /** What the view shows, said from the camera (the guide shows the same). */
 function viewSentence(spec: DirectionPhotoSpec): string {
@@ -64,7 +132,8 @@ export function hiddenParts(spec: DirectionPhotoSpec): string[] {
   if (category === 'toilet')
     return [
       ...{
-        front: ['the back of the tank', 'the waste pipe'],
+        // A tankless toilet has no tank to hide behind its seat unit.
+        front: form === 'tankless' ? ['the waste pipe'] : ['the back of the tank', 'the waste pipe'],
         left: ['the waste pipe'],
         right: ['the waste pipe'],
         back: ['the front of the bowl'],
@@ -94,6 +163,7 @@ const BATH_OUTSIDE = 'Draw no hole, drain or overflow on the outside of the tub.
  */
 export function buildDirectionPhotoPrompt(spec: DirectionPhotoSpec, photos: number): string {
   if (!Number.isInteger(photos) || photos < 1 || photos > 3) throw new Error('참고 사진은 1~3장이에요.');
+  if (spec.photoAngles.length !== photos) throw new Error('참고 사진마다 찍은 각도가 있어야 해요.');
   const noun = productNoun(spec.category);
   const [w, h, d] = spec.sizeMm;
   const shadow = standsOnFloor(spec.installation)
@@ -104,13 +174,14 @@ export function buildDirectionPhotoPrompt(spec: DirectionPhotoSpec, photos: numb
       ? 'Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position.'
       : `Images 1–${photos} are photos of the real product taken from other angles: use them only for the material, colour and small details, never for the shape, the camera angle or the position.`;
   return [
-    `Image 0 is a plain grey 3D render of ${FORM_NOUNS[spec.form]}. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0.`,
+    `Image 0 is a plain grey 3D render of ${productInImageZero(spec)}. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0.`,
     productFrontSentence(spec.category),
     viewSentence(spec),
     hiddenSentence(hiddenParts(spec)),
     spec.category === 'bath' ? BATH_OUTSIDE : '',
     `The real ${noun} is about ${w} × ${h} × ${d} mm (width × height × depth).`,
     photosSentence,
+    photoAngleSentence(spec.photoAngles, spec.direction),
     `Turn image 0 into a photorealistic studio product photograph of that real ${noun}: pure white seamless background (#FFFFFF), soft even studio lighting, ${shadow}, no props, no floor texture, no text, no watermark.`,
   ]
     .filter(Boolean)

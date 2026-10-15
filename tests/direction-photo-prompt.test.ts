@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildDirectionPhotoPrompt, hiddenParts } from '../src/lib/direction-photo/prompt';
+import {
+  buildDirectionPhotoPrompt as buildPrompt,
+  hiddenParts,
+  photoAngleSentence,
+} from '../src/lib/direction-photo/prompt';
 import {
   DIRECTION_PHOTO_FORMS,
   directionPhotoSpecSchema,
@@ -13,8 +17,19 @@ const spec = (edit: Partial<DirectionPhotoSpec> = {}): DirectionPhotoSpec => ({
   direction: 'front',
   installation: 'floor',
   sizeMm: BATH,
+  photoAngles: ['unknown'],
   ...edit,
 });
+/** The prompt for this many photos, each of an unknown angle unless the spec says. */
+const buildDirectionPhotoPrompt = (value: DirectionPhotoSpec, photos: number) =>
+  buildPrompt(
+    {
+      ...value,
+      photoAngles:
+        value.photoAngles.length === photos ? value.photoAngles : Array(Math.max(0, photos)).fill('unknown'),
+    },
+    photos,
+  );
 
 describe('direction photo prompt', () => {
   it('follows the trial’s frame: image 0 fixes the shape and angle, the photos only the material', () => {
@@ -52,7 +67,8 @@ describe('direction photo prompt', () => {
     expect(view({ direction: 'back' })).toContain('The view shows the long back side of the tub.');
     const toilet: Partial<DirectionPhotoSpec> = {
       category: 'toilet',
-      form: 'lid-closed',
+      form: 'two-piece',
+      lid: 'closed',
       sizeMm: [380, 760, 700],
     };
     expect(view({ ...toilet, direction: 'left' })).toContain(
@@ -82,10 +98,18 @@ describe('direction photo prompt', () => {
         'In this view the drain in the bottom of the tub is not visible; do not draw it. Draw no hole, drain or overflow on the outside of the tub.',
       );
     expect(
-      buildDirectionPhotoPrompt(spec({ category: 'toilet', form: 'lid-open', sizeMm: [380, 760, 700] }), 1),
+      buildDirectionPhotoPrompt(
+        spec({ category: 'toilet', form: 'two-piece', lid: 'open', sizeMm: [380, 760, 700] }),
+        1,
+      ),
     ).toContain(
       'In this view the back of the tank, the waste pipe and the water in the bowl are not visible; do not draw them.',
     );
+    // A tankless toilet has no tank behind its seat unit.
+    expect(hiddenParts(spec({ category: 'toilet', form: 'tankless', lid: 'closed' }))).toEqual([
+      'the waste pipe',
+      'the water in the bowl',
+    ]);
     expect(hiddenParts(spec({ category: 'basin', form: 'wall-round', installation: 'wall' }))).toEqual([
       'the drain hole in the bowl',
       'the waste pipe and the wall fixings',
@@ -102,6 +126,47 @@ describe('direction photo prompt', () => {
           ).toBeGreaterThan(0);
   });
 
+  it('names the toilet in image 0 by its body and lid, in the words the trial sent', () => {
+    const named = (form: DirectionPhotoSpec['form'], lid: DirectionPhotoSpec['lid']) =>
+      buildDirectionPhotoPrompt(spec({ category: 'toilet', form, lid, sizeMm: [370, 660, 640] }), 1);
+    expect(named('two-piece', 'closed')).toContain(
+      'Image 0 is a plain grey 3D render of a floor-standing toilet with its lid closed.',
+    );
+    expect(named('two-piece', 'open')).toContain('render of a floor-standing toilet with its lid open.');
+    expect(named('one-piece', 'seat')).toContain(
+      'render of a one-piece floor-standing toilet with a seat and no lid.',
+    );
+    expect(named('tankless', 'closed')).toContain(
+      'render of a tankless floor-standing toilet with its seat unit at the back and its lid closed.',
+    );
+  });
+
+  it('says where each photo was taken from and that its angle is not the one to make', () => {
+    // The trial's sentences, word for word (one photo; its angle known, then unknown).
+    expect(photoAngleSentence(['front-right'], 'left')).toBe(
+      'Image 1 was taken from the front right of the product, from above: that is not the view to make. Turn the product to the view of image 0 and do not copy the angle, the perspective or the framing of image 1.',
+    );
+    expect(photoAngleSentence(['unknown'], 'front')).toBe(
+      'Image 1 was taken from another angle: that is not the view to make. Turn the product to the view of image 0 and do not copy the angle, the perspective or the framing of image 1.',
+    );
+    // A photo from the view being made is not called another view.
+    expect(photoAngleSentence(['front'], 'front')).toBe(
+      'Image 1 was taken from straight in front of the product, close to the view to make: still keep the outline, the camera angle and the position exactly as in image 0.',
+    );
+    expect(photoAngleSentence(['front-left', 'unknown'], 'right')).toBe(
+      'Image 1 was taken from the front left of the product, from above and image 2 from another angle: none of them is the view to make. Turn the product to the view of image 0 and do not copy the angle, the perspective or the framing of images 1–2.',
+    );
+    expect(photoAngleSentence(['left', 'front', 'right'], 'left')).toBe(
+      "Image 1 was taken from the product's left side, image 2 from straight in front of the product and image 3 from the product's right side. Image 1 is close to the view to make; still keep the outline, the camera angle and the position exactly as in image 0, and do not copy the angle, the perspective or the framing of image 2 and image 3.",
+    );
+    // It follows the photos' sentence, in every prompt.
+    const text = buildDirectionPhotoPrompt(spec({ direction: 'left', photoAngles: ['front-right'] }), 1);
+    expect(text).toContain(
+      'never for the shape, the camera angle or the position. Image 1 was taken from the front right of the product, from above:',
+    );
+    expect(() => buildPrompt(spec({ photoAngles: ['front', 'left'] }), 1)).toThrow();
+  });
+
   it('gives the same text for the same spec, and none of it comes from the person', () => {
     expect(buildDirectionPhotoPrompt(spec({ direction: 'left' }), 2)).toBe(
       buildDirectionPhotoPrompt(spec({ direction: 'left' }), 2),
@@ -112,14 +177,27 @@ describe('direction photo prompt', () => {
   it.each([
     ['an unknown field', { ...spec(), note: 'make it gold' }],
     ['a free form', { ...spec(), form: 'a golden tub' }],
-    ['a form of another kind', { ...spec(), form: 'lid-closed' }],
+    ['a form of another kind', { ...spec(), form: 'two-piece' }],
+    ['a toilet without a lid said', { ...spec(), category: 'toilet', form: 'one-piece' }],
+    ['a lid on a bath', { ...spec(), lid: 'closed' }],
+    ['an open lid on a tankless toilet', { ...spec(), category: 'toilet', form: 'tankless', lid: 'open' }],
+    [
+      'a toilet’s back',
+      { ...spec(), category: 'toilet', form: 'two-piece', lid: 'closed', direction: 'back' },
+    ],
+    ['no photo angle', { ...spec(), photoAngles: [] }],
+    ['four photo angles', { ...spec(), photoAngles: ['front', 'front', 'left', 'right'] }],
+    ['a free photo angle', { ...spec(), photoAngles: ['from the top'] }],
     ['an unknown category', { ...spec(), category: 'vanity' }],
     ['a Korean direction', { ...spec(), direction: '정면' }],
     [
       'a wall product’s back',
       { ...spec(), category: 'basin', form: 'wall-round', installation: 'wall', direction: 'back' },
     ],
-    ['a wall-hung toilet', { ...spec(), category: 'toilet', form: 'lid-closed', installation: 'wall' }],
+    [
+      'a wall-hung toilet',
+      { ...spec(), category: 'toilet', form: 'two-piece', lid: 'closed', installation: 'wall' },
+    ],
     ['a fractional size', { ...spec(), sizeMm: [1700.5, 560, 750] }],
     ['a size below 10 mm', { ...spec(), sizeMm: [1700, 5, 750] }],
     ['a missing depth', { ...spec(), sizeMm: [1700, 560] }],

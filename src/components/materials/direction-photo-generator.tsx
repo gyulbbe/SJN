@@ -13,12 +13,16 @@ import {
   DIRECTION_PHOTO_FORMS,
   DIRECTION_PHOTO_MAX_MM,
   DIRECTION_PHOTO_MIN_MM,
+  DIRECTION_PHOTO_PHOTO_ANGLES,
   directionPhotoSizeOk,
   directionPhotoView,
   isDirectionPhotoCategory,
   standsOnFloor,
+  toiletLids,
   type DirectionPhotoCategory,
   type DirectionPhotoForm,
+  type DirectionPhotoLid,
+  type DirectionPhotoPhotoAngle,
   type DirectionPhotoSpec,
 } from '@/lib/direction-photo/contract';
 import type { DirectionGuide } from '@/lib/direction-photo/guide-render';
@@ -41,17 +45,32 @@ const MAX_REFS = 3;
 const FORM_LABELS: Record<DirectionPhotoForm, string> = {
   'oval-freestanding': '타원형 독립 욕조',
   rectangular: '사각 욕조(벽에 붙이는)',
-  'lid-closed': '뚜껑 닫힘',
-  'lid-open': '뚜껑 열림',
+  'two-piece': '투피스(물탱크가 따로 올라감)',
+  'one-piece': '일체형(물탱크와 몸통이 한 덩어리)',
+  tankless: '비데 일체형(물탱크 없음)',
   'wall-round': '벽걸이 · 둥근 그릇',
   'wall-rectangular': '벽걸이 · 사각 그릇',
   'pedestal-round': '받침대 · 둥근 그릇',
   'pedestal-rectangular': '받침대 · 사각 그릇',
 };
-/** The shape a kind starts with: the oval tub the trial checked, a closed toilet, a basin as installed. */
+const LID_LABELS: Record<DirectionPhotoLid, string> = {
+  closed: '뚜껑 닫힘',
+  open: '뚜껑 열림',
+  seat: '시트만(뚜껑 없음)',
+};
+/** Said as the slots name a photo: the way the product's front points in it. */
+const PHOTO_ANGLE_LABELS: Record<DirectionPhotoPhotoAngle, string> = {
+  unknown: '찍은 각도 모름',
+  front: '정면',
+  'front-right': '정면과 오른쪽 사이',
+  'front-left': '정면과 왼쪽 사이',
+  right: '오른쪽',
+  left: '왼쪽',
+};
+/** The shape a kind starts with: the oval tub the trial checked, a two-piece toilet, a basin as installed. */
 function defaultForm(category: DirectionPhotoCategory, installation: MaterialInput['installation']) {
   if (category === 'bath') return 'oval-freestanding';
-  if (category === 'toilet') return 'lid-closed';
+  if (category === 'toilet') return 'two-piece';
   return installation === 'wall' || installation === 'suspended' ? 'wall-round' : 'pedestal-round';
 }
 const randomSeed = () => crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff;
@@ -60,6 +79,8 @@ type Reference = {
   id: string;
   file: File;
   status: 'removing' | 'ready' | 'failed';
+  /** Where the person says it was taken from (told to the model so it does not copy the angle). */
+  angle: DirectionPhotoPhotoAngle;
   /** The photo without its background, on white, within the model's input size. */
   onWhite?: Blob;
   url?: string;
@@ -98,6 +119,8 @@ export function DirectionPhotoGenerator({
   const kind = isDirectionPhotoCategory(category) ? category : undefined;
   /** The shape the person picked; until then the kind's default for its installation. */
   const [chosen, setChosen] = useState<DirectionPhotoForm>();
+  /** A toilet's lid as picked (closed until then, and when the body has no such lid). */
+  const [chosenLid, setChosenLid] = useState<DirectionPhotoLid>('closed');
   const [symmetric, setSymmetric] = useState(true);
   const [useCover, setUseCover] = useState(!hasCover);
   const [refs, setRefs] = useState<Reference[]>([]);
@@ -128,10 +151,12 @@ export function DirectionPhotoGenerator({
   // category) draws no guide and sends nothing.
   const sized = directionPhotoSizeOk([widthMm, heightMm, depthMm]);
   const sizeText = `가로 ${widthMm} × 높이 ${heightMm} × 깊이 ${depthMm}mm`;
+  const lid: DirectionPhotoLid | undefined =
+    kind === 'toilet' ? (toiletLids(shape).includes(chosenLid) ? chosenLid : 'closed') : undefined;
   const wallToilet = kind === 'toilet' && !standsOnFloor(installation);
-  const plan = planDirections({ installation, symmetric });
+  const plan = planDirections({ category: kind, installation, symmetric });
   const ready = refs.filter((ref) => ref.status === 'ready' && ref.onWhite);
-  const inputs = JSON.stringify([kind, shape, widthMm, heightMm, depthMm, installation]);
+  const inputs = JSON.stringify([kind, shape, lid, widthMm, heightMm, depthMm, installation]);
 
   const keep = (blob: Blob) => {
     const url = URL.createObjectURL(blob);
@@ -185,7 +210,7 @@ export function DirectionPhotoGenerator({
         try {
           const { renderDirectionGuides } = await import('@/lib/direction-photo/guide-render');
           const made = await renderDirectionGuides(
-            { category: kind, form: shape, sizeMm: [widthMm, heightMm, depthMm], installation },
+            { category: kind, form: shape, lid, sizeMm: [widthMm, heightMm, depthMm], installation },
             PRODUCT_DIRECTIONS,
           );
           if (!current) return;
@@ -205,7 +230,7 @@ export function DirectionPhotoGenerator({
       current = false;
       clearTimeout(timer);
     };
-  }, [kind, shape, widthMm, heightMm, depthMm, installation, sized, wallToilet]);
+  }, [kind, shape, lid, widthMm, heightMm, depthMm, installation, sized, wallToilet]);
 
   const addRefs = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -214,7 +239,7 @@ export function DirectionPhotoGenerator({
     setRefNotice(pick.error ?? pick.notice ?? '');
     for (const file of pick.files) {
       const id = crypto.randomUUID();
-      setRefs((current) => [...current, { id, file, status: 'removing' }]);
+      setRefs((current) => [...current, { id, file, status: 'removing', angle: 'unknown' }]);
       void cutout(file)
         .then(prepareReferenceImage)
         .then((onWhite) => {
@@ -263,6 +288,7 @@ export function DirectionPhotoGenerator({
     controller.current = abort;
     const jobs = directionJobs(directions, DIRECTION_PHOTO_CANDIDATES, randomSeed);
     const photos = ready.map((ref) => ref.onWhite!);
+    const photoAngles = ready.map((ref) => ref.angle);
     const sizeMm: [number, number, number] = [widthMm, heightMm, depthMm].map(Math.round) as [
       number,
       number,
@@ -279,9 +305,11 @@ export function DirectionPhotoGenerator({
           const spec: DirectionPhotoSpec = {
             category: kind,
             form: shape,
+            ...(lid && { lid }),
             direction: directionPhotoView(job.direction),
             installation,
             sizeMm,
+            photoAngles,
           };
           return requestDirectionPhoto({
             guide: guideOf(job.direction)!.blob,
@@ -435,6 +463,28 @@ export function DirectionPhotoGenerator({
                   {ref.status === 'failed' ? ref.error : '배경을 지우는 중'}
                 </span>
               )}
+              <select
+                className="input"
+                aria-label={`참고 사진 ${index + 1} 찍은 각도`}
+                title="사진에서 제품의 앞이 향하는 쪽(방향 칸과 같은 이름)"
+                value={ref.angle}
+                disabled={!!running || !!applying}
+                onChange={(event) =>
+                  setRefs((current) =>
+                    current.map((item) =>
+                      item.id === ref.id
+                        ? { ...item, angle: event.target.value as DirectionPhotoPhotoAngle }
+                        : item,
+                    ),
+                  )
+                }
+              >
+                {DIRECTION_PHOTO_PHOTO_ANGLES.map((angle) => (
+                  <option key={angle} value={angle}>
+                    {PHOTO_ANGLE_LABELS[angle]}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
                 className={styles.textButton}
@@ -460,12 +510,18 @@ export function DirectionPhotoGenerator({
           첫 참고 사진을 대표 이미지로 쓰기
         </label>
       )}
+      {refs.length > 0 && (
+        <p className={styles.note}>
+          찍은 각도는 사진에서 제품의 앞이 향하는 쪽이에요(방향 칸과 같은 이름). 알려 주면 AI가 사진의 각도를
+          베끼지 않고 가이드의 시점으로 그려요.
+        </p>
+      )}
       <div className={styles.toolbar}>
         <label className="field">
-          모양
+          {kind === 'toilet' ? '몸통' : '모양'}
           <select
             className="input"
-            aria-label="가이드 모양"
+            aria-label={kind === 'toilet' ? '변기 몸통' : '가이드 모양'}
             value={shape}
             disabled={!!running}
             onChange={(event) => setChosen(event.target.value as DirectionPhotoForm)}
@@ -477,6 +533,24 @@ export function DirectionPhotoGenerator({
             ))}
           </select>
         </label>
+        {lid && (
+          <label className="field">
+            뚜껑
+            <select
+              className="input"
+              aria-label="변기 뚜껑"
+              value={lid}
+              disabled={!!running}
+              onChange={(event) => setChosenLid(event.target.value as DirectionPhotoLid)}
+            >
+              {toiletLids(shape).map((value) => (
+                <option key={value} value={value}>
+                  {LID_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className={styles.aiCheck}>
           <input
             type="checkbox"
