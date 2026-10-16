@@ -20,7 +20,10 @@
  * Env: AI_BUDGET_NEURONS (required), FLUX_WORKER (default http://127.0.0.1:8799),
  *   AI_ROOT (default test-results/direction-photo-bear), AI_LEDGER (default <root>/ledger.jsonl),
  *   AI_INPUT (the photos' folder), SEEDS (default 1001,1002), REPLAY (replay's run folder),
- *   GUIDES_ONLY=1 (draw the guides into <root>/guides-preview, no call).
+ *   GUIDES_ONLY=1 (draw the guides into <root>/guides-preview, no call), DRY=1 (write the guides, photos
+ *   and prompts of the run, no call), SPEC (JSON over the product's settings, null removing one: the
+ *   choices Gemma made, docs/direction-photo-results-20261013.md section 5), APPEND (a JSON file of
+ *   sentences per direction, {"front": "..."}, written after the app's prompt: a trial only).
  */
 import { chromium } from '@playwright/test';
 import { build } from 'esbuild';
@@ -189,8 +192,16 @@ async function inBrowser(
 // What each direction sends: drawn and written now (app), or read from the recorded run (replay).
 const sends: Record<string, { guide: Buffer; prompt: string }> = {};
 let photoFiles: string[];
+// The settings of this run: the product's, or the ones SPEC changes (null drops one).
+const spec = Object.fromEntries(
+  Object.entries({ ...product.spec, ...(process.env.SPEC ? JSON.parse(process.env.SPEC) : {}) }).filter(
+    ([, value]) => value !== null,
+  ),
+) as Omit<DirectionPhotoSpec, 'direction'>;
+const append: Partial<Record<DirectionPhotoView, string>> = process.env.APPEND
+  ? JSON.parse(readFileSync(process.env.APPEND, 'utf8'))
+  : {};
 if (mode === 'app') {
-  const { spec } = product;
   const made = await inBrowser(
     {
       category: spec.category,
@@ -216,7 +227,7 @@ if (mode === 'app') {
     const full = directionPhotoSpecSchema.parse({ ...spec, direction: view });
     sends[view] = {
       guide: made.guides[VIEW_NAMES[view]],
-      prompt: buildDirectionPhotoPrompt(full, photoFiles.length),
+      prompt: [buildDirectionPhotoPrompt(full, photoFiles.length), append[view]].filter(Boolean).join(' '),
     };
   }
 } else {
@@ -243,6 +254,7 @@ for (const view of views) {
   writeFileSync(`${OUT}/sent-guide-${view}.png`, guide);
   writeFileSync(`${OUT}/prompt-${view}.txt`, prompt);
   const meta = await sharp(guide).metadata();
+  if (process.env.DRY) continue;
   const cost = callNeurons({ width: meta.width!, height: meta.height! }, photoFiles.length);
   for (const seed of seeds) {
     const used = spent().reduce((sum, row) => sum + (row.neurons ?? 0), 0);
@@ -312,7 +324,7 @@ for (const view of views) {
 writeFileSync(
   `${OUT}/variant.json`,
   JSON.stringify(
-    { product: productName, mode, label, replay: REPLAY, spec: product.spec, views, seeds },
+    { product: productName, mode, label, replay: REPLAY, spec, append: process.env.APPEND, views, seeds },
     null,
     2,
   ),
