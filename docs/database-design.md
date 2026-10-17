@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0007_username_auth.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼을 추가한다. **2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다.**
+이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0008_query_indexes.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼, `0008`로 재시도 기록 정리 인덱스를 추가한다. **0008은 2026-10-17 소스에만 추가했고 원격 `sjn`에는 미적용이다.** **2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다.**
 
 **코드·SQL 파일을 작성하는 것과 운영 DB에 적용하는 것은 별도 단계다.** 2026-09-17 사용자 승인 후 원격 D1 `sjn`의 기존 `0001~0004`에 `0005`·`0006`을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 `0001~0006`을 순서대로 적용했다. 양쪽 적용 이력·초기 데이터·무결성을 확인했다. 상세 확인값은 8절을 따른다. 앱의 운영 연결·실제 Google OAuth·운영 R2 검증과 관리자 지정·배포·R2 버킷 생성·AI 호출은 별도이며 이번 작업에서 수행하지 않았다. Google 비밀키, Better Auth secret, 로그인 토큰은 이 문서나 소스에 넣지 않는다.
 
@@ -196,6 +196,8 @@ OAuth 토큰 암호화·HttpOnly 세션 쿠키·출처 검사·CSRF 검사를 �
 | `d1_mutations`    | `owner_id`, `request_key`, `resource`, `request_hash`, `response_key`, `response_json`, `created_at`             | 재시도 중복 저장 방지. 소유자+요청 키 PK, 요청 내용 해시, R2 응답 키 또는 직접 JSON 중 최소 하나 |
 | `d1_checks`       | `id`, `conflict_ok`, `reference_ok`                                                                              | D1 batch 내부 조건 검증용 CHECK. 실패 시 전체 batch 중단, 성공 시 검증 행 삭제                   |
 | `d1_maintenance`  | `owner_id`, `next_run_at`                                                                                        | 소유자별 다음 유지관리 가능 시각                                                                 |
+
+`d1_mutations`의 소유자별 만료 기록 정리(`cleanup.ts`)는 0008의 `d1_mutations_owner_age(owner_id,created_at)`를 쓴다. 이 인덱스가 없으면 PK나 `d1_mutations_age`로 그 소유자의 기록 전체 또는 모든 만료 기록을 읽는다(결과는 같다).
 
 D1 transaction과 R2 업로드는 하나의 분산 transaction이 아니다. R2 저장을 완료한 뒤 D1 참조를 확정한다. 업로드 실패 시 자재/프로젝트 등록 성공으로 표시하지 않으며, D1 실패로 남은 R2 객체는 기존 정리 흐름을 사용한다. 참조되는 자산과 자재 버전은 유지한다.
 
@@ -790,3 +792,15 @@ CREATE UNIQUE INDEX "user_username_idx" ON "user" ("username");
 ```
 
 0007은 추가만 하는 변경이라 auth meta를 1로 유지해 이미 배포된 Worker가 계속 동작한다. 앱 준비 검사는 두 컬럼 조회로 0007 적용을 확인하므로 컬럼이 없는 DB에 이 코드를 배포하면 로그인 준비가 실패한다.
+
+### 10.8 읽기 비용 인덱스 — `0008_query_indexes.sql`
+
+```sql
+-- Read-cost index only; no data or schema contract changes, so no meta version bump or readiness check.
+-- Retry-record cleanup (cleanup.ts) deletes one owner's expired d1_mutations rows. With only the
+-- (owner_id,request_key) key and the created_at index, it read every record of that owner or every
+-- expired record of all owners; this index reads just the expired rows of that owner.
+CREATE INDEX d1_mutations_owner_age ON d1_mutations(owner_id,created_at);
+```
+
+0008은 인덱스 하나만 더한다. 준비 검사는 확인하지 않으며 적용 전후 앱 동작은 같다. 원격 적용 명령과 측정 결과는 [D1 읽기 줄이기 결과](d1-query-efficiency-results-20261017.md)에 있다.

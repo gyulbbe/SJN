@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-확인 기준: **2026-09-17 현재 소스와 별도로 확인한 원격 이력**. 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 기존 `0001~0004`를 보존하며 `0005_admin_management.sql`과 `0006_reconstruction_diagnostics.sql`을 추가 적용했다. `.wrangler/development`의 빈 로컬 개발 DB에도 `0001~0006`을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했으며 관리자 지정·배포·R2 버킷 생성·실제 Google 로그인·AI 호출은 수행하지 않았다. 2026-09-23 소스에 아이디 로그인용 `0007_username_auth.sql`을 추가했다. 0007은 컬럼·인덱스만 더하고 auth meta는 version 1로 두며, 준비 검사는 `username`·`displayUsername` 컬럼 존재로 적용 여부를 확인한다. 2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다. 운영 R2 연결도 미검증이다. 정확한 DDL은 [migrations/d1](../../../../migrations/d1), ERD·인덱스·전체 SQL·과거 확인값은 [DB 설계](../../../../docs/database-design.md)를 따른다.
+확인 기준: **2026-09-17 현재 소스와 별도로 확인한 원격 이력**. 2026-09-17 사용자 승인 후 원격 D1 `sjn`에 기존 `0001~0004`를 보존하며 `0005_admin_management.sql`과 `0006_reconstruction_diagnostics.sql`을 추가 적용했다. `.wrangler/development`의 빈 로컬 개발 DB에도 `0001~0006`을 순서대로 적용했다. 양쪽 초기 데이터·무결성을 확인했으며 관리자 지정·배포·R2 버킷 생성·실제 Google 로그인·AI 호출은 수행하지 않았다. 2026-09-23 소스에 아이디 로그인용 `0007_username_auth.sql`을 추가했다. 0007은 컬럼·인덱스만 더하고 auth meta는 version 1로 두며, 준비 검사는 `username`·`displayUsername` 컬럼 존재로 적용 여부를 확인한다. 2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다. 2026-10-17 소스에 읽기 비용용 인덱스 `0008_query_indexes.sql`을 추가했고 로컬 개발·테스트 DB에만 적용했다. 원격 `sjn`에는 미적용이며 적용은 사용자가 결정한다([결과](../../../../docs/d1-query-efficiency-results-20261017.md)). 운영 R2 연결도 미검증이다. 정확한 DDL은 [migrations/d1](../../../../migrations/d1), ERD·인덱스·전체 SQL·과거 확인값은 [DB 설계](../../../../docs/database-design.md)를 따른다.
 
 ## 저장 경계
 
@@ -28,8 +28,9 @@
 | [0005](../../../../migrations/d1/0005_admin_management.sql) | `d1_user_management`, `d1_admin_audit`, `d1_admin_checks`, 관리자 프로젝트 자산/버전 범위, admin meta·목록/감사 인덱스 |
 | [0006](../../../../migrations/d1/0006_reconstruction_diagnostics.sql) | `d1_reconstruction_diagnostics`, `d1_diagnostic_cleanup`, `d1_diagnostic_checks`; 계정별 목록/정리 인덱스 |
 | [0007](../../../../migrations/d1/0007_username_auth.sql) | `user.username`(고유 인덱스)·`displayUsername` 추가만 하며 auth meta는 1 유지. 기존 Google 회원은 username NULL |
+| [0008](../../../../migrations/d1/0008_query_indexes.sql) | `d1_mutations(owner_id,created_at)` 인덱스만 추가(재시도 기록 정리). 메타 버전·준비 검사 변화 없음, 없어도 결과는 같고 읽기만 많음 |
 
-`0001~0006`은 수정하지 않는다. `0005`는 기존 회원을 active/revision 0으로 backfill하고 기존 역할·세션·자료를 보존한다. 신규 회원 상태 생성, 정지 시 세션 삭제, 정지 회원 session INSERT/UPDATE 거부는 SQL trigger로도 보장한다. `owner_id`·`current_version_id`는 기존 논리 관계이며 새 FK를 만들려고 기존 테이블을 재생성하지 않는다. 카탈로그·새 프로젝트 편집 범위의 참조는 FK를 사용한다.
+`0001~0007`은 수정하지 않는다. `0005`는 기존 회원을 active/revision 0으로 backfill하고 기존 역할·세션·자료를 보존한다. 신규 회원 상태 생성, 정지 시 세션 삭제, 정지 회원 session INSERT/UPDATE 거부는 SQL trigger로도 보장한다. `owner_id`·`current_version_id`는 기존 논리 관계이며 새 FK를 만들려고 기존 테이블을 재생성하지 않는다. 카탈로그·새 프로젝트 편집 범위의 참조는 FK를 사용한다.
 
 ## 로그인·회원 관리
 
@@ -50,7 +51,7 @@
 
 ## 저장·정리
 
-[D1 database helper](../../../../src/lib/d1/database.ts)는 소유권·revision·자산/버전 참조를 커밋 batch에서 재확인한다. 관리자 편집 batch에는 현재 활성 관리자 조건도 추가한다. 재시도 기록은 행위자·요청 키·리소스·해시가 맞아야 재사용하며 권한 상실 후에는 반환하지 않는다.
+[D1 database helper](../../../../src/lib/d1/database.ts)는 소유권·revision·자산/버전 참조를 커밋 batch에서 재확인한다. **권한 CTE는 요청 대상에서 출발한다.** `visibleAssetsQuery(ctx, refs)`·`visibleVersionsQuery(ctx, refs)`는 확인할 id 목록(JSON)만 받아 그중 보이는 id를 `visible_assets`·`visible_versions`에 담는다. 자산은 요청한 자산에서 파생 자산(`source_asset_id`를 거꾸로, 삭제 중 제외)으로 내려가며 직접 보이는 자산을 찾으면 멈춘다. 볼 수 있는 전체 집합을 만드는 CTE는 새로 쓰지 않는다(1회 비용이 전체 자산 수에 비례해 2026-10-17 하루 읽기 한도를 넘김). 관리자 프로젝트 자재 목록만 목록 자체라 전체 집합(`adminVisibleVersionsSet`)을 쓴다. 공개 이미지도 그 자산을 참조하는 버전(`d1_material_assets`)에서 출발한다([public](../../../../src/lib/catalog/public.ts) `publiclyDisplayed`). 판단 결과가 예전과 같다는 증명은 `tests/d1-visibility-equivalence.test.ts`다. 관리자 편집 batch에는 현재 활성 관리자 조건도 추가한다. 재시도 기록은 행위자·요청 키·리소스·해시가 맞아야 재사용하며 권한 상실 후에는 반환하지 않는다.
 
 R2와 D1은 하나의 트랜잭션이 아니다. `stageObject`가 업로드 전에 정리 작업을 기록하고 D1 커밋이 확정되면 제거한다. [cleanup](../../../../src/lib/d1/cleanup.ts)은 프로젝트·불변 버전·파생 자산의 원본 참조를 보존한다. 미사용 객체는 24시간 유예, lease·재시도를 사용한다. 저장 후 유지관리 실패로 확정된 저장을 실패로 바꾸지 않는다.
 
@@ -58,7 +59,7 @@ R2와 D1은 하나의 트랜잭션이 아니다. `stageObject`가 업로드 전�
 
 `npm run db:dev:migrate`는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`의 로컬 DB에만 적용한다. 원격 `sjn`과 로컬 개발 DB는 2026-09-17 승인 후 0001~0006 적용을 완료했다. 원격 0007은 2026-09-23 적용을 마쳤다(위 확인 기준 참고). 이후 원격 변경은 승인된 대상과 미적용 목록을 다시 확인한다. migration 작성이나 문서 변경을 운영 적용 허가로 해석하지 않는다.
 
-빈 DB 0001~0007, 기존 DB upgrade, seed 중복 방지, FK·불변 참조·관리자 감사·정지·동시 변경·재시도를 격리 Miniflare로 검사한다. 주된 테스트는 `tests/d1-auth.test.ts`, `d1-admin-users.test.ts`, `admin-projects.test.ts`, `d1-storage.test.ts`, `d1-catalog.test.ts`다. 아이디 가입·로그인·중복·정지·속도 제한은 `tests/d1-auth.test.ts`가 실제 Better Auth와 Miniflare D1로 검사한다. 브라우저 fixture와 로컬 Google provider를 실제 Google·운영 R2 검증으로 보고하지 않는다. 준비 확인은 읽기 전용이며 앱이 테이블을 자동 생성하지 않는다.
+빈 DB 0001~0008, 기존 DB upgrade, seed 중복 방지, FK·불변 참조·관리자 감사·정지·동시 변경·재시도를 격리 Miniflare로 검사한다. 주된 테스트는 `tests/d1-auth.test.ts`, `d1-admin-users.test.ts`, `admin-projects.test.ts`, `d1-storage.test.ts`, `d1-catalog.test.ts`, `d1-visibility-equivalence.test.ts`다. 쿼리별 읽은 행 수는 `SJN_D1_COST=1 npx vitest run tests/d1-read-cost.test.ts`로 잰다. 아이디 가입·로그인·중복·정지·속도 제한은 `tests/d1-auth.test.ts`가 실제 Better Auth와 Miniflare D1로 검사한다. 브라우저 fixture와 로컬 Google provider를 실제 Google·운영 R2 검증으로 보고하지 않는다. 준비 확인은 읽기 전용이며 앱이 테이블을 자동 생성하지 않는다.
 
 관련 스키마·권한·참조·실행 경계가 바뀌면 이 요약과 [상세 설계](../../../../docs/database-design.md), [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 함께 갱신한다.
 

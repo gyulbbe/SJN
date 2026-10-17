@@ -2,6 +2,18 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-17 — D1 읽기 줄이기: 권한 확인은 요청한 자산에서 출발, 공개 이미지, 0008 인덱스
+
+- 무엇: 운영 D1 `sjn`이 하루 읽기 한도(500만 행)를 넘은 원인인 자산 권한 확인 CTE(1회 2,000~5,500행, 전체 자산 수에 비례)를 요청한 자산·버전에서 출발하도록 바꿨다. 공개 이미지·배치 이미지도 그 자산의 참조에서 출발한다(CROSS JOIN으로 순서 고정). `0008_query_indexes.sql`(`d1_mutations(owner_id,created_at)`)을 추가했다. 권한 판단은 바꾸지 않았다. 원격 D1에는 쓰지 않았고 0008은 로컬 개발·테스트 DB에만 적용했다. 배포하지 않았다([결과](d1-query-efficiency-results-20261017.md)).
+- 원격 읽기(사용자 승인): 읽기 전용 COUNT 7개를 두 번 실행했다(25,875행 + 29,726행, 첫 번째는 `--file`이라 결과 없이 요약만 옴). 자산 2,037, 자재 958, 버전 973, 불변식 두 가지 어긋남 0.
+- 같은 결과 증명: `tests/d1-visibility-equivalence.test.ts`, `SJN_EQ_SEEDS=60`에서 범위 480개·자산 판정 28,480·버전 판정 14,544·실제 함수 단건 288·목록 168·공개 판정 3,320·라우트 331, 불일치 0. 기본 실행(10 seed) 통과, 약 3분.
+- 읽은 행: `SJN_D1_COST=1 npx vitest run tests/d1-read-cost.test.ts` 통과. 자산 읽기 4,922~9,782 → 5~11행, 프로젝트 저장 검사(참조 50) 8,051 → 331행, 공개 이미지 1,398 → 4행, 공개 배치 이미지 전체 1,385,760행(6.4초) → 5,760행(0.14초), 재시도 정리 902 → 2행. 5배 데이터에서도 같다.
+- 단위: D1·카탈로그·관리자 8파일(d1-storage 15, admin-projects 9, admin-project-repository 5, catalog-visibility 3, catalog-auth-boundary 13, d1-catalog 23, d1-route 8, guest-public-routes 2) 통과. `d1-catalog`의 옛 `위` 사진 시험 데이터에 실제 저장이 넣는 `d1_material_assets` 행을 더했다. 전체 vitest는 246개 파일 3,569개 중 3,557개 통과, 9개 실패였다. 실패는 알려진 환경 실패 7개(reconstruction-corpus 1, source-plane-mapping 5, storage-server의 D1/R2 첫 연결 5초 초과 1)와 동시 실행 부하의 시간 초과 2개(flux-backdrop, flux-composite, 단독 재실행에서 통과)다. 새 equivalence 파일은 전체 실행 때 준비 시간 초과(10초)로 실패해 다른 D1 시험처럼 30초를 주었고 단독 실행에서 통과했다.
+- e2e(격리 D1/R2): catalog-access, catalog-selection-completion, guest-workspace, guest-promotion-recovery, material-images, d1-storage-policy, admin-management, four-directions-cover, cloud-recovery, flux-export 59개 중 58개 통과. 실패 1개(`guest-workspace` "비로그인 견적·타일…")는 시험 안의 fetch가 "bad port"로 실패한 것으로, 단독 재실행에서 통과했다(10-14 기록과 같은 증상).
+- 로컬 개발 서버(`npm run dev`, 새 로컬 D1/R2에 0001~0008, 생성한 로컬 전용 `.dev.vars`·시험 계정, 로컬 DB에서만 관리자 지정): 자재 목록·상세·수정 창 이미지, 타일 새 버전 저장, 기본 공간 프로젝트에 타일 적용·자동 저장·다시 열기, 공개 목록·공개 이미지(표시 이미지 200, 원본 404)·공개 배치, 쿠키 없는 회원 API 401 확인. 기본 공간 만들기의 개발 서버 업로드 한도 413은 문서대로 `next.config.ts`를 임시로 바꿨다가 되돌렸다.
+- 원격 0008: 17:05 KST 적용 시도가 그날 읽기 한도 초과(`code 7500`)로 목록 조회부터 실패했다. 10-18 09:00 KST 이후 적용한다.
+- typecheck·Prettier(바꾼 코드 파일) 통과. eslint는 `npx eslint . --ignore-pattern ".claude/**"`로 문제 0이다. 그냥 `npm run lint`는 `.claude/worktrees`에 남은 다른 작업의 워크트리 복사본(빌드 산출물 포함)까지 읽어 15,302개를 보고한다. 설정 문제이며 이번 변경과 무관하다.
+
 ## 2026-10-15 — AI 방향 사진: 변기 몸통·뚜껑, 일체형·비데 일체형 변기의 사진 각도, 변기 뒤 없음
 
 - 무엇: 곰 변기로 "엉망"이던 원인(가이드의 투피스 모양을 그대로 그림, 제품 모양 가이드에서는 사진의 사선 각도를 베낌, 뒤는 앞모습)을 같은 seed 실제 호출로 찾아 고쳤다. 변기 가이드는 몸통(투피스·일체형·비데 일체형)×뚜껑(닫힘·열림·시트만), 일체형·비데 일체형 변기만 참고 사진마다 찍은 각도를 받아 프롬프트에 사진 각도 문장을 넣고, 변기는 뒤를 만들지 않는다. 욕조·세면대·투피스 변기의 프롬프트는 이전과 같다([결과](direction-photo-results-20261013.md) 4절, [자재 이미지](material-images.md), [FLUX 변환](flux-export.md)의 **자재 방향 사진**).

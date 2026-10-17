@@ -10,7 +10,7 @@
 
 | 항목 | 확인 상태 |
 | --- | --- |
-| 원격 D1 `sjn` | 0001~0006 적용·무결성 확인 완료. 0007은 2026-09-23 적용 완료(두 컬럼은 사용자가 직접 추가, 고유 인덱스·`d1_migrations` 기록은 승인 후 추가, auth meta 1) |
+| 원격 D1 `sjn` | 0001~0006 적용·무결성 확인 완료. 0007은 2026-09-23 적용 완료(두 컬럼은 사용자가 직접 추가, 고유 인덱스·`d1_migrations` 기록은 승인 후 추가, auth meta 1). 0008(인덱스만)은 2026-10-17 소스 추가, 원격 미적용 |
 | 기존 R2 `sjn` | Standard/APAC, 2026-09-14 생성, 확인 당시 객체 0개; 새 버킷은 생성하지 않음 |
 | 소스 R2·주소 설정 | `wrangler.jsonc`에 `ASSET_BUCKET → sjn`, `BETTER_AUTH_URL=https://sjn.gyulbbe.workers.dev` 추가 완료 |
 | 빌드 산출물 | vinext 빌드 성공. `dist/server/wrangler.json`에 `ASSET_BUCKET → sjn`과 기존 `DB → sjn`·`AI` 유지 확인 |
@@ -79,7 +79,7 @@ npx wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc --persis
 - [wrangler.d1.example.jsonc](../wrangler.d1.example.jsonc): 운영 참고본. 이름·ID·도메인·버킷 예시를 현재 설정 전체와 교체하지 않음.
 - [.dev.vars.example](../.dev.vars.example): 로컬 Workers secret 예시. 실제 .dev.vars는 커밋·배포하지 않음.
 - [.env.example](../.env.example): Node 변수 예시. .env.local은 Worker secret을 대신하지 않음.
-- [migrations/d1](../migrations/d1): 0001~0007. 앱은 요청 중 테이블을 생성하지 않음.
+- [migrations/d1](../migrations/d1): 0001~0008. 앱은 요청 중 테이블을 생성하지 않음.
 
 생성물 `dist/server/wrangler.json`을 직접 수정하지 않는다. 비밀값은 `NEXT_PUBLIC_*`, vars, 소스, 로그에 넣지 않는다. Workers runtime secret과 빌드 환경변수는 별개다. [Cloudflare secrets](https://developers.cloudflare.com/workers/configuration/secrets/).
 
@@ -140,8 +140,9 @@ npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 - `0005_admin_management.sql`: 회원 상태/revision·기존 회원 backfill·세션 정지 trigger, 관리자 감사/원자 조건 검사, 프로젝트별 관리자 자산·버전 범위와 인덱스.
 - `0006_reconstruction_diagnostics.sql`: 계정별 진단 메타데이터·비공개 R2 JSON, 활성 계정·실행 ID 충돌 검사, 별도 정리 대기열. 기존 브라우저 로그를 자동 이전하지 않는다.
 - `0007_username_auth.sql`: 아이디 로그인용 `user.username`(고유 인덱스)·`displayUsername` 추가만 한다. auth meta는 1로 유지해 기존 배포가 계속 동작하며 기존 회원 자료는 바꾸지 않는다.
+- `0008_query_indexes.sql`: 재시도 기록 정리용 `d1_mutations(owner_id,created_at)` 인덱스만 추가한다. 자료·메타 버전·준비 검사는 바뀌지 않으며 적용 전후 앱 동작은 같다(정리 쿼리가 읽는 행만 줄어든다).
 
-빈 DB는 0001~0007을 순서대로 적용한다. 원격 sjn과 로컬 개발 DB는 2026-09-17에 0001~0006 적용을 완료했고, 원격 sjn은 2026-09-23 0007까지 적용을 마쳐 `No migrations to apply` 상태다. 다른 DB나 이후 새 파일은 적용 이력을 확인한 뒤 미적용 번호만 진행한다. 기존 SQL을 수동 재실행하지 않는다. 기본 INSERT는 기존 관리자 변경을 덮어쓰지 않는다.
+빈 DB는 0001~0008을 순서대로 적용한다. 원격 sjn과 로컬 개발 DB는 2026-09-17에 0001~0006 적용을 완료했고, 원격 sjn은 2026-09-23 0007까지 적용을 마쳤다. 2026-10-17 추가한 0008은 원격에 미적용이다. 다른 DB나 이후 새 파일은 적용 이력을 확인한 뒤 미적용 번호만 진행한다. 기존 SQL을 수동 재실행하지 않는다. 기본 INSERT는 기존 관리자 변경을 덮어쓰지 않는다.
 
 Wrangler는 적용한 migration을 추적한다. 이후 스키마 변경은 기존 SQL을 수정하지 말고 새 번호의 파일로 추가한다. 이번 Better Auth 버전은 `1.7.4`로 고정했고 실제 D1에서 로그인 테이블 동작을 테스트했다. 라이브러리 업데이트 때에는 스키마 차이를 검토한다. `npx ...@latest migrate`로 기존 운영 테이블을 무검토 변경하지 않는다. [D1 migrations 문서](https://developers.cloudflare.com/d1/reference/migrations/)
 
@@ -243,7 +244,7 @@ Workers/D1은 우선 Free 플랜을 유지한다. R2는 사용량·객체 개수
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | 개발/배포 후 접근이 차단됨 | 선택한 설정 파일, STORAGE_MODE=d1, DB/ASSET_BUCKET, 인증 변수, /api/storage/status의 reason |
 | `missing_bindings`                            | 바인딩 철자, 실제 배포 Worker/환경, 빌드 산출물의 설정                                                      |
-| `connection_failed` / `invalid_configuration` | migration 0001~0007, DB 권한, R2 연결, origin·`BETTER_AUTH_SECRET`, Google 값(둘 다 있거나 둘 다 없어야 함). 브라우저 응답에는 비밀값을 노출하지 않는다. |
+| `connection_failed` / `invalid_configuration` | migration 0001~0007(0008은 준비 조건 아님), DB 권한, R2 연결, origin·`BETTER_AUTH_SECRET`, Google 값(둘 다 있거나 둘 다 없어야 함). 브라우저 응답에는 비밀값을 노출하지 않는다. |
 | `unsupported_runtime`                         | D1은 Workers용 vinext 경로에서 사용. 기본 Node `next start`에 D1 바인딩은 없다.                             |
 | Google redirect 오류                          | 접속 origin = BETTER_AUTH_URL = 콘솔 승인 URI의 origin, `/api/auth/callback/google` 경로, 테스트 사용자     |
 | 서버 저장 실패                                | 화면의 실제 이유 확인 후 재시도. 로컬로 자동 우회하지 않는다. 용량·권한·revision 충돌은 각각 해결해야 한다. |
