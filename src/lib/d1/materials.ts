@@ -6,6 +6,7 @@ import { identifierSchema, materialInputSchema } from '../storage/validation';
 import { readMaterialViews } from '../product-direction';
 import type { AssetRecord, Material, MaterialInput, MaterialVersion } from '../types';
 import {
+  adminVisibleVersionsSet,
   assetAssertion,
   dataOwnerId,
   visibleAssetsQuery,
@@ -47,7 +48,7 @@ async function materialFor(ctx: Context, id: string): Promise<MaterialRow> {
   return row;
 }
 async function versionFor(ctx: Context, id: string): Promise<VersionRow> {
-  const visible = visibleVersionsQuery(ctx);
+  const visible = visibleVersionsQuery(ctx, JSON.stringify([id]));
   const row = await sql(
     ctx,
     `${visible.cte} SELECT v.* FROM d1_material_versions v JOIN visible_versions p ON p.id=v.id WHERE v.id=?`,
@@ -64,7 +65,7 @@ async function checkMaterialAssets(ctx: Context, input: MaterialInput): Promise<
   const refs = materialReferences(input),
     refsJson = referenceJson(refs);
   const assets = new Map<string, Omit<AssetRecord, 'blob'>>();
-  const visible = visibleAssetsQuery(ctx);
+  const visible = visibleAssetsQuery(ctx, refsJson);
   const rows = await sql(
     ctx,
     `${visible.cte} SELECT a.id,a.metadata_json FROM d1_assets a JOIN visible_assets v ON v.id=a.id JOIN json_each(?) r ON r.value=a.id`,
@@ -106,8 +107,8 @@ export async function materials(
   if (ctx.adminProject && body.operation === 'create' && !projectResource) throw forbidden();
   switch (body.operation) {
     case 'list': {
-      const visible = visibleVersionsQuery(ctx);
-      const rows = ctx.adminProject
+      const visible = ctx.adminProject && adminVisibleVersionsSet(ctx.adminProject, ctx.actor.id);
+      const rows = visible
         ? await sql(
             ctx,
             `${visible.cte} SELECT m.*,v.payload_json FROM d1_materials m JOIN d1_material_versions v ON v.material_id=m.id JOIN visible_versions p ON p.id=v.id ORDER BY (v.id=m.current_version_id) DESC,m.updated_at DESC`,
