@@ -60,6 +60,16 @@ const directDisplay = `(
    (json_extract(v.payload_json,'$.coverAssetId')=a.id OR EXISTS(SELECT 1 FROM json_each(v.payload_json,'$.imageAssetIds') j WHERE j.value=a.id))) OR
   (json_extract(v.payload_json,'$.category')<>'tile' AND json_extract(v.payload_json,'$.coverAssetId')=a.id)
 )`;
+/**
+ * A current public version displays asset `a` directly. Starts from the versions that reference the
+ * asset (`d1_material_assets` holds every image a version shows) instead of reading every public
+ * payload, so one image check does not grow with the catalog. CROSS JOIN keeps that order: SQLite
+ * would otherwise start from the public-materials index and read every public version.
+ */
+export const publiclyDisplayed = `EXISTS(SELECT 1 FROM d1_material_assets r
+  CROSS JOIN d1_material_versions v CROSS JOIN d1_materials m
+  WHERE r.asset_id=a.id AND v.id=r.version_id AND m.id=v.material_id AND m.current_version_id=v.id
+  AND ${visible} AND ${directDisplay})`;
 export async function publicMaterials(env: D1Bindings): Promise<Response> {
   const rows = await env.DB.prepare(
     `SELECT m.id,v.payload_json FROM d1_materials m JOIN d1_material_versions v ON v.id=m.current_version_id WHERE ${visible} ORDER BY m.updated_at DESC`,
@@ -103,8 +113,7 @@ export async function publicImage(env: D1Bindings, request: Request): Promise<Re
   // Only directly displayed images on the current published version; never follow source_asset_id.
   const row = await env.DB.prepare(
     `SELECT a.object_key,a.metadata_json FROM d1_assets a WHERE a.id=? AND a.deleting=0
- AND json_extract(a.metadata_json,'$.kind') IN ('texture','product','preview') AND EXISTS(
- SELECT 1 FROM d1_materials m JOIN d1_material_versions v ON v.id=m.current_version_id WHERE ${visible} AND ${directDisplay})`,
+ AND json_extract(a.metadata_json,'$.kind') IN ('texture','product','preview') AND ${publiclyDisplayed}`,
   )
     .bind(id)
     .first<{ object_key: string; metadata_json: string }>();
@@ -150,8 +159,7 @@ export async function publicPlacement(env: D1Bindings, request: Request): Promis
      AND a.id IN(SELECT value FROM json_each(?))
      AND json_extract(a.metadata_json,'$.kind') IN ('texture','product','preview')
      AND json_extract(a.metadata_json,'$.mime') IN ('image/png','image/jpeg','image/webp')
-     AND EXISTS(SELECT 1 FROM d1_materials m JOIN d1_material_versions v ON v.id=m.current_version_id
-       WHERE ${visible} AND ${directDisplay})`,
+     AND ${publiclyDisplayed}`,
   )
     .bind(JSON.stringify(ids))
     .all<{ id: string; metadata_json: string }>();

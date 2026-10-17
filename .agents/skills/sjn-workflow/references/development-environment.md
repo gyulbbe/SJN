@@ -11,7 +11,7 @@ Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [pack
 | 목적 | 명령 | 동작 |
 | --- | --- | --- |
 | 기본 Workers 개발 | `npm run dev` 또는 `npm run dev:vinext` | vinext, `http://127.0.0.1:3000`, 로컬 D1/R2; 계정 기능은 아이디 가입·로그인(Google은 설정 시) |
-| 개발 migration | `npm run db:dev:migrate` | 0001~0007 중 미적용 번호, 로컬 DB만, `.wrangler/development` |
+| 개발 migration | `npm run db:dev:migrate` | 0001~0008 중 미적용 번호, 로컬 DB만, `.wrangler/development` |
 | 별도 Next 개발 | `npm run dev:next` | Node/Next, Cloudflare D1/R2/AI 바인딩 없음; 기본 앱 작업 공간 대체 아님 |
 | Next 빌드 | `npm run build` → `npm run start` | Node 빌드/실행 검사; Workers 바인딩은 생기지 않음 |
 | Workers 빌드·미리보기 | `npm run build:vinext` → `npm run start:vinext` | 빌드 설정과 `dist/server/wrangler.json`, 포트 8787, `.wrangler/state` |
@@ -22,6 +22,16 @@ vinext 개발 서버는 클라이언트 모듈을 동적 import로 받아 Next �
 개발 서버(vinext)는 1MB를 넘는 업로드를 기본 한도(`serverActions.bodySizeLimit`)로 413으로 막는다. 큰 사진(1MB 초과)을 실제로 저장해 보는 확인에서만 `next.config.ts`에 `experimental: { serverActions: { bodySizeLimit: '40mb' } }`를 임시로 넣고 서버를 다시 띄운 뒤, 끝나면 반드시 되돌린다(커밋 금지). 운영 Workers에서도 그런지는 확인하지 못했다.
 
 [dev-local](../../../../scripts/dev-local.mjs)는 `APP_ENV=development`, `SJN_DEV_BINDINGS=1`을 설정한다. [Vite 설정](../../../../vite.config.ts)이 이를 보고 `wrangler.dev.jsonc`와 `persistState.path=.wrangler/development`를 선택한다. 개발용 DB/R2에는 `remote:false`가 명시돼 있다. 기본 빌드 설정과 개발 설정을 섞지 않는다. 기존 `.wrangler/state`나 origin별 IndexedDB 자료는 삭제·자동 이전하지 않는다.
+
+## D1 쿼리 통계
+
+운영 D1의 읽기·쓰기 양은 Cloudflare 대시보드의 D1 → `sjn` → **Metrics**와 쿼리별 통계 명령으로 본다. 통계 명령은 분석 API만 읽어 D1 읽기 한도를 쓰지 않는다. 무료 한도는 하루 읽기 500만 행이고 매일 UTC 0시(한국 09:00)에 초기화된다.
+
+```bash
+npx wrangler d1 insights sjn --sort-by=reads --timePeriod=1d --limit=10
+```
+
+`--timePeriod=7d --json`이면 쿼리 원문·실행 횟수·읽은 행 합계를 기록용으로 받는다. 원격 `wrangler d1 execute --remote`의 SELECT는 읽기 한도를 쓰므로 쿼리 원문과 예상 읽기 행 수를 보이고 승인을 받은 뒤에만 실행한다. `--file`로 원격 실행하면 결과 없이 요약(읽은 행 수)만 돌아오므로 결과가 필요하면 `--command`를 쓴다. 로컬(Miniflare)의 D1 결과 `meta.rows_read`로 쿼리별 읽은 행 수를 미리 잰다([측정](../../../../tests/d1-read-cost.test.ts), [2026-10-17 결과](../../../../docs/d1-query-efficiency-results-20261017.md)).
 
 ## 설정 파일과 변수
 

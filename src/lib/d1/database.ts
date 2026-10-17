@@ -30,21 +30,88 @@ export const sql = (ctx: Context, query: string, ...values: unknown[]) =>
   ctx.env.DB.prepare(query).bind(...values);
 export const stamp = () => new Date().toISOString();
 export const later = () => new Date(Date.now() + GRACE_MS).toISOString();
-export const visibleAssets = `WITH RECURSIVE visible_assets(id,source_asset_id) AS (
-  SELECT a.id,a.source_asset_id FROM d1_assets a WHERE a.deleting=0 AND (
-    a.owner_id=? OR EXISTS(SELECT 1 FROM d1_material_assets r
-      JOIN d1_material_versions v ON v.id=r.version_id JOIN d1_materials m ON m.id=v.material_id
-      WHERE r.asset_id=a.id AND m.scope='shared'))
-  UNION SELECT a.id,a.source_asset_id FROM d1_assets a JOIN visible_assets p ON p.source_asset_id=a.id WHERE a.deleting=0
-)`;
 /** Data ownership is distinct from the authenticated action author. */
 export const dataOwnerId = (ctx: Context) => ctx.adminProject?.ownerId ?? ctx.actor.id;
-export function visibleVersionsQuery(ctx: Context): { cte: string; values: unknown[] } {
+interface Condition {
+  sql: string;
+  values: unknown[];
+}
+/**
+ * The administrator project scope may read version `column`: the project's own references, what this
+ * administrator made for it, or a current public catalog version. Checked per version, never by
+ * building the whole set (a material's current version is always one of its own versions).
+ * CROSS JOIN fixes the join order (SQLite keeps it as written): from the one version to its
+ * material, never from every public material.
+ */
+function adminVersionVisible(
+  project: NonNullable<Context['adminProject']>,
+  actorId: string,
+  column: string,
+): Condition {
+  return {
+    sql: `(EXISTS(SELECT 1 FROM d1_project_versions pv WHERE pv.project_id=? AND pv.version_id=${column})
+      OR EXISTS(SELECT 1 FROM d1_admin_project_versions av WHERE av.project_id=? AND av.actor_id=? AND av.version_id=${column})
+      OR EXISTS(SELECT 1 FROM d1_material_versions cv CROSS JOIN d1_materials cm
+        WHERE cv.id=${column} AND cm.id=cv.material_id AND cm.current_version_id=cv.id
+        AND cm.scope='shared' AND cm.active=1 AND cm.purpose='catalog' AND json_extract(cv.payload_json,'$.reconstruction') IS NULL))`,
+    values: [project.id, project.id, actorId],
+  };
+}
+/** Asset `a` itself is readable, before following derived assets. Joins start from `a`'s references. */
+function directlyVisibleAsset(ctx: Context): Condition {
   if (!ctx.adminProject)
     return {
-      cte: `WITH visible_versions(id) AS (SELECT v.id FROM d1_material_versions v JOIN d1_materials m ON m.id=v.material_id WHERE m.owner_id=? OR m.scope='shared')`,
+      sql: `(a.owner_id=? OR EXISTS(SELECT 1 FROM d1_material_assets r
+        CROSS JOIN d1_material_versions v CROSS JOIN d1_materials m
+        WHERE r.asset_id=a.id AND v.id=r.version_id AND m.id=v.material_id AND m.scope='shared'))`,
       values: [ctx.actor.id],
     };
+  const version = adminVersionVisible(ctx.adminProject, ctx.actor.id, 'r.version_id');
+  return {
+    sql: `(EXISTS(SELECT 1 FROM d1_project_assets r WHERE r.project_id=? AND r.asset_id=a.id)
+      OR EXISTS(SELECT 1 FROM d1_admin_project_assets r WHERE r.project_id=? AND r.actor_id=? AND r.asset_id=a.id)
+      OR EXISTS(SELECT 1 FROM d1_material_assets r WHERE r.asset_id=a.id AND ${version.sql}))`,
+    values: [ctx.adminProject.id, ctx.adminProject.id, ctx.actor.id, ...version.values],
+  };
+}
+/**
+ * `visible_assets(id)`: the requested ids (a JSON array) that the actor may read. An asset is readable
+ * when it, or an asset derived from it (`source_asset_id` chain, none being deleted), is directly
+ * visible. The walk starts from the requested ids and stops at the first visible one, so the cost
+ * follows the request, not the number of stored assets.
+ */
+export function visibleAssetsQuery(ctx: Context, refs: string): { cte: string; values: unknown[] } {
+  const direct = directlyVisibleAsset(ctx);
+  return {
+    cte: `WITH RECURSIVE requested(id) AS (SELECT value FROM json_each(?)),
+    asset_chain(root,id,ok) AS (
+      SELECT a.id,a.id,${direct.sql} FROM requested q JOIN d1_assets a ON a.id=q.id WHERE a.deleting=0
+      UNION SELECT c.root,a.id,${direct.sql} FROM asset_chain c JOIN d1_assets a ON a.source_asset_id=c.id
+        WHERE c.ok=0 AND a.deleting=0
+    ),
+    visible_assets(id) AS (SELECT DISTINCT root FROM asset_chain WHERE ok=1)`,
+    values: [refs, ...direct.values, ...direct.values],
+  };
+}
+/**
+ * `visible_versions(id)`: the requested ids (a JSON array) that the actor may read. The member form
+ * stays a plain join so SQLite folds it into each caller's lookup.
+ */
+export function visibleVersionsQuery(ctx: Context, refs: string): { cte: string; values: unknown[] } {
+  if (!ctx.adminProject)
+    return {
+      cte: `WITH visible_versions(id) AS (SELECT v.id FROM d1_material_versions v CROSS JOIN d1_materials m
+        WHERE v.id IN (SELECT value FROM json_each(?)) AND m.id=v.material_id AND (m.owner_id=? OR m.scope='shared'))`,
+      values: [refs, ctx.actor.id],
+    };
+  const version = adminVersionVisible(ctx.adminProject, ctx.actor.id, 'q.value');
+  return {
+    cte: `WITH visible_versions(id) AS (SELECT DISTINCT q.value FROM json_each(?) q WHERE ${version.sql})`,
+    values: [refs, ...version.values],
+  };
+}
+/** Every version the administrator project scope may read; only for listing them. */
+export function adminVisibleVersionsSet(project: NonNullable<Context['adminProject']>, actorId: string) {
   return {
     cte: `WITH visible_versions(id) AS (
       SELECT version_id FROM d1_project_versions WHERE project_id=?
@@ -52,28 +119,11 @@ export function visibleVersionsQuery(ctx: Context): { cte: string; values: unkno
       UNION SELECT v.id FROM d1_material_versions v JOIN d1_materials m ON m.current_version_id=v.id
         WHERE m.scope='shared' AND m.active=1 AND m.purpose='catalog' AND json_extract(v.payload_json,'$.reconstruction') IS NULL
     )`,
-    values: [ctx.adminProject.id, ctx.adminProject.id, ctx.actor.id],
-  };
-}
-export function visibleAssetsQuery(ctx: Context): { cte: string; values: unknown[] } {
-  if (!ctx.adminProject) return { cte: visibleAssets, values: [ctx.actor.id] };
-  const versions = visibleVersionsQuery(ctx);
-  return {
-    cte:
-      versions.cte.replace('WITH ', 'WITH RECURSIVE ') +
-      `, visible_assets(id,source_asset_id) AS (
-      SELECT a.id,a.source_asset_id FROM d1_assets a WHERE a.deleting=0 AND (
-        EXISTS(SELECT 1 FROM d1_project_assets r WHERE r.project_id=? AND r.asset_id=a.id)
-        OR EXISTS(SELECT 1 FROM d1_admin_project_assets r WHERE r.project_id=? AND r.actor_id=? AND r.asset_id=a.id)
-        OR EXISTS(SELECT 1 FROM d1_material_assets r JOIN visible_versions v ON v.id=r.version_id WHERE r.asset_id=a.id)
-      )
-      UNION SELECT a.id,a.source_asset_id FROM d1_assets a JOIN visible_assets p ON p.source_asset_id=a.id WHERE a.deleting=0
-    )`,
-    values: [...versions.values, ctx.adminProject.id, ctx.adminProject.id, ctx.actor.id],
+    values: [project.id, project.id, actorId],
   };
 }
 export async function readableAsset(ctx: Context, id: string): Promise<AssetRow> {
-  const visible = visibleAssetsQuery(ctx);
+  const visible = visibleAssetsQuery(ctx, JSON.stringify([id]));
   const row = await sql(
     ctx,
     `${visible.cte} SELECT a.* FROM d1_assets a JOIN visible_assets v ON v.id=a.id WHERE a.id=?`,
@@ -104,7 +154,7 @@ export function assertion(
   );
 }
 export function assetAssertion(ctx: Context, refs: string): D1Statement {
-  const visible = visibleAssetsQuery(ctx);
+  const visible = visibleAssetsQuery(ctx, refs);
   return assertion(
     ctx,
     'reference',
@@ -114,7 +164,7 @@ export function assetAssertion(ctx: Context, refs: string): D1Statement {
   );
 }
 export function versionAssertion(ctx: Context, refs: string): D1Statement {
-  const visible = visibleVersionsQuery(ctx);
+  const visible = visibleVersionsQuery(ctx, refs);
   return assertion(
     ctx,
     'reference',
@@ -293,8 +343,8 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
 
 /** Read-only preflight; committing batches still perform the same assertions atomically. */
 export async function validateReferences(ctx: Context, assetIds: string, versionIds: string): Promise<void> {
-  const assetsVisible = visibleAssetsQuery(ctx),
-    versionsVisible = visibleVersionsQuery(ctx);
+  const assetsVisible = visibleAssetsQuery(ctx, assetIds),
+    versionsVisible = visibleVersionsQuery(ctx, versionIds);
   const assets = await sql(
     ctx,
     `${assetsVisible.cte} SELECT NOT EXISTS(SELECT 1 FROM json_each(?) r WHERE NOT EXISTS(SELECT 1 FROM visible_assets a WHERE a.id=r.value)) AS valid`,

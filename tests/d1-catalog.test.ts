@@ -974,6 +974,10 @@ describe('anonymous placement projections', () => {
     await env.DB.prepare('UPDATE d1_material_versions SET payload_json=? WHERE id=?')
       .bind(JSON.stringify(stored), saved.id)
       .run();
+    // That save also recorded the 위 photo as one of the version's images, as every save does.
+    await env.DB.prepare('INSERT INTO d1_material_assets(version_id,asset_id) VALUES(?,?)')
+      .bind(saved.id, top.id)
+      .run();
     const listed = (await listPublic()).materials.find((row) => row.id === saved.materialId)!;
     expect(listed.images.map((i) => i.url)).toEqual([urls(cover.id), urls(front.id), urls(side.id)]);
     const result = await data(saved.materialId);
