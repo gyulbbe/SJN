@@ -45,4 +45,5 @@ export const allD1Migrations = [
   '0005_admin_management.sql',
   '0006_reconstruction_diagnostics.sql',
   '0007_username_auth.sql',
+  '0008_query_indexes.sql',
 ];
