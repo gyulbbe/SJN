@@ -157,7 +157,19 @@ D1을 거치는 모든 라우트(`src/app/api/**/route.ts`)는 다섯 출구 중
 
 ## 6. 병합과 배포
 
-(병합·배포 확인 뒤 채움)
+- **브랜치**: `claude/service-limit-notice`(최신 `origin/main` `df73162`에서 출발, 원격에도 푸시). 커밋은 세 개다.
+  1. `2347da2` 서버 판별·응답 계약·테스트
+  2. `68fefaa` 화면 안내·e2e
+  3. `4abf007` 문서
+- **병합**: `git fetch` 뒤 main이 그대로라(`df73162`) 다시 맞출 것이 없었다. main 병합 커밋 `b59ac39`를 2026-10-18 17:29:50 KST에 `git push origin main` 했다(강제 푸시 없음).
+- **배포 확인**(읽기만, 실제 한도 상황은 만들지 않음)
+  - Cloudflare 자동 배포: 푸시 약 74초 뒤 `2026-10-18T08:31:04Z`, 버전 `2583817e-b795-4597-bed0-474bdfccfb2a`(`wrangler deployments list`)
+  - `https://sjn.gyulbbe.workers.dev/api/storage/status`: `{"mode":"d1","ready":true,"reason":"ready","authRequired":true,"googleSignIn":true}`
+  - 내장 브라우저로 연 `/`, `/login`, `/materials`
+    - 모두 정상이고 안내 띠는 없었다(`service-limit-banner` 0개, 저장된 안내 없음).
+    - `/materials`는 "928개의 자재"를 보였다.
+    - `/login`에는 경고가 없었다.
+  - 배포된 스크립트(`repositories-*.js`)에 새 코드(`sjn-service-limit`)가 들어 있음을 확인했다.
 
 ## 7. 하지 않은 것과 한계
 
