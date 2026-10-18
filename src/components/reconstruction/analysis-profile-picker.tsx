@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
+import { noteServiceAnswer, serviceLimitMessage } from '@/lib/service-limit-notice';
 import type { ReconstructionAnalysisProfile } from '@/lib/reconstruction/quality-contract';
 import styles from './reconstruction.module.css';
 
@@ -33,11 +34,14 @@ export default function AnalysisProfilePicker({
       try {
         const response = await fetch(url, { signal, cache: 'no-store', credentials: 'same-origin' });
         const body = await response.json();
+        // The access check meeting a spent database limit says when it comes back.
+        const limit = response.ok ? null : noteServiceAnswer(false, body, 'db');
         return {
           checking: false,
           available: response.ok && body.available === true,
-          reason:
-            typeof body.reason === 'string'
+          reason: limit
+            ? serviceLimitMessage(limit)
+            : typeof body.reason === 'string'
               ? body.reason
               : typeof body.error === 'string'
                 ? body.error

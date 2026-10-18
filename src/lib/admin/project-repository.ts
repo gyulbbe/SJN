@@ -11,9 +11,11 @@ import type { Repositories } from '../repositories/contracts';
 import { CloudRequestError } from '../repositories/cloud';
 import { StorageConflictError } from '../repositories/references';
 import type { AdminProjectDetail } from './contracts';
+import { noteServiceAnswer } from '../service-limit-notice';
 
 async function responseJson<T>(response: Response): Promise<T> {
   const value = await response.json().catch(() => ({ error: '서버 응답을 읽지 못했어요.' }));
+  noteServiceAnswer(response.ok, value, 'db');
   if (!response.ok) {
     if (response.status === 409) throw new StorageConflictError();
     if (response.status === 401 && typeof window !== 'undefined')

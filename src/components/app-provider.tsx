@@ -9,6 +9,8 @@ import { checkpointBeforeAccountChange, flushBeforeStorageTransition } from '@/l
 import { isPublicPage, signInDestinations, type SignInOptions } from '@/lib/auth/public-routes';
 import { credentialErrorMessage } from '@/lib/auth/credential-account';
 import CredentialAuthForm from './auth/credential-auth-form';
+import { ServiceLimitBanner } from './service-limit-banner';
+import { noteServiceAnswer, serviceLimitMessage } from '@/lib/service-limit-notice';
 
 export type PasswordSignIn = SignInOptions & {
   mode: 'sign-in' | 'sign-up';
@@ -131,8 +133,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setReady(false);
           return;
         }
-        if (!response.ok) throw new Error('로그인 상태를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.');
+        if (!response.ok) {
+          const limit = noteServiceAnswer(false, await response.json().catch(() => null), 'db');
+          throw new Error(
+            limit
+              ? serviceLimitMessage(limit)
+              : '로그인 상태를 확인하지 못했어요. 잠시 후 다시 확인해 주세요.',
+          );
+        }
         const session = await response.json();
+        noteServiceAnswer(true, session, 'db');
         if (dead || generation !== initializing.current) return;
         if (session?.user?.id && typeof session.user.id === 'string') {
           initializeRepositories(value.mode, session.user.id);
@@ -188,7 +198,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           credentials: 'same-origin',
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
         });
-        if (!response.ok && ![401, 403].includes(response.status)) return;
+        if (!response.ok && ![401, 403].includes(response.status)) {
+          noteServiceAnswer(false, await response.json().catch(() => null), 'db');
+          return;
+        }
         const session = !response.ok ? null : await response.json();
         if (dead) return;
         if (!session?.user?.id) {
@@ -281,7 +294,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
       if (!response.ok) {
         const result = await response.json().catch(() => null);
-        throw new Error(credentialErrorMessage(mode, response.status, result?.code));
+        // A spent daily limit is not a wrong ID or password.
+        const limit = noteServiceAnswer(false, result, 'db');
+        throw new Error(
+          limit ? serviceLimitMessage(limit) : credentialErrorMessage(mode, response.status, result?.code),
+        );
       }
       // Same full navigation as the Google return so account storage starts fresh.
       window.location.assign(signInDestinations(options).callbackURL);
@@ -306,6 +323,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }),
       });
       const result = await response.json();
+      const limit = response.ok ? null : noteServiceAnswer(false, result, 'db');
+      if (limit) throw new Error(serviceLimitMessage(limit));
       if (!response.ok || typeof result.url !== 'string')
         throw new Error('Google 로그인 연결에 실패했어요. OAuth 설정과 배포 주소를 확인해 주세요.');
       const target = new URL(result.url);
@@ -350,7 +369,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         expired,
       }}
     >
-      {!publicPage && status && STORAGE_MESSAGES[status.reason] && (
+      <ServiceLimitBanner />
+      {/* A spent daily limit is told by the banner above, with when it comes back. */}
+      {!publicPage && status && !status.limit && STORAGE_MESSAGES[status.reason] && (
         <div className="readonly-banner" role="status">
           {STORAGE_MESSAGES[status.reason]}{' '}
           <button onClick={() => void reconnect()}>서버 연결 다시 확인</button>
@@ -412,7 +433,13 @@ export function BackendGuard({ children }: { children: React.ReactNode }) {
         </Link>
         <h1>로그인 / 회원가입</h1>
         <CredentialAuthForm disabled={!status.ready} onBusyChange={setBusy} />
-        {!status.ready && <p role="alert">로그인과 D1·R2 연결 설정을 먼저 확인해 주세요.</p>}
+        {!status.ready && (
+          <p role="alert">
+            {status.limit
+              ? serviceLimitMessage(status.limit)
+              : '로그인과 D1·R2 연결 설정을 먼저 확인해 주세요.'}
+          </p>
+        )}
         {error && (
           <p role="alert" className="error">
             {error}

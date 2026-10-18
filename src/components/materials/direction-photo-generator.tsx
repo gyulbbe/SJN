@@ -37,6 +37,7 @@ import {
   runEstimate,
   type DirectionJob,
 } from '@/lib/direction-photo/plan';
+import { AiLimitHint } from '@/components/service-limit-banner';
 import styles from './materials.module.css';
 
 /** A photo the AI made for one direction and the person may pick. */
@@ -620,6 +621,7 @@ export function DirectionPhotoGenerator({
         >
           {madeAny ? '모두 다시 만들기' : '방향 사진 만들기'}
         </button>
+        <AiLimitHint />
         {running && (
           <button type="button" className="btn small" onClick={() => controller.current?.abort()}>
             만들기 취소

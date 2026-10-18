@@ -23,6 +23,7 @@ import {
 import { categoryLabels } from '@/lib/types';
 import WorkspaceNav from '@/components/workspace-nav';
 import { MaterialFacets } from './material-facets';
+import { noteServiceAnswer, serviceLimitMessage } from '@/lib/service-limit-notice';
 import styles from './public-catalog.module.css';
 
 function MaterialImage({
@@ -183,6 +184,9 @@ export default function PublicCatalog() {
     fetch('/api/catalog/materials', { signal: controller.signal, cache: 'no-store' })
       .then(async (r) => {
         const data = await r.json();
+        // A spent daily limit says when the list comes back (and shows the banner).
+        const limit = noteServiceAnswer(r.ok, data, 'db');
+        if (limit) throw new Error(serviceLimitMessage(limit));
         if (!r.ok) throw new Error(data.error ?? '자재 목록을 불러오지 못했어요.');
         if (!controller.signal.aborted) {
           setRows(data.materials);

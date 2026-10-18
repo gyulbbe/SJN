@@ -1,4 +1,5 @@
 import { blockedStatus, type StorageStatus, STORAGE_MESSAGES } from './config';
+import { clearServiceLimit, limitFromBody, reportServiceLimit } from '../service-limit-notice';
 
 /** Resolves once: a late server response cannot change this workspace. */
 export async function discoverStorage(
@@ -37,6 +38,15 @@ export async function discoverStorage(
         !Object.hasOwn(STORAGE_MESSAGES, value.reason)
       )
         return blockedStatus('invalid_configuration');
+      // A spent daily limit, known from this first answer (no request of its own).
+      const limit = limitFromBody(value);
+      if (limit) {
+        reportServiceLimit(limit);
+        value.limit = limit;
+      } else {
+        delete value.limit;
+        if (value.ready) clearServiceLimit('db');
+      }
       return value;
     } catch {
       return blockedStatus(timedOut ? 'initialization_timeout' : 'connection_failed');
