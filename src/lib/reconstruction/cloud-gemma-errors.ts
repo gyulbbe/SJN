@@ -1,4 +1,5 @@
 import type { CloudGemmaErrorCode } from './cloud-gemma-contract';
+import { detectServiceLimit, nextResetAt, serviceLimitResponse } from '../platform/service-limit';
 
 export class CloudGemmaError extends Error {
   constructor(
@@ -75,6 +76,9 @@ export function classifyCloudGemmaFailure(
   );
 }
 export function cloudGemmaErrorResponse(error: unknown, signal?: AbortSignal): Response {
+  // The account's database limit (met while checking the sign-in) is the storage routes' answer.
+  const databaseLimit = signal?.aborted ? null : detectServiceLimit(error);
+  if (databaseLimit && databaseLimit.service !== 'ai') return serviceLimitResponse(databaseLimit);
   const failure = signal?.aborted
     ? new CloudGemmaError('설비 분석을 취소했어요.', 'cancelled', 499)
     : error instanceof CloudGemmaError
@@ -90,6 +94,8 @@ export function cloudGemmaErrorResponse(error: unknown, signal?: AbortSignal): R
       retryable: failure.retryable,
       retryAfterMs: failure.retryAfterMs,
       diagnostics: failure.diagnostics,
+      // The day's AI allocation comes back at 00:00 UTC; the screens say when (no retry here).
+      ...(failure.code === 'quota_exhausted' && { limit: { service: 'ai', resetAt: nextResetAt() } }),
     },
     { status: failure.status, headers },
   );

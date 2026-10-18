@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { cloudGemmaErrorResponse } from '../src/lib/reconstruction/cloud-gemma-errors';
 import sharp from 'sharp';
 import { runFluxCheck, fluxCheckPayload, readFluxCheckCompletion } from '../src/lib/ai-export/check-server';
 import {
@@ -163,6 +164,12 @@ describe('FLUX result check (mock inference)', () => {
     const env = environment(run);
     const failure = await runFluxCheck(request(await jpeg()), env).catch((error) => error);
     expect(failure.status).toBe(429);
+    expect(failure.code).toBe('quota_exhausted');
+    // The route's answer (cloudGemmaErrorResponse) says when the day's AI allocation comes back.
+    expect((await cloudGemmaErrorResponse(failure).json()).limit).toEqual({
+      service: 'ai',
+      resetAt: expect.stringMatching(/T00:00:00\.000Z$/),
+    });
     expect(run).toHaveBeenCalledTimes(1);
     expect(failure.diagnostics).toMatchObject({ fixtures: 2, imageWidth: 992, imageHeight: 672 });
     expect(JSON.stringify(failure.diagnostics)).not.toMatch(/toilet|washbasin|base64/);
