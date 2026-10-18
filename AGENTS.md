@@ -11,3 +11,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## SJN 프로젝트 참고 문서
 
 SJN의 DB·권한, 개발/배포 환경·R2, 기능·구조 관련 작업은 [sjn-workflow](.agents/skills/sjn-workflow/SKILL.md)에 따라 필요한 참고 문서를 먼저 읽는다. 관련 구현이나 설정이 바뀌면 같은 작업에서 해당 references 문서도 갱신한다.
+
+D1(DB)을 거치는 SQL·API·권한 확인이나 그 API를 부르는 화면 코드(fetch·폴링·이미지 표시)를 추가·변경할 때는 [d1-query-budget](.agents/skills/d1-query-budget/SKILL.md)에 따라 요청 1회의 쿼리 수·읽은 행과 화면 호출 횟수를 측정하는 테스트를 함께 추가한다.
