@@ -2,6 +2,26 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-18 — Cloudflare 하루 한도 화면 안내(DB·AI)
+
+- 무엇: D1 하루 한도(읽기·쓰기·용량)와 Workers AI 하루 할당이 차면 모든 화면이 다음을 알린다([결과](service-limit-notice-results-20261018.md)).
+  - 무엇이 멈췄는지
+  - 언제(한국 시간) 다시 되는지
+  - 지금 할 수 있는 것
+- 응답 계약
+  - D1 한도: 503 `SERVICE_LIMIT` + `limit`
+  - AI 할당: 429 `quota_exhausted` + `limit`
+  - 준비 검사: `daily_limit`·`storage_full`
+- 새 요청, 폴링, D1 쿼리는 없다. Better Auth가 삼키는 get-session 한도는 DB 감시로 알린다(추가 쿼리 없음, 시험으로 확인).
+- 단위·서버: `service-limit`(7), `service-limit-server`(7, 실제 Miniflare·Better Auth), `service-limit-notice`(7). AI 5곳 라우트의 `limit`도 기존 시험에 더했다.
+- 전체 vitest: 249개 파일 중 245개 통과, 3개 실패, 1개 건너뜀.
+  - 알려진 환경 실패: reconstruction-corpus 1, source-plane-mapping 5
+  - 부하성 시간 초과: flux-composite 1(단독 재실행 통과)
+- e2e: `service-limit` 4개(호출 수 비교·60초 무요청·09:00 뒤 사라짐·375px), `direction-photo-ai` 3개, `cloud-recovery`, `login-flow`가 통과했다.
+  - `flux-export`의 2개(453행, 772행)는 이번 변경이 없는 기준 코드에서도 실패했다.
+  - 1개는 실행마다 바뀌고 단독 재실행에서 통과했다.
+- typecheck와 전체 lint(문제 0), 바꾼 코드 파일 Prettier 통과.
+
 ## 2026-10-17 — D1 읽기 줄이기: 권한 확인은 요청한 자산에서 출발, 공개 이미지, 0008 인덱스
 
 - 무엇: 운영 D1 `sjn`이 하루 읽기 한도(500만 행)를 넘은 원인인 자산 권한 확인 CTE(1회 2,000~5,500행, 전체 자산 수에 비례)를 요청한 자산·버전에서 출발하도록 바꿨다. 공개 이미지·배치 이미지도 그 자산의 참조에서 출발한다(CROSS JOIN으로 순서 고정). `0008_query_indexes.sql`(`d1_mutations(owner_id,created_at)`)을 추가했다. 권한 판단은 바꾸지 않았다. 원격 D1에는 쓰지 않았고 0008은 로컬 개발·테스트 DB에만 적용했다. 배포하지 않았다([결과](d1-query-efficiency-results-20261017.md)).
