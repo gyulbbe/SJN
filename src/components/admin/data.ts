@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { AdminPage } from '@/lib/admin/contracts';
 import { useAccess } from '@/components/app-provider';
+import { noteServiceAnswer } from '@/lib/service-limit-notice';
 
 export class AdminRequestError extends Error {
   constructor(
@@ -20,6 +21,7 @@ export async function adminRequest<T>(url: string, userId: string, init: Request
     signal: init.signal ?? AbortSignal.timeout(15_000),
   });
   const data = await response.json().catch(() => null);
+  noteServiceAnswer(response.ok, data, 'db');
   if (!response.ok) {
     if (response.status === 401 || data?.code === 'account_suspended')
       window.dispatchEvent(

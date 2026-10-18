@@ -4,6 +4,7 @@ import CredentialAuthForm from '@/components/auth/credential-auth-form';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState, useEffect } from 'react';
 import { useAccess } from '@/components/app-provider';
+import { serviceLimitMessage } from '@/lib/service-limit-notice';
 
 export default function LoginPage() {
   const access = useAccess();
@@ -74,7 +75,10 @@ export default function LoginPage() {
         {(error || access.error) && <p role="alert">{error || access.error}</p>}
         {access.status && !access.status.ready && (
           <p role="alert">
-            로그인 연결을 준비하지 못했어요. <button onClick={access.retry}>다시 확인</button>
+            {access.status.limit
+              ? serviceLimitMessage(access.status.limit)
+              : '로그인 연결을 준비하지 못했어요.'}{' '}
+            <button onClick={access.retry}>다시 확인</button>
           </p>
         )}
       </div>

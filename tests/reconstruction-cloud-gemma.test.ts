@@ -482,11 +482,13 @@ describe('Cloudflare Gemma transport (mocked model; no AI accuracy claim or remo
       const { run, env } = runtime(async () =>
         Response.json(body, { status, headers: { 'Retry-After': '7' } }),
       );
-      await expect(runCloudGemmaModel(request(), env)).rejects.toMatchObject({
-        code,
-        retryable,
-        ...(retryable ? { retryAfterMs: 7000 } : {}),
-      });
+      const failure = await runCloudGemmaModel(request(), env).catch((error) => error);
+      expect(failure).toMatchObject({ code, retryable, ...(retryable ? { retryAfterMs: 7000 } : {}) });
+      // Only the spent day's allocation says when it comes back; a rate limit says Retry-After.
+      const answer = await cloudGemmaErrorResponse(failure).json();
+      if (code === 'quota_exhausted')
+        expect(answer.limit).toEqual({ service: 'ai', resetAt: expect.stringMatching(/T00:00:00\.000Z$/) });
+      else expect(answer).not.toHaveProperty('limit');
       expect(run).toHaveBeenCalledTimes(1);
     }
   });

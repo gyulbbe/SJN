@@ -1,5 +1,6 @@
 import { analysisCacheAllowed } from './analysis-cache-policy';
 import { openDB } from 'idb';
+import { noteServiceAnswer, serviceLimitMessage } from '../service-limit-notice';
 import type { AnalysisProvider } from './analysis-provider';
 import { validAnalysisResponse } from './analysis-provider';
 import { cloudOperationCacheIdentity } from './cloud-gemma-cache-contract';
@@ -164,8 +165,16 @@ async function execute(form: FormData, key: string, signal: AbortSignal, cacheAl
         await wait(delay, signal);
         continue;
       }
+      // A spent daily limit (no retry: retryable is false) goes to the banner, with when.
+      const limit = noteServiceAnswer(false, body, 'ai');
       throw Object.assign(
-        new Error(typeof body.error === 'string' ? body.error : '설비 분석 요청에 실패했어요.'),
+        new Error(
+          limit
+            ? serviceLimitMessage(limit)
+            : typeof body.error === 'string'
+              ? body.error
+              : '설비 분석 요청에 실패했어요.',
+        ),
         {
           status: response.status,
           code: body.code,
@@ -176,6 +185,7 @@ async function execute(form: FormData, key: string, signal: AbortSignal, cacheAl
     }
     if (!validAnalysisResponse(body, 'cloudflare-workers-ai'))
       throw new Error('설비 분석 공급자 정보를 확인할 수 없어요.');
+    noteServiceAnswer(true, null, 'ai');
     body.measurement = {
       ...(body.measurement as object),
       cacheHit: false,
@@ -259,6 +269,9 @@ export async function fetchAnalysis(provider: AnalysisProvider, init: RequestIni
   });
   const available = await status.json();
   cancelled(init.signal);
+  // The access check meets a spent database limit at sign-in: said with when, not "check the server".
+  const limit = status.ok ? null : noteServiceAnswer(false, available, 'db');
+  if (limit) throw new Error(serviceLimitMessage(limit));
   if (!status.ok || available.available !== true || typeof available.cacheScope !== 'string')
     throw new Error(available.reason ?? available.error ?? '서버 설비 분석 연결을 확인해 주세요.');
   const cacheAllowed = analysisCacheAllowed(init.signal);

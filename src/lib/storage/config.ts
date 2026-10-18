@@ -1,3 +1,5 @@
+import type { ServiceLimit } from '../platform/service-limit';
+
 export type StorageMode = 'd1';
 export type StorageReason =
   | 'invalid_configuration'
@@ -5,6 +7,8 @@ export type StorageReason =
   | 'connection_failed'
   | 'initialization_timeout'
   | 'unsupported_runtime'
+  | 'daily_limit'
+  | 'storage_full'
   | 'ready';
 export type StorageStatus = {
   mode: StorageMode;
@@ -13,6 +17,8 @@ export type StorageStatus = {
   authRequired: boolean;
   /** Only sent when ready; ID/password sign-in works without Google. */
   googleSignIn?: boolean;
+  /** A spent daily limit (daily_limit, storage_full): which, and when it comes back. */
+  limit?: ServiceLimit;
 };
 export type RuntimeSettings = {
   APP_ENV?: string;
@@ -37,6 +43,9 @@ export const STORAGE_MESSAGES: Record<StorageReason, string> = {
   connection_failed: '서버 저장소에 연결하지 못했어요. 잠시 후 다시 확인해 주세요.',
   initialization_timeout: '서버 연결 확인 시간이 초과됐어요. 다시 확인해 주세요.',
   unsupported_runtime: '이 실행 환경에서 선택한 서버 저장소를 사용할 수 없어요.',
+  daily_limit:
+    '오늘 서버 이용 한도를 모두 써서 로그인·저장·불러오기가 잠시 멈췄어요. 한국 시간 오전 9시 이후 다시 접속해 주세요.',
+  storage_full: '서버 저장 공간이 가득 찼어요. 관리자에게 알려 주세요.',
 };
 export function blockedStatus(reason: StorageReason): StorageStatus {
   return { mode: 'd1', ready: false, reason, authRequired: true };
