@@ -15,7 +15,12 @@
  * with its estimated neurons (callNeurons), and none is sent past 90% of AI_BUDGET_NEURONS counted
  * over today's (UTC) calls; a failure counts as spent.
  *
- * Usage: node tests/run-browser-test.mjs tests/direction-photo-real/variants.ts <bear|smart|bath> <app|replay> [directions] [label]
+ * Photos with a background (the toilet trial's t1–t6, 2026-10-17) go through the screen's background
+ * removal first (BiRefNet, src/lib/background-removal, the model file served from tmp/background-model
+ * and the runtime from node_modules), then its photo preparation; the cut-outs are kept as
+ * `cutout-ref-N.png` beside the photos sent (`sent-ref-N.png`).
+ *
+ * Usage: node tests/run-browser-test.mjs tests/direction-photo-real/variants.ts <product> <app|replay> [directions] [label]
  *   e.g. ... variants.ts bear app front,left,right after
  * Env: AI_BUDGET_NEURONS (required), FLUX_WORKER (default http://127.0.0.1:8799),
  *   AI_ROOT (default test-results/direction-photo-bear), AI_LEDGER (default <root>/ledger.jsonl),
@@ -23,11 +28,24 @@
  *   GUIDES_ONLY=1 (draw the guides into <root>/guides-preview, no call), DRY=1 (write the guides, photos
  *   and prompts of the run, no call), SPEC (JSON over the product's settings, null removing one: the
  *   choices Gemma made, docs/direction-photo-results-20261013.md section 5), APPEND (a JSON file of
- *   sentences per direction, {"front": "..."}, written after the app's prompt: a trial only).
+ *   sentences per direction, {"front": "..."}, written after the app's prompt: a trial only),
+ *   REPLACE (a JSON file of [from, to] pairs per direction or for all ("*"), {"*": [["...", "..."]]},
+ *   each `from` found exactly once in the app's prompt: a trial only).
  */
 import { chromium } from '@playwright/test';
 import { build } from 'esbuild';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { createServer } from 'node:http';
+import path from 'node:path';
 import sharp from 'sharp';
 import { buildDirectionPhotoPrompt } from '../../src/lib/direction-photo/prompt';
 import { callNeurons } from '../../src/lib/direction-photo/plan';
@@ -51,8 +69,14 @@ const VIEW_NAMES: Record<DirectionPhotoView, string> = {
   back: '뒤',
 };
 
-/** The products as the screen would be set for them now, and their photos. */
-const PRODUCTS: Record<string, { spec: Omit<DirectionPhotoSpec, 'direction'>; photos: string[] }> = {
+/**
+ * The products as the screen would be set for them now, and their photos. `cutout`: the photo has a
+ * background, taken off as the screen does before it is sent.
+ */
+const PRODUCTS: Record<
+  string,
+  { spec: Omit<DirectionPhotoSpec, 'direction'>; photos: string[]; cutout?: boolean }
+> = {
   // One piece, ears on the tank, a face printed on its front, the lever on its right side, a seat.
   bear: {
     spec: {
@@ -88,6 +112,85 @@ const PRODUCTS: Record<string, { spec: Omit<DirectionPhotoSpec, 'direction'>; ph
     // The white catalogue photo only: the staged one needs the screen's background removal.
     photos: ['61-bathtub-3q-white.png'],
   },
+  // The 2026-10-17 toilet trial (test-results/toilet-direction/truth.md, confirmed by the person; the
+  // sizes are assumed, the photos have none). Sides are the product's own (a seated person's right).
+  // One piece, white, blue seat and lid, a blue whale lever on the tank's right side; staged room, a mark.
+  t1: {
+    spec: {
+      category: 'toilet',
+      form: 'one-piece',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [380, 700, 700],
+      photoAngles: ['front-right'],
+    },
+    photos: ['t1-onepiece-blue-seat.webp'],
+    cutout: true,
+  },
+  // Tankless, all black, a squared box; the back cover is two low slabs, a small panel on its right.
+  t2: {
+    spec: {
+      category: 'toilet',
+      form: 'tankless',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [400, 500, 680],
+      photoAngles: ['front-right'],
+    },
+    photos: ['t2-tankless-black-square.webp'],
+    cutout: true,
+  },
+  // Tankless, white, a rounded body narrowing down, a tall boxy unit at the back, vents on its left.
+  t3: {
+    spec: {
+      category: 'toilet',
+      form: 'tankless',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [400, 560, 700],
+      photoAngles: ['front-left'],
+    },
+    photos: ['t3-tankless-white-vents.webp'],
+    cutout: true,
+  },
+  // One piece, white, a smooth skirted body, a thin lid, a chrome lever on the tank's right side.
+  t4: {
+    spec: {
+      category: 'toilet',
+      form: 'one-piece',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [380, 700, 700],
+      photoAngles: ['front-right'],
+    },
+    photos: ['t4-onepiece-white-slim.webp'],
+    cutout: true,
+  },
+  // Two piece (a seam under the tank), skirted below, a lever at the right end of the tank's front (no angle sent).
+  t5: {
+    spec: {
+      category: 'toilet',
+      form: 'two-piece',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [380, 760, 700],
+    },
+    photos: ['t5-tank-white-k.webp'],
+    cutout: true,
+  },
+  // Tankless, white, rounded, buttons on the unit's right side; a remote panel drawn at the top right.
+  t6: {
+    spec: {
+      category: 'toilet',
+      form: 'tankless',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [400, 500, 680],
+      photoAngles: ['front-right'],
+    },
+    photos: ['t6-tankless-white-remote.webp'],
+    cutout: true,
+  },
 };
 
 // After the runner and this file (node tests/run-browser-test.mjs <this file> ...).
@@ -120,45 +223,144 @@ const ledger = (): Row[] =>
 const today = new Date().toISOString().slice(0, 10);
 const spent = () => ledger().filter((row) => row.status !== 'refused' && String(row.at).startsWith(today));
 
-/** The app's guide renderer and photo preparation, in the person's Chrome on the GPU. */
+/** The app's guide renderer, background removal and photo preparation, in Chrome on the GPU. */
 async function inBrowser(
   guideInput: Record<string, unknown>,
   photos: string[],
-): Promise<{ guides: Record<string, Buffer>; photos: Buffer[] }> {
-  const bundle = await build({
-    stdin: {
-      contents: `export { renderDirectionGuides } from './src/lib/direction-photo/guide-render';
-        export { prepareReferenceImage } from './src/lib/ai-export/client';`,
-      resolveDir: process.cwd(),
+  cutout: boolean,
+): Promise<{ guides: Record<string, Buffer>; photos: Buffer[]; cutouts: Buffer[]; removal: unknown[] }> {
+  // Served from a local page: the background removal runs in a module worker beside the bundle. The
+  // model file and the runtime the screen downloads come from this computer: their addresses are
+  // written into the bundles (intercepting the page's requests kept the worker from loading), and
+  // the worker is served as .js.
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const rewrite = (file: string, from: string, to: string) => {
+    const source = readFileSync(file, 'utf8');
+    if (!source.includes(from)) throw new Error(`${file}: ${from} 없음`);
+    return { contents: source.replace(from, to), loader: 'ts' as const };
+  };
+  const local = {
+    name: 'local-background-removal',
+    setup(plugin: {
+      onLoad: (
+        options: { filter: RegExp },
+        load: (args: { path: string }) => { contents: string; loader: 'ts' },
+      ) => void;
+    }) {
+      plugin.onLoad({ filter: /background-removal[\\/]client\.ts$/ }, ({ path: file }) =>
+        rewrite(file, "new URL('./worker.ts', import.meta.url)", "new URL('./worker.js', import.meta.url)"),
+      );
+      plugin.onLoad({ filter: /background-removal[\\/]model\.ts$/ }, ({ path: file }) => {
+        const runtimeUrl = rewrite(
+          file,
+          "'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/'",
+          `'${origin}/'`,
+        ).contents;
+        const modelUrl =
+          '`https://huggingface.co/${BACKGROUND_MODEL_ID}/resolve/${BACKGROUND_MODEL_REVISION}/onnx/';
+        if (!runtimeUrl.includes(modelUrl)) throw new Error(`${file}: 모델 주소 없음`);
+        return { contents: runtimeUrl.replace(modelUrl, '`' + origin + '/'), loader: 'ts' as const };
+      });
     },
-    bundle: true,
-    write: false,
-    platform: 'browser',
-    format: 'iife',
-    globalName: 'App',
+  };
+  const bundles = new Map<string, string>();
+  const entries: [string, Parameters<typeof build>[0]][] = [
+    [
+      '/bg/app.js',
+      {
+        stdin: {
+          contents: `export { renderDirectionGuides } from './src/lib/direction-photo/guide-render';
+            export { prepareReferenceImage } from './src/lib/ai-export/client';
+            export { BackgroundRemovalClient } from './src/lib/background-removal/client';`,
+          resolveDir: process.cwd(),
+        },
+      },
+    ],
+    ['/bg/worker.js', { entryPoints: ['src/lib/background-removal/worker.ts'] }],
+  ];
+  for (const [route, options] of entries) {
+    const result = await build({
+      ...options,
+      bundle: true,
+      write: false,
+      platform: 'browser',
+      format: 'esm',
+      logLevel: 'warning',
+      plugins: [local],
+    });
+    bundles.set(route, result.outputFiles[0].text);
+  }
+  const models = path.resolve('tmp/background-model');
+  const runtime = path.resolve('node_modules/onnxruntime-web/dist');
+  server.on('request', (req, res) => {
+    const route = new URL(req.url ?? '/', 'http://localhost').pathname;
+    if (bundles.has(route)) {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      res.end(bundles.get(route));
+      return;
+    }
+    if (route === '/') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>');
+      return;
+    }
+    const name = path.basename(route);
+    const file = path.join(name.endsWith('.onnx') ? models : runtime, name);
+    if (!existsSync(file)) {
+      if (process.env.DEBUG_BROWSER) console.log('404', route);
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': file.endsWith('.wasm')
+        ? 'application/wasm'
+        : /\.m?js$/.test(file)
+          ? 'text/javascript'
+          : 'application/octet-stream',
+      'Content-Length': statSync(file).size,
+      'Access-Control-Allow-Origin': '*',
+    });
+    createReadStream(file).pipe(res);
   });
   const browser = await chromium.launch({
     channel: 'chrome',
     headless: true,
-    args: ['--enable-webgl', '--ignore-gpu-blocklist', '--use-angle=d3d11', '--enable-gpu'],
+    args: [
+      '--enable-webgl',
+      '--ignore-gpu-blocklist',
+      '--use-angle=d3d11',
+      '--enable-gpu',
+      '--enable-unsafe-webgpu',
+    ],
   });
   try {
     const page = await browser.newPage();
-    await page.setContent('<!doctype html><body></body>');
-    await page.addScriptTag({ content: bundle.outputFiles[0].text });
+    if (process.env.DEBUG_BROWSER) {
+      page.on('console', (message) => console.log('[page]', message.type(), message.text().slice(0, 300)));
+      page.on('worker', (worker) => console.log('[worker]', worker.url()));
+      page.on('requestfailed', (request) =>
+        console.log('[failed]', request.url(), request.failure()?.errorText),
+      );
+    }
+    await page.goto(`${origin}/`);
     const made = await page.evaluate(
-      async ({ guideInput, photos }) => {
-        const app = (
-          window as unknown as {
-            App: {
-              renderDirectionGuides: (
-                input: unknown,
-                directions: string[],
-              ) => Promise<{ direction: string; blob: Blob }[]>;
-              prepareReferenceImage: (photo: Blob) => Promise<Blob>;
-            };
-          }
-        ).App;
+      async ({ guideInput, photos, cutout }) => {
+        type App = {
+          renderDirectionGuides: (
+            input: unknown,
+            directions: string[],
+          ) => Promise<{ direction: string; blob: Blob }[]>;
+          prepareReferenceImage: (photo: Blob) => Promise<Blob>;
+          BackgroundRemovalClient: new () => {
+            run: (blob: Blob, onProgress: () => void) => Promise<{ blob: Blob } & Record<string, unknown>>;
+            dispose: () => void;
+          };
+        };
+        const url = '/bg/app.js';
+        const app = (await import(url)) as App;
         const encode = async (blob: Blob) => {
           const bytes = new Uint8Array(await blob.arrayBuffer());
           let text = '';
@@ -169,23 +371,39 @@ async function inBrowser(
         const guides: Record<string, string> = {};
         for (const guide of await app.renderDirectionGuides(guideInput, ['정면', '왼쪽', '오른쪽', '뒤']))
           guides[guide.direction] = await encode(guide.blob);
-        const prepared: string[] = [];
-        for (const photo of photos) {
-          const bytes = Uint8Array.from(atob(photo), (c) => c.charCodeAt(0));
-          prepared.push(await encode(await app.prepareReferenceImage(new Blob([bytes]))));
+        const prepared: string[] = [],
+          cutouts: string[] = [],
+          removal: unknown[] = [];
+        const client = cutout ? new app.BackgroundRemovalClient() : undefined;
+        try {
+          for (const photo of photos) {
+            let blob = new Blob([Uint8Array.from(atob(photo), (c) => c.charCodeAt(0))]);
+            if (client) {
+              const result = await client.run(blob, () => {});
+              const { backend, precision, processingMs, fallbackReason } = result;
+              removal.push({ backend, precision, processingMs, fallbackReason });
+              cutouts.push(await encode(result.blob));
+              blob = result.blob;
+            }
+            prepared.push(await encode(await app.prepareReferenceImage(blob)));
+          }
+        } finally {
+          client?.dispose();
         }
-        return { guides, photos: prepared };
+        return { guides, photos: prepared, cutouts, removal };
       },
-      { guideInput, photos: photos.map((file) => readFileSync(file).toString('base64')) },
+      { guideInput, photos: photos.map((file) => readFileSync(file).toString('base64')), cutout },
     );
+    const decode = (value: string) => Buffer.from(value, 'base64');
     return {
-      guides: Object.fromEntries(
-        Object.entries(made.guides).map(([key, value]) => [key, Buffer.from(value, 'base64')]),
-      ),
-      photos: made.photos.map((value) => Buffer.from(value, 'base64')),
+      guides: Object.fromEntries(Object.entries(made.guides).map(([key, value]) => [key, decode(value)])),
+      photos: made.photos.map(decode),
+      cutouts: made.cutouts.map(decode),
+      removal: made.removal,
     };
   } finally {
     await browser.close();
+    server.close();
   }
 }
 
@@ -201,6 +419,15 @@ const spec = Object.fromEntries(
 const append: Partial<Record<DirectionPhotoView, string>> = process.env.APPEND
   ? JSON.parse(readFileSync(process.env.APPEND, 'utf8'))
   : {};
+const replacements: Partial<Record<DirectionPhotoView | '*', [string, string][]>> = process.env.REPLACE
+  ? JSON.parse(readFileSync(process.env.REPLACE, 'utf8'))
+  : {};
+// A trial's sentences in place of the app's; a `from` not found exactly once stops the run.
+const replaced = (prompt: string, view: DirectionPhotoView) =>
+  [...(replacements['*'] ?? []), ...(replacements[view] ?? [])].reduce((text, [from, to]) => {
+    if (text.split(from).length !== 2) throw new Error(`REPLACE: ${view}에서 한 번 나오지 않음: ${from}`);
+    return text.replace(from, () => to);
+  }, prompt);
 if (mode === 'app') {
   const made = await inBrowser(
     {
@@ -209,25 +436,31 @@ if (mode === 'app') {
       lid: spec.lid,
       sizeMm: spec.sizeMm,
       installation: spec.installation,
+      skirt: spec.skirt,
     },
     product.photos.map((name) => `${INPUT}/${name}`),
+    !!product.cutout,
   );
   for (const [direction, png] of Object.entries(made.guides))
     writeFileSync(`${OUT}/guide-${direction}.png`, png);
-  if (process.env.GUIDES_ONLY) {
-    console.log(`${OUT}: 가이드만 그림(호출 없음)`);
-    process.exit(0);
-  }
+  made.cutouts.forEach((png, index) => writeFileSync(`${OUT}/cutout-ref-${index + 1}.png`, png));
+  if (made.removal.length) writeFileSync(`${OUT}/removal.json`, JSON.stringify(made.removal, null, 2));
   photoFiles = made.photos.map((png, index) => {
     const file = `${OUT}/sent-ref-${index + 1}.png`;
     writeFileSync(file, png);
     return file;
   });
+  if (process.env.GUIDES_ONLY) {
+    console.log(`${OUT}: 가이드·보낼 사진만 만듦(호출 없음)`);
+    process.exit(0);
+  }
   for (const view of views) {
     const full = directionPhotoSpecSchema.parse({ ...spec, direction: view });
     sends[view] = {
       guide: made.guides[VIEW_NAMES[view]],
-      prompt: [buildDirectionPhotoPrompt(full, photoFiles.length), append[view]].filter(Boolean).join(' '),
+      prompt: [replaced(buildDirectionPhotoPrompt(full, photoFiles.length), view), append[view]]
+        .filter(Boolean)
+        .join(' '),
     };
   }
 } else {
@@ -324,7 +557,17 @@ for (const view of views) {
 writeFileSync(
   `${OUT}/variant.json`,
   JSON.stringify(
-    { product: productName, mode, label, replay: REPLAY, spec, append: process.env.APPEND, views, seeds },
+    {
+      product: productName,
+      mode,
+      label,
+      replay: REPLAY,
+      spec,
+      append: process.env.APPEND,
+      replace: process.env.REPLACE,
+      views,
+      seeds,
+    },
     null,
     2,
   ),

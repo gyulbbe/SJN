@@ -2,6 +2,49 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-18 — 양변기 방향 사진: 세부 종류별 문장·가이드, 색 선택지
+
+- 무엇: 자재별 모듈 `src/lib/direction-photo/categories/toilet.ts`를 만들었다. 다음을 앱에 넣었다([결과](toilet-direction-photo-results-20261018.md)).
+  - 비데 일체형 전용 앞 정의·방향 문장(물탱크라는 말 없음)
+  - 투피스 아래 모양(받침·치마형, 가이드만 바뀜, `toiletSkirt`)
+  - 몸통·시트 색 선택지(고를 때만 문장)
+  - 욕조·세면대는 옮기지 않았다.
+- 실제 호출(하루 무료 사용량 안, klein 4B만, 자동 재시도 없음): 2026-10-17 54회(모두 성공, 추정 약 5,790), 2026-10-18 45회(44회 성공, call 99 429 하루 한도, 추정 약 5,068). 장부와 시트는 git 제외 경로 `test-results/toilet-direction/`에 있다.
+- 같음 확인(AI 호출 없음):
+  - HEAD의 `prompt.ts`·`contract.ts`와 나란히 비교했다. 받는 spec 378개 조합의 프롬프트가 같았고, 다른 것은 비데 일체형 48개뿐이다. 거절 여부도 모두 같았다.
+  - 앱의 비데 일체형·색 문장은 시험에 보낸 문장과 같다.
+  - 기본 가이드 PNG(t1·t3·t5)는 전날 것과 바이트 단위로 같고, 치마형 가이드는 v2 시험의 가이드와 같다.
+- 단위: `direction-photo-prompt`(36: 욕조·세면대·투피스·일체형 기본 프롬프트 전문 고정, 비데 일체형 문장, 색 문장, 거절 조합 8개 추가)·`direction-photo-plan`·`direction-photo-server`·`direction-guide` 90개 통과.
+- 실제 WebGL 가이드 검사: `node tests/run-browser-test.mjs tests/direction-guide-browser.ts` 통과(44장). 치마형 투피스가 받침보다 아래(70–85% 높이)에서 넓고 위(10–40%)는 같은지 확인한다.
+- e2e: `e2e/direction-photo-ai.spec.ts` 3개 통과(모의 모델). 확인한 것은 다음과 같다.
+  - 아래 모양 선택지는 투피스에만 보이고, 고르면 가이드가 바뀐다.
+  - 색 선택지가 보인다.
+  - 요청 spec에 `bodyColor`·`seatColor`가 실리고 `skirt`는 없다.
+- 실제 화면 확인(2026-10-19): 로컬 개발 서버 + 확인 동안만 붙인 원격 AI 바인딩, 로컬 DB에만 만든 시험 계정으로 진행했다. t1·t6·t2 × 정면·왼쪽·오른쪽 × 후보 2 = 18회, 모두 200이다.
+  - 비데 일체형 물탱크 없음 12/12, 파란 시트 6/6, 검정 6/6
+  - 시점 11/18(오른쪽 1/6 사선)
+  - 화면 추정(585·690·690뉴런) = 장부
+  - 칸에 넣기 성공(기준점 바닥 가운데). 자재는 저장하지 않았다.
+  - 같은 seed(1001·1002)로 4회 다시 보냈다(t6 오른쪽, t1 왼쪽 색). 1단계와 같았고, 화면 차이는 seed 때문이다.
+  - 1단계 t6 오른쪽 "시점 2/2"는 너그러운 채점이었다(실제로는 사선). 결과 문서 2절에 정정했다.
+  - 날짜별: 2026-10-19 22회(모두 성공, 추정 약 2,424, 429 없음).
+- main(한도 안내) 합친 뒤 검사(2026-10-19)
+  - 충돌: `verification.md` 맨 위 항목만 있어서 둘 다 살렸다. 폼(`AiLimitHint`)과 e2e는 자동으로 합쳐졌다.
+  - 통과: `npm run typecheck`, `npx eslint . --ignore-pattern ".claude/**"`(문제 0). 남아 있는 다른 워크트리만 뺐다.
+  - Prettier: 바꾼 코드 파일이 통과했다. `templates.ts`는 main에서부터 샤워 부분이 맞지 않았고(91줄), 같은 수 그대로다.
+  - 전체 vitest: 249개 파일 중 240개 통과, 8개 실패, 1개 건너뜀.
+    - 알려진 환경 실패: reconstruction-corpus 1, source-plane-mapping 5(기준 파일 없음), storage-server 1(D1/R2 첫 연결 5초)
+    - 부하성 시간 초과: d1-auth, d1-reconstruction-diagnostics, flux-backdrop, flux-composite, room-source-depth-clip. 단독 재실행에서 모두 통과했다.
+  - 가이드 브라우저 검사 44장 통과.
+  - e2e: `service-limit` 4개, `material-panel-layout`, `direction-photo-ai` 3개 통과.
+    - `direction-photo-ai` 첫 시험은 세 spec을 함께 돌릴 때 "방향 칸에 넣는 중"(배경 제거)이 15초를 넘겨 실패했다. 단독 재실행에서 통과했다.
+  - d1-query-budget: 이번 변경은 D1을 거치지 않는다(SQL·API·화면 호출 변화 없음).
+- `npm run typecheck`, 바꾼 파일의 eslint(문제 0)·Prettier 통과.
+  - e2e 개발 서버가 쓰다 만 `.next/dev/types/validator.ts`가 처음 typecheck를 깨뜨렸다. 그 생성 파일을 지우고 다시 돌려 통과했다.
+- 전체 vitest: 246개 파일 중 235개 통과, 10개 실패. 바뀐 코드와 관계없는 실패다.
+  - 알려진 환경 실패: reconstruction-corpus 1, source-plane-mapping 5, storage-server의 D1/R2 첫 연결 1.
+  - 동시 실행 부하로 약 5초에서 시간 초과: d1-auth, d1-storage, flux-backdrop, flux-color, flux-composite, reconstruction-partial-wall, reconstruction-tile-courses. 단독 재실행에서 모두 통과했다.
+
 ## 2026-10-18 — Cloudflare 하루 한도 화면 안내(DB·AI)
 
 - 무엇: D1 하루 한도(읽기·쓰기·용량)와 Workers AI 하루 할당이 차면 모든 화면이 다음을 알린다([결과](service-limit-notice-results-20261018.md)).
@@ -34,7 +77,7 @@
 - 단위: D1·카탈로그·관리자 8파일(d1-storage 15, admin-projects 9, admin-project-repository 5, catalog-visibility 3, catalog-auth-boundary 13, d1-catalog 23, d1-route 8, guest-public-routes 2) 통과. `d1-catalog`의 옛 `위` 사진 시험 데이터에 실제 저장이 넣는 `d1_material_assets` 행을 더했다. 전체 vitest는 246개 파일 3,569개 중 3,557개 통과, 9개 실패였다. 실패는 알려진 환경 실패 7개(reconstruction-corpus 1, source-plane-mapping 5, storage-server의 D1/R2 첫 연결 5초 초과 1)와 동시 실행 부하의 시간 초과 2개(flux-backdrop, flux-composite, 단독 재실행에서 통과)다. 새 equivalence 파일은 전체 실행 때 준비 시간 초과(10초)로 실패해 다른 D1 시험처럼 30초를 주었고 단독 실행에서 통과했다.
 - e2e(격리 D1/R2): catalog-access, catalog-selection-completion, guest-workspace, guest-promotion-recovery, material-images, d1-storage-policy, admin-management, four-directions-cover, cloud-recovery, flux-export 59개 중 58개 통과. 실패 1개(`guest-workspace` "비로그인 견적·타일…")는 시험 안의 fetch가 "bad port"로 실패한 것으로, 단독 재실행에서 통과했다(10-14 기록과 같은 증상).
 - 로컬 개발 서버(`npm run dev`, 새 로컬 D1/R2에 0001~0008, 생성한 로컬 전용 `.dev.vars`·시험 계정, 로컬 DB에서만 관리자 지정): 자재 목록·상세·수정 창 이미지, 타일 새 버전 저장, 기본 공간 프로젝트에 타일 적용·자동 저장·다시 열기, 공개 목록·공개 이미지(표시 이미지 200, 원본 404)·공개 배치, 쿠키 없는 회원 API 401 확인. 기본 공간 만들기의 개발 서버 업로드 한도 413은 문서대로 `next.config.ts`를 임시로 바꿨다가 되돌렸다.
-- 원격 0008: 17:05 KST 적용 시도가 그날 읽기 한도 초과(`code 7500`)로 목록 조회부터 실패했다. 10-18 09:00 KST 이후 적용한다.
+- 원격 0008: 17:05 KST 적용 시도가 그날 읽기 한도 초과(`code 7500`)로 목록 조회부터 실패했다. 2026-10-18 원격 적용 완료: `migrations list`에 미적용 없음, `sqlite_master`에 `d1_mutations_owner_age` 있음. (적용 직전 첫 목록 조회가 `code 7403`으로 한 번 실패했고, 다시 하니 정상이었다.)
 - typecheck·Prettier(바꾼 코드 파일) 통과. eslint는 `npx eslint . --ignore-pattern ".claude/**"`로 문제 0이다. 그냥 `npm run lint`는 `.claude/worktrees`에 남은 다른 작업의 워크트리 복사본(빌드 산출물 포함)까지 읽어 15,302개를 보고한다. 설정 문제이며 이번 변경과 무관하다.
 
 ## 2026-10-15 — AI 방향 사진: 변기 몸통·뚜껑, 일체형·비데 일체형 변기의 사진 각도, 변기 뒤 없음

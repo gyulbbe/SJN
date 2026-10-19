@@ -180,6 +180,113 @@ describe('direction photo prompt', () => {
     expect(directionPhotoSpecSchema.safeParse(onePiece()).success).toBe(true);
   });
 
+  it('keeps the bath’s, the basin’s and the toilets’ texts word for word when nothing new is said', () => {
+    // The texts before the toilet's own module (2026-10-18), byte for byte.
+    expect(buildDirectionPhotoPrompt(spec(), 1)).toBe(
+      'Image 0 is a plain grey 3D render of an oval freestanding bathtub with rounded ends. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the long side facing the room; its back is the long side placed along the wall. The view shows the long side of the tub. In this view the drain in the bottom of the tub is not visible; do not draw it. Draw no hole, drain or overflow on the outside of the tub. The real bathtub is about 1700 × 560 × 750 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Turn image 0 into a photorealistic studio product photograph of that real bathtub: pure white seamless background (#FFFFFF), soft even studio lighting, at most a very faint soft contact shadow directly under it, no props, no floor texture, no text, no watermark.',
+    );
+    expect(
+      buildDirectionPhotoPrompt(
+        spec({
+          category: 'basin',
+          form: 'wall-round',
+          direction: 'left',
+          installation: 'wall',
+          sizeMm: [500, 180, 420],
+        }),
+        1,
+      ),
+    ).toBe(
+      'Image 0 is a plain grey 3D render of a wall-hung washbasin with a round bowl. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the side a person stands at; its back mounts to the wall. The view shows the washbasin from its left side: its front points to the left of the picture and its back, the wall side, is on the right. In this view the drain hole in the bowl is not visible; do not draw it. The real washbasin is about 500 × 180 × 420 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Turn image 0 into a photorealistic studio product photograph of that real washbasin: pure white seamless background (#FFFFFF), soft even studio lighting, no cast shadow, no props, no floor texture, no text, no watermark.',
+    );
+    const twoPiece = spec({ category: 'toilet', form: 'two-piece', lid: 'closed', sizeMm: [380, 760, 700] });
+    const twoPieceText =
+      "Image 0 is a plain grey 3D render of a floor-standing toilet with its lid closed. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the bowl end, where a seated person's legs go; the tank or rear housing is its back. The view shows the toilet from the front: the bowl faces the camera and the tank is behind it. In this view the back of the tank, the waste pipe and the water in the bowl are not visible; do not draw them. The real toilet is about 380 × 760 × 700 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Turn image 0 into a photorealistic studio product photograph of that real toilet: pure white seamless background (#FFFFFF), soft even studio lighting, at most a very faint soft contact shadow directly under it, no props, no floor texture, no text, no watermark.";
+    expect(buildDirectionPhotoPrompt(twoPiece, 1)).toBe(twoPieceText);
+    // A skirted two-piece changes the guide only (the 2026-10-17 trial): the same text.
+    expect(buildDirectionPhotoPrompt({ ...twoPiece, skirt: 'skirted' }, 1)).toBe(twoPieceText);
+    expect(
+      buildDirectionPhotoPrompt(
+        onePiece({
+          lid: 'closed',
+          direction: 'right',
+          sizeMm: [380, 700, 700],
+          photoAngles: ['front-right'],
+        }),
+        1,
+      ),
+    ).toBe(
+      "Image 0 is a plain grey 3D render of a one-piece floor-standing toilet with its lid closed. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the bowl end, where a seated person's legs go; the tank or rear housing is its back. The view shows the toilet from its right side: the bowl points to the right of the picture and the tank is on the left. In this view the waste pipe and the water in the bowl are not visible; do not draw them. The real toilet is about 380 × 700 × 700 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Image 1 was taken from the front right of the product, from above: that is not the view to make. Turn the product to the view of image 0 and do not copy the angle, the perspective or the framing of image 1. Turn image 0 into a photorealistic studio product photograph of that real toilet: pure white seamless background (#FFFFFF), soft even studio lighting, at most a very faint soft contact shadow directly under it, no props, no floor texture, no text, no watermark.",
+    );
+  });
+
+  it('speaks of a tankless toilet’s seat unit, never of a tank (the 2026-10-18 trial’s words)', () => {
+    const tankless = (direction: DirectionPhotoSpec['direction']) =>
+      buildDirectionPhotoPrompt(
+        spec({
+          category: 'toilet',
+          form: 'tankless',
+          lid: 'closed',
+          direction,
+          sizeMm: [400, 500, 680],
+          photoAngles: ['front-right'],
+        }),
+        1,
+      );
+    for (const direction of ['front', 'left', 'right'] as const) {
+      const text = tankless(direction);
+      expect(text).toContain(
+        "Its front is the bowl end, where a seated person's legs go; the seat unit at the back is its back. It has no water tank.",
+      );
+      expect(text).not.toMatch(/the tank\b/);
+    }
+    expect(tankless('front')).toContain(
+      'The view shows the toilet from the front: the bowl faces the camera and the low seat unit is behind it.',
+    );
+    expect(tankless('left')).toContain(
+      'the bowl points to the left of the picture and the seat unit is on the right.',
+    );
+    expect(tankless('right')).toContain(
+      'the bowl points to the right of the picture and the seat unit is on the left.',
+    );
+  });
+
+  it('says the colours the person picked for a toilet, after the photos’ role, and none unsaid', () => {
+    const toilet = (edit: Partial<DirectionPhotoSpec>) =>
+      buildDirectionPhotoPrompt(onePiece({ lid: 'closed', photoAngles: ['front-right'], ...edit }), 1);
+    const colour = (edit: Partial<DirectionPhotoSpec>) =>
+      toilet(edit).match(
+        /never for the shape, the camera angle or the position\. (.*?) Image 1 was taken/,
+      )?.[1];
+    expect(colour({ bodyColor: 'black', seatColor: 'black' })).toBe(
+      'The body, the seat and the lid are black.',
+    );
+    expect(colour({ bodyColor: 'white', seatColor: 'blue' })).toBe(
+      'The body is white; the seat and the lid are blue.',
+    );
+    expect(colour({ bodyColor: 'ivory' })).toBe('The body is ivory.');
+    expect(colour({ seatColor: 'pink' })).toBe('The seat and the lid are pink.');
+    expect(colour({ lid: 'seat', bodyColor: 'grey', seatColor: 'grey' })).toBe(
+      'The body and the seat are grey.',
+    );
+    expect(colour({ lid: 'seat', bodyColor: 'white', seatColor: 'black' })).toBe(
+      'The body is white; the seat is black.',
+    );
+    expect(colour({ lid: 'seat', seatColor: 'blue' })).toBe('The seat is blue.');
+    expect(
+      directionPhotoSpecSchema.safeParse(onePiece({ bodyColor: 'ivory', seatColor: 'pink' })).success,
+    ).toBe(true);
+    expect(
+      directionPhotoSpecSchema.safeParse(
+        spec({ category: 'toilet', form: 'two-piece', lid: 'open', skirt: 'skirted', bodyColor: 'black' }),
+      ).success,
+    ).toBe(true);
+    // Nothing said: no colour sentence at all.
+    expect(toilet({})).toContain(
+      'never for the shape, the camera angle or the position. Image 1 was taken from the front right',
+    );
+  });
+
   it('gives the same text for the same spec, and none of it comes from the person', () => {
     expect(buildDirectionPhotoPrompt(spec({ direction: 'left' }), 2)).toBe(
       buildDirectionPhotoPrompt(spec({ direction: 'left' }), 2),
@@ -213,6 +320,17 @@ describe('direction photo prompt', () => {
       'a wall-hung toilet',
       { ...spec(), category: 'toilet', form: 'two-piece', lid: 'closed', installation: 'wall' },
     ],
+    ['a skirt on a one-piece toilet', { ...onePiece(), skirt: 'skirted' }],
+    ['a skirt on a tankless toilet', { ...onePiece(), form: 'tankless', lid: 'closed', skirt: 'exposed' }],
+    ['a skirt on a bath', { ...spec(), skirt: 'skirted' }],
+    ['a colour on a bath', { ...spec(), bodyColor: 'white' }],
+    [
+      'a seat colour on a basin',
+      { ...spec(), category: 'basin', form: 'wall-round', installation: 'wall', seatColor: 'blue' },
+    ],
+    ['a free colour', { ...onePiece(), bodyColor: 'gold' }],
+    ['a body colour the seats have only', { ...onePiece(), bodyColor: 'pink' }],
+    ['a seat colour said as the body’s', { ...onePiece(), seatColor: 'body' }],
     ['a fractional size', { ...spec(), sizeMm: [1700.5, 560, 750] }],
     ['a size below 10 mm', { ...spec(), sizeMm: [1700, 5, 750] }],
     ['a missing depth', { ...spec(), sizeMm: [1700, 560] }],

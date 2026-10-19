@@ -2,11 +2,17 @@ import { productFrontSentence, productNoun } from '../product-photo-prompt';
 import {
   standsOnFloor,
   type DirectionPhotoForm,
-  type DirectionPhotoLid,
   type DirectionPhotoPhotoAngle,
   type DirectionPhotoSpec,
   type DirectionPhotoView,
 } from './contract';
+import {
+  toiletColorSentence,
+  toiletFrontSentence,
+  toiletHiddenParts,
+  toiletInImageZero,
+  toiletViewSentence,
+} from './categories/toilet';
 
 /**
  * "AI로 방향 사진 만들기": the material form makes the 정면·왼쪽·오른쪽·뒤 photos of a product with
@@ -17,7 +23,7 @@ import {
  * end); a guide in image 0 fixed the angle in 8 of 8 answers (docs/direction-photo-results-20261013.md).
  *
  * What travels is a few enums and three numbers (contract.ts); the server writes every
- * sentence here. Same spec, same text.
+ * sentence here, a toilet's from its own module (categories/toilet.ts). Same spec, same text.
  */
 
 /** The product as image 0 shows it, with its article (a toilet's from its body and lid). */
@@ -30,19 +36,10 @@ const FORM_NOUNS: Record<Exclude<DirectionPhotoForm, 'two-piece' | 'one-piece' |
   'pedestal-rectangular': 'a pedestal washbasin with a rectangular bowl',
 };
 
-const LID_WORDS: Record<DirectionPhotoLid, string> = {
-  closed: 'its lid closed',
-  open: 'its lid open',
-  seat: 'a seat and no lid',
-};
-/** The words the 2026-10-15 trial sent for each toilet guide. */
 function productInImageZero(spec: DirectionPhotoSpec): string {
-  const { form, lid = 'closed' } = spec;
-  if (form === 'tankless')
-    return `a tankless floor-standing toilet with its seat unit at the back and ${LID_WORDS[lid]}`;
-  if (form === 'one-piece') return `a one-piece floor-standing toilet with ${LID_WORDS[lid]}`;
-  if (form === 'two-piece') return `a floor-standing toilet with ${LID_WORDS[lid]}`;
-  return FORM_NOUNS[form];
+  return spec.category === 'toilet'
+    ? toiletInImageZero(spec)
+    : FORM_NOUNS[spec.form as keyof typeof FORM_NOUNS];
 }
 
 /** Where a photo was taken from, in the camera's words. */
@@ -103,14 +100,7 @@ function viewSentence(spec: DirectionPhotoSpec): string {
       ? 'The view shows the narrow rounded end of the tub; the long sides are not visible.'
       : 'The view shows the narrow end of the tub; the long sides are not visible.';
   }
-  if (category === 'toilet')
-    return {
-      front: 'The view shows the toilet from the front: the bowl faces the camera and the tank is behind it.',
-      left: 'The view shows the toilet from its left side: the bowl points to the left of the picture and the tank is on the right.',
-      right:
-        'The view shows the toilet from its right side: the bowl points to the right of the picture and the tank is on the left.',
-      back: 'The view shows the back of the toilet: the tank faces the camera and the bowl is behind it.',
-    }[direction];
+  if (category === 'toilet') return toiletViewSentence(spec);
   return {
     front: 'The view shows the washbasin from the front, where a person stands.',
     left: 'The view shows the washbasin from its left side: its front points to the left of the picture and its back, the wall side, is on the right.',
@@ -128,18 +118,7 @@ function viewSentence(spec: DirectionPhotoSpec): string {
 export function hiddenParts(spec: DirectionPhotoSpec): string[] {
   const { category, direction, form } = spec;
   if (category === 'bath') return ['the drain in the bottom of the tub'];
-  // A toilet's water sits low in the bowl: from 10° above the rim hides it, lid open or closed.
-  if (category === 'toilet')
-    return [
-      ...{
-        // A tankless toilet has no tank to hide behind its seat unit.
-        front: form === 'tankless' ? ['the waste pipe'] : ['the back of the tank', 'the waste pipe'],
-        left: ['the waste pipe'],
-        right: ['the waste pipe'],
-        back: ['the front of the bowl'],
-      }[direction],
-      'the water in the bowl',
-    ];
+  if (category === 'toilet') return toiletHiddenParts(spec);
   const wall = form.startsWith('wall-');
   return {
     front: ['the drain hole in the bowl', wall ? 'the waste pipe and the wall fixings' : 'the waste pipe'],
@@ -176,12 +155,14 @@ export function buildDirectionPhotoPrompt(spec: DirectionPhotoSpec, photos: numb
       : `Images 1–${photos} are photos of the real product taken from other angles: use them only for the material, colour and small details, never for the shape, the camera angle or the position.`;
   return [
     `Image 0 is a plain grey 3D render of ${productInImageZero(spec)}. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0.`,
-    productFrontSentence(spec.category),
+    spec.category === 'toilet' ? toiletFrontSentence(spec) : productFrontSentence(spec.category),
     viewSentence(spec),
     hiddenSentence(hiddenParts(spec)),
     spec.category === 'bath' ? BATH_OUTSIDE : '',
     `The real ${noun} is about ${w} × ${h} × ${d} mm (width × height × depth).`,
     photosSentence,
+    // The colours a person said for a toilet, after the photos' role (the 2026-10-18 trial's place).
+    spec.category === 'toilet' ? toiletColorSentence(spec) : '',
     spec.photoAngles ? photoAngleSentence(spec.photoAngles, spec.direction) : '',
     `Turn image 0 into a photorealistic studio product photograph of that real ${noun}: pure white seamless background (#FFFFFF), soft even studio lighting, ${shadow}, no props, no floor texture, no text, no watermark.`,
   ]

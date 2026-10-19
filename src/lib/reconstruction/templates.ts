@@ -81,6 +81,7 @@ export function createTemplateModel({
   curtainHardware,
   bathShape,
   toiletBody,
+  toiletSkirt,
 }: Pick<TemplateOptions, 'kind' | 'color' | 'widthMm' | 'heightMm' | 'depthMm' | 'version'> &
   ReconstructionStandardOptions & {
     face?: RoomFace;
@@ -96,6 +97,12 @@ export function createTemplateModel({
      * material form's direction-photo guides (never stored).
      */
     toiletBody?: 'one-piece' | 'tankless';
+    /**
+     * A two-piece toilet's lower part. Absent: the foot and the trap in the open, as before.
+     * 'skirted': the bowl hidden in a smooth skirt down to the floor (as the one-piece body). Drawn
+     * only for the material form's direction-photo guides (never stored).
+     */
+    toiletSkirt?: 'skirted';
   }): Group {
   if (kind === 'showerCurtain') {
     if (version !== 2) throw new Error('샤워 커튼은 표준 모형 v2에서 지원해요.');
@@ -275,7 +282,16 @@ export function createTemplateModel({
     }
   } else if (kind === 'toilet') {
     // Foot, tapered siphon support, bowl, seat, cistern and flush handle are independent silhouettes.
-    oval(0, h * 0.045, d * 0.1, w * 0.67, h * 0.09, d * 0.59);
+    if (toiletSkirt === 'skirted') {
+      // A guide's skirted two-piece: the bowl in a smooth skirt to the floor (as the one-piece body).
+      const skirt = part(
+        new Mesh(new CylinderGeometry(0.5, 0.4, 1, 64, 1, true), ceramic),
+        0,
+        h * 0.285,
+        d * 0.06,
+      );
+      skirt.scale.set(w * 0.96, h * 0.57, d * 0.8);
+    } else oval(0, h * 0.045, d * 0.1, w * 0.67, h * 0.09, d * 0.59);
     const foot = part(
       new Mesh(
         new LatheGeometry(

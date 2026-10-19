@@ -1,6 +1,14 @@
 import { z } from 'zod';
 import type { ProductDirection } from '../product-direction';
 import type { MaterialInput } from '../types';
+import {
+  TOILET_BODY_COLORS,
+  TOILET_FORMS,
+  TOILET_LIDS,
+  TOILET_SEAT_COLORS,
+  TOILET_SKIRTS,
+  toiletIssues,
+} from './categories/toilet';
 
 /**
  * What a direction photo is made of, shared by the guide (guide-render.ts), the prompt (prompt.ts),
@@ -21,7 +29,7 @@ export const isDirectionPhotoCategory = (value: unknown): value is DirectionPhot
  */
 export const DIRECTION_PHOTO_FORMS = {
   bath: ['oval-freestanding', 'rectangular'],
-  toilet: ['two-piece', 'one-piece', 'tankless'],
+  toilet: TOILET_FORMS,
   basin: ['wall-round', 'wall-rectangular', 'pedestal-round', 'pedestal-rectangular'],
 } as const satisfies Record<DirectionPhotoCategory, readonly string[]>;
 export type DirectionPhotoForm = (typeof DIRECTION_PHOTO_FORMS)[DirectionPhotoCategory][number];
@@ -30,12 +38,10 @@ const FORM_VALUES = Object.values(DIRECTION_PHOTO_FORMS).flat() as [
   ...DirectionPhotoForm[],
 ];
 
-/** A toilet's lid: closed, open, or a seat alone (no lid). */
-export const DIRECTION_PHOTO_LIDS = ['closed', 'open', 'seat'] as const;
+/** A toilet's lid and the lids each body can show (categories/toilet.ts). */
+export const DIRECTION_PHOTO_LIDS = TOILET_LIDS;
 export type DirectionPhotoLid = (typeof DIRECTION_PHOTO_LIDS)[number];
-/** The lids a toilet body can show: a tankless toilet's open lid would stand above its seat unit. */
-export const toiletLids = (form: DirectionPhotoForm): readonly DirectionPhotoLid[] =>
-  form === 'tankless' ? ['closed', 'seat'] : DIRECTION_PHOTO_LIDS;
+export { toiletLids } from './categories/toilet';
 
 /**
  * Where each photo was taken from, said as the slots name a photo: the way the product's front points
@@ -92,7 +98,9 @@ const mm = z.number().int().min(DIRECTION_PHOTO_MIN_MM).max(DIRECTION_PHOTO_MAX_
 /**
  * The request's facts: the kind and its shape (a toilet's lid too), the direction, how it is
  * installed, its size (width × height × depth, mm) and, for a one-piece or tankless toilet only,
- * where each photo was taken from in the photos' order. Nothing else, and no free text.
+ * where each photo was taken from in the photos' order. A toilet's finer choices
+ * (categories/toilet.ts): a two-piece's skirt, and the body's and the seat's colours when said.
+ * Nothing else, and no free text.
  */
 export const directionPhotoSpecSchema = z
   .strictObject({
@@ -103,6 +111,9 @@ export const directionPhotoSpecSchema = z
     installation: z.enum(INSTALLATIONS),
     sizeMm: z.tuple([mm, mm, mm]),
     photoAngles: z.array(z.enum(DIRECTION_PHOTO_PHOTO_ANGLES)).min(1).max(3).optional(),
+    skirt: z.enum(TOILET_SKIRTS).optional(),
+    bodyColor: z.enum(TOILET_BODY_COLORS).optional(),
+    seatColor: z.enum(TOILET_SEAT_COLORS).optional(),
   })
   .superRefine((spec, context) => {
     if (!(DIRECTION_PHOTO_FORMS[spec.category] as readonly string[]).includes(spec.form))
@@ -115,24 +126,17 @@ export const directionPhotoSpecSchema = z
         message: '찍은 각도는 일체형·비데 일체형 변기에만 보내요.',
         path: ['photoAngles'],
       });
-    if (spec.category === 'toilet' && spec.lid && !toiletLids(spec.form).includes(spec.lid))
-      context.addIssue({ code: 'custom', message: '이 몸통에 없는 뚜껑이에요.', path: ['lid'] });
-    // A toilet stands against the wall, and 17 of the trial's 19 backs came out as its front.
-    if (spec.category === 'toilet' && spec.direction === 'back')
-      context.addIssue({ code: 'custom', message: '변기는 뒤 사진을 만들지 않아요.', path: ['direction'] });
+    if (spec.category !== 'toilet' && (spec.skirt || spec.bodyColor || spec.seatColor))
+      context.addIssue({ code: 'custom', message: '아래 모양과 색은 변기에만 정해요.', path: ['category'] });
+    if (spec.category === 'toilet')
+      for (const issue of toiletIssues({ ...spec, wall: !standsOnFloor(spec.installation) }))
+        context.addIssue({ code: 'custom', message: issue.message, path: [issue.path] });
     // A wall product's back is against the wall: no room view shows it, so none is made.
     if (spec.direction === 'back' && !standsOnFloor(spec.installation))
       context.addIssue({
         code: 'custom',
         message: '벽에 거는 제품의 뒤 사진은 만들지 않아요.',
         path: ['direction'],
-      });
-    // The toilet model stands on a foot: a wall-hung toilet has no guide yet.
-    if (spec.category === 'toilet' && !standsOnFloor(spec.installation))
-      context.addIssue({
-        code: 'custom',
-        message: '벽걸이 변기는 아직 만들 수 없어요.',
-        path: ['installation'],
       });
   });
 export type DirectionPhotoSpec = z.infer<typeof directionPhotoSpecSchema>;

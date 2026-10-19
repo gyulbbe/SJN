@@ -27,6 +27,15 @@ import {
   type DirectionPhotoSpec,
 } from '@/lib/direction-photo/contract';
 import type { DirectionGuide } from '@/lib/direction-photo/guide-render';
+import {
+  TOILET_BODY_COLORS,
+  TOILET_LABELS,
+  TOILET_SEAT_COLORS,
+  TOILET_SKIRTS,
+  type ToiletBodyColor,
+  type ToiletSeatColor,
+  type ToiletSkirt,
+} from '@/lib/direction-photo/categories/toilet';
 import { mirrorPng, readAlpha, requestDirectionPhoto } from '@/lib/direction-photo/client';
 import {
   anchorFromAlpha,
@@ -47,19 +56,13 @@ const MAX_REFS = 3;
 const FORM_LABELS: Record<DirectionPhotoForm, string> = {
   'oval-freestanding': '타원형 독립 욕조',
   rectangular: '사각 욕조(벽에 붙이는)',
-  'two-piece': '투피스(물탱크가 따로 올라감)',
-  'one-piece': '일체형(물탱크와 몸통이 한 덩어리)',
-  tankless: '비데 일체형(물탱크 없음)',
+  ...TOILET_LABELS.form,
   'wall-round': '벽걸이 · 둥근 그릇',
   'wall-rectangular': '벽걸이 · 사각 그릇',
   'pedestal-round': '받침대 · 둥근 그릇',
   'pedestal-rectangular': '받침대 · 사각 그릇',
 };
-const LID_LABELS: Record<DirectionPhotoLid, string> = {
-  closed: '뚜껑 닫힘',
-  open: '뚜껑 열림',
-  seat: '시트만(뚜껑 없음)',
-};
+const LID_LABELS: Record<DirectionPhotoLid, string> = TOILET_LABELS.lid;
 /** Said as the slots name a photo: the way the product's front points in it. */
 const PHOTO_ANGLE_LABELS: Record<DirectionPhotoPhotoAngle, string> = {
   unknown: '찍은 각도 모름',
@@ -123,6 +126,11 @@ export function DirectionPhotoGenerator({
   const [chosen, setChosen] = useState<DirectionPhotoForm>();
   /** A toilet's lid as picked (closed until then, and when the body has no such lid). */
   const [chosenLid, setChosenLid] = useState<DirectionPhotoLid>('closed');
+  /** A two-piece toilet's lower part as picked (the foot in the open until then). */
+  const [chosenSkirt, setChosenSkirt] = useState<ToiletSkirt>('exposed');
+  /** A toilet's colours as said: none ('') is as the photos show; the seat may follow the body. */
+  const [chosenBody, setChosenBody] = useState<ToiletBodyColor | ''>('');
+  const [chosenSeat, setChosenSeat] = useState<ToiletSeatColor | 'body' | ''>('');
   const [symmetric, setSymmetric] = useState(true);
   const [useCover, setUseCover] = useState(!hasCover);
   const [refs, setRefs] = useState<Reference[]>([]);
@@ -155,12 +163,29 @@ export function DirectionPhotoGenerator({
   const sizeText = `가로 ${widthMm} × 높이 ${heightMm} × 깊이 ${depthMm}mm`;
   const lid: DirectionPhotoLid | undefined =
     kind === 'toilet' ? (toiletLids(shape).includes(chosenLid) ? chosenLid : 'closed') : undefined;
+  // A toilet's finer choices (categories/toilet.ts), sent only when said: none, the same as before.
+  const skirt =
+    kind === 'toilet' && shape === 'two-piece' && chosenSkirt === 'skirted' ? chosenSkirt : undefined;
+  const bodyColor = kind === 'toilet' ? chosenBody || undefined : undefined;
+  const seatColor =
+    kind !== 'toilet' ? undefined : chosenSeat === 'body' ? bodyColor : chosenSeat || undefined;
   // The photos' angles, asked and sent for a toilet shaped like the product only (contract.ts).
   const anglesTold = !!kind && photoAngleTold(kind, shape);
   const wallToilet = kind === 'toilet' && !standsOnFloor(installation);
   const plan = planDirections({ category: kind, installation, symmetric });
   const ready = refs.filter((ref) => ref.status === 'ready' && ref.onWhite);
-  const inputs = JSON.stringify([kind, shape, lid, widthMm, heightMm, depthMm, installation]);
+  const inputs = JSON.stringify([
+    kind,
+    shape,
+    lid,
+    skirt,
+    bodyColor,
+    seatColor,
+    widthMm,
+    heightMm,
+    depthMm,
+    installation,
+  ]);
 
   const keep = (blob: Blob) => {
     const url = URL.createObjectURL(blob);
@@ -214,7 +239,7 @@ export function DirectionPhotoGenerator({
         try {
           const { renderDirectionGuides } = await import('@/lib/direction-photo/guide-render');
           const made = await renderDirectionGuides(
-            { category: kind, form: shape, lid, sizeMm: [widthMm, heightMm, depthMm], installation },
+            { category: kind, form: shape, lid, skirt, sizeMm: [widthMm, heightMm, depthMm], installation },
             PRODUCT_DIRECTIONS,
           );
           if (!current) return;
@@ -234,7 +259,7 @@ export function DirectionPhotoGenerator({
       current = false;
       clearTimeout(timer);
     };
-  }, [kind, shape, lid, widthMm, heightMm, depthMm, installation, sized, wallToilet]);
+  }, [kind, shape, lid, skirt, widthMm, heightMm, depthMm, installation, sized, wallToilet]);
 
   const addRefs = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -314,6 +339,9 @@ export function DirectionPhotoGenerator({
             installation,
             sizeMm,
             ...(photoAngles && { photoAngles }),
+            ...(skirt && { skirt }),
+            ...(bodyColor && { bodyColor }),
+            ...(seatColor && { seatColor }),
           };
           return requestDirectionPhoto({
             guide: guideOf(job.direction)!.blob,
@@ -516,6 +544,12 @@ export function DirectionPhotoGenerator({
           첫 참고 사진을 대표 이미지로 쓰기
         </label>
       )}
+      {kind === 'toilet' && (
+        <p className={styles.note}>
+          흰색이 아닌 변기(검정 몸통, 색 있는 시트 등)는 색을 골라 주세요. 사진만으로는 흰색으로 바뀌어 나오기
+          쉬워요. 고르면 그 색을 AI에 알려요(사진대로면 알리지 않아요).
+        </p>
+      )}
       {refs.length > 0 && anglesTold && (
         <p className={styles.note}>
           찍은 각도는 사진에서 제품의 앞이 향하는 쪽이에요(방향 칸과 같은 이름). 이 몸통은 가이드가 제품과
@@ -552,6 +586,66 @@ export function DirectionPhotoGenerator({
               {toiletLids(shape).map((value) => (
                 <option key={value} value={value}>
                   {LID_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {kind === 'toilet' && shape === 'two-piece' && (
+          <label className="field">
+            아래 모양
+            <select
+              className="input"
+              aria-label="변기 아래 모양"
+              title="물탱크 아래 몸통이 바닥까지 매끈하게 덮였으면 치마형이에요"
+              value={chosenSkirt}
+              disabled={!!running}
+              onChange={(event) => setChosenSkirt(event.target.value as ToiletSkirt)}
+            >
+              {TOILET_SKIRTS.map((value) => (
+                <option key={value} value={value}>
+                  {TOILET_LABELS.skirt[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {kind === 'toilet' && (
+          <label className="field">
+            몸통 색
+            <select
+              className="input"
+              aria-label="변기 몸통 색"
+              value={chosenBody}
+              disabled={!!running}
+              onChange={(event) => setChosenBody(event.target.value as ToiletBodyColor | '')}
+            >
+              <option value="">사진대로</option>
+              {TOILET_BODY_COLORS.map((value) => (
+                <option key={value} value={value}>
+                  {TOILET_LABELS.color[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {kind === 'toilet' && (
+          <label className="field">
+            {lid === 'seat' ? '시트 색' : '시트·뚜껑 색'}
+            <select
+              className="input"
+              aria-label="변기 시트 색"
+              value={chosenSeat}
+              disabled={!!running}
+              onChange={(event) => setChosenSeat(event.target.value as ToiletSeatColor | 'body' | '')}
+            >
+              <option value="">사진대로</option>
+              <option value="body" disabled={!chosenBody}>
+                몸통과 같음
+              </option>
+              {TOILET_SEAT_COLORS.filter((value) => value !== 'ivory').map((value) => (
+                <option key={value} value={value}>
+                  {TOILET_LABELS.color[value]}
                 </option>
               ))}
             </select>
@@ -640,7 +734,7 @@ export function DirectionPhotoGenerator({
       )}
       {madeAny && madeWith !== inputs && (
         <p role="status" className={styles.promptNotice}>
-          모양·크기·설치 방식이 바뀌었어요. 지금 후보는 이전 가이드로 만든 것이에요.
+          모양·색·크기·설치 방식이 바뀌었어요. 지금 후보는 이전 설정으로 만든 것이에요.
         </p>
       )}
       {plan.made.map((direction) =>

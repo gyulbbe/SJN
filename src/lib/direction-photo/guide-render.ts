@@ -31,12 +31,15 @@ import {
   type DirectionPhotoForm,
   type DirectionPhotoLid,
 } from './contract';
+import { toiletGuideOptions, type ToiletSkirt } from './categories/toilet';
 
 export type GuideInput = {
   category: DirectionPhotoCategory;
   form: DirectionPhotoForm;
   /** A toilet's lid (closed when not said). */
   lid?: DirectionPhotoLid;
+  /** A two-piece toilet's lower part (exposed when not said). */
+  skirt?: ToiletSkirt;
   /** Width × height × depth (mm). */
   sizeMm: [number, number, number];
   installation: MaterialInput['installation'];
@@ -44,6 +47,7 @@ export type GuideInput = {
 type GuideModelOptions = ReconstructionStandardOptions & {
   bathShape?: 'oval';
   toiletBody?: 'one-piece' | 'tankless';
+  toiletSkirt?: 'skirted';
 };
 export type DirectionGuide = {
   direction: ProductDirection;
@@ -55,8 +59,12 @@ export type DirectionGuide = {
   share: number;
 };
 
-/** The standard model's options that make each shape (a toilet: its body, and its lid or none). */
-function modelOptions(form: DirectionPhotoForm, lid: DirectionPhotoLid = 'closed'): GuideModelOptions {
+/** The standard model's options that make each shape (a toilet: its body, lid or none, and skirt). */
+function modelOptions(
+  form: DirectionPhotoForm,
+  lid: DirectionPhotoLid = 'closed',
+  skirt?: ToiletSkirt,
+): GuideModelOptions {
   switch (form) {
     case 'oval-freestanding':
       return { bathShape: 'oval' };
@@ -65,10 +73,7 @@ function modelOptions(form: DirectionPhotoForm, lid: DirectionPhotoLid = 'closed
     case 'two-piece':
     case 'one-piece':
     case 'tankless':
-      return {
-        ...(form !== 'two-piece' && { toiletBody: form }),
-        ...(lid !== 'seat' && { toiletLidState: lid }),
-      };
+      return toiletGuideOptions(form, lid, skirt);
     default: {
       const [variant, shape] = form.split('-') as ['wall' | 'pedestal', 'round' | 'rectangular'];
       return { basinVariant: variant, basinShape: shape, bowlCount: 1 };
@@ -160,7 +165,7 @@ export async function renderDirectionGuides(
     depthMm,
     version: 2,
     face: standsOnFloor(input.installation) ? 'floor' : 'back',
-    ...modelOptions(input.form, input.lid),
+    ...modelOptions(input.form, input.lid, input.skirt),
   });
   matteGrey(model);
   const scene = new Scene();
