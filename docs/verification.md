@@ -2,6 +2,38 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-18 — 양변기 방향 사진: 세부 종류별 문장·가이드, 색 선택지
+
+- 무엇: 자재별 모듈 `src/lib/direction-photo/categories/toilet.ts`를 만들었다. 다음을 앱에 넣었다([결과](toilet-direction-photo-results-20261018.md)).
+  - 비데 일체형 전용 앞 정의·방향 문장(물탱크라는 말 없음)
+  - 투피스 아래 모양(받침·치마형, 가이드만 바뀜, `toiletSkirt`)
+  - 몸통·시트 색 선택지(고를 때만 문장)
+  - 욕조·세면대는 옮기지 않았다.
+- 실제 호출(하루 무료 사용량 안, klein 4B만, 자동 재시도 없음): 2026-10-17 54회(모두 성공, 추정 약 5,790), 2026-10-18 45회(44회 성공, call 99 429 하루 한도, 추정 약 5,068). 장부와 시트는 git 제외 경로 `test-results/toilet-direction/`에 있다.
+- 같음 확인(AI 호출 없음):
+  - HEAD의 `prompt.ts`·`contract.ts`와 나란히 비교했다. 받는 spec 378개 조합의 프롬프트가 같았고, 다른 것은 비데 일체형 48개뿐이다. 거절 여부도 모두 같았다.
+  - 앱의 비데 일체형·색 문장은 시험에 보낸 문장과 같다.
+  - 기본 가이드 PNG(t1·t3·t5)는 전날 것과 바이트 단위로 같고, 치마형 가이드는 v2 시험의 가이드와 같다.
+- 단위: `direction-photo-prompt`(36: 욕조·세면대·투피스·일체형 기본 프롬프트 전문 고정, 비데 일체형 문장, 색 문장, 거절 조합 8개 추가)·`direction-photo-plan`·`direction-photo-server`·`direction-guide` 90개 통과.
+- 실제 WebGL 가이드 검사: `node tests/run-browser-test.mjs tests/direction-guide-browser.ts` 통과(44장). 치마형 투피스가 받침보다 아래(70–85% 높이)에서 넓고 위(10–40%)는 같은지 확인한다.
+- e2e: `e2e/direction-photo-ai.spec.ts` 3개 통과(모의 모델). 확인한 것은 다음과 같다.
+  - 아래 모양 선택지는 투피스에만 보이고, 고르면 가이드가 바뀐다.
+  - 색 선택지가 보인다.
+  - 요청 spec에 `bodyColor`·`seatColor`가 실리고 `skirt`는 없다.
+- 실제 화면 확인(2026-10-19): 로컬 개발 서버 + 확인 동안만 붙인 원격 AI 바인딩, 로컬 DB에만 만든 시험 계정으로 진행했다. t1·t6·t2 × 정면·왼쪽·오른쪽 × 후보 2 = 18회, 모두 200이다.
+  - 비데 일체형 물탱크 없음 12/12, 파란 시트 6/6, 검정 6/6
+  - 시점 11/18(오른쪽 1/6 사선)
+  - 화면 추정(585·690·690뉴런) = 장부
+  - 칸에 넣기 성공(기준점 바닥 가운데). 자재는 저장하지 않았다.
+  - 같은 seed(1001·1002)로 4회 다시 보냈다(t6 오른쪽, t1 왼쪽 색). 1단계와 같았고, 화면 차이는 seed 때문이다.
+  - 1단계 t6 오른쪽 "시점 2/2"는 너그러운 채점이었다(실제로는 사선). 결과 문서 2절에 정정했다.
+  - 날짜별: 2026-10-19 22회(모두 성공, 추정 약 2,424, 429 없음).
+- `npm run typecheck`, 바꾼 파일의 eslint(문제 0)·Prettier 통과.
+  - e2e 개발 서버가 쓰다 만 `.next/dev/types/validator.ts`가 처음 typecheck를 깨뜨렸다. 그 생성 파일을 지우고 다시 돌려 통과했다.
+- 전체 vitest: 246개 파일 중 235개 통과, 10개 실패. 바뀐 코드와 관계없는 실패다.
+  - 알려진 환경 실패: reconstruction-corpus 1, source-plane-mapping 5, storage-server의 D1/R2 첫 연결 1.
+  - 동시 실행 부하로 약 5초에서 시간 초과: d1-auth, d1-storage, flux-backdrop, flux-color, flux-composite, reconstruction-partial-wall, reconstruction-tile-courses. 단독 재실행에서 모두 통과했다.
+
 ## 2026-10-17 — D1 읽기 줄이기: 권한 확인은 요청한 자산에서 출발, 공개 이미지, 0008 인덱스
 
 - 무엇: 운영 D1 `sjn`이 하루 읽기 한도(500만 행)를 넘은 원인인 자산 권한 확인 CTE(1회 2,000~5,500행, 전체 자산 수에 비례)를 요청한 자산·버전에서 출발하도록 바꿨다. 공개 이미지·배치 이미지도 그 자산의 참조에서 출발한다(CROSS JOIN으로 순서 고정). `0008_query_indexes.sql`(`d1_mutations(owner_id,created_at)`)을 추가했다. 권한 판단은 바꾸지 않았다. 원격 D1에는 쓰지 않았고 0008은 로컬 개발·테스트 DB에만 적용했다. 배포하지 않았다([결과](d1-query-efficiency-results-20261017.md)).
