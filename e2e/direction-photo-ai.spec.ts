@@ -1,6 +1,7 @@
 import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { expect, test, type Locator, type Page, type Request as PlaywrightRequest } from '@playwright/test';
 import sharp from 'sharp';
+import { nextResetAt } from '../src/lib/platform/service-limit';
 
 let app: AuthenticatedApp | undefined;
 test.afterEach(async () => {
@@ -338,6 +339,7 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
         json: {
           error: 'Cloudflare AI 사용 한도를 모두 사용했어요. 한도가 갱신된 뒤 다시 시도해 주세요.',
           code: 'quota_exhausted',
+          limit: { service: 'ai', resetAt: nextResetAt() },
         },
       };
     if (mode === 'payment')
@@ -386,11 +388,14 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
 
   // A spent limit: the two requests in flight fail, the other four are never sent.
   await make.click();
-  await expect(generator.getByTestId('ai-notice')).toContainText(
-    'Cloudflare AI 사용 한도를 모두 사용했어요.',
-  );
+  await expect(generator.getByTestId('ai-notice')).toContainText('오늘 AI 이용 한도를 모두 써서');
   expect(sent.length).toBeLessThanOrEqual(2);
-  await expect(generator.getByText(/후보 1: Cloudflare AI 사용 한도/).first()).toBeVisible();
+  await expect(generator.getByText(/후보 1: 오늘 AI 이용 한도를 모두 써서/).first()).toBeVisible();
+  // When it comes back: in the banner over the page and beside the button (which still works).
+  await expect(generator.getByTestId('ai-notice')).toContainText('오전 9시 이후 다시 시도해 주세요.');
+  await expect(page.getByTestId('service-limit-banner')).toContainText('오늘 AI 이용 한도를 모두 써서');
+  await expect(generator.getByTestId('ai-limit-hint')).toContainText(/^AI 한도 · .*오전 9시 이후$/);
+  await expect(generator.getByRole('button', { name: '모두 다시 만들기', exact: true })).toBeEnabled();
   mode = 'payment';
   sent.length = 0;
   await generator.getByRole('button', { name: '모두 다시 만들기', exact: true }).click();

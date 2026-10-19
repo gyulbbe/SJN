@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cloudGemmaErrorResponse } from '../src/lib/reconstruction/cloud-gemma-errors';
 import sharp from 'sharp';
 import { runDirectionPhoto } from '../src/lib/direction-photo/server';
 import { requestDirectionPhoto } from '../src/lib/direction-photo/client';
@@ -241,9 +242,12 @@ describe('direction photo route', () => {
 
   it.each([402, 429])('surfaces a spent limit (%s) without retry', async (status) => {
     const env = environment(vi.fn(async () => Response.json({ errors: [{ code: 3036 }] }, { status })));
-    await expect(runDirectionPhoto(await request(), env)).rejects.toMatchObject({
-      code: 'quota_exhausted',
-      status: 429,
+    const failure = await runDirectionPhoto(await request(), env).catch((error) => error);
+    expect(failure).toMatchObject({ code: 'quota_exhausted', status: 429 });
+    // The route's answer (cloudGemmaErrorResponse) says when the day's AI allocation comes back.
+    expect((await cloudGemmaErrorResponse(failure).json()).limit).toEqual({
+      service: 'ai',
+      resetAt: expect.stringMatching(/T00:00:00\.000Z$/),
     });
     expect(env.AI.run).toHaveBeenCalledTimes(1);
   });

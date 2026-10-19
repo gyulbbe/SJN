@@ -17,6 +17,7 @@ import {
 } from './cloud-gemma-coordinates';
 import { z } from 'zod';
 import { getRuntimeEnvironment } from '../platform/runtime';
+import { detectServiceLimit } from '../platform/service-limit';
 import { configuredStorage, type RuntimeSettings } from '../storage/config';
 import { readImageHeader, type ImageHeader } from '../images';
 import {
@@ -164,6 +165,8 @@ export async function assertCloudGemmaRequest(request: Request, environment: Env
       return 'actor-sha256:' + (await sha256('sjn-cloud-gemma:' + actor.id));
     } catch (error) {
       if (error instanceof CloudGemmaError) throw error;
+      // A spent database limit is said as such (cloudGemmaErrorResponse), not as a sign-in problem.
+      if (detectServiceLimit(error)) throw error;
       const status = error && typeof error === 'object' && 'status' in error ? Number(error.status) : 503;
       throw new CloudGemmaError(
         status === 401

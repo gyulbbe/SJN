@@ -2,6 +2,7 @@ import { betterAuth, type BetterAuthOptions } from 'better-auth';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { username } from 'better-auth/plugins/username';
 import type { D1DatabaseLike } from '@/lib/d1/types';
+import { detectServiceLimit, serviceLimitResponse, watchServiceLimit } from '@/lib/platform/service-limit';
 import { credentialEmail, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, USERNAME_PATTERN } from './credential-account';
 
 export interface D1AuthEnvironment {
@@ -18,8 +19,10 @@ export class D1AuthError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    /** The database's own error, kept so a spent daily limit is still recognised. */
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
     this.name = 'D1AuthError';
   }
 }
@@ -81,11 +84,12 @@ export async function checkD1AuthSchema(env: Pick<D1AuthEnvironment, 'DB'>) {
       LEFT JOIN admin_roles ar ON ar.user_id = u.id
       LEFT JOIN d1_user_management um ON um.user_id = u.id LIMIT 0`,
     ).all();
-  } catch {
+  } catch (error) {
     throw new D1AuthError(
       503,
       'auth_schema_unavailable',
       '로그인용 D1 마이그레이션 또는 연결을 확인해 주세요.',
+      { cause: error },
     );
   }
 }
@@ -233,10 +237,20 @@ export function assertD1RequestOrigin(request: Request, env: D1AuthEnvironment) 
 }
 
 export async function getD1Session(request: Request, env: D1AuthEnvironment) {
-  const session = await createD1Auth(env).api.getSession({
-    headers: request.headers,
-    query: { disableCookieCache: true, disableRefresh: true },
-  });
+  // Better Auth answers "no session" (or its own error) when its query fails; a spent daily limit must
+  // not read as signed out (the screens would drop the account's work view), so it is thrown as it was.
+  const watched = watchServiceLimit(env.DB);
+  let session: Awaited<ReturnType<ReturnType<typeof createD1Auth>['api']['getSession']>>;
+  try {
+    session = await createD1Auth({ ...env, DB: watched.db }).api.getSession({
+      headers: request.headers,
+      query: { disableCookieCache: true, disableRefresh: true },
+    });
+  } catch (error) {
+    // Its server API throws its own INTERNAL_SERVER_ERROR, without the database's words.
+    throw watched.hit() ?? error;
+  }
+  if (watched.hit()) throw watched.hit();
   if (!session) return null;
   return {
     user: {
@@ -274,12 +288,18 @@ export async function getD1Actor(
 
 /** Route entrypoint also enforces origin on the first (not yet cookie-bearing) sign-in. */
 export async function handleD1Auth(request: Request, env: D1AuthEnvironment): Promise<Response> {
+  // get-session answers 200 null when its query fails: a spent daily limit is said instead.
+  const watched = watchServiceLimit(env.DB);
   try {
     assertD1RequestOrigin(request, env);
-    const response = await createD1Auth(env).handler(request);
+    const response = await createD1Auth({ ...env, DB: watched.db }).handler(request);
+    const limit = detectServiceLimit(watched.hit());
+    if (limit) return serviceLimitResponse(limit);
     response.headers.set('Cache-Control', 'no-store');
     return response;
   } catch (error) {
+    const limit = detectServiceLimit(error) ?? detectServiceLimit(watched.hit());
+    if (limit) return serviceLimitResponse(limit);
     if (error instanceof D1AuthError) {
       return Response.json(
         { error: error.message, code: error.code },

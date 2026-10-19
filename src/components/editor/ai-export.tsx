@@ -43,6 +43,7 @@ import {
   type RefineProduct,
 } from '@/lib/ai-export/refine-run';
 import type { BackgroundRemovalClient } from '@/lib/background-removal/client';
+import { AiLimitHint } from '@/components/service-limit-banner';
 import styles from './ai-export.module.css';
 
 type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: string };
@@ -686,6 +687,7 @@ export default function AiExport({
                 ? '4B 변환 중…'
                 : `AI 변환 · flux-2-klein-4b${result.url && !turned ? ' 다시 만들기' : ''}`}
             </button>
+            <AiLimitHint />
             {shown && (
               <a
                 className="btn"

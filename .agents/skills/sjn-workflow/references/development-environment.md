@@ -33,6 +33,56 @@ npx wrangler d1 insights sjn --sort-by=reads --timePeriod=1d --limit=10
 
 `--timePeriod=7d --json`이면 쿼리 원문·실행 횟수·읽은 행 합계를 기록용으로 받는다. 원격 `wrangler d1 execute --remote`의 SELECT는 읽기 한도를 쓰므로 쿼리 원문과 예상 읽기 행 수를 보이고 승인을 받은 뒤에만 실행한다. `--file`로 원격 실행하면 결과 없이 요약(읽은 행 수)만 돌아오므로 결과가 필요하면 `--command`를 쓴다. 로컬(Miniflare)의 D1 결과 `meta.rows_read`로 쿼리별 읽은 행 수를 미리 잰다([측정](../../../../tests/d1-read-cost.test.ts), [2026-10-17 결과](../../../../docs/d1-query-efficiency-results-20261017.md)).
 
+## Cloudflare 하루 한도와 화면 안내
+
+Workers Free 플랜의 하루 한도는 모두 **매일 00:00 UTC(한국 09:00)**에 초기화된다.
+
+| 서비스 | 하루 한도 | 넘으면 |
+| --- | --- | --- |
+| D1 읽은 행 | 500만 | 모든 D1 쿼리 오류: 로그인, 프로젝트 저장·불러오기, 자재 목록, 관리자 화면이 멈춤(저장된 자료는 그대로) |
+| D1 쓴 행 | 10만 | 쓰기 오류 |
+| D1 저장 용량 | 계정 한도 | 시간이 지나도 풀리지 않음(관리자 문의) |
+| Workers AI | 10,000뉴런 | FLUX(실사 변환·방향 사진·제품 다듬기)와 Gemma(설비 분석·결과 확인) 오류 |
+| Workers 요청 | 10만 | Worker 실행 전에 Cloudflare 자체 오류 페이지. **앱이 안내할 수 없다** |
+
+**판별** ([service-limit](../../../../src/lib/platform/service-limit.ts) `detectServiceLimit`): 오류의 `message`와 `cause`(3단계)를 대소문자 무시 부분 문자열로 본다. 앞에 `D1_ERROR: `가 붙어도 되고 끝부분이 달라도 된다.
+- `free tier daily row read limit` → `db-read`
+- `free tier daily row write limit` → `db-write`
+- `exceeded maximum db size` 또는 `maximum account storage limit` → `db-storage`
+- AI는 기존 `classifyCloudGemmaFailure`의 `quota_exhausted`(내부 코드 3036 등)를 그대로 쓴다.
+- 출처: Cloudflare 문서 `d1/observability/debug-d1`, 2026-09-01 변경 기록 "D1 free tier limit enforcement".
+
+**응답 계약**
+- D1 한도: 503 `{ error, code: 'SERVICE_LIMIT', limit: { service, resetAt } }`. `resetAt`은 서버 시각 기준 다음 00:00 UTC이고, `db-storage`에는 없다. 원문 오류·계정 정보·사용량 숫자는 넣지 않는다.
+- AI 하루 할당: 지금처럼 429 `quota_exhausted`(`ENDS_RUN` 등 호환)에 `limit: { service: 'ai', resetAt }`만 더한다. 자동 재시도는 없다.
+- `/api/storage/status`: 준비 검사가 한도면 `reason: 'daily_limit'`(용량은 `storage_full`)과 `limit`을 준다. 앱이 처음 여는 요청이라 새 요청 없이 미리 안다.
+- **출구**: D1을 거치는 모든 라우트는 다섯 출구 중 하나로 끝나고, 다섯 곳 모두 먼저 한도를 판별한다.
+  - `errorResponse`: `d1Route`의 처리기, 관리자 처리기, 진단 아카이브
+  - `serverError`: 로그인 확인 단계, 공개 자재, `/api/storage/session`, 관리자 로그인 확인
+  - `handleD1Auth`
+  - `storageStatus`
+  - `cloudGemmaErrorResponse`: AI 라우트 5곳. 로그인 확인 중 D1 한도는 `SERVICE_LIMIT`로 답한다.
+- **Better Auth가 삼키는 오류**: get-session은 DB 오류를 "세션 없음"(200 null)으로 답하고, 서버 API는 자기 `INTERNAL_SERVER_ERROR`를 던진다. 그래서 로그인 경로는 `watchServiceLimit`로 DB를 감싸 한도 오류만 기록한다(쿼리·순서·결과는 같고 추가 쿼리 없음). 그러지 않으면 한도가 "로그아웃됨"(401)으로 보인다.
+
+**화면** ([service-limit-notice](../../../../src/lib/service-limit-notice.ts), [띠](../../../../src/components/service-limit-banner.tsx))
+- 이미 오가는 응답에서만 안내를 만든다. 새 요청·폴링·재확인은 없다.
+- 안내를 만드는 곳
+  - `/api/storage/status`
+  - `/api/d1/**`·관리자 fetch(`responseJson`·`adminRequest`)
+  - get-session, 로그인
+  - FLUX(`readFluxAnswer`·결과 확인)
+  - Gemma 분석 transport와 접근 확인
+  - 공개 자재 목록
+- 모든 페이지(공개 포함) 위쪽에 고정하지 않는 띠를 둔다. 종류(DB·AI)마다 한 줄이다.
+- 시각은 `Asia/Seoul`로 "10월 19일(월) 오전 9시"처럼 쓴다. 브라우저 시계로 오늘이면 앞에 "오늘", 내일이면 "내일"을 붙인다.
+- `localStorage['sjn-service-limit']`에 `{service, resetAt}`만 둔다. 저장소가 없거나 거부해도 그 페이지 메모리로 동작한다. `resetAt`이 지나면 타이머로 숨긴다(요청 없음). 그 종류의 정상 응답을 받으면 지운다.
+- 화면별 처리
+  - 잠금 화면(`BackendGuard`)과 `/login`의 준비 안내: 일반 문구 대신 한도 문구를 보인다.
+  - 로그인 실패: "아이디·비밀번호" 문구 대신 한도 문구를 보인다.
+  - AI 버튼 옆(실사 변환·방향 사진·자동 초안): "AI 한도 · {시각} 이후"를 보인다. 버튼은 막지 않는다.
+  - 공개 자재의 오류 영역: 한도 문구를 보인다.
+- 사전 경고("곧 한도")는 없다. 관리자 AI 사용량 화면은 토큰이 필요하고 요청이 늘어서 쓰지 않았다.
+
 ## 설정 파일과 변수
 
 | 파일 | 역할 |

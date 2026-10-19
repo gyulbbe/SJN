@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { noteServiceAnswer, serviceLimitMessage } from '../service-limit-notice';
 import type { Pixels } from './color';
 import { fluxInputLayout } from './contract';
 import type { FluxProduct } from './product-prompt';
@@ -68,14 +69,21 @@ export async function prepareFluxImage(blob: Blob): Promise<Blob> {
 export async function readFluxAnswer(response: Response): Promise<Blob> {
   if (!response.ok) {
     const failure = await response.json().catch(() => null);
+    // A spent daily limit (AI's, or the database's at sign-in) goes to the banner, with when.
+    const limit = noteServiceAnswer(false, failure, 'ai');
     // The status travels with the error: a spent limit or a refused login ends a whole run (refine-run).
     throw Object.assign(
-      new Error(failure?.error || 'AI 이미지 변환에 실패했어요. 자동 재시도하지 않았어요.'),
+      new Error(
+        limit
+          ? serviceLimitMessage(limit)
+          : failure?.error || 'AI 이미지 변환에 실패했어요. 자동 재시도하지 않았어요.',
+      ),
       {
         status: response.status,
       },
     );
   }
+  noteServiceAnswer(true, null, 'ai');
   const result = await response.blob();
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(result.type) || !result.size)
     throw new Error('AI 이미지 응답이 올바르지 않아요.');
@@ -238,8 +246,14 @@ export async function requestFluxCheck(
   });
   if (!response.ok) {
     const failure = await response.json().catch(() => null);
-    throw new Error(failure?.error || '설비 확인에 실패했어요. 자동 재시도하지 않았어요.');
+    const limit = noteServiceAnswer(false, failure, 'ai');
+    throw new Error(
+      limit
+        ? serviceLimitMessage(limit)
+        : failure?.error || '설비 확인에 실패했어요. 자동 재시도하지 않았어요.',
+    );
   }
+  noteServiceAnswer(true, null, 'ai');
   const body = checkResponse.safeParse(await response.json().catch(() => null));
   if (!body.success || body.data.fixtures.length !== scene.fixtures.length)
     throw new Error('설비 확인 응답이 올바르지 않아요.');

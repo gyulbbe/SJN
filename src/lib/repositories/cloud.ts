@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import type { Repositories } from './contracts';
 import { StorageConflictError } from './references';
+import { noteServiceAnswer } from '../service-limit-notice';
 import {
   cacheCloudAsset,
   readCachedCloudAsset,
@@ -25,6 +26,8 @@ export class CloudRequestError extends Error {
 }
 async function responseJson<T>(response: Response): Promise<T> {
   const value = await response.json().catch(() => ({ error: '서버 응답을 읽지 못했어요.' }));
+  // A spent daily limit goes to the banner; a normal answer takes it away.
+  noteServiceAnswer(response.ok, value, 'db');
   if (!response.ok) {
     if (response.status === 409) throw new StorageConflictError();
     if (response.status === 403 && typeof window !== 'undefined')

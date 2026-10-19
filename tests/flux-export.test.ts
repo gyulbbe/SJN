@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { cloudGemmaErrorResponse } from '../src/lib/reconstruction/cloud-gemma-errors';
 import sharp from 'sharp';
 import { runFluxExport } from '../src/lib/ai-export/server';
 import { FLUX_MODEL, FLUX_PROMPT, fluxDimensions } from '../src/lib/ai-export/contract';
@@ -115,9 +116,12 @@ describe('FLUX image export', () => {
   });
   it.each([402, 429])('surfaces provider limit %s without retry or model fallback', async (status) => {
     const env = environment(vi.fn(async () => Response.json({ errors: [{ code: 3036 }] }, { status })));
-    await expect(runFluxExport(request(await png()), env)).rejects.toMatchObject({
-      code: 'quota_exhausted',
-      status: 429,
+    const failure = await runFluxExport(request(await png()), env).catch((error) => error);
+    expect(failure).toMatchObject({ code: 'quota_exhausted', status: 429 });
+    // The route's answer (cloudGemmaErrorResponse) says when the day's AI allocation comes back.
+    expect((await cloudGemmaErrorResponse(failure).json()).limit).toEqual({
+      service: 'ai',
+      resetAt: expect.stringMatching(/T00:00:00\.000Z$/),
     });
     expect(env.AI.run).toHaveBeenCalledTimes(1);
   });

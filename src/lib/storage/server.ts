@@ -1,6 +1,7 @@
 import { getRuntimeEnvironment, continueInBackground } from '../platform/runtime';
 import { configuredStorage, blockedStatus, type RuntimeSettings, type StorageStatus } from './config';
 import type { D1Bindings } from '../d1/types';
+import { detectServiceLimit, serviceLimitResponse } from '../platform/service-limit';
 
 export function runtimeSelection() {
   const environment = getRuntimeEnvironment();
@@ -21,16 +22,26 @@ export async function storageStatus(): Promise<StorageStatus> {
   } catch {
     return blockedStatus('invalid_configuration');
   }
+  let modules: [typeof import('../d1'), typeof import('../auth/d1')];
   try {
-    const [{ checkD1Storage }, auth] = await Promise.all([import('../d1'), import('../auth/d1')]);
-    await Promise.all([
-      checkD1Storage(env as unknown as D1Bindings),
-      auth.checkD1AuthSchema(env as unknown as Parameters<typeof auth.checkD1AuthSchema>[0]),
-    ]);
-    return { ...selection, ready: true, googleSignIn };
+    modules = await Promise.all([import('../d1'), import('../auth/d1')]);
   } catch {
     return blockedStatus('connection_failed');
   }
+  const [{ checkD1Storage }, auth] = modules;
+  const checks = await Promise.allSettled([
+    checkD1Storage(env as unknown as D1Bindings),
+    auth.checkD1AuthSchema(env as unknown as Parameters<typeof auth.checkD1AuthSchema>[0]),
+  ]);
+  const failures = checks.flatMap((check) => (check.status === 'rejected' ? [check.reason] : []));
+  if (!failures.length) return { ...selection, ready: true, googleSignIn };
+  // A spent daily limit is told as such, with when it comes back (the screens' first request).
+  for (const failure of failures) {
+    const limit = detectServiceLimit(failure);
+    if (limit?.service === 'db-storage') return { ...blockedStatus('storage_full'), limit };
+    if (limit && limit.service !== 'ai') return { ...blockedStatus('daily_limit'), limit };
+  }
+  return blockedStatus('connection_failed');
 }
 
 export function requireD1Environment() {
@@ -47,6 +58,8 @@ export function requireD1Environment() {
 }
 
 export function serverError(error: unknown): Response {
+  const limit = detectServiceLimit(error);
+  if (limit) return serviceLimitResponse(limit);
   const status = error && typeof error === 'object' && 'status' in error ? Number(error.status) : 500;
   const safeStatus = [400, 401, 403, 404, 409, 413, 429, 503].includes(status) ? status : 500;
   const message =

@@ -1,4 +1,5 @@
 import { ZodError } from 'zod';
+import { detectServiceLimit, serviceLimitResponse } from '../platform/service-limit';
 
 export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_ASSET_BYTES = 25 * 1024 * 1024;
@@ -25,6 +26,9 @@ export function json(value: unknown, status = 200): Response {
 }
 export function errorResponse(error: unknown): Response {
   if (error instanceof D1StorageError) return json({ error: error.message, code: error.code }, error.status);
+  // A spent daily limit says when it comes back, not "try again" (platform/service-limit.ts).
+  const limit = detectServiceLimit(error);
+  if (limit) return serviceLimitResponse(limit);
   if (error instanceof ZodError || error instanceof SyntaxError)
     return json({ error: '입력 형식이나 범위를 확인해 주세요.', code: 'INVALID_INPUT' }, 400);
   const detail = error instanceof Error ? error.message : '';

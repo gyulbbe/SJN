@@ -13,6 +13,7 @@ import AnalysisProfilePicker, { type AnalysisProfileSelection } from './analysis
 import DiagnosticLogDownload from './diagnostic-log-download';
 import styles from './reconstruction.module.css';
 import { usePhotoAnalysisModelProgress } from '@/components/model-loading-progress';
+import { AiLimitHint } from '@/components/service-limit-banner';
 import { useCloudAnalysisWait } from '@/components/server-wait-progress';
 
 export default function ReconstructionDialog({
@@ -292,6 +293,7 @@ export default function ReconstructionDialog({
               {stage ? '초안 만드는 중…' : '자동 초안 만들기'}
               <ArrowRight size={16} />
             </button>
+            <AiLimitHint />
           </div>
         </footer>
       </form>
