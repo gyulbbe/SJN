@@ -11,7 +11,7 @@
 - 단위: D1·카탈로그·관리자 8파일(d1-storage 15, admin-projects 9, admin-project-repository 5, catalog-visibility 3, catalog-auth-boundary 13, d1-catalog 23, d1-route 8, guest-public-routes 2) 통과. `d1-catalog`의 옛 `위` 사진 시험 데이터에 실제 저장이 넣는 `d1_material_assets` 행을 더했다. 전체 vitest는 246개 파일 3,569개 중 3,557개 통과, 9개 실패였다. 실패는 알려진 환경 실패 7개(reconstruction-corpus 1, source-plane-mapping 5, storage-server의 D1/R2 첫 연결 5초 초과 1)와 동시 실행 부하의 시간 초과 2개(flux-backdrop, flux-composite, 단독 재실행에서 통과)다. 새 equivalence 파일은 전체 실행 때 준비 시간 초과(10초)로 실패해 다른 D1 시험처럼 30초를 주었고 단독 실행에서 통과했다.
 - e2e(격리 D1/R2): catalog-access, catalog-selection-completion, guest-workspace, guest-promotion-recovery, material-images, d1-storage-policy, admin-management, four-directions-cover, cloud-recovery, flux-export 59개 중 58개 통과. 실패 1개(`guest-workspace` "비로그인 견적·타일…")는 시험 안의 fetch가 "bad port"로 실패한 것으로, 단독 재실행에서 통과했다(10-14 기록과 같은 증상).
 - 로컬 개발 서버(`npm run dev`, 새 로컬 D1/R2에 0001~0008, 생성한 로컬 전용 `.dev.vars`·시험 계정, 로컬 DB에서만 관리자 지정): 자재 목록·상세·수정 창 이미지, 타일 새 버전 저장, 기본 공간 프로젝트에 타일 적용·자동 저장·다시 열기, 공개 목록·공개 이미지(표시 이미지 200, 원본 404)·공개 배치, 쿠키 없는 회원 API 401 확인. 기본 공간 만들기의 개발 서버 업로드 한도 413은 문서대로 `next.config.ts`를 임시로 바꿨다가 되돌렸다.
-- 원격 0008: 17:05 KST 적용 시도가 그날 읽기 한도 초과(`code 7500`)로 목록 조회부터 실패했다. 10-18 09:00 KST 이후 적용한다.
+- 원격 0008: 17:05 KST 적용 시도가 그날 읽기 한도 초과(`code 7500`)로 목록 조회부터 실패했다. 2026-10-18 원격 적용 완료: `migrations list`에 미적용 없음, `sqlite_master`에 `d1_mutations_owner_age` 있음. (적용 직전 첫 목록 조회가 `code 7403`으로 한 번 실패했고, 다시 하니 정상이었다.)
 - typecheck·Prettier(바꾼 코드 파일) 통과. eslint는 `npx eslint . --ignore-pattern ".claude/**"`로 문제 0이다. 그냥 `npm run lint`는 `.claude/worktrees`에 남은 다른 작업의 워크트리 복사본(빌드 산출물 포함)까지 읽어 15,302개를 보고한다. 설정 문제이며 이번 변경과 무관하다.
 
 ## 2026-10-15 — AI 방향 사진: 변기 몸통·뚜껑, 일체형·비데 일체형 변기의 사진 각도, 변기 뒤 없음
