@@ -28,6 +28,17 @@
   - 같은 seed(1001·1002)로 4회 다시 보냈다(t6 오른쪽, t1 왼쪽 색). 1단계와 같았고, 화면 차이는 seed 때문이다.
   - 1단계 t6 오른쪽 "시점 2/2"는 너그러운 채점이었다(실제로는 사선). 결과 문서 2절에 정정했다.
   - 날짜별: 2026-10-19 22회(모두 성공, 추정 약 2,424, 429 없음).
+- main(한도 안내) 합친 뒤 검사(2026-10-19)
+  - 충돌: `verification.md` 맨 위 항목만 있어서 둘 다 살렸다. 폼(`AiLimitHint`)과 e2e는 자동으로 합쳐졌다.
+  - 통과: `npm run typecheck`, `npx eslint . --ignore-pattern ".claude/**"`(문제 0). 남아 있는 다른 워크트리만 뺐다.
+  - Prettier: 바꾼 코드 파일이 통과했다. `templates.ts`는 main에서부터 샤워 부분이 맞지 않았고(91줄), 같은 수 그대로다.
+  - 전체 vitest: 249개 파일 중 240개 통과, 8개 실패, 1개 건너뜀.
+    - 알려진 환경 실패: reconstruction-corpus 1, source-plane-mapping 5(기준 파일 없음), storage-server 1(D1/R2 첫 연결 5초)
+    - 부하성 시간 초과: d1-auth, d1-reconstruction-diagnostics, flux-backdrop, flux-composite, room-source-depth-clip. 단독 재실행에서 모두 통과했다.
+  - 가이드 브라우저 검사 44장 통과.
+  - e2e: `service-limit` 4개, `material-panel-layout`, `direction-photo-ai` 3개 통과.
+    - `direction-photo-ai` 첫 시험은 세 spec을 함께 돌릴 때 "방향 칸에 넣는 중"(배경 제거)이 15초를 넘겨 실패했다. 단독 재실행에서 통과했다.
+  - d1-query-budget: 이번 변경은 D1을 거치지 않는다(SQL·API·화면 호출 변화 없음).
 - `npm run typecheck`, 바꾼 파일의 eslint(문제 0)·Prettier 통과.
   - e2e 개발 서버가 쓰다 만 `.next/dev/types/validator.ts`가 처음 typecheck를 깨뜨렸다. 그 생성 파일을 지우고 다시 돌려 통과했다.
 - 전체 vitest: 246개 파일 중 235개 통과, 10개 실패. 바뀐 코드와 관계없는 실패다.
