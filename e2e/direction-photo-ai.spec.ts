@@ -440,10 +440,39 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   await expect(body).toHaveValue('two-piece');
   await expect(lid).toHaveValue('closed');
   await expect(lid.locator('option')).toHaveText(['뚜껑 닫힘', '뚜껑 열림', '시트만(뚜껑 없음)']);
+  // A two-piece's lower part (the guide only); the other bodies have none to pick.
+  const skirt = toilet.getByLabel('변기 아래 모양', { exact: true });
+  await expect(skirt).toHaveValue('exposed');
+  await expect(skirt.locator('option')).toHaveText([
+    '받침이 드러남(아래가 잘록함)',
+    '치마형(아래가 매끈하게 바닥까지)',
+  ]);
+  const frontGuide = toilet.getByTestId('ai-guides').getByRole('img', { name: '정면 가이드' });
+  await expect(frontGuide).toBeVisible({ timeout: 30000 });
+  const exposedGuide = await frontGuide.getAttribute('src');
+  await skirt.selectOption('skirted');
+  await expect(frontGuide).not.toHaveAttribute('src', exposedGuide!, { timeout: 30000 });
   await body.selectOption('tankless');
   await expect(lid.locator('option')).toHaveText(['뚜껑 닫힘', '시트만(뚜껑 없음)']);
+  await expect(skirt).toHaveCount(0);
   await body.selectOption('one-piece');
   await lid.selectOption('seat');
+  // The colours: as the photos (nothing said) until picked; the seat may follow the body.
+  const bodyColor = toilet.getByLabel('변기 몸통 색', { exact: true });
+  const seatColor = toilet.getByLabel('변기 시트 색', { exact: true });
+  await expect(bodyColor).toHaveValue('');
+  await expect(bodyColor.locator('option')).toHaveText(['사진대로', '흰색', '아이보리', '회색', '검정']);
+  await expect(seatColor.locator('option')).toHaveText([
+    '사진대로',
+    '몸통과 같음',
+    '흰색',
+    '회색',
+    '검정',
+    '파랑',
+    '분홍',
+  ]);
+  await bodyColor.selectOption('black');
+  await seatColor.selectOption('body');
   await expect(toilet.getByTestId('ai-guides')).toContainText(
     '뒤 · 변기는 벽에 붙여 설치해서 뒤 사진을 만들지 않아요',
     { timeout: 30000 },
@@ -461,14 +490,18 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   ).toHaveCount(2, { timeout: 30000 });
   const toiletSent = sent.slice(before);
   expect(toiletSent.map((s) => s.spec.direction).sort()).toEqual(['front', 'front', 'left', 'left']);
-  for (const s of toiletSent)
+  for (const s of toiletSent) {
     expect(s.spec).toMatchObject({
       category: 'toilet',
       form: 'one-piece',
       lid: 'seat',
       installation: 'floor',
       photoAngles: ['front-right'],
+      bodyColor: 'black',
+      seatColor: 'black',
     });
+    expect(s.spec).not.toHaveProperty('skirt');
+  }
   await expect(toilet.getByRole('group', { name: '뒤 후보' })).toHaveCount(0);
   await toilet.screenshot({ path: info.outputPath('generator-toilet.png') });
   // A tile has no generator at all.

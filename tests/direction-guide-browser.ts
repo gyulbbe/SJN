@@ -3,8 +3,9 @@
  * and the basin is drawn from 정면·왼쪽·오른쪽·뒤 at its registered size. Checks: the guide is FLUX's
  * input size (long side 496, 16 px steps), its border is plain white, the product fills it with an
  * even margin, a floor product has a soft shadow under it and a wall product none, and 왼쪽 and
- * 오른쪽 are each other's mirror image (the models are symmetric left to right). The guides and a
- * contact sheet go to test-results/direction-guide/.
+ * 오른쪽 are each other's mirror image (the models are symmetric left to right). A skirted two-piece
+ * toilet differs from the open foot only below the bowl, where it is wider. The guides and a contact
+ * sheet go to test-results/direction-guide/.
  *
  * Usage: node tests/run-browser-test.mjs tests/direction-guide-browser.ts [--gpu]
  */
@@ -33,6 +34,7 @@ type Case = {
   category: 'bath' | 'toilet' | 'basin';
   form: string;
   lid?: 'closed' | 'open' | 'seat';
+  skirt?: 'exposed' | 'skirted';
   sizeMm: [number, number, number];
   installation: 'floor' | 'wall';
 };
@@ -56,6 +58,15 @@ const cases: Case[] = [
     category: 'toilet',
     form: 'two-piece',
     lid: 'closed',
+    sizeMm: [380, 760, 700],
+    installation: 'floor',
+  },
+  {
+    name: 'toilet-skirted',
+    category: 'toilet',
+    form: 'two-piece',
+    lid: 'closed',
+    skirt: 'skirted',
     sizeMm: [380, 760, 700],
     installation: 'floor',
   },
@@ -266,6 +277,36 @@ try {
     });
     const mean = off / rows / 2;
     assert.ok(mean < 2, `${name}: 왼쪽 vs mirrored 오른쪽 edges differ by ${mean.toFixed(2)} px`);
+  }
+  // The skirt: the same toilet from 정면 and 왼쪽, wider below the bowl and the same above it.
+  const widths = async (png: Buffer) => {
+    const { data, info } = await sharp(png)
+      .removeAlpha()
+      .greyscale()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    return Array.from({ length: info.height }, (_, y) => {
+      let n = 0;
+      for (let x = 0; x < info.width; x++) if (data[y * info.width + x] < 240) n++;
+      return n;
+    });
+  };
+  for (const direction of ['정면', '왼쪽'] as const) {
+    const open = await widths(byName.get('toilet-closed')!.get(direction)!);
+    const skirted = await widths(byName.get('toilet-skirted')!.get(direction)!);
+    assert.equal(open.length, skirted.length, `toilet-skirted ${direction}: same guide size`);
+    const band = (rows: number[], from: number, to: number) =>
+      rows.slice(Math.round(rows.length * from), Math.round(rows.length * to)).reduce((a, b) => a + b, 0);
+    // Rows 70–85% of the height: the foot (open) or the skirt; 10–40%: the cistern, the same in both.
+    assert.ok(
+      band(skirted, 0.7, 0.85) > band(open, 0.7, 0.85) * 1.15,
+      `toilet-skirted ${direction}: not wider below the bowl`,
+    );
+    const top = band(open, 0.1, 0.4);
+    assert.ok(
+      Math.abs(band(skirted, 0.1, 0.4) - top) < top * 0.03,
+      `toilet-skirted ${direction}: top changed`,
+    );
   }
   await writeFile(`${output}/report.json`, JSON.stringify(report, null, 2));
   console.table(report);

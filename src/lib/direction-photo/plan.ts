@@ -1,6 +1,7 @@
 import { PRODUCT_DIRECTIONS, type ProductDirection } from '../product-direction';
 import type { Point } from '../types';
 import { standsOnFloor, type DirectionPhotoCategory } from './contract';
+import { TOILET_NO_BACK } from './categories/toilet';
 import type { MaterialInput } from '../types';
 
 /** Candidates made for each direction (the person picks one). */
@@ -30,8 +31,7 @@ export function planDirections(input: {
   const plan: DirectionPlan = { made: ['정면', '왼쪽'], mirrored: [], skipped: [] };
   if (input.symmetric) plan.mirrored.push('오른쪽');
   else plan.made.push('오른쪽');
-  if (input.category === 'toilet')
-    plan.skipped.push({ direction: '뒤', reason: '변기는 벽에 붙여 설치해서 뒤 사진을 만들지 않아요' });
+  if (input.category === 'toilet') plan.skipped.push({ direction: '뒤', reason: TOILET_NO_BACK });
   else if (standsOnFloor(input.installation)) plan.made.push('뒤');
   else plan.skipped.push({ direction: '뒤', reason: '벽에 거는 제품은 뒤 사진을 만들지 않아요' });
   // Keep the list's order (정면·왼쪽·오른쪽·뒤).
