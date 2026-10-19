@@ -39,6 +39,9 @@
   - e2e: `service-limit` 4개, `material-panel-layout`, `direction-photo-ai` 3개 통과.
     - `direction-photo-ai` 첫 시험은 세 spec을 함께 돌릴 때 "방향 칸에 넣는 중"(배경 제거)이 15초를 넘겨 실패했다. 단독 재실행에서 통과했다.
   - d1-query-budget: 이번 변경은 D1을 거치지 않는다(SQL·API·화면 호출 변화 없음).
+- main 병합 `7fe97c6`을 푸시했다. 자동 배포는 `2026-10-19T07:10:28Z`에 나갔다.
+  - 운영 `ready:true`, `/`·`/login`·`/materials`는 200이다(띠 없음, 자재 928개).
+  - 배포된 화면 코드에 양변기 선택지가 있다.
 - `npm run typecheck`, 바꾼 파일의 eslint(문제 0)·Prettier 통과.
   - e2e 개발 서버가 쓰다 만 `.next/dev/types/validator.ts`가 처음 typecheck를 깨뜨렸다. 그 생성 파일을 지우고 다시 돌려 통과했다.
 - 전체 vitest: 246개 파일 중 235개 통과, 10개 실패. 바뀐 코드와 관계없는 실패다.
