@@ -11,7 +11,10 @@
 // AI_BUDGET_NEURONS (default none), both counted across runs in the same ledger. A failed request
 // counts as spent. Nothing is saved to the material: the dialog is left without "자재 등록".
 //
-// Usage: [PRODUCT=bath|bear-toilet|smart-toilet] [FORM=one-piece] [AI_OUT=...] node tests/direction-photo-real/run.mjs
+// Usage: [PRODUCT=bath|bear-toilet|smart-toilet|toilet-t1|toilet-t6|toilet-t2] [FORM=one-piece] [AI_OUT=...]
+//   node tests/direction-photo-real/run.mjs
+// The toilet-t* products are the 2026-10-17 trial's photos (docs/toilet-direction-photo-results-20261018.md),
+// on that trial's ledger.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { build } from 'esbuild';
 import sharp from 'sharp';
@@ -69,6 +72,59 @@ const PRODUCTS = {
     angles: ['front-right'],
     pick: ['정면', '왼쪽', '오른쪽'],
   },
+  // The toilet trial's products on the real screen (sizes assumed: the photos have none). t1 is a
+  // one-piece with a blue seat and lid on a white body, its staged backdrop and label mark left to
+  // the real cut-out; t6 a white tankless with a remote drawn beside it, its colours left to the
+  // photo; t2 a black square tankless.
+  'toilet-t1': {
+    out: 'test-results/toilet-direction/screen-t1',
+    ledger: 'test-results/toilet-direction/ledger.jsonl',
+    input: 'test-results/toilet-direction/input',
+    name: '실제 AI 양변기 t1(저장 안 함)',
+    category: 'toilet',
+    size: ['380', '700', '700'],
+    installation: 'floor',
+    form: 'one-piece',
+    lid: 'closed',
+    bodyColor: 'white',
+    seatColor: 'blue',
+    symmetric: false,
+    photos: ['t1-onepiece-blue-seat.webp'],
+    angles: ['front-right'],
+    pick: ['정면', '왼쪽', '오른쪽'],
+  },
+  'toilet-t6': {
+    out: 'test-results/toilet-direction/screen-t6',
+    ledger: 'test-results/toilet-direction/ledger.jsonl',
+    input: 'test-results/toilet-direction/input',
+    name: '실제 AI 양변기 t6(저장 안 함)',
+    category: 'toilet',
+    size: ['400', '500', '680'],
+    installation: 'floor',
+    form: 'tankless',
+    lid: 'closed',
+    symmetric: false,
+    photos: ['t6-tankless-white-remote.webp'],
+    angles: ['front-right'],
+    pick: ['정면', '왼쪽', '오른쪽'],
+  },
+  'toilet-t2': {
+    out: 'test-results/toilet-direction/screen-t2',
+    ledger: 'test-results/toilet-direction/ledger.jsonl',
+    input: 'test-results/toilet-direction/input',
+    name: '실제 AI 양변기 t2(저장 안 함)',
+    category: 'toilet',
+    size: ['400', '500', '680'],
+    installation: 'floor',
+    form: 'tankless',
+    lid: 'closed',
+    bodyColor: 'black',
+    seatColor: 'body',
+    symmetric: false,
+    photos: ['t2-tankless-black-square.webp'],
+    angles: ['front-right'],
+    pick: ['정면', '왼쪽', '오른쪽'],
+  },
 };
 const product = PRODUCTS[process.env.PRODUCT ?? 'bath'];
 if (!product) throw new Error(`PRODUCT is one of ${Object.keys(PRODUCTS).join(', ')}`);
@@ -76,7 +132,7 @@ const OUT = process.env.AI_OUT ?? product.out;
 const CAP = Number(process.env.AI_CAP_FLUX ?? 8);
 const BUDGET = Number(process.env.AI_BUDGET_NEURONS ?? Infinity);
 const LEDGER = process.env.AI_LEDGER ?? product.ledger ?? `${OUT}/ledger.jsonl`;
-const INPUT = process.env.AI_INPUT ?? 'test-results/product-representation/real/input';
+const INPUT = process.env.AI_INPUT ?? product.input ?? 'test-results/product-representation/real/input';
 mkdirSync(`${OUT}/answers`, { recursive: true });
 
 // The server's own prompt and estimate, to write down what each request was sent with.
@@ -225,6 +281,11 @@ try {
       .getByLabel(product.category === 'toilet' ? '변기 몸통' : '가이드 모양', { exact: true })
       .selectOption(shape);
   if (product.lid) await generator.getByLabel('변기 뚜껑', { exact: true }).selectOption(product.lid);
+  // The body first: the seat's "몸통과 같음" opens once a body colour is chosen.
+  if (product.bodyColor)
+    await generator.getByLabel('변기 몸통 색', { exact: true }).selectOption(product.bodyColor);
+  if (product.seatColor)
+    await generator.getByLabel('변기 시트 색', { exact: true }).selectOption(product.seatColor);
   const symmetric = generator.getByRole('checkbox', { name: /좌우 대칭 제품/ });
   if ((await symmetric.isChecked()) !== product.symmetric) await symmetric.click();
   await generator
@@ -287,7 +348,8 @@ try {
     if (!(await select.count())) break;
     const direction = await select.inputValue();
     const card = select.locator('xpath=ancestor::div[contains(@class, "viewCard")][1]');
-    const image = card.getByRole('img', { name: '배치 기준점을 지정할 제품 이미지', exact: true });
+    // The picture itself: while it loads the slot shows a placeholder with the same name.
+    const image = card.locator('img[alt="배치 기준점을 지정할 제품 이미지"]');
     writeFileSync(`${OUT}/slot-${direction}.png`, Buffer.from(await dataOf(image), 'base64'));
     const values = await card
       .getByRole('spinbutton')
