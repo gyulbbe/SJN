@@ -12,6 +12,7 @@
 // counts as spent. Nothing is saved to the material: the dialog is left without "자재 등록".
 //
 // Usage: [PRODUCT=bath|bear-toilet|smart-toilet|toilet-t1|toilet-t6|toilet-t2] [FORM=one-piece] [AI_OUT=...]
+//   [FLUX_ENGINE=local: answered by the local FLUX server, no AI binding needed]
 //   node tests/direction-photo-real/run.mjs
 // The toilet-t* products are the 2026-10-17 trial's photos (docs/toilet-direction-photo-results-20261018.md),
 // on that trial's ledger.
@@ -129,6 +130,13 @@ const PRODUCTS = {
 const product = PRODUCTS[process.env.PRODUCT ?? 'bath'];
 if (!product) throw new Error(`PRODUCT is one of ${Object.keys(PRODUCTS).join(', ')}`);
 const OUT = process.env.AI_OUT ?? product.out;
+// FLUX_ENGINE=local: the route's request is answered here by the local FLUX.2 klein 4B server
+// (local-flux/server.py, default http://127.0.0.1:8798) with the route's model input, instead of going
+// on to the dev server and Cloudflare; free, so neither the cap nor the budget counts it. An answer
+// that does not say `meta.engine: 'local'` is refused.
+const LOCAL = process.env.FLUX_ENGINE === 'local';
+if (process.env.FLUX_ENGINE && !LOCAL) throw new Error('FLUX_ENGINE is local or unset (Cloudflare).');
+const LOCAL_FLUX = process.env.FLUX_WORKER ?? 'http://127.0.0.1:8798';
 const CAP = Number(process.env.AI_CAP_FLUX ?? 8);
 const BUDGET = Number(process.env.AI_BUDGET_NEURONS ?? Infinity);
 const LEDGER = process.env.AI_LEDGER ?? product.ledger ?? `${OUT}/ledger.jsonl`;
@@ -139,7 +147,8 @@ mkdirSync(`${OUT}/answers`, { recursive: true });
 const bundled = await build({
   stdin: {
     contents: `export { buildDirectionPhotoPrompt } from './src/lib/direction-photo/prompt';
-      export { callNeurons } from './src/lib/direction-photo/plan';`,
+      export { callNeurons } from './src/lib/direction-photo/plan';
+      export { directionPhotoSpecSchema } from './src/lib/direction-photo/contract';`,
     resolveDir: process.cwd(),
   },
   bundle: true,
@@ -147,7 +156,7 @@ const bundled = await build({
   platform: 'node',
   format: 'esm',
 });
-const { buildDirectionPhotoPrompt, callNeurons } = await import(
+const { buildDirectionPhotoPrompt, callNeurons, directionPhotoSpecSchema } = await import(
   `data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`
 );
 
@@ -183,8 +192,8 @@ await context.route('**/api/materials/direction-photo', async (route) => {
   const guideBytes = Buffer.from(await form.get('guide').arrayBuffer());
   const guideMeta = await sharp(guideBytes).metadata();
   const refs = form.getAll('refs');
-  const cost = callNeurons({ width: guideMeta.width, height: guideMeta.height }, refs.length);
-  if (sent >= CAP || neurons + cost > BUDGET * 0.9) {
+  const cost = LOCAL ? 0 : callNeurons({ width: guideMeta.width, height: guideMeta.height }, refs.length);
+  if (!LOCAL && (sent >= CAP || neurons + cost > BUDGET * 0.9)) {
     appendFileSync(
       LEDGER,
       JSON.stringify({ at: new Date().toISOString(), status: 'refused', direction: spec.direction, seed }) +
@@ -195,7 +204,7 @@ await context.route('**/api/materials/direction-photo', async (route) => {
       json: { error: `시험 상한(${CAP}회·예산 ${BUDGET}뉴런의 90%)에 걸려 보내지 않았어요.` },
     });
   }
-  sent++;
+  if (!LOCAL) sent++;
   const number = ++n;
   neurons += cost;
   if (!existsSync(`${OUT}/request-spec.json`)) {
@@ -215,7 +224,55 @@ await context.route('**/api/materials/direction-photo', async (route) => {
     refs: refs.length,
     guide: [guideMeta.width, guideMeta.height],
     neurons: Number(cost.toFixed(2)),
+    engine: LOCAL ? 'local' : 'cloudflare',
   };
+  if (LOCAL) {
+    // The route's model input, answered here: the dev server and its AI binding are never reached.
+    let status, answer;
+    try {
+      const reply = await fetch(LOCAL_FLUX, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'flux-2-klein-4b',
+          image: guideBytes.toString('base64'),
+          refs: await Promise.all(
+            refs.map(async (ref) => Buffer.from(await ref.arrayBuffer()).toString('base64')),
+          ),
+          // Checked as the route checks it.
+          prompt: buildDirectionPhotoPrompt(directionPhotoSpecSchema.parse(spec), refs.length),
+          width: guideMeta.width * 2,
+          height: guideMeta.height * 2,
+          seed: Number(seed),
+        }),
+        signal: AbortSignal.timeout(900_000),
+      });
+      status = reply.status;
+      answer = await reply.json();
+    } catch (error) {
+      status = 'error';
+      answer = { error: String(error).slice(0, 300) };
+    }
+    row.ms = Date.now() - started;
+    row.meta = answer.meta;
+    if (status === 200 && answer.meta?.engine !== 'local') {
+      status = 'not-local';
+      answer = { error: 'the answer did not come from the local server' };
+    }
+    row.status = status === 200 && answer.image ? 200 : status;
+    if (row.status !== 200) {
+      row.error = String(answer.error).slice(0, 400);
+      appendFileSync(LEDGER, JSON.stringify(row) + '\n');
+      return route.fulfill({ status: 502, json: { error: `로컬 FLUX: ${row.error}` } });
+    }
+    const png = Buffer.from(answer.image, 'base64');
+    const meta = await sharp(png).metadata();
+    row.size = [meta.width, meta.height];
+    writeFileSync(`${OUT}/answers/${String(number).padStart(3, '0')}-${spec.direction}-${seed}.png`, png);
+    appendFileSync(LEDGER, JSON.stringify(row) + '\n');
+    log('local', number, spec.direction, seed, 200, `${(row.ms / 1000).toFixed(1)}s`);
+    return route.fulfill({ status: 200, contentType: 'image/png', body: png });
+  }
   let response, body;
   try {
     response = await route.fetch({ timeout: 200_000 });
@@ -333,6 +390,21 @@ try {
   const notice = generator.getByTestId('ai-notice');
   if (await notice.count()) log('notice:', await notice.textContent());
   await generator.screenshot({ path: `${OUT}/screen-candidates.png` });
+  // The candidates as the screen shows them: a toilet's sides in order of their overlap with the guide.
+  const order = {};
+  for (const direction of product.pick) {
+    const group = generator.getByRole('group', { name: `${direction} 후보` });
+    if (!(await group.count())) continue;
+    order[direction] = await group.getByRole('button', { name: /후보 \d$/ }).evaluateAll((buttons) =>
+      buttons.map((button) => ({
+        overlap: button.getAttribute('data-overlap'),
+        image: button.querySelector('img')?.getAttribute('src'),
+      })),
+    );
+    await group.screenshot({ path: `${OUT}/screen-${direction}-candidates.png` });
+  }
+  writeFileSync(`${OUT}/candidate-order.json`, JSON.stringify(order, null, 2));
+  log('candidate order:', JSON.stringify(Object.fromEntries(Object.entries(order).map(([d, list]) => [d, list.map((c) => c.overlap)]))));
 
   // Pick the first answer of each direction, put them in (real cut-out, anchor from the outline).
   for (const direction of product.pick) {

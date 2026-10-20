@@ -1,0 +1,12 @@
+# Local FLUX.2 klein 4B for the direction-photo trials (server.py). Python 3.12, a venv outside the
+# repository. PyTorch's CUDA build first, from its own index:
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+# then: pip install -r requirements.txt
+accelerate==1.15.0
+diffusers==0.41.0
+huggingface_hub==1.33.0
+numpy==2.5.4
+pillow==13.0.0
+safetensors==0.8.0
+tokenizers==0.23.3
+transformers==5.20.2

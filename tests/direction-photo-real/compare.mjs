@@ -1,7 +1,8 @@
 // Side-by-side sheet of direction-photo runs (run.mjs or variants.ts): one row per run, its answers in
 // the same order (direction, then seed), so the same seed lines up down a column; the guides of the
 // first run and each run's outline overlap with its guide (IoU, measure.mjs) under each answer.
-// Usage: node tests/direction-photo-real/compare.mjs <out.png> <run folder>... (AI_LABELS="a|b" names the rows)
+// Usage: node tests/direction-photo-real/compare.mjs <out.png> <run folder>... (AI_LABELS="a|b" names the rows,
+// AI_VIEWS="left" keeps some directions)
 import { existsSync, readdirSync } from 'node:fs';
 import sharp from 'sharp';
 import { compare } from './measure.mjs';
@@ -31,12 +32,15 @@ const fitted = async (file) =>
     .flatten({ background: '#ffffff' })
     .png()
     .toBuffer();
+// AI_VIEWS="left,right" keeps those directions only.
+const VIEWS = process.env.AI_VIEWS?.split(',');
 const answersOf = (run) =>
   readdirSync(`${run}/answers`)
     .map((name) => {
       const [, direction, seed] = name.replace(/\.png$/, '').split('-');
       return { name, direction, seed };
     })
+    .filter(({ direction }) => !VIEWS || VIEWS.includes(direction))
     .sort(
       (a, b) => ORDER.indexOf(a.direction) - ORDER.indexOf(b.direction) || Number(a.seed) - Number(b.seed),
     );
