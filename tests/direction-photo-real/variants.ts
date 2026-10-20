@@ -31,6 +31,17 @@
  *   sentences per direction, {"front": "..."}, written after the app's prompt: a trial only),
  *   REPLACE (a JSON file of [from, to] pairs per direction or for all ("*"), {"*": [["...", "..."]]},
  *   each `from` found exactly once in the app's prompt: a trial only).
+ *
+ * FLUX_ENGINE=local sends the same request to the local FLUX.2 klein 4B server instead
+ * (tests/direction-photo-real/local-flux/server.py, default http://127.0.0.1:8798): no
+ * AI_BUDGET_NEURONS is needed, the ledger gets 0 neurons, the engine and its settings, and an answer
+ * that does not say `meta.engine: 'local'` stops the run (the budget counts Cloudflare's calls only).
+ * Trial-only changes to what is sent (docs/toilet-side-view-results-20261021.md):
+ *   PHOTOS (comma-separated photo paths in place of the product's), REF_EDGE (the photos' long side
+ *   shrunk to this many px after the screen's preparation, on white), REF_FLIP=1 (the photos turned
+ *   over), REF_ADD_FLIP=1 (each photo followed by itself turned over), GUIDE_FILES (a JSON file
+ *   {"left": {"file": "...", "flip": true}}: that picture, at the guide's size, as image 0), GUIDE_EDIT
+ *   (contrast:<factor> or outline: the guide drawn stronger).
  */
 import { chromium } from '@playwright/test';
 import { build } from 'esbuild';
@@ -46,7 +57,7 @@ import {
 } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
-import sharp from 'sharp';
+import sharp, { type Sharp } from 'sharp';
 import { buildDirectionPhotoPrompt } from '../../src/lib/direction-photo/prompt';
 import { callNeurons } from '../../src/lib/direction-photo/plan';
 import {
@@ -57,10 +68,12 @@ import {
 
 const ROOT = process.env.AI_ROOT ?? 'test-results/direction-photo-bear';
 const LEDGER = process.env.AI_LEDGER ?? `${ROOT}/ledger.jsonl`;
+const LOCAL = process.env.FLUX_ENGINE === 'local';
+if (process.env.FLUX_ENGINE && !LOCAL) throw new Error('FLUX_ENGINE은 local만 받아요(없으면 Cloudflare).');
 const BUDGET = Number(process.env.AI_BUDGET_NEURONS);
-const WORKER = process.env.FLUX_WORKER ?? 'http://127.0.0.1:8799';
+const WORKER = process.env.FLUX_WORKER ?? (LOCAL ? 'http://127.0.0.1:8798' : 'http://127.0.0.1:8799');
 const INPUT = process.env.AI_INPUT ?? 'test-results/product-representation/real/input';
-if (!(BUDGET > 0)) throw new Error('AI_BUDGET_NEURONS를 정해 주세요.');
+if (!LOCAL && !(BUDGET > 0)) throw new Error('AI_BUDGET_NEURONS를 정해 주세요.');
 
 const VIEW_NAMES: Record<DirectionPhotoView, string> = {
   front: '정면',
@@ -100,6 +113,83 @@ const PRODUCTS: Record<
       photoAngles: ['front-right'],
     },
     photos: ['57-toilet-3q-small.png'],
+  },
+  // The 2026-10-21 side-view trial (docs/toilet-side-view-results-20261021.md): the bear and the smart
+  // toilet turned over, so the side nearer the photo is the left (their levers and buttons too), and
+  // the person's photos (test-results/toilet-side/input/extra, sizes assumed). A photo name with a
+  // slash is a path from the repository's root.
+  'bear-m': {
+    spec: {
+      category: 'toilet',
+      form: 'one-piece',
+      lid: 'seat',
+      installation: 'floor',
+      sizeMm: [370, 660, 640],
+      photoAngles: ['front-left'],
+    },
+    photos: ['test-results/product-representation/input/bear-toilet-cutout-mirrored.png'],
+  },
+  'smart-m': {
+    spec: {
+      category: 'toilet',
+      form: 'tankless',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [400, 520, 700],
+      photoAngles: ['front-left'],
+    },
+    photos: ['test-results/product-representation/input/smart-toilet-cutout-mirrored.png'],
+  },
+  // The smart toilet's photo with its grey backdrop (57 is its cut-out): the screen's background removal.
+  u4: {
+    spec: {
+      category: 'toilet',
+      form: 'tankless',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [400, 520, 700],
+      photoAngles: ['front-right'],
+    },
+    photos: ['test-results/toilet-side/input/extra/u4.jpg'],
+    cutout: true,
+  },
+  // One piece, lid closed, a chrome button on the tank's right side.
+  u5: {
+    spec: {
+      category: 'toilet',
+      form: 'one-piece',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [380, 700, 700],
+      photoAngles: ['front-right'],
+    },
+    photos: ['test-results/toilet-side/input/extra/u5.jpg'],
+    cutout: true,
+  },
+  // One piece with a low tank, lid closed, a chrome button on its right side.
+  u6: {
+    spec: {
+      category: 'toilet',
+      form: 'one-piece',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [380, 620, 700],
+      photoAngles: ['front-right'],
+    },
+    photos: ['test-results/toilet-side/input/extra/u6.jpg'],
+    cutout: true,
+  },
+  // Two piece, the foot in the open, lid closed, the lever at the left end of the tank's front (its right).
+  u9: {
+    spec: {
+      category: 'toilet',
+      form: 'two-piece',
+      lid: 'closed',
+      installation: 'floor',
+      sizeMm: [380, 760, 700],
+    },
+    photos: ['test-results/toilet-side/input/extra/u9.jpg'],
+    cutout: true,
   },
   // The 2026-10-13 bath, to see the new photo sentence does not hurt it.
   bath: {
@@ -428,6 +518,75 @@ const replaced = (prompt: string, view: DirectionPhotoView) =>
     if (text.split(from).length !== 2) throw new Error(`REPLACE: ${view}에서 한 번 나오지 않음: ${from}`);
     return text.replace(from, () => to);
   }, prompt);
+/** The photos as a trial sends them (REF_EDGE, REF_FLIP, REF_ADD_FLIP); the screen's without them. */
+async function trialRefs(photos: Buffer[]): Promise<Buffer[]> {
+  const edge = Number(process.env.REF_EDGE ?? 0);
+  const out: Buffer[] = [];
+  for (const photo of photos) {
+    let png = photo;
+    if (edge) {
+      // Still a route-sized PNG: sides in 16 px steps.
+      const { width = 0, height = 0 } = await sharp(png).metadata();
+      const scale = edge / Math.max(width, height);
+      png = await sharp(png)
+        .resize(Math.round((width * scale) / 16) * 16, Math.round((height * scale) / 16) * 16, {
+          fit: 'fill',
+        })
+        .png()
+        .toBuffer();
+    }
+    const flipped = await sharp(png).flop().png().toBuffer();
+    if (process.env.REF_FLIP) out.push(flipped);
+    else out.push(png, ...(process.env.REF_ADD_FLIP ? [flipped] : []));
+  }
+  return out;
+}
+
+/** Image 0 as a trial sends it (GUIDE_FILES, GUIDE_EDIT) for the views made; none without them. */
+async function trialGuides(guides: Record<string, Buffer>) {
+  const files: Partial<Record<DirectionPhotoView, { file: string; flip?: boolean }>> = process.env.GUIDE_FILES
+    ? JSON.parse(readFileSync(process.env.GUIDE_FILES, 'utf8'))
+    : {};
+  const edit = process.env.GUIDE_EDIT;
+  const changed: Partial<Record<DirectionPhotoView, Buffer>> = {};
+  for (const view of views) {
+    const guide = guides[VIEW_NAMES[view]];
+    const { width, height } = await sharp(guide).metadata();
+    const swap = files[view];
+    if (swap) {
+      let picture = sharp(readFileSync(swap.file)).resize(width, height, { fit: 'fill' });
+      if (swap.flip) picture = picture.flop();
+      changed[view] = await picture.flatten({ background: '#ffffff' }).png().toBuffer();
+    } else if (edit?.startsWith('contrast:')) {
+      // Around the middle grey, the white background staying white.
+      const factor = Number(edit.slice('contrast:'.length));
+      changed[view] = await sharp(guide)
+        .linear(factor, 128 * (1 - factor))
+        .png()
+        .toBuffer();
+    } else if (edit === 'outline') {
+      // A dark line where the grey meets the white, over the guide as it is. One step per sharp
+      // instance: sharp runs its operations in its own fixed order, and a second threshold replaces
+      // the first.
+      const step = async (input: Buffer, apply: (image: Sharp) => Sharp) =>
+        apply(sharp(input)).png().toBuffer();
+      const solid = await step(guide, (image) => image.removeAlpha().greyscale().threshold(250).negate());
+      const edges = await step(solid, (image) =>
+        image.convolve({ width: 3, height: 3, kernel: [-1, -1, -1, -1, 8, -1, -1, -1, -1] }),
+      );
+      // About 3 px wide: the 1 px edge blurred and cut again (sharp's dilate left nothing here).
+      const thin = await step(edges, (image) => image.threshold(1));
+      const lines = await step(await step(thin, (image) => image.blur(1)), (image) => image.threshold(20));
+      const mask = await step(lines, (image) => image.negate());
+      changed[view] = await sharp(guide)
+        .composite([{ input: mask, blend: 'multiply' }])
+        .png()
+        .toBuffer();
+    } else if (edit) throw new Error('GUIDE_EDIT는 contrast:<배수> 또는 outline');
+  }
+  return changed;
+}
+
 if (mode === 'app') {
   const made = await inBrowser(
     {
@@ -438,18 +597,23 @@ if (mode === 'app') {
       installation: spec.installation,
       skirt: spec.skirt,
     },
-    product.photos.map((name) => `${INPUT}/${name}`),
+    (process.env.PHOTOS?.split(',') ?? product.photos).map((name) =>
+      name.includes('/') ? name : `${INPUT}/${name}`,
+    ),
     !!product.cutout,
   );
   for (const [direction, png] of Object.entries(made.guides))
     writeFileSync(`${OUT}/guide-${direction}.png`, png);
   made.cutouts.forEach((png, index) => writeFileSync(`${OUT}/cutout-ref-${index + 1}.png`, png));
   if (made.removal.length) writeFileSync(`${OUT}/removal.json`, JSON.stringify(made.removal, null, 2));
-  photoFiles = made.photos.map((png, index) => {
+  const refs = await trialRefs(made.photos);
+  photoFiles = refs.map((png, index) => {
     const file = `${OUT}/sent-ref-${index + 1}.png`;
     writeFileSync(file, png);
     return file;
   });
+  for (const [view, png] of Object.entries(await trialGuides(made.guides)))
+    made.guides[VIEW_NAMES[view as DirectionPhotoView]] = png;
   if (process.env.GUIDES_ONLY) {
     console.log(`${OUT}: 가이드·보낼 사진만 만듦(호출 없음)`);
     process.exit(0);
@@ -488,10 +652,11 @@ for (const view of views) {
   writeFileSync(`${OUT}/prompt-${view}.txt`, prompt);
   const meta = await sharp(guide).metadata();
   if (process.env.DRY) continue;
-  const cost = callNeurons({ width: meta.width!, height: meta.height! }, photoFiles.length);
+  // A local answer costs nothing on the account: only Cloudflare's calls count against the budget.
+  const cost = LOCAL ? 0 : callNeurons({ width: meta.width!, height: meta.height! }, photoFiles.length);
   for (const seed of seeds) {
     const used = spent().reduce((sum, row) => sum + (row.neurons ?? 0), 0);
-    if (used + cost > BUDGET * 0.9) {
+    if (!LOCAL && used + cost > BUDGET * 0.9) {
       appendFileSync(
         LEDGER,
         JSON.stringify({ at: new Date().toISOString(), status: 'refused', run: OUT, direction: view, seed }) +
@@ -510,6 +675,7 @@ for (const view of views) {
       refs: photoFiles.length,
       guide: [meta.width, meta.height],
       neurons: Number(cost.toFixed(2)),
+      engine: LOCAL ? 'local' : 'cloudflare',
     };
     const started = Date.now();
     try {
@@ -525,10 +691,24 @@ for (const view of views) {
           height: meta.height! * 2,
           seed,
         }),
-        signal: AbortSignal.timeout(200_000),
+        signal: AbortSignal.timeout(LOCAL ? 900_000 : 200_000),
       });
-      const body = (await response.json()) as { image?: string; error?: string; status?: number };
+      const body = (await response.json()) as {
+        image?: string;
+        error?: string;
+        status?: number;
+        meta?: Record<string, unknown>;
+      };
       row.status = response.ok && body.image ? 200 : (body.status ?? response.status);
+      if (LOCAL) {
+        row.meta = body.meta;
+        // Never a Cloudflare answer counted as free.
+        if (body.meta?.engine !== 'local') {
+          row.status = 'not-local';
+          row.error = `로컬 서버가 아닌 응답이에요: ${JSON.stringify(body.meta ?? null).slice(0, 200)}`;
+          delete body.image;
+        }
+      }
       if (body.image) {
         const png = Buffer.from(body.image, 'base64');
         const answer = await sharp(png).metadata();
@@ -565,6 +745,12 @@ writeFileSync(
       spec,
       append: process.env.APPEND,
       replace: process.env.REPLACE,
+      engine: LOCAL ? 'local' : 'cloudflare',
+      trial: Object.fromEntries(
+        ['PHOTOS', 'REF_EDGE', 'REF_FLIP', 'REF_ADD_FLIP', 'GUIDE_FILES', 'GUIDE_EDIT'].flatMap((key) =>
+          process.env[key] ? [[key, process.env[key]]] : [],
+        ),
+      ),
       views,
       seeds,
     },

@@ -105,6 +105,32 @@ async function paint(guide: Buffer, direction: string) {
     .png()
     .toBuffer();
 }
+/**
+ * A side answer that left its guide: the painted product with the top of its far end cut away, as
+ * an outline turned toward the camera loses the guide's (the candidates' order, candidate-order.ts).
+ */
+async function paintTurned(guide: Buffer, direction: string) {
+  const painted = await paint(guide, direction);
+  const { data, info } = await sharp(painted).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width, height } = info;
+  let left = width,
+    right = -1,
+    top = height,
+    bottom = -1;
+  for (let i = 0; i < width * height; i++)
+    if (data[i * 3] < 254 || data[i * 3 + 1] < 254 || data[i * 3 + 2] < 254) {
+      left = Math.min(left, i % width);
+      right = Math.max(right, i % width);
+      top = Math.min(top, Math.floor(i / width));
+      bottom = Math.max(bottom, Math.floor(i / width));
+    }
+  for (let y = top; y < (top + bottom) / 2; y++)
+    for (let x = Math.round(right - (right - left) * 0.35); x <= right; x++)
+      data.fill(255, (y * width + x) * 3, (y * width + x) * 3 + 3);
+  return sharp(data, { raw: { width, height, channels: 3 } })
+    .png()
+    .toBuffer();
+}
 async function formOf(request: PlaywrightRequest) {
   return new Response(new Uint8Array(request.postDataBuffer()!), {
     headers: { 'content-type': request.headers()['content-type'] },
@@ -120,7 +146,7 @@ type Sent = {
 async function mockModel(
   page: Page,
   sent: Sent[],
-  answer?: (spec: Record<string, unknown>) => Promise<unknown>,
+  answer?: (spec: Record<string, unknown>, guide: Buffer) => Promise<unknown>,
 ) {
   await page.route('**/api/materials/direction-photo', async (route) => {
     const form = await formOf(route.request());
@@ -140,7 +166,7 @@ async function mockModel(
       guide: [meta.width!, meta.height!],
       refs,
     });
-    const custom = await answer?.(spec);
+    const custom = await answer?.(spec, guide);
     if (custom) return route.fulfill(custom as Parameters<typeof route.fulfill>[0]);
     await route.fulfill({ contentType: 'image/png', body: await paint(guide, spec.direction) });
   });
@@ -332,7 +358,13 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   const sent: Sent[] = [];
   let mode: 'quota' | 'payment' | 'wait' | 'answer' = 'quota';
   const waiting: (() => void)[] = [];
-  await mockModel(page, sent, async () => {
+  // The toilet's first 왼쪽 request (its candidate 1) is answered turned away from its guide.
+  let turnedSent = false;
+  await mockModel(page, sent, async (spec, guide) => {
+    if (mode === 'answer' && spec.category === 'toilet' && spec.direction === 'left' && !turnedSent) {
+      turnedSent = true;
+      return { contentType: 'image/png', body: await paintTurned(guide, 'left') };
+    }
     if (mode === 'quota')
       return {
         status: 429,
@@ -508,6 +540,23 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
     expect(s.spec).not.toHaveProperty('skirt');
   }
   await expect(toilet.getByRole('group', { name: '뒤 후보' })).toHaveCount(0);
+  // A toilet's side candidates come in order of their outline's overlap with the guide: the answer
+  // that kept the guide first, the turned one (sent first) second. The front keeps its order.
+  const leftGroup = toilet.getByRole('group', { name: '왼쪽 후보' });
+  const overlaps = await leftGroup
+    .getByRole('button', { name: /후보 \d$/ })
+    .evaluateAll((buttons) => buttons.map((button) => Number(button.getAttribute('data-overlap'))));
+  expect(turnedSent).toBe(true);
+  // The mock paints the guide's faint shadow too, so even the faithful answer is not quite 1.
+  expect(overlaps[0]).toBeGreaterThan(0.85);
+  expect(overlaps[0] - overlaps[1]).toBeGreaterThan(0.03);
+  await expect(leftGroup).toContainText('가이드와 윤곽이 더 비슷한 후보');
+  await expect(toilet.getByRole('group', { name: '정면 후보' })).not.toContainText('가이드와 윤곽이');
+  await expect(
+    toilet
+      .getByRole('group', { name: '정면 후보' })
+      .getByRole('button', { name: '정면 후보 1', exact: true }),
+  ).not.toHaveAttribute('data-overlap');
   await toilet.screenshot({ path: info.outputPath('generator-toilet.png') });
   // A tile has no generator at all.
   await form.getByLabel('카테고리', { exact: true }).selectOption('tile');

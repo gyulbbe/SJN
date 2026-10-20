@@ -31,11 +31,13 @@ import {
   TOILET_BODY_COLORS,
   TOILET_LABELS,
   TOILET_SEAT_COLORS,
+  TOILET_ORDERED_VIEWS,
   TOILET_SKIRTS,
   type ToiletBodyColor,
   type ToiletSeatColor,
   type ToiletSkirt,
 } from '@/lib/direction-photo/categories/toilet';
+import { guideOverlap, overlapOrder } from '@/lib/direction-photo/candidate-order';
 import { mirrorPng, readAlpha, requestDirectionPhoto } from '@/lib/direction-photo/client';
 import {
   anchorFromAlpha,
@@ -91,7 +93,9 @@ type Reference = {
   url?: string;
   error?: string;
 };
-type Candidate = { status: 'made'; blob: Blob; url: string } | { status: 'failed'; message: string };
+/** `overlap`: its outline's overlap with the guide, where the candidates are put in that order. */
+type Candidate =
+  { status: 'made'; blob: Blob; url: string; overlap?: number } | { status: 'failed'; message: string };
 
 /**
  * "AI로 방향 사진 만들기" in the material form (bath, toilet, basin): the person's photos of the
@@ -301,6 +305,9 @@ export function DirectionPhotoGenerator({
     });
 
   const guideOf = (direction: ProductDirection) => guides?.find((guide) => guide.direction === direction);
+  /** A toilet's sides: their candidates come in order of how closely they follow the guide. */
+  const ordersCandidates = (direction: ProductDirection) =>
+    kind === 'toilet' && (TOILET_ORDERED_VIEWS as readonly string[]).includes(directionPhotoView(direction));
   const estimate = guides
     ? runEstimate(
         plan.made.map((direction) => guideOf(direction)!),
@@ -354,6 +361,12 @@ export function DirectionPhotoGenerator({
         },
       });
       if (!alive.current) return;
+      // A toilet's side candidates, measured against their guide to be shown in that order.
+      const overlaps = new Map<(typeof outcomes)[number], number | undefined>();
+      for (const outcome of outcomes)
+        if (outcome.status === 'made' && ordersCandidates(outcome.job.direction))
+          overlaps.set(outcome, await guideOverlap(guideOf(outcome.job.direction)!.blob, outcome.image));
+      if (!alive.current) return;
       // The new answers replace the directions' earlier ones only now (a cancelled run keeps them).
       setCandidates((current) => {
         const next = { ...current };
@@ -365,8 +378,20 @@ export function DirectionPhotoGenerator({
           const list = (next[outcome.job.direction] ??= []);
           list[outcome.job.candidate] =
             outcome.status === 'made'
-              ? { status: 'made', blob: outcome.image, url: keep(outcome.image) }
+              ? {
+                  status: 'made',
+                  blob: outcome.image,
+                  url: keep(outcome.image),
+                  overlap: overlaps.get(outcome),
+                }
               : { status: 'failed', message: outcome.message };
+        }
+        for (const direction of directions) {
+          const list = next[direction];
+          if (list && ordersCandidates(direction))
+            next[direction] = overlapOrder(
+              list.map((candidate) => (candidate.status === 'made' ? candidate.overlap : undefined)),
+            ).map((index) => list[index]);
         }
         return next;
       });
@@ -750,6 +775,7 @@ export function DirectionPhotoGenerator({
                     className={`${styles.aiCandidate}${picked[direction] === index ? ` ${styles.aiPicked}` : ''}`}
                     aria-label={`${direction} 후보 ${index + 1}`}
                     aria-pressed={picked[direction] === index}
+                    data-overlap={candidate.overlap?.toFixed(3)}
                     disabled={!!applying}
                     onClick={() => setPicked((current) => ({ ...current, [direction]: index }))}
                   >
@@ -773,6 +799,11 @@ export function DirectionPhotoGenerator({
             </button>
             {direction === '왼쪽' && plan.mirrored.includes('오른쪽') && (
               <span className={styles.note}>오른쪽은 고른 왼쪽 사진을 좌우 반전해 넣어요.</span>
+            )}
+            {ordersCandidates(direction) && (
+              <span className={styles.note}>
+                가이드와 윤곽이 더 비슷한 후보(옆모습이 덜 돌아간 쪽)를 앞에 두었어요.
+              </span>
             )}
           </div>
         ) : null,

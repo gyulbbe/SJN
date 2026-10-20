@@ -65,6 +65,14 @@ export const TOILET_LABELS = {
   } satisfies Record<ToiletSeatColor, string>,
 };
 
+/**
+ * The views whose candidates the form puts in order of their outline's overlap with the guide
+ * (candidate-order.ts): the sides, where a candidate turned toward the camera shows; on Cloudflare
+ * the larger overlap was the more side-on candidate in 15 of 15 pairs (2026-10-21,
+ * docs/toilet-side-view-results-20261021.md). The front was not tried.
+ */
+export const TOILET_ORDERED_VIEWS = ['left', 'right'] as const;
+
 /** The views a toilet makes: no 뒤 (it stands against the wall, and 17 of 19 backs came out as its front). */
 export const TOILET_NO_BACK = '변기는 벽에 붙여 설치해서 뒤 사진을 만들지 않아요';
 
