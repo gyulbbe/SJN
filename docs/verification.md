@@ -2,6 +2,27 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-21 — 양변기 옆모습: 로컬 FLUX 시험, 변기 옆 후보 순서
+
+- 무엇: 변기 옆모습이 살짝 사선으로 나오는 문제를 시험했다([결과](toilet-side-view-results-20261021.md)). 사용자 결정으로 R8만 앱에 넣었다.
+  - R8: 변기의 왼쪽·오른쪽 후보를 가이드와 윤곽이 더 겹치는 순서로 보인다(`src/lib/direction-photo/candidate-order.ts`, `TOILET_ORDERED_VIEWS`, 폼 안내 문구).
+  - 요청·프롬프트·가이드·계약·저장은 그대로다.
+- 시험 도구: 로컬 FLUX.2 klein 4B 서버 `tests/direction-photo-real/local-flux/`(127.0.0.1:8798, 시험 하네스만)와 하네스의 `FLUX_ENGINE=local`을 더했다. 그 밖에 `variants.ts`의 시험용 스위치(`PHOTOS`, `REF_EDGE`, `REF_FLIP`, `REF_ADD_FLIP`, `GUIDE_FILES`, `GUIDE_EDIT`), `compare.mjs`의 `AI_VIEWS`, `side-grade.mjs`, `side-order.ts`가 있다.
+- 실제 호출
+  - Cloudflare: 30회, 모두 성공, 추정 약 3,448뉴런, 429 없음. 시험용 Worker(원격 AI 바인딩, klein 4B만, 재시도 없음)로 보냈다.
+  - 로컬: 484회, 모두 성공, 뉴런 0.
+- 확인
+  - 같은 하네스를 `FLUX_ENGINE` 없이 `DRY=1`로 돌렸다. 곰·스마트의 가이드·보낸 사진·프롬프트 11개 파일이 바꾸기 전 하네스와 같았다.
+  - 로컬 서버: 시험 요청 1장, 같은 seed 두 번(픽셀 같음), 사진 4장·다른 모델 거절(400)을 확인했다.
+  - 실제 화면(`run.mjs` `PRODUCT=bear-toilet FLUX_ENGINE=local`, 로컬 개발 서버, 시험 계정)에서 배경 제거 → 6장 → 옆 후보 순서와 안내 → 칸에 넣기까지 갔다. 자재는 저장하지 않았다.
+  - Cloudflare 실제 화면 확인은 하지 않았다(예산).
+- 검사
+  - `npx vitest run` 249파일 통과(3,603 테스트, 1 건너뜀)
+  - `npm run typecheck`, `npm run lint`, 바꾼 코드 파일의 Prettier 검사
+  - e2e: `direction-photo-ai` 3개, `material-images` 5개 통과
+  - 로컬 개발 DB에 0008을 적용했다(`npm run db:dev:migrate`).
+  - `next-env.d.ts`는 되돌렸다. `wrangler.dev.jsonc`·`next.config.ts`는 바꾸지 않았다.
+
 ## 2026-10-18 — 양변기 방향 사진: 세부 종류별 문장·가이드, 색 선택지
 
 - 무엇: 자재별 모듈 `src/lib/direction-photo/categories/toilet.ts`를 만들었다. 다음을 앱에 넣었다([결과](toilet-direction-photo-results-20261018.md)).

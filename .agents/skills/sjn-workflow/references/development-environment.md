@@ -129,6 +129,26 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 
 Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는 `/api/export/photoreal`(제품 하나씩 다듬는 실험 C는 별도 라우트 `/api/export/photoreal/product`, 자재 폼의 방향 사진 만들기는 `/api/materials/direction-photo`)의 `@cf/black-forest-labs/flux-2-klein-4b`다. 같은 `AI` 바인딩을 사용하고 `sjn-gateway`는 Gemma만 거치며(FLUX는 multipart 스트림이라 게이트웨이 미사용), 활성 로그인이 필요하다. 기본 개발 설정과 Next Node에는 AI 바인딩이 없다. 기본 개발 서버 시작만으로 원격 프록시를 연결하지 않도록 `wrangler.dev.jsonc`에서 AI를 제외했다. 실제 Workers AI 검증은 별도 승인된 원격 AI 바인딩 설정에서 실행한다. **로컬 D1/R2라는 사실은 AI가 로컬이라는 뜻이 아니다.** 명시적 AI 실행은 Cloudflare 사진 전송·사용량을 발생시킨다. 로그인·DB 준비·문서 갱신만으로 AI를 실행하지 않는다.
 
+### 로컬 FLUX 시험 환경 (2026-10-21)
+
+방향 사진 시험을 Cloudflare 하루 한도 없이 하려고 FLUX.2 klein 4B를 PC에서 돌린다. **시험 하네스만** 쓰고 앱 라우트는 쓰지 않는다. 로컬은 Cloudflare와 다르게 그린다(가이드를 거의 그대로, 회색으로, 사진을 거의 쓰지 않음; [옆모습 결과](../../../../docs/toilet-side-view-results-20261021.md) 4절). 그래서 문장·사진 변형과 결정은 Cloudflare로 확인한다.
+
+- **모델:** `black-forest-labs/FLUX.2-klein-4B`(Apache 2.0, 동의 절차 없음, 2026-10-21 revision `e7b7dc2`). diffusers 폴더만 받는다(약 16GB). 저장소의 단일 파일(7.75GB)은 필요 없다. 9B는 비상업 라이선스라 쓰지 않는다.
+- **환경(저장소 밖):** Python 3.12 venv. 예: `C:\dev\sjn-local-flux\.venv`
+  1. `py -3.12 -m venv C:\dev\sjn-local-flux\.venv`
+  2. `pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128`(드라이버에 맞는 CUDA 빌드)
+  3. `pip install -r tests/direction-photo-real/local-flux/requirements.txt`
+- **실행:** `HF_HOME`을 모델 캐시 폴더로 두고(예: `C:\dev\sjn-local-flux\hf`) `python tests/direction-photo-real/local-flux/server.py`를 실행한다. 첫 실행에서 가중치를 받는다. Hugging Face 로그인·토큰은 필요 없다.
+  - 주소: `127.0.0.1:8798`에서만 받는다. Cloudflare 시험용 Worker는 8799다.
+  - 요청: 시험용 Worker와 같다. 한 번에 한 요청, 재시도 없음.
+  - 확인: `GET /health`가 설정(`meta`)을 돌려준다.
+- **설정(env):** `LOCAL_FLUX_OFFLOAD`(`model` 기본 / `sequential` / `none`), `LOCAL_FLUX_STEPS`(4), `LOCAL_FLUX_GUIDANCE`(1.0), `LOCAL_FLUX_PORT`(8798)
+- **12GB VRAM:** bf16 + 모델 CPU 오프로드면 GPU 최대 약 8.4GB, 896×992 한 장 약 7~10초다(RTX 4070 Ti, 첫 장 16초). 같은 요청·seed는 같은 이미지다.
+- **하네스:** `variants.ts`·`run.mjs`에 `FLUX_ENGINE=local`을 준다.
+  - 장부에는 engine·설정·시간을 적고 뉴런은 0이다. 예산은 Cloudflare 호출만 센다.
+  - 응답의 `meta.engine`이 `local`이 아니면 멈춘다.
+  - `run.mjs`의 로컬 모드는 화면이 보낸 라우트 요청을 가로채 로컬 서버의 답으로 돌려준다. 개발 서버의 AI 바인딩이 필요 없다.
+
 체험 중에는 사진 업로드·AI 실행·진단 아카이브를 시작하지 않는다. MoGe·DeepLab·배경 제거는 로그인한 기능의 브라우저 실행이며 모델/CDN 다운로드가 필요할 수 있다. [현재 AI 가이드](../../../../docs/reconstruction-cloud-browser-setup.md), [FLUX](../../../../docs/flux-export.md)를 해당 기능 작업 시 확인한다. 준비 응답은 바인딩/접근 검사이며 추론·과금·잔여량 검증이 아니다.
 
 `deploy:vinext`는 실제 배포다. 현재 확인한 실배포에는 소스의 R2 바인딩과 공개 인증 URL이 반영되어 있다. 이후 소스 변경을 Worker에 반영하려면 검증된 산출물로 배포해야 하며, 누락된 Better Auth secret(과 선택한 경우 Google 두 값)은 배포만으로 생성되지 않는다. main 푸시는 Cloudflare 자동 배포로 이어진다(2026-09-23 푸시 약 80초 뒤 새 배포 확인). 아이디 로그인 코드는 0007 컬럼이 있는 DB에서만 준비 검사를 통과한다. 이 문서 갱신에서는 원격 설정·DB·배포를 변경하지 않았다. 원격 sjn과 로컬 개발 DB는 2026-09-17 사용자 승인 후 0001~0006 적용을 완료했다. 이후 운영 DB 변경은 대상과 미적용 목록을 확인해 별도로 승인된 범위에서 진행한다. 로컬 개발 DB 적용과 원격 DB 적용은 다른 작업이다. 자세한 Google/secret/배포 준비는 [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 따른다.
