@@ -9,6 +9,7 @@ import {
   directionPhotoSpecSchema,
   type DirectionPhotoSpec,
 } from '../src/lib/direction-photo/contract';
+import { TOILET_SIDE_ELEVATION } from '../src/lib/direction-photo/categories/toilet';
 
 const BATH: [number, number, number] = [1700, 560, 750];
 const spec = (edit: Partial<DirectionPhotoSpec> = {}): DirectionPhotoSpec => ({
@@ -181,7 +182,8 @@ describe('direction photo prompt', () => {
   });
 
   it('keeps the bath’s, the basin’s and the toilets’ texts word for word when nothing new is said', () => {
-    // The texts before the toilet's own module (2026-10-18), byte for byte.
+    // The texts before the toilet's own module (2026-10-18), byte for byte; a toilet's side has the
+    // 2026-10-21 sentence after them.
     expect(buildDirectionPhotoPrompt(spec(), 1)).toBe(
       'Image 0 is a plain grey 3D render of an oval freestanding bathtub with rounded ends. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the long side facing the room; its back is the long side placed along the wall. The view shows the long side of the tub. In this view the drain in the bottom of the tub is not visible; do not draw it. Draw no hole, drain or overflow on the outside of the tub. The real bathtub is about 1700 × 560 × 750 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Turn image 0 into a photorealistic studio product photograph of that real bathtub: pure white seamless background (#FFFFFF), soft even studio lighting, at most a very faint soft contact shadow directly under it, no props, no floor texture, no text, no watermark.',
     );
@@ -216,8 +218,44 @@ describe('direction photo prompt', () => {
         1,
       ),
     ).toBe(
-      "Image 0 is a plain grey 3D render of a one-piece floor-standing toilet with its lid closed. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the bowl end, where a seated person's legs go; the tank or rear housing is its back. The view shows the toilet from its right side: the bowl points to the right of the picture and the tank is on the left. In this view the waste pipe and the water in the bowl are not visible; do not draw them. The real toilet is about 380 × 700 × 700 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Image 1 was taken from the front right of the product, from above: that is not the view to make. Turn the product to the view of image 0 and do not copy the angle, the perspective or the framing of image 1. Turn image 0 into a photorealistic studio product photograph of that real toilet: pure white seamless background (#FFFFFF), soft even studio lighting, at most a very faint soft contact shadow directly under it, no props, no floor texture, no text, no watermark.",
+      "Image 0 is a plain grey 3D render of a one-piece floor-standing toilet with its lid closed. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the bowl end, where a seated person's legs go; the tank or rear housing is its back. The view shows the toilet from its right side: the bowl points to the right of the picture and the tank is on the left. In this view the waste pipe and the water in the bowl are not visible; do not draw them. The real toilet is about 380 × 700 × 700 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Image 1 was taken from the front right of the product, from above: that is not the view to make. Turn the product to the view of image 0 and do not copy the angle, the perspective or the framing of image 1. Turn image 0 into a photorealistic studio product photograph of that real toilet: pure white seamless background (#FFFFFF), soft even studio lighting, at most a very faint soft contact shadow directly under it, no props, no floor texture, no text, no watermark. " +
+        TOILET_SIDE_ELEVATION,
     );
+  });
+
+  it('ends a toilet’s side views with the side-elevation sentence, and no other view (2026-10-21)', () => {
+    const toilet = (form: DirectionPhotoSpec['form'], direction: DirectionPhotoSpec['direction']) =>
+      buildDirectionPhotoPrompt(
+        spec({
+          category: 'toilet',
+          form,
+          lid: 'closed',
+          direction,
+          sizeMm: [380, 700, 700],
+          ...(form !== 'two-piece' && { photoAngles: ['front-right'] as const }),
+        }),
+        1,
+      );
+    for (const form of ['two-piece', 'one-piece', 'tankless'] as const) {
+      for (const direction of ['left', 'right'] as const)
+        expect(toilet(form, direction).endsWith(`no watermark. ${TOILET_SIDE_ELEVATION}`)).toBe(true);
+      expect(toilet(form, 'front')).not.toContain(TOILET_SIDE_ELEVATION);
+    }
+    for (const direction of ['left', 'right'] as const) {
+      expect(buildDirectionPhotoPrompt(spec({ direction }), 1)).not.toContain(TOILET_SIDE_ELEVATION);
+      expect(
+        buildDirectionPhotoPrompt(
+          spec({
+            category: 'basin',
+            form: 'wall-round',
+            direction,
+            installation: 'wall',
+            sizeMm: [500, 180, 420],
+          }),
+          1,
+        ),
+      ).not.toContain(TOILET_SIDE_ELEVATION);
+    }
   });
 
   it('speaks of a tankless toilet’s seat unit, never of a tank (the 2026-10-18 trial’s words)', () => {

@@ -133,6 +133,17 @@ export function toiletViewSentence({ form, direction }: Pick<DirectionPhotoSpec,
   }[direction];
 }
 
+/**
+ * Said last for a side view: the side drawn flat, as the guide shows it. The side near the photo
+ * followed the photo's slant (the 2026-10-21 trials, docs/direction-photo-explore-results-20261021.md);
+ * with this sentence the one-piece bear toilet's near side came out side-on 2 of 4 and slanted 0 of 4
+ * (0 and 2 of 4 without), the tankless toilet's side-on 3 of 4 (2 of 4), the far side as before.
+ */
+export const TOILET_SIDE_ELEVATION =
+  'Draw it as an orthographic side elevation, like a product drawing: no perspective, no turn toward the camera, the outline exactly that of image 0.';
+export const toiletSideSentence = ({ direction }: Pick<DirectionPhotoSpec, 'direction'>) =>
+  direction === 'left' || direction === 'right' ? TOILET_SIDE_ELEVATION : '';
+
 /** What this view cannot show: the back of a tank, the pipes and the water low in the bowl. */
 export const toiletHiddenParts = ({ form, direction }: Pick<DirectionPhotoSpec, 'form' | 'direction'>) => [
   ...{
