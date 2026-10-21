@@ -131,7 +131,7 @@ Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는
 
 ### 로컬 FLUX 시험 환경 (2026-10-21)
 
-방향 사진 시험을 Cloudflare 하루 한도 없이 하려고 FLUX.2 klein 4B를 PC에서 돌린다. **시험 하네스만** 쓰고 앱 라우트는 쓰지 않는다. 로컬은 Cloudflare와 다르게 그린다(가이드를 거의 그대로, 회색으로, 사진을 거의 쓰지 않음; [옆모습 결과](../../../../docs/toilet-side-view-results-20261021.md) 4절). 그래서 문장·사진 변형과 결정은 Cloudflare로 확인한다.
+방향 사진 시험을 Cloudflare 하루 한도 없이 하려고 FLUX.2 klein 4B를 PC에서 돌린다. **시험 하네스만** 쓰고 앱 라우트는 쓰지 않는다. 로컬은 Cloudflare와 다르게 그린다. 앱 프롬프트의 "plain grey"를 훨씬 세게 따라 회색으로 그리고, 사진의 특징(곰 얼굴·레버)도 덜 쓴다. 공식 구현과는 같다(guidance·버전·크기는 원인이 아님, [넓게 찾기 결과](../../../../docs/direction-photo-explore-results-20261021.md) 1절). image 0·사진 변형은 로컬로 거르고, 문장 변형과 결정은 Cloudflare로 확인한다.
 
 - **모델:** `black-forest-labs/FLUX.2-klein-4B`(Apache 2.0, 동의 절차 없음, 2026-10-21 revision `e7b7dc2`). diffusers 폴더만 받는다(약 16GB). 저장소의 단일 파일(7.75GB)은 필요 없다. 9B는 비상업 라이선스라 쓰지 않는다.
 - **환경(저장소 밖):** Python 3.12 venv. 예: `C:\dev\sjn-local-flux\.venv`
@@ -142,7 +142,9 @@ Gemma는 `/api/reconstruction/cloud`의 `@cf/google/gemma-4-26b-a4b-it`, FLUX는
   - 주소: `127.0.0.1:8798`에서만 받는다. Cloudflare 시험용 Worker는 8799다.
   - 요청: 시험용 Worker와 같다. 한 번에 한 요청, 재시도 없음.
   - 확인: `GET /health`가 설정(`meta`)을 돌려준다.
-- **설정(env):** `LOCAL_FLUX_OFFLOAD`(`model` 기본 / `sequential` / `none`), `LOCAL_FLUX_STEPS`(4), `LOCAL_FLUX_GUIDANCE`(1.0), `LOCAL_FLUX_PORT`(8798)
+- **설정(env):** `LOCAL_FLUX_OFFLOAD`(`model` 기본 / `sequential` / `none`), `LOCAL_FLUX_STEPS`(4), `LOCAL_FLUX_GUIDANCE`(1.0, 가중치가 distilled라 쓰이지 않음), `LOCAL_FLUX_PORT`(8798). 사진 0장 요청도 받는다(시험용).
+- **진단:** `tests/direction-photo-real/local-flux/diag.py`는 서버와 같은 로딩(`flux_local.py`)으로 파이프라인을 직접 불러, 지난 요청의 가이드·사진·프롬프트를 하나씩 바꿔 본다. 다른 diffusers·transformers 버전은 venv를 새로 만들지 않고 `pip install --no-deps --target <폴더>`로 받아 `PYTHONPATH`에 먼저 둔다(torch는 기존 venv 것).
+- **GPU를 같이 쓰는 앱:** 게임 등이 GPU 메모리를 많이 쓰면(예: 6.5GB) 12GB 카드에 함께 올라가지 못해 한 장이 수 분 걸리거나 하네스가 300초에 끊긴다. Ollama 비전 모델(약 4GB)도 서버와 동시에 올리지 않는다.
 - **12GB VRAM:** bf16 + 모델 CPU 오프로드면 GPU 최대 약 8.4GB, 896×992 한 장 약 7~10초다(RTX 4070 Ti, 첫 장 16초). 같은 요청·seed는 같은 이미지다.
 - **하네스:** `variants.ts`·`run.mjs`에 `FLUX_ENGINE=local`을 준다.
   - 장부에는 engine·설정·시간을 적고 뉴런은 0이다. 예산은 Cloudflare 호출만 센다.
