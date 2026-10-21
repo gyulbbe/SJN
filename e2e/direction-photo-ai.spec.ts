@@ -1,5 +1,6 @@
 import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { expect, test, type Locator, type Page, type Request as PlaywrightRequest } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { nextResetAt } from '../src/lib/platform/service-limit';
 
@@ -141,6 +142,8 @@ type Sent = {
   seed: string;
   spec: Record<string, unknown>;
   guide: [number, number];
+  /** The guide's bytes, hashed (sha256). */
+  guideHash: string;
   refs: number[][];
 };
 async function mockModel(
@@ -164,6 +167,7 @@ async function mockModel(
       seed: String(form.get('seed')),
       spec,
       guide: [meta.width!, meta.height!],
+      guideHash: createHash('sha256').update(guide).digest('hex'),
       refs,
     });
     const custom = await answer?.(spec, guide);
@@ -540,6 +544,22 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
     expect(s.spec).not.toHaveProperty('skirt');
   }
   await expect(toilet.getByRole('group', { name: '뒤 후보' })).toHaveCount(0);
+  // Each request carried the guide drawn for the toilet as picked last (one-piece, a seat only), the
+  // one shown now: never an earlier shape's still on screen while the new one was being drawn (a
+  // skirted two-piece's went out once, and its painted answer overlapped it by 0.655 only).
+  const shownGuide = async (direction: string) => {
+    const src = await toilet
+      .getByTestId('ai-guides')
+      .getByRole('img', { name: `${direction} 가이드` })
+      .getAttribute('src');
+    const bytes = await page.evaluate(
+      async (url) => Array.from(new Uint8Array(await (await fetch(url)).arrayBuffer())),
+      src!,
+    );
+    return createHash('sha256').update(Buffer.from(bytes)).digest('hex');
+  };
+  const shown: Record<string, string> = { front: await shownGuide('정면'), left: await shownGuide('왼쪽') };
+  for (const s of toiletSent) expect(s.guideHash).toBe(shown[String(s.spec.direction)]);
   // A toilet's side candidates come in order of their outline's overlap with the guide: the answer
   // that kept the guide first, the turned one (sent first) second. The front keeps its order.
   const leftGroup = toilet.getByRole('group', { name: '왼쪽 후보' });
