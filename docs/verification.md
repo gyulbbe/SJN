@@ -2,6 +2,26 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-22 — 양변기 옆모습 개선 방향 넓게 찾기: 변기 옆 평면도 문장(T4)
+
+- 무엇: 로컬 FLUX로 고칠 방향을 넓게 거르고 일부를 Cloudflare로 확인했다([결과](direction-photo-explore-results-20261021.md)). 사용자 결정으로 T4만 앱에 넣었다.
+  - T4: 변기의 왼쪽·오른쪽 프롬프트 끝에 옆 평면도 문장을 붙인다(`TOILET_SIDE_ELEVATION`, `toiletSideSentence`, `prompt.ts`). 몸통 상관없이 넣는다.
+  - 계약·가이드·요청 수·뉴런 추정·후보 순서·저장·라우트는 그대로다.
+- 시험 도구: `local-flux/flux_local.py`(서버·진단 공용 로딩), `local-flux/diag.py`, 서버의 사진 0장 허용, `side-vlm.mjs`, `variants.ts`의 넓은 거르기 스위치(`GUIDE_ELEVATION`, `GUIDE_LOOK`, `GUIDE_FRAME`, `GUIDE_EDGE`, `GUIDE_FILES`의 `blend`·`lever`·`{seed}`, `REF_CROP`, `PHOTOS=none`, `PREPEND_REFS`, `PROMPT_FILE`, `PROMPT_EDIT`, `FLUX_GUIDANCE`)
+- 실제 호출
+  - Cloudflare: 22회, 모두 성공, 추정 약 2,529뉴런, 429 없음(시험용 Worker, 재시도 없음).
+  - 로컬: 842회 중 838회 성공, 뉴런 0. 실패 4회는 다른 앱(게임)이 GPU 메모리를 써서 300초에 끊긴 것이다.
+- 확인
+  - 하네스를 스위치 없이 `DRY=1`로 돌렸다. 곰의 가이드·보낸 사진·프롬프트 12개 파일이 바꾸기 전 하네스와 같았다. 새 스위치는 `DRY=1`로 만든 입력을 눈으로 봤다.
+  - 서버 로딩을 옮긴 뒤 같은 요청·seed의 답이 지난 결과와 픽셀까지 같았다(곰 오른쪽 4장).
+  - 실제 화면(`run.mjs` `PRODUCT=bear-toilet FLUX_ENGINE=local`, 로컬 개발 서버, 시험 계정): 배경 제거 → 6장 → 후보 순서 → 칸에 넣기. 왼쪽·오른쪽 프롬프트 끝에 T4가 있었다. 자재는 저장하지 않았다.
+  - Cloudflare 실제 화면 확인은 하지 않았다(예산).
+- 검사
+  - `npx vitest run` 249파일 통과(3,604 테스트, 1 건너뜀)
+  - `npm run typecheck`, `npm run lint`, 바꾼 코드 파일의 Prettier 검사
+  - e2e: `direction-photo-ai` 3개, `material-images` 5개. 첫 실행에서 `direction-photo-ai`의 후보 순서 검사 1개가 실패했다(첫 후보 겹침 0.655). 그 검사만 다시 돌리면 통과했고, 두 파일을 다시 함께 돌리면 8개 모두 통과했다.
+  - `next-env.d.ts`는 되돌렸다. `wrangler.dev.jsonc`·`next.config.ts`는 바꾸지 않았다.
+
 ## 2026-10-21 — 양변기 옆모습: 로컬 FLUX 시험, 변기 옆 후보 순서
 
 - 무엇: 변기 옆모습이 살짝 사선으로 나오는 문제를 시험했다([결과](toilet-side-view-results-20261021.md)). 사용자 결정으로 R8만 앱에 넣었다.

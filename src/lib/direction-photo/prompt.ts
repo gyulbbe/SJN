@@ -11,6 +11,7 @@ import {
   toiletFrontSentence,
   toiletHiddenParts,
   toiletInImageZero,
+  toiletSideSentence,
   toiletViewSentence,
 } from './categories/toilet';
 
@@ -165,6 +166,8 @@ export function buildDirectionPhotoPrompt(spec: DirectionPhotoSpec, photos: numb
     spec.category === 'toilet' ? toiletColorSentence(spec) : '',
     spec.photoAngles ? photoAngleSentence(spec.photoAngles, spec.direction) : '',
     `Turn image 0 into a photorealistic studio product photograph of that real ${noun}: pure white seamless background (#FFFFFF), soft even studio lighting, ${shadow}, no props, no floor texture, no text, no watermark.`,
+    // A toilet's side drawn flat, last (the 2026-10-21 trial's place).
+    spec.category === 'toilet' ? toiletSideSentence(spec) : '',
   ]
     .filter(Boolean)
     .join(' ');
