@@ -140,6 +140,8 @@ export function DirectionPhotoGenerator({
   const [refs, setRefs] = useState<Reference[]>([]);
   const [refNotice, setRefNotice] = useState('');
   const [guides, setGuides] = useState<DirectionGuide[]>();
+  /** What the guides shown were drawn from (guideInput then). */
+  const [guidesFor, setGuidesFor] = useState('');
   const [guideUrls, setGuideUrls] = useState<Partial<Record<ProductDirection, string>>>({});
   const [guideError, setGuideError] = useState('');
   const [candidates, setCandidates] = useState<Partial<Record<ProductDirection, Candidate[]>>>({});
@@ -190,6 +192,9 @@ export function DirectionPhotoGenerator({
     depthMm,
     installation,
   ]);
+  // What the guides are drawn from. They are drawn again a moment after it changes; until then the
+  // ones shown are another shape's, and a request with them would say one shape and show another.
+  const guideInput = JSON.stringify([kind, shape, lid, skirt, widthMm, heightMm, depthMm, installation]);
 
   const keep = (blob: Blob) => {
     const url = URL.createObjectURL(blob);
@@ -249,6 +254,7 @@ export function DirectionPhotoGenerator({
           if (!current) return;
           setGuideError('');
           setGuides(made);
+          setGuidesFor(guideInput);
           setGuideUrls((previous) => {
             Object.values(previous).forEach(drop);
             return Object.fromEntries(made.map((guide) => [guide.direction, keep(guide.blob)]));
@@ -263,7 +269,7 @@ export function DirectionPhotoGenerator({
       current = false;
       clearTimeout(timer);
     };
-  }, [kind, shape, lid, skirt, widthMm, heightMm, depthMm, installation, sized, wallToilet]);
+  }, [kind, shape, lid, skirt, widthMm, heightMm, depthMm, installation, sized, wallToilet, guideInput]);
 
   const addRefs = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -314,12 +320,14 @@ export function DirectionPhotoGenerator({
         Math.max(1, ready.length),
       )
     : undefined;
+  /** The guides shown are the ones for what is picked now (not still being drawn again). */
+  const guidesCurrent = !!guides && guidesFor === guideInput;
   const canMake =
-    !!kind && sized && !wallToilet && !!guides && ready.length > 0 && !running && !applying && !disabled;
+    !!kind && sized && !wallToilet && guidesCurrent && ready.length > 0 && !running && !applying && !disabled;
 
   /** Sends the jobs for these directions; their candidates replace what was there. */
   const make = async (directions: readonly ProductDirection[]) => {
-    if (!kind || !guides || !ready.length) return;
+    if (!kind || !guidesCurrent || !ready.length) return;
     const abort = new AbortController();
     controller.current = abort;
     const jobs = directionJobs(directions, DIRECTION_PHOTO_CANDIDATES, randomSeed);
@@ -723,6 +731,11 @@ export function DirectionPhotoGenerator({
       {guides && (
         <p className={styles.note} data-testid="ai-guide-size">
           {sizeText}로 그렸어요. 제품 크기와 다르면 위 크기 칸을 고쳐 주세요.
+        </p>
+      )}
+      {guides && !guidesCurrent && !guideError && (
+        <p role="status" className={styles.note} data-testid="ai-guide-redraw">
+          가이드를 다시 그리는 중이에요. 다 그리면 만들 수 있어요.
         </p>
       )}
       {estimate && (
