@@ -42,6 +42,21 @@
  *   over), REF_ADD_FLIP=1 (each photo followed by itself turned over), GUIDE_FILES (a JSON file
  *   {"left": {"file": "...", "flip": true}}: that picture, at the guide's size, as image 0), GUIDE_EDIT
  *   (contrast:<factor> or outline: the guide drawn stronger).
+ * And the wide screen's (docs/direction-photo-explore-results-20261021.md):
+ *   GUIDE_ELEVATION (the guides' camera this many degrees above level, the app's 10), GUIDE_LOOK
+ *   (level:<grey 0-1>,rough:<0-1>,tint:<hex>,ambient:<n>,key:<n>: the guides' material and lights,
+ *   written into guide-render.ts as it is bundled), GUIDE_FRAME (the outline's share of the guide's
+ *   long side, the app's 0.9), GUIDE_EDGE (the guide's long side in px, 16 px steps, after the rest),
+ *   GUIDE_FILES' blend (0-1: the picture over the guide at that opacity, in place of it) and lever
+ *   ([x, y, w, h] fractions of the guide: a grey lever drawn there), REF_CROP (x,y,w,h fractions: the
+ *   part of each photo sent), PHOTOS=none (no photo: PROMPT_FILE then writes the whole prompt),
+ *   PREPEND_REFS (a JSON file {"right": [{"file": "...", "flip": true}]}: pictures sent before the
+ *   photos, image 1 on), PROMPT_FILE (a JSON file of whole prompts per direction or for all ("*"),
+ *   {app} standing for the app's), PROMPT_EDIT=renumber (images counted from 1: the guide image 1),
+ *   FLUX_GUIDANCE (Cloudflare's guidance field sent; the local distilled model has no use for it).
+ *   A file path in GUIDE_FILES or PREPEND_REFS may hold {seed} (each seed its own picture) and one *
+ *   in its name (the one answer in that folder matching it, e.g. answers/*-left-{seed}.png); such a
+ *   run writes each seed's guide as sent-guide-<view>-<seed>.png and the app's as sent-guide-<view>.png.
  */
 import { chromium } from '@playwright/test';
 import { build } from 'esbuild';
@@ -60,6 +75,7 @@ import path from 'node:path';
 import sharp, { type Sharp } from 'sharp';
 import { buildDirectionPhotoPrompt } from '../../src/lib/direction-photo/prompt';
 import { callNeurons } from '../../src/lib/direction-photo/plan';
+import { FLUX_INPUT_EDGE } from '../../src/lib/ai-export/contract';
 import {
   directionPhotoSpecSchema,
   type DirectionPhotoSpec,
@@ -353,6 +369,52 @@ async function inBrowser(
         if (!runtimeUrl.includes(modelUrl)) throw new Error(`${file}: 모델 주소 없음`);
         return { contents: runtimeUrl.replace(modelUrl, '`' + origin + '/'), loader: 'ts' as const };
       });
+      // The guides' look and frame as a trial asks (GUIDE_LOOK, GUIDE_FRAME); as they are without.
+      plugin.onLoad({ filter: /direction-photo[\\/]guide-render\.ts$/ }, ({ path: file }) => {
+        let source = readFileSync(file, 'utf8');
+        const swap = (from: string, to: string) => {
+          if (source.split(from).length !== 2) throw new Error(`${file}: 한 번 나오지 않음: ${from}`);
+          source = source.replace(from, () => to);
+        };
+        const look = Object.fromEntries(
+          (process.env.GUIDE_LOOK ?? '')
+            .split(',')
+            .filter(Boolean)
+            .map((pair) => pair.split(':') as [string, string]),
+        );
+        const unknown = Object.keys(look).filter(
+          (key) => !['level', 'rough', 'tint', 'ambient', 'key'].includes(key),
+        );
+        if (unknown.length) throw new Error(`GUIDE_LOOK: ${unknown.join(', ')}`);
+        if (look.level)
+          swap(
+            ': Math.min(0.9, Math.max(0.45, source.color?.getHSL({ h: 0, s: 0, l: 0 }).l ?? 0.8));',
+            `: ${Number(look.level)};`,
+          );
+        if (look.rough)
+          swap('roughness: metal ? 0.55 : 0.9', `roughness: metal ? 0.55 : ${Number(look.rough)}`);
+        if (look.tint) {
+          const [r, g, b] = [1, 3, 5].map((i) => parseInt(look.tint.slice(i, i + 2), 16) / 255);
+          swap(
+            'grey.color.setRGB(level, level, level * 1.01);',
+            `grey.color.setRGB(level * ${r}, level * ${g}, level * ${b});`,
+          );
+        }
+        if (look.ambient)
+          swap("new AmbientLight('#ffffff', 1.6)", `new AmbientLight('#ffffff', ${Number(look.ambient)})`);
+        if (look.key)
+          swap(
+            "new DirectionalLight('#ffffff', 2.3)",
+            `new DirectionalLight('#ffffff', ${Number(look.key)})`,
+          );
+        const frame = process.env.GUIDE_FRAME;
+        if (frame)
+          swap(
+            '(size.width * 0.9) / extent.width, (size.height * 0.9) / extent.height',
+            `(size.width * ${Number(frame)}) / extent.width, (size.height * ${Number(frame)}) / extent.height`,
+          );
+        return { contents: source, loader: 'ts' as const };
+      });
     },
   };
   const bundles = new Map<string, string>();
@@ -437,11 +499,12 @@ async function inBrowser(
     }
     await page.goto(`${origin}/`);
     const made = await page.evaluate(
-      async ({ guideInput, photos, cutout }) => {
+      async ({ guideInput, photos, cutout, elevation }) => {
         type App = {
           renderDirectionGuides: (
             input: unknown,
             directions: string[],
+            elevation?: number,
           ) => Promise<{ direction: string; blob: Blob }[]>;
           prepareReferenceImage: (photo: Blob) => Promise<Blob>;
           BackgroundRemovalClient: new () => {
@@ -459,7 +522,11 @@ async function inBrowser(
           return btoa(text);
         };
         const guides: Record<string, string> = {};
-        for (const guide of await app.renderDirectionGuides(guideInput, ['정면', '왼쪽', '오른쪽', '뒤']))
+        for (const guide of await app.renderDirectionGuides(
+          guideInput,
+          ['정면', '왼쪽', '오른쪽', '뒤'],
+          elevation ?? undefined,
+        ))
           guides[guide.direction] = await encode(guide.blob);
         const prepared: string[] = [],
           cutouts: string[] = [],
@@ -482,7 +549,13 @@ async function inBrowser(
         }
         return { guides, photos: prepared, cutouts, removal };
       },
-      { guideInput, photos: photos.map((file) => readFileSync(file).toString('base64')), cutout },
+      {
+        guideInput,
+        photos: photos.map((file) => readFileSync(file).toString('base64')),
+        cutout,
+        // The app's 10° unless a trial asks otherwise (undefined does not cross into the page).
+        elevation: process.env.GUIDE_ELEVATION ? Number(process.env.GUIDE_ELEVATION) : null,
+      },
     );
     const decode = (value: string) => Buffer.from(value, 'base64');
     return {
@@ -518,23 +591,39 @@ const replaced = (prompt: string, view: DirectionPhotoView) =>
     if (text.split(from).length !== 2) throw new Error(`REPLACE: ${view}에서 한 번 나오지 않음: ${from}`);
     return text.replace(from, () => to);
   }, prompt);
-/** The photos as a trial sends them (REF_EDGE, REF_FLIP, REF_ADD_FLIP); the screen's without them. */
+/** A long side cut to `edge` px, both sides in 16 px steps (a route-sized PNG). */
+async function toEdge(png: Buffer, edge: number): Promise<Buffer> {
+  const { width = 0, height = 0 } = await sharp(png).metadata();
+  const scale = edge / Math.max(width, height);
+  return sharp(png)
+    .resize(Math.round((width * scale) / 16) * 16, Math.round((height * scale) / 16) * 16, { fit: 'fill' })
+    .png()
+    .toBuffer();
+}
+
+/** The photos as a trial sends them (REF_CROP, REF_EDGE, REF_FLIP, REF_ADD_FLIP); the screen's without them. */
 async function trialRefs(photos: Buffer[]): Promise<Buffer[]> {
   const edge = Number(process.env.REF_EDGE ?? 0);
+  const crop = process.env.REF_CROP?.split(',').map(Number);
   const out: Buffer[] = [];
   for (const photo of photos) {
     let png = photo;
-    if (edge) {
-      // Still a route-sized PNG: sides in 16 px steps.
+    if (crop) {
+      // That part only, as large as the photo was.
       const { width = 0, height = 0 } = await sharp(png).metadata();
-      const scale = edge / Math.max(width, height);
-      png = await sharp(png)
-        .resize(Math.round((width * scale) / 16) * 16, Math.round((height * scale) / 16) * 16, {
-          fit: 'fill',
+      const [x, y, w, h] = crop;
+      const part = await sharp(png)
+        .extract({
+          left: Math.round(x * width),
+          top: Math.round(y * height),
+          width: Math.round(w * width),
+          height: Math.round(h * height),
         })
         .png()
         .toBuffer();
+      png = await toEdge(part, Math.max(width, height));
     }
+    if (edge) png = await toEdge(png, edge);
     const flipped = await sharp(png).flop().png().toBuffer();
     if (process.env.REF_FLIP) out.push(flipped);
     else out.push(png, ...(process.env.REF_ADD_FLIP ? [flipped] : []));
@@ -542,49 +631,142 @@ async function trialRefs(photos: Buffer[]): Promise<Buffer[]> {
   return out;
 }
 
-/** Image 0 as a trial sends it (GUIDE_FILES, GUIDE_EDIT) for the views made; none without them. */
-async function trialGuides(guides: Record<string, Buffer>) {
-  const files: Partial<Record<DirectionPhotoView, { file: string; flip?: boolean }>> = process.env.GUIDE_FILES
-    ? JSON.parse(readFileSync(process.env.GUIDE_FILES, 'utf8'))
-    : {};
+type TrialPicture = { file: string; flip?: boolean };
+const guideFiles: Partial<
+  Record<DirectionPhotoView, TrialPicture & { blend?: number; lever?: [number, number, number, number] }>
+> = process.env.GUIDE_FILES ? JSON.parse(readFileSync(process.env.GUIDE_FILES, 'utf8')) : {};
+const prepends: Partial<Record<DirectionPhotoView, TrialPicture[]>> = process.env.PREPEND_REFS
+  ? JSON.parse(readFileSync(process.env.PREPEND_REFS, 'utf8'))
+  : {};
+const bySeed = (pictures: (TrialPicture | undefined)[] = []) =>
+  pictures.some((picture) => picture?.file.includes('{seed}'));
+
+/** A trial picture's file for a seed: {seed} filled in, and one * matched to the one file it names. */
+function trialFile(pattern: string, seed?: number): string {
+  const file = seed === undefined ? pattern : pattern.replaceAll('{seed}', String(seed));
+  if (file.includes('{seed}')) throw new Error(`${pattern}: seed마다 다른 그림이에요.`);
+  if (!file.includes('*')) return file;
+  const folder = path.dirname(file);
+  const name = new RegExp(
+    `^${path
+      .basename(file)
+      .split('*')
+      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+      .join('.*')}$`,
+  );
+  const found = readdirSync(folder).filter((entry) => name.test(entry));
+  if (found.length !== 1) throw new Error(`${file}: ${found.length}개가 맞아요(1개여야 해요).`);
+  return `${folder}/${found[0]}`;
+}
+
+/**
+ * Image 0 as a trial sends it for a view (GUIDE_FILES, GUIDE_EDIT, GUIDE_EDGE), from the app's guide;
+ * undefined when the trial leaves it as it is.
+ */
+async function trialGuide(view: DirectionPhotoView, guide: Buffer, seed?: number) {
+  const { width = 0, height = 0 } = await sharp(guide).metadata();
   const edit = process.env.GUIDE_EDIT;
-  const changed: Partial<Record<DirectionPhotoView, Buffer>> = {};
-  for (const view of views) {
-    const guide = guides[VIEW_NAMES[view]];
-    const { width, height } = await sharp(guide).metadata();
-    const swap = files[view];
-    if (swap) {
-      let picture = sharp(readFileSync(swap.file)).resize(width, height, { fit: 'fill' });
-      if (swap.flip) picture = picture.flop();
-      changed[view] = await picture.flatten({ background: '#ffffff' }).png().toBuffer();
-    } else if (edit?.startsWith('contrast:')) {
-      // Around the middle grey, the white background staying white.
-      const factor = Number(edit.slice('contrast:'.length));
-      changed[view] = await sharp(guide)
-        .linear(factor, 128 * (1 - factor))
+  const swap = guideFiles[view];
+  let changed: Buffer | undefined;
+  if (swap) {
+    let picture = sharp(readFileSync(trialFile(swap.file, seed))).resize(width, height, { fit: 'fill' });
+    if (swap.flip) picture = picture.flop();
+    changed = await picture.flatten({ background: '#ffffff' }).png().toBuffer();
+    if (swap.blend !== undefined) {
+      // The picture at that opacity over the app's guide.
+      const over = await sharp(changed).ensureAlpha(swap.blend).png().toBuffer();
+      changed = await sharp(guide)
+        .flatten({ background: '#ffffff' })
+        .composite([{ input: over }])
         .png()
         .toBuffer();
-    } else if (edit === 'outline') {
-      // A dark line where the grey meets the white, over the guide as it is. One step per sharp
-      // instance: sharp runs its operations in its own fixed order, and a second threshold replaces
-      // the first.
-      const step = async (input: Buffer, apply: (image: Sharp) => Sharp) =>
-        apply(sharp(input)).png().toBuffer();
-      const solid = await step(guide, (image) => image.removeAlpha().greyscale().threshold(250).negate());
-      const edges = await step(solid, (image) =>
-        image.convolve({ width: 3, height: 3, kernel: [-1, -1, -1, -1, 8, -1, -1, -1, -1] }),
-      );
-      // About 3 px wide: the 1 px edge blurred and cut again (sharp's dilate left nothing here).
-      const thin = await step(edges, (image) => image.threshold(1));
-      const lines = await step(await step(thin, (image) => image.blur(1)), (image) => image.threshold(20));
-      const mask = await step(lines, (image) => image.negate());
-      changed[view] = await sharp(guide)
-        .composite([{ input: mask, blend: 'multiply' }])
+    }
+    if (swap.lever) {
+      // A small grey handle with rounded ends, as the guide's grey would draw it.
+      const [x, y, w, h] = swap.lever;
+      const box = { x: x * width, y: y * height, w: w * width, h: h * height };
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="${Math.min(box.w, box.h) / 2}" fill="#8f8f8f" stroke="#6a6a6a" stroke-width="1"/></svg>`;
+      changed = await sharp(changed)
+        .composite([{ input: Buffer.from(svg) }])
         .png()
         .toBuffer();
-    } else if (edit) throw new Error('GUIDE_EDIT는 contrast:<배수> 또는 outline');
-  }
+    }
+  } else if (edit?.startsWith('contrast:')) {
+    // Around the middle grey, the white background staying white.
+    const factor = Number(edit.slice('contrast:'.length));
+    changed = await sharp(guide)
+      .linear(factor, 128 * (1 - factor))
+      .png()
+      .toBuffer();
+  } else if (edit === 'outline') {
+    // A dark line where the grey meets the white, over the guide as it is. One step per sharp
+    // instance: sharp runs its operations in its own fixed order, and a second threshold replaces
+    // the first.
+    const step = async (input: Buffer, apply: (image: Sharp) => Sharp) =>
+      apply(sharp(input)).png().toBuffer();
+    const solid = await step(guide, (image) => image.removeAlpha().greyscale().threshold(250).negate());
+    const edges = await step(solid, (image) =>
+      image.convolve({ width: 3, height: 3, kernel: [-1, -1, -1, -1, 8, -1, -1, -1, -1] }),
+    );
+    // About 3 px wide: the 1 px edge blurred and cut again (sharp's dilate left nothing here).
+    const thin = await step(edges, (image) => image.threshold(1));
+    const lines = await step(await step(thin, (image) => image.blur(1)), (image) => image.threshold(20));
+    const mask = await step(lines, (image) => image.negate());
+    changed = await sharp(guide)
+      .composite([{ input: mask, blend: 'multiply' }])
+      .png()
+      .toBuffer();
+  } else if (edit) throw new Error('GUIDE_EDIT는 contrast:<배수> 또는 outline');
+  const edge = Number(process.env.GUIDE_EDGE ?? 0);
+  if (edge)
+    changed = await toEdge(
+      await sharp(changed ?? guide)
+        .flatten({ background: '#ffffff' })
+        .png()
+        .toBuffer(),
+      edge,
+    );
   return changed;
+}
+
+/** The pictures a trial sends before the photos for a view and seed (PREPEND_REFS), on white. */
+async function prependedRefs(view: DirectionPhotoView, seed: number): Promise<Buffer[]> {
+  const out: Buffer[] = [];
+  for (const { file, flip } of prepends[view] ?? []) {
+    let picture = sharp(readFileSync(trialFile(file, seed))).flatten({ background: '#ffffff' });
+    if (flip) picture = picture.flop();
+    out.push(await toEdge(await picture.png().toBuffer(), FLUX_INPUT_EDGE));
+  }
+  return out;
+}
+
+const promptFiles: Partial<Record<DirectionPhotoView | '*', string>> = process.env.PROMPT_FILE
+  ? JSON.parse(readFileSync(process.env.PROMPT_FILE, 'utf8'))
+  : {};
+if (process.env.PROMPT_EDIT && process.env.PROMPT_EDIT !== 'renumber')
+  throw new Error('PROMPT_EDIT는 renumber');
+/** The images counted from 1: image 0 becomes image 1, images 1–3 images 2–4. */
+const renumbered = (prompt: string) =>
+  prompt.replace(
+    /\b(Images?|images?) (\d)(?:–(\d))?/g,
+    (_, word: string, from: string, to?: string) =>
+      `${word} ${Number(from) + 1}${to ? `–${Number(to) + 1}` : ''}`,
+  );
+/** A view's prompt: the app's with REPLACE and APPEND, or PROMPT_FILE's around it, then PROMPT_EDIT. */
+function trialPrompt(view: DirectionPhotoView, photos: number): string {
+  const app = () =>
+    [
+      replaced(
+        buildDirectionPhotoPrompt(directionPhotoSpecSchema.parse({ ...spec, direction: view }), photos),
+        view,
+      ),
+      append[view],
+    ]
+      .filter(Boolean)
+      .join(' ');
+  const template = promptFiles[view] ?? promptFiles['*'];
+  const prompt = template ? template.replace('{app}', () => app()) : app();
+  return process.env.PROMPT_EDIT === 'renumber' ? renumbered(prompt) : prompt;
 }
 
 if (mode === 'app') {
@@ -597,7 +779,7 @@ if (mode === 'app') {
       installation: spec.installation,
       skirt: spec.skirt,
     },
-    (process.env.PHOTOS?.split(',') ?? product.photos).map((name) =>
+    (process.env.PHOTOS === 'none' ? [] : (process.env.PHOTOS?.split(',') ?? product.photos)).map((name) =>
       name.includes('/') ? name : `${INPUT}/${name}`,
     ),
     !!product.cutout,
@@ -612,21 +794,18 @@ if (mode === 'app') {
     writeFileSync(file, png);
     return file;
   });
-  for (const [view, png] of Object.entries(await trialGuides(made.guides)))
-    made.guides[VIEW_NAMES[view as DirectionPhotoView]] = png;
+  for (const view of views) {
+    // A picture of each seed's own is made in the calls' loop: the app's guide stays here.
+    if (bySeed([guideFiles[view]])) continue;
+    const changed = await trialGuide(view, made.guides[VIEW_NAMES[view]]);
+    if (changed) made.guides[VIEW_NAMES[view]] = changed;
+  }
   if (process.env.GUIDES_ONLY) {
     console.log(`${OUT}: 가이드·보낼 사진만 만듦(호출 없음)`);
     process.exit(0);
   }
-  for (const view of views) {
-    const full = directionPhotoSpecSchema.parse({ ...spec, direction: view });
-    sends[view] = {
-      guide: made.guides[VIEW_NAMES[view]],
-      prompt: [replaced(buildDirectionPhotoPrompt(full, photoFiles.length), view), append[view]]
-        .filter(Boolean)
-        .join(' '),
-    };
-  }
+  for (const view of views)
+    sends[view] = { guide: made.guides[VIEW_NAMES[view]], prompt: trialPrompt(view, photoFiles.length) };
 } else {
   photoFiles = readdirSync(REPLAY!)
     .filter((file) => /^sent-ref-\d+\.png$/.test(file))
@@ -650,11 +829,21 @@ for (const view of views) {
   const { guide, prompt } = sends[view];
   writeFileSync(`${OUT}/sent-guide-${view}.png`, guide);
   writeFileSync(`${OUT}/prompt-${view}.txt`, prompt);
-  const meta = await sharp(guide).metadata();
-  if (process.env.DRY) continue;
-  // A local answer costs nothing on the account: only Cloudflare's calls count against the budget.
-  const cost = LOCAL ? 0 : callNeurons({ width: meta.width!, height: meta.height! }, photoFiles.length);
+  const seedGuides = mode === 'app' && bySeed([guideFiles[view]]);
+  const seedRefs = bySeed(prepends[view]);
   for (const seed of seeds) {
+    // This seed's image 0 and pictures before the photos, when the trial gives each seed its own.
+    const sent = seedGuides ? ((await trialGuide(view, guide, seed)) ?? guide) : guide;
+    if (seedGuides) writeFileSync(`${OUT}/sent-guide-${view}-${seed}.png`, sent);
+    const before = await prependedRefs(view, seed);
+    before.forEach((png, index) =>
+      writeFileSync(`${OUT}/sent-pre-${view}${seedRefs ? `-${seed}` : ''}-${index + 1}.png`, png),
+    );
+    if (process.env.DRY) continue;
+    const meta = await sharp(sent).metadata();
+    const refs = [...before, ...photoFiles.map((file) => readFileSync(file))];
+    // A local answer costs nothing on the account: only Cloudflare's calls count against the budget.
+    const cost = LOCAL ? 0 : callNeurons({ width: meta.width!, height: meta.height! }, refs.length);
     const used = spent().reduce((sum, row) => sum + (row.neurons ?? 0), 0);
     if (!LOCAL && used + cost > BUDGET * 0.9) {
       appendFileSync(
@@ -672,7 +861,7 @@ for (const view of views) {
       variant: label,
       direction: view,
       seed: String(seed),
-      refs: photoFiles.length,
+      refs: refs.length,
       guide: [meta.width, meta.height],
       neurons: Number(cost.toFixed(2)),
       engine: LOCAL ? 'local' : 'cloudflare',
@@ -684,12 +873,14 @@ for (const view of views) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           model: 'flux-2-klein-4b',
-          image: guide.toString('base64'),
-          refs: photoFiles.map((file) => readFileSync(file).toString('base64')),
+          image: sent.toString('base64'),
+          refs: refs.map((png) => png.toString('base64')),
           prompt,
           width: meta.width! * 2,
           height: meta.height! * 2,
           seed,
+          // Cloudflare's guidance field, sent only when a trial sets it (the route never sends it).
+          ...(process.env.FLUX_GUIDANCE && { guidance: Number(process.env.FLUX_GUIDANCE) }),
         }),
         signal: AbortSignal.timeout(LOCAL ? 900_000 : 200_000),
       });
@@ -747,9 +938,23 @@ writeFileSync(
       replace: process.env.REPLACE,
       engine: LOCAL ? 'local' : 'cloudflare',
       trial: Object.fromEntries(
-        ['PHOTOS', 'REF_EDGE', 'REF_FLIP', 'REF_ADD_FLIP', 'GUIDE_FILES', 'GUIDE_EDIT'].flatMap((key) =>
-          process.env[key] ? [[key, process.env[key]]] : [],
-        ),
+        [
+          'PHOTOS',
+          'REF_EDGE',
+          'REF_FLIP',
+          'REF_ADD_FLIP',
+          'REF_CROP',
+          'GUIDE_FILES',
+          'GUIDE_EDIT',
+          'GUIDE_ELEVATION',
+          'GUIDE_LOOK',
+          'GUIDE_FRAME',
+          'GUIDE_EDGE',
+          'PREPEND_REFS',
+          'PROMPT_FILE',
+          'PROMPT_EDIT',
+          'FLUX_GUIDANCE',
+        ].flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : [])),
       ),
       views,
       seeds,

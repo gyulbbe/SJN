@@ -2,13 +2,13 @@
 
 The same request and answer as the test Worker (test-results/.../flux-test-worker.js), so the
 harness (tests/direction-photo-real/variants.ts and run.mjs with FLUX_ENGINE=local) only changes its
-address: POST / with JSON {model: 'flux-2-klein-4b', image, refs (1-3), prompt, width, height, seed},
+address: POST / with JSON {model: 'flux-2-klein-4b', image, refs (0-3), prompt, width, height, seed},
 the images base64 PNGs; the answer is {ms, image, meta}. The model input is the route's
-(src/lib/direction-photo/server.ts): image 0 the guide, images 1-3 the photos, the size asked (twice
-the guide's), the seed. One request at a time, no retry, 127.0.0.1 only. The app never calls it.
+(src/lib/direction-photo/server.ts): image 0 the guide, images 1-3 the photos (none for a trial), the
+size asked (twice the guide's), the seed. One request at a time, no retry, 127.0.0.1 only. The app
+never calls it.
 
-Weights: black-forest-labs/FLUX.2-klein-4B (Apache 2.0), its diffusers folders only, fetched into the
-Hugging Face cache (HF_HOME) on the first start. Settings (env): LOCAL_FLUX_PORT (8798),
+Weights and loading: flux_local.py (shared with diag.py). Settings (env): LOCAL_FLUX_PORT (8798),
 LOCAL_FLUX_OFFLOAD (model | sequential | none, default model: the 12 GB card), LOCAL_FLUX_STEPS (4,
 the distilled model's), LOCAL_FLUX_GUIDANCE (1.0). Run: python server.py (docs:
 .agents/skills/sjn-workflow/references/development-environment.md, "로컬 FLUX 시험 환경").
@@ -22,49 +22,22 @@ import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import diffusers
 import torch
-from diffusers import Flux2KleinPipeline
-from huggingface_hub import snapshot_download
 from PIL import Image
 
-REPO = 'black-forest-labs/FLUX.2-klein-4B'
-MODEL = 'flux-2-klein-4b'
+from flux_local import MODEL, OFFLOADS, load_pipeline
+
 PORT = int(os.environ.get('LOCAL_FLUX_PORT', '8798'))
 OFFLOAD = os.environ.get('LOCAL_FLUX_OFFLOAD', 'model')
 STEPS = int(os.environ.get('LOCAL_FLUX_STEPS', '4'))
 GUIDANCE = float(os.environ.get('LOCAL_FLUX_GUIDANCE', '1.0'))
 MAX_REFS = 3
 MAX_BODY = 16 * 1024 * 1024
-if OFFLOAD not in ('model', 'sequential', 'none'):
+if OFFLOAD not in OFFLOADS:
     sys.exit('LOCAL_FLUX_OFFLOAD는 model, sequential, none 중 하나예요.')
 
-# The diffusers folders only: the repository's single-file checkpoint (7.75 GB) is not needed.
-FOLDER = snapshot_download(
-    REPO,
-    allow_patterns=['model_index.json', 'scheduler/*', 'text_encoder/*', 'tokenizer/*', 'transformer/*', 'vae/*'],
-)
-REVISION = os.path.basename(FOLDER)
-pipe = Flux2KleinPipeline.from_pretrained(FOLDER, torch_dtype=torch.bfloat16)
-if OFFLOAD == 'model':
-    pipe.enable_model_cpu_offload()
-elif OFFLOAD == 'sequential':
-    pipe.enable_sequential_cpu_offload()
-else:
-    pipe.to('cuda')
-
-META = {
-    'engine': 'local',
-    'model': REPO,
-    'revision': REVISION,
-    'steps': STEPS,
-    'guidance': GUIDANCE,
-    'dtype': 'bfloat16',
-    'offload': OFFLOAD,
-    'torch': torch.__version__,
-    'diffusers': diffusers.__version__,
-    'gpu': torch.cuda.get_device_name(0),
-}
+pipe, LOADED = load_pipeline(OFFLOAD)
+META = {**LOADED, 'steps': STEPS, 'guidance': GUIDANCE}
 
 
 class Refused(Exception):
@@ -89,14 +62,14 @@ def size(value, what):
 
 
 def read(body):
-    """The Worker's request, checked: one model, a guide, one to three photos, the size, the seed."""
+    """The Worker's request, checked: one model, a guide, up to three photos, the size, the seed."""
     if not isinstance(body, dict):
         raise Refused('JSON 객체가 아니에요.')
     if body.get('model') != MODEL:
         raise Refused(f'model은 {MODEL}만 받아요.')
     refs = body.get('refs')
-    if not isinstance(refs, list) or not 1 <= len(refs) <= MAX_REFS:
-        raise Refused(f'refs는 1~{MAX_REFS}장이에요.')
+    if not isinstance(refs, list) or not 0 <= len(refs) <= MAX_REFS:
+        raise Refused(f'refs는 0~{MAX_REFS}장이에요.')
     prompt = body.get('prompt')
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 8000:
         raise Refused('prompt가 비었거나 너무 길어요.')
