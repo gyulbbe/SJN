@@ -7,7 +7,10 @@ import {
   type MaterialVersion,
   type RenderSnapshot,
   type Scene,
+  type Surface,
 } from '../types';
+import { roomFaceSizeMm } from '../room-geometry';
+import { baseSurfaceAt } from '../room-surface-regions';
 import { finishAppearance } from '../render/finish';
 import { facingOfDirection, nearestHorizontalDirection, viewDirectionAngle } from '../product-direction';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
@@ -280,6 +283,8 @@ export type FluxCaptureSource = {
   boxes?: Record<string, Box>;
   /** Which wall, floor or fixture covers each capture pixel, for the result's colour check. */
   regions?: RegionMask;
+  /** Where each region (a part of a face with its own tile) is in the capture, keyed by surface id. */
+  surfaceBoxes?: Record<string, Box>;
   /** Paint colour of the ceiling the view shows (with its one light panel); none otherwise. */
   ceiling?: string;
   /** A view from outside with the near walls cut away and a plain backdrop (the orbit view). */
@@ -395,6 +400,8 @@ export async function buildFluxGrounding(input: {
   layout: FluxInputLayout;
   /** Boxes from the 3D viewer, keyed by fixture id; the 2D path derives them from the scene. */
   boxes?: Record<string, Box>;
+  /** Capture boxes of the regions, keyed by surface id (FluxCaptureSource.surfaceBoxes). */
+  surfaceBoxes?: Record<string, Box>;
   /** Ceiling paint of a view that shows it; it is named under the photo's light, like the tiles. */
   ceiling?: string;
   /** An outside view with the near walls cut away: the prompt says so (FLUX_CUTAWAY_SENTENCE). */
@@ -457,9 +464,9 @@ export async function buildFluxGrounding(input: {
 
   const surfaces: FluxSurface[] = [];
   const textureColors = new Map<string, string | undefined>();
-  for (const surface of scene.surfaces) {
+  const describe = async (surface: Surface): Promise<Omit<FluxSurface, 'faces'> | undefined> => {
     const material = surface.materialVersionId ? snapshot.materials[surface.materialVersionId] : undefined;
-    if (!material || material.category !== 'tile') continue;
+    if (!material || material.category !== 'tile') return undefined;
     const textureId = material.textureAssetIds[0] ?? material.coverAssetId;
     if (textureId && !textureColors.has(textureId)) {
       const bitmap = await assetBitmap(reader, textureId);
@@ -468,9 +475,8 @@ export async function buildFluxGrounding(input: {
     }
     const color =
       (textureId && textureColors.get(textureId)) || (HEX.test(material.color) ? material.color : undefined);
-    if (!color || !HEX.test(surface.tile.groutColor)) continue;
-    const face: FluxFace = surface.roomFace ?? (surface.kind === 'floor' ? 'floor' : 'back');
-    const entry: Omit<FluxSurface, 'faces'> = {
+    if (!color || !HEX.test(surface.tile.groutColor)) return undefined;
+    return {
       color: litColor(color.toLowerCase(), snapshot.lighting),
       tileMm: [
         Math.max(1, Math.min(20000, material.widthMm)),
@@ -481,14 +487,40 @@ export async function buildFluxGrounding(input: {
       groutMm: Math.max(0, Math.min(50, surface.tile.groutWidth)),
       finish: finishCategory(material.finish),
     };
-    // Faces with the same tile, layout and grout are described once ("Back wall and left wall: …").
-    const key = (s: Omit<FluxSurface, 'faces'>) =>
-      JSON.stringify([s.color, s.tileMm, s.pattern, s.groutColor, s.groutMm, s.finish]);
+  };
+  // Faces with the same tile, layout and grout are described once ("Back wall and left wall: …").
+  const key = (s: Omit<FluxSurface, 'faces'>) =>
+    JSON.stringify([s.color, s.tileMm, s.pattern, s.groutColor, s.groutMm, s.finish]);
+  for (const surface of scene.surfaces) {
+    if (surface.region) continue;
+    const entry = await describe(surface);
+    if (!entry) continue;
+    const face: FluxFace = surface.roomFace ?? (surface.kind === 'floor' ? 'floor' : 'back');
     const same = surfaces.find((s) => key(s) === key(entry));
     if (same) {
       if (!same.faces.includes(face)) same.faces.push(face);
     } else if (surfaces.length < FLUX_MAX_SURFACES) surfaces.push({ faces: [face], ...entry });
   }
+  // A region is said on its own after the faces, with where it is in image 0, largest first; one
+  // with its face's own tile says nothing new and is left out.
+  const regions: { surface: FluxSurface; area: number }[] = [];
+  for (const surface of scene.surfaces) {
+    const captured = surface.region && surface.roomFace ? input.surfaceBoxes?.[surface.id] : undefined;
+    const entry = captured && (await describe(surface));
+    if (!captured || !entry || !scene.room) continue;
+    const size = roomFaceSizeMm(scene.room, surface.roomFace!);
+    const middle = (surface.region!.topMm + surface.region!.heightMm / 2) / size.height;
+    const under = baseSurfaceAt(scene, surface.roomFace!, middle);
+    const base = under && (await describe(under));
+    if (base && key(base) === key(entry)) continue;
+    const box = toInputBox(captured, input.layout);
+    regions.push({
+      surface: { faces: [surface.roomFace!], ...entry, box },
+      area: (box[2] - box[0]) * (box[3] - box[1]),
+    });
+  }
+  regions.sort((a, b) => b.area - a.area);
+  for (const region of regions) if (surfaces.length < FLUX_MAX_SURFACES) surfaces.push(region.surface);
   const ceiling =
     input.ceiling && HEX.test(input.ceiling)
       ? { color: litColor(input.ceiling.toLowerCase(), snapshot.lighting), light: 'flat-panel' as const }

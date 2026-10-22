@@ -1364,6 +1364,13 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         reader: assetReader,
         snapshot,
         boxes: roomRenderer.fixtureBounds(width, height, view),
+        // Where each region is in the frame, for the prompt to say so.
+        surfaceBoxes: roomRenderer.surfaceBounds(
+          width,
+          height,
+          view,
+          snapshot.scene.surfaces.filter((surface) => surface.region).map((surface) => surface.id),
+        ),
         regions,
         ...(visibleCeiling(regions) ? { ceiling: VIEWER_CEILING_COLOR } : {}),
         ...(view.projection === 'room-orbit' ? { cutaway: true } : {}),

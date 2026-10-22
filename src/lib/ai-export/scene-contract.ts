@@ -79,15 +79,19 @@ export const fluxFixtureSchema = z.strictObject({
   sizeMm: z.tuple([fluxMm, fluxMm, fluxMm]),
   box,
 });
-export const fluxSurfaceSchema = z.strictObject({
-  faces: z.array(z.enum(FLUX_FACES)).min(1).max(4),
-  color: fluxHex,
-  tileMm: z.tuple([fluxMm, fluxMm]),
-  pattern: z.enum(['grid', 'brick']),
-  groutColor: fluxHex,
-  groutMm: z.number().finite().min(0).max(50),
-  finish: z.enum(FLUX_FINISHES),
-});
+export const fluxSurfaceSchema = z
+  .strictObject({
+    faces: z.array(z.enum(FLUX_FACES)).min(1).max(4),
+    color: fluxHex,
+    tileMm: z.tuple([fluxMm, fluxMm]),
+    pattern: z.enum(['grid', 'brick']),
+    groutColor: fluxHex,
+    groutMm: z.number().finite().min(0).max(50),
+    finish: z.enum(FLUX_FINISHES),
+    /** A rectangle of one face with its own tile (a region), as where it is in image 0. */
+    box: box.optional(),
+  })
+  .refine((surface) => !surface.box || surface.faces.length === 1, '부분 타일은 한 면에만 있어요.');
 /**
  * The ceiling an in-room view shows: its paint colour and the one flat light panel. Absent for the
  * front composite and older requests, which show no ceiling.

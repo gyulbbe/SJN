@@ -159,12 +159,22 @@ function surfaceSentence(surface: FluxSurface, compact = false): string {
   const keep = achromatic(surface.color)
     ? `Keep this exact ${colorWords(surface.color).replace(/ \(.*$/, '')} as it appears in image 0; do not warm, yellow or tint it.`
     : 'Keep this exact colour as it appears in image 0; do not change its hue or saturation.';
-  if (compact) return `${name}: ${colorWords(surface.color)} tiles. ${keep}`;
+  // A region: one face's rectangle, said with where it is in image 0 so its tile does not spread.
+  const area = surface.box
+    ? `On the ${faces}, the rectangular area at x ${percent(surface.box[0])}–${percent(surface.box[2])}%, y ${percent(surface.box[1])}–${percent(surface.box[3])}% of image 0 has`
+    : undefined;
+  if (compact)
+    return area
+      ? `${area} ${colorWords(surface.color)} tiles. ${keep}`
+      : `${name}: ${colorWords(surface.color)} tiles. ${keep}`;
   const grout =
     surface.groutMm > 0
       ? `, ${colorWords(surface.groutColor)} grout ${Math.round(surface.groutMm * 10) / 10} mm`
       : ', no visible grout';
-  return `${name}: ${colorWords(surface.color)} ${surface.finish} tiles, ${surface.tileMm.map((value) => Math.round(value)).join(' × ')} mm, ${surface.pattern === 'brick' ? 'staggered' : 'grid'} layout${grout}. ${keep}`;
+  const tiles = `${colorWords(surface.color)} ${surface.finish} tiles, ${surface.tileMm.map((value) => Math.round(value)).join(' × ')} mm, ${surface.pattern === 'brick' ? 'staggered' : 'grid'} layout${grout}`;
+  return area
+    ? `${area} ${tiles}; the rest of the ${faces} keeps its own tiles. ${keep}`
+    : `${name}: ${tiles}. ${keep}`;
 }
 
 /** A view that shows the ceiling: said plainly, as it is, so the model has nothing to invent there. */
