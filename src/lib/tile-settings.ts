@@ -14,11 +14,15 @@ export const SHARED_TILE_SETTINGS = [
   'shading',
 ] as const satisfies readonly (keyof TileSettings)[];
 
-/** Copies the source surface's installation settings to every wall and floor; tiles stay as chosen. */
+/**
+ * Copies the source surface's installation settings to every wall and floor; tiles stay as chosen.
+ * Regions keep their own settings (a region's tile is chosen on purpose to differ).
+ */
 export function applyTileSettingsToAllSurfaces(scene: Scene, sourceId: string): number {
   const source = scene.surfaces.find((surface) => surface.id === sourceId);
   if (!source) return 0;
   const shared = Object.fromEntries(SHARED_TILE_SETTINGS.map((key) => [key, source.tile[key]]));
-  for (const surface of scene.surfaces) if (surface !== source) Object.assign(surface.tile, shared);
-  return scene.surfaces.length;
+  const targets = scene.surfaces.filter((surface) => !surface.region || surface === source);
+  for (const surface of targets) if (surface !== source) Object.assign(surface.tile, shared);
+  return targets.length;
 }

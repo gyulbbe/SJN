@@ -81,6 +81,21 @@ export function roomFaceAreaM2(room: RoomDimensions, face: RoomFace): number {
   );
 }
 
+export const ROOM_FACE_NAMES: Record<RoomFace, string> = {
+  floor: '바닥',
+  left: '왼쪽 벽',
+  back: '정면 벽',
+  right: '오른쪽 벽',
+};
+
+/** Face extent in millimetres along u and v (see roomFacePoint). */
+export function roomFaceSizeMm(room: RoomDimensions, face: RoomFace): { width: number; height: number } {
+  return {
+    width: face === 'left' || face === 'right' ? room.depthMm : room.widthMm,
+    height: face === 'floor' ? room.depthMm : room.heightMm,
+  };
+}
+
 export function createRoomSurfaces(room: RoomDimensions, aspect = ROOM_ASPECT): Surface[] {
   const camera = createRoomCamera(room, aspect);
   const corners = [
@@ -89,12 +104,7 @@ export function createRoomSurfaces(room: RoomDimensions, aspect = ROOM_ASPECT): 
     [1, 1],
     [0, 1],
   ] as const;
-  const names: Record<RoomFace, string> = {
-    floor: '바닥',
-    left: '왼쪽 벽',
-    back: '정면 벽',
-    right: '오른쪽 벽',
-  };
+  const names = ROOM_FACE_NAMES;
   return (['floor', 'left', 'back', 'right'] as const).map((face): Surface => {
     const quad = corners.map(([u, v]) => {
       const point = roomFacePoint(room, face, u, v).project(camera);
