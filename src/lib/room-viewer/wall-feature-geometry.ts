@@ -8,6 +8,7 @@ import {
   type ResolvedWallFeature,
   type WallFeatureV1,
 } from '../wall-features';
+import { cellLeft, cellRight, cellsAlong } from '../room-face-partition';
 import type { ViewerSurfacePatch } from './surfaces';
 
 type WallFace = WallFeatureV1['face'];
@@ -42,23 +43,40 @@ const normalFor = (face: WallFace): Triple =>
   face === 'back' ? [0, 0, 1] : face === 'left' ? [1, 0, 0] : [-1, 0, 0];
 const uniqueSorted = (values: number[]) => [...new Set(values)].sort((a, b) => a - b);
 
-/** Patches must be the non-overlapping full partition returned by viewerSurfacePatches. */
+/**
+ * Patches must be the non-overlapping full partition returned by viewerSurfacePatches: rows of the
+ * whole face, or a grid of cells where a region splits them. Row-major, top to bottom.
+ */
 function wallPatches(patches: readonly ViewerSurfacePatch[], face: RoomFace) {
-  const result = patches.filter((p) => p.face === face).sort((a, b) => a.from - b.from);
-  let end = 0;
-  for (const patch of result) {
-    if (
-      !Number.isFinite(patch.from) ||
-      !Number.isFinite(patch.to) ||
-      patch.from !== end ||
-      patch.to <= patch.from ||
-      patch.to > 1
+  const result = patches
+    .filter((p) => p.face === face)
+    .sort((a, b) => a.from - b.from || cellLeft(a) - cellLeft(b));
+  const us = uniqueSorted(result.flatMap((p) => [cellLeft(p), cellRight(p)]));
+  const vs = uniqueSorted(result.flatMap((p) => [p.from, p.to]));
+  if (
+    result.some(
+      (p) =>
+        ![p.from, p.to, cellLeft(p), cellRight(p)].every(Number.isFinite) ||
+        p.to <= p.from ||
+        cellRight(p) <= cellLeft(p),
     )
-      throw new Error('벽 구조의 부모 자재 구간이 전체 면을 겹침 없이 나누어야 해요.');
-    end = patch.to;
-  }
-  if (end !== 1 || (face === 'floor' && result.length !== 1))
+  )
+    throw new Error('벽 구조의 부모 자재 구간이 전체 면을 겹침 없이 나누어야 해요.');
+  if (!result.length || us[0] !== 0 || us.at(-1) !== 1 || vs[0] !== 0 || vs.at(-1) !== 1)
     throw new Error('벽 구조의 부모 벽·바닥 자재 구간이 없거나 올바르지 않아요.');
+  // Every grid cell is covered by exactly one patch, which spans whole grid cells only.
+  let covered = 0;
+  for (let y = 0; y < vs.length - 1; y++)
+    for (let x = 0; x < us.length - 1; x++) {
+      const u = (us[x] + us[x + 1]) / 2,
+        v = (vs[y] + vs[y + 1]) / 2;
+      const over = result.filter((p) => cellLeft(p) < u && u < cellRight(p) && p.from < v && v < p.to);
+      if (over.length !== 1) throw new Error('벽 구조의 부모 자재 구간이 전체 면을 겹침 없이 나누어야 해요.');
+      covered += (us[x + 1] - us[x]) * (vs[y + 1] - vs[y]);
+    }
+  const area = result.reduce((sum, p) => sum + (cellRight(p) - cellLeft(p)) * (p.to - p.from), 0);
+  if (Math.abs(area - covered) > 1e-9)
+    throw new Error('벽 구조의 부모 자재 구간이 전체 면을 겹침 없이 나누어야 해요.');
   return result;
 }
 
@@ -77,9 +95,7 @@ export function buildWallFeaturePieces(
   const affectedFaces = WALLS.filter((face) => resolved.some((feature) => feature.face === face));
   // Validate all parents before allocating geometry, retaining neutral/ambiguous surface entries.
   const parents = new Map(affectedFaces.map((face) => [face, wallPatches(patches, face)]));
-  const floor = resolved.some((f) => f.kind === 'floor-alcove')
-    ? wallPatches(patches, 'floor')[0]
-    : undefined;
+  const floor = resolved.some((f) => f.kind === 'floor-alcove') ? wallPatches(patches, 'floor') : undefined;
   const pieces: WallFeaturePiece[] = [];
   const structureBounds = new Box3();
   let disposed = false;
@@ -145,7 +161,12 @@ export function buildWallFeaturePieces(
         role,
         featureId,
         sourceSurfaceId: piece.sourceSurfaceId,
-        parentPatch: { face: parentPatch.face, from: parentPatch.from, to: parentPatch.to },
+        parentPatch: {
+          face: parentPatch.face,
+          from: parentPatch.from,
+          to: parentPatch.to,
+          ...(parentPatch.left !== undefined ? { left: parentPatch.left, right: parentPatch.right } : {}),
+        },
         tileFace: piece.tileFace,
         uvChart: piece.uvChart,
         expectedNormal: [...expectedNormal],
@@ -172,126 +193,178 @@ export function buildWallFeaturePieces(
     [u1, v1],
     [u0, v1],
   ];
-  const interiorPatch = (bands: ViewerSurfacePatch[], v: number, edge: 'top' | 'bottom') => {
-    // Top belongs to the interval below it; bottom to the one above it. No fuzzy band selection.
-    const result = bands.find((p) => (edge === 'top' ? p.from <= v && v < p.to : p.from < v && v <= p.to));
-    if (!result) throw new Error('홈 내부의 부모 자재 구간을 찾을 수 없어요.');
+  /**
+   * The cells along one opening edge, each with the part of [from, to] it holds. A point on a cell
+   * edge goes to the cell inside the opening: the top to the cell below it, the bottom to the cell
+   * above it, as the bands did. No fuzzy choice.
+   */
+  const along = (
+    cells: readonly ViewerSurfacePatch[],
+    axis: 'u' | 'v',
+    at: number,
+    side: 'after' | 'before',
+    from: number,
+    to: number,
+  ) => {
+    const result = cellsAlong(cells, axis, at, side)
+      .map((cell) => {
+        const start = axis === 'v' ? cellLeft(cell) : cell.from,
+          end = axis === 'v' ? cellRight(cell) : cell.to;
+        return { cell, from: Math.max(from, start), to: Math.min(to, end) };
+      })
+      .filter((part) => part.from < part.to)
+      .sort((a, b) => a.from - b.from);
+    if (!result.length) throw new Error('홈 내부의 부모 자재 구간을 찾을 수 없어요.');
     return result;
   };
-  const addInterior = (feature: ResolvedWallFeature, bands: ViewerSurfacePatch[]) => {
+  const addInterior = (feature: ResolvedWallFeature, cells: ViewerSurfacePatch[]) => {
     const { face, id, opening: o, depthMm: d, wallSpanMm: length } = feature;
     const uAxis = roomFacePoint(room, face, 1, 0)
       .sub(roomFacePoint(room, face, 0, 0))
       .normalize();
-    for (const patch of bands) {
+    for (const patch of cells) {
       const top = Math.max(o.top, patch.from),
         bottom = Math.min(o.bottom, patch.to);
       if (top >= bottom) continue;
-      add(
-        face,
-        'rear',
-        patch,
-        rect(face, o.left, top, o.right, bottom, d),
-        rectUv(o.left, top, o.right, bottom),
-        normalFor(face),
-        id,
-      );
-      add(
-        face,
-        'reveal-left',
-        patch,
-        [
-          point(face, o.left, top),
-          point(face, o.left, top, d),
-          point(face, o.left, bottom, d),
-          point(face, o.left, bottom),
-        ],
-        [
-          [o.left, top],
-          [o.left + d / length, top],
-          [o.left + d / length, bottom],
-          [o.left, bottom],
-        ],
-        uAxis.toArray(),
-        id,
-      );
-      add(
-        face,
-        'reveal-right',
-        patch,
-        [
-          point(face, o.right, top),
-          point(face, o.right, top, d),
-          point(face, o.right, bottom, d),
-          point(face, o.right, bottom),
-        ],
-        [
-          [o.right, top],
-          [o.right - d / length, top],
-          [o.right - d / length, bottom],
-          [o.right, bottom],
-        ],
-        uAxis.clone().negate().toArray(),
-        id,
-      );
+      const left = Math.max(o.left, cellLeft(patch)),
+        right = Math.min(o.right, cellRight(patch));
+      if (left < right)
+        add(
+          face,
+          'rear',
+          patch,
+          rect(face, left, top, right, bottom, d),
+          rectUv(left, top, right, bottom),
+          normalFor(face),
+          id,
+        );
+      if (cellLeft(patch) <= o.left && o.left < cellRight(patch))
+        add(
+          face,
+          'reveal-left',
+          patch,
+          [
+            point(face, o.left, top),
+            point(face, o.left, top, d),
+            point(face, o.left, bottom, d),
+            point(face, o.left, bottom),
+          ],
+          [
+            [o.left, top],
+            [o.left + d / length, top],
+            [o.left + d / length, bottom],
+            [o.left, bottom],
+          ],
+          uAxis.toArray(),
+          id,
+        );
+      if (cellLeft(patch) < o.right && o.right <= cellRight(patch))
+        add(
+          face,
+          'reveal-right',
+          patch,
+          [
+            point(face, o.right, top),
+            point(face, o.right, top, d),
+            point(face, o.right, bottom, d),
+            point(face, o.right, bottom),
+          ],
+          [
+            [o.right, top],
+            [o.right - d / length, top],
+            [o.right - d / length, bottom],
+            [o.right, bottom],
+          ],
+          uAxis.clone().negate().toArray(),
+          id,
+        );
     }
-    add(
-      face,
-      'reveal-top',
-      interiorPatch(bands, o.top, 'top'),
-      [
-        point(face, o.left, o.top),
-        point(face, o.right, o.top),
-        point(face, o.right, o.top, d),
-        point(face, o.left, o.top, d),
-      ],
-      [
-        [o.left, o.top],
-        [o.right, o.top],
-        [o.right, o.top + d / room.heightMm],
-        [o.left, o.top + d / room.heightMm],
-      ],
-      [0, -1, 0],
-      id,
-    );
-    const bottomPoints = [
-      point(face, o.left, o.bottom),
-      point(face, o.right, o.bottom),
-      point(face, o.right, o.bottom, d),
-      point(face, o.left, o.bottom, d),
+    for (const part of along(cells, 'v', o.top, 'after', o.left, o.right))
+      add(
+        face,
+        'reveal-top',
+        part.cell,
+        [
+          point(face, part.from, o.top),
+          point(face, part.to, o.top),
+          point(face, part.to, o.top, d),
+          point(face, part.from, o.top, d),
+        ],
+        [
+          [part.from, o.top],
+          [part.to, o.top],
+          [part.to, o.top + d / room.heightMm],
+          [part.from, o.top + d / room.heightMm],
+        ],
+        [0, -1, 0],
+        id,
+      );
+    const bottomPoints = (from: number, to: number) => [
+      point(face, from, o.bottom),
+      point(face, to, o.bottom),
+      point(face, to, o.bottom, d),
+      point(face, from, o.bottom, d),
     ];
     if (feature.kind === 'floor-alcove')
-      add(
-        face,
-        'floor-extension',
-        floor!,
-        bottomPoints,
-        bottomPoints.map((p) => [(p.x + room.widthMm / 2) / room.widthMm, p.z / room.depthMm]),
-        [0, 1, 0],
-        id,
-      );
+      // The alcove's floor continues the floor cells it meets, split where they are (wall u).
+      for (const part of floorEdge(face, o.left, o.right)) {
+        const points = bottomPoints(part.from, part.to);
+        add(
+          face,
+          'floor-extension',
+          part.cell,
+          points,
+          points.map((p) => [(p.x + room.widthMm / 2) / room.widthMm, p.z / room.depthMm]),
+          [0, 1, 0],
+          id,
+        );
+      }
     else
-      add(
-        face,
-        'reveal-bottom',
-        interiorPatch(bands, o.bottom, 'bottom'),
-        bottomPoints,
-        [
-          [o.left, o.bottom],
-          [o.right, o.bottom],
-          [o.right, o.bottom - d / room.heightMm],
-          [o.left, o.bottom - d / room.heightMm],
-        ],
-        [0, 1, 0],
-        id,
-      );
+      for (const part of along(cells, 'v', o.bottom, 'before', o.left, o.right))
+        add(
+          face,
+          'reveal-bottom',
+          part.cell,
+          bottomPoints(part.from, part.to),
+          [
+            [part.from, o.bottom],
+            [part.to, o.bottom],
+            [part.to, o.bottom - d / room.heightMm],
+            [part.from, o.bottom - d / room.heightMm],
+          ],
+          [0, 1, 0],
+          id,
+        );
+  };
+  /** The floor cells along a wall's foot, as wall u from `from` to `to` (left wall u = 1 − floor v). */
+  const floorEdge = (face: WallFace, from: number, to: number) => {
+    const cells = floor!;
+    const parts =
+      face === 'back'
+        ? along(cells, 'v', 0, 'after', from, to)
+        : cellsAlong(cells, 'u', face === 'left' ? 0 : 1, face === 'left' ? 'after' : 'before')
+            .map((cell) =>
+              face === 'left'
+                ? { cell, from: Math.max(from, 1 - cell.to), to: Math.min(to, 1 - cell.from) }
+                : { cell, from: Math.max(from, cell.from), to: Math.min(to, cell.to) },
+            )
+            .filter((part) => part.from < part.to)
+            .sort((a, b) => a.from - b.from);
+    if (!parts.length) throw new Error('홈 내부의 부모 자재 구간을 찾을 수 없어요.');
+    return parts;
   };
   try {
     for (const face of affectedFaces) {
       const openings = resolved.filter((f) => f.face === face);
-      const bands = parents.get(face)!;
-      const us = uniqueSorted([0, 1, ...openings.flatMap((f) => [f.opening.left, f.opening.right])]);
-      for (const patch of bands) {
+      const cells = parents.get(face)!;
+      for (const patch of cells) {
+        const us = uniqueSorted([
+          cellLeft(patch),
+          cellRight(patch),
+          ...openings
+            .flatMap((f) => [f.opening.left, f.opening.right])
+            .filter((u) => u > cellLeft(patch) && u < cellRight(patch)),
+        ]);
         const vs = uniqueSorted([
           patch.from,
           patch.to,
@@ -319,7 +392,7 @@ export function buildWallFeaturePieces(
             );
           }
       }
-      for (const opening of openings) addInterior(opening, bands);
+      for (const opening of openings) addInterior(opening, cells);
     }
   } catch (error) {
     dispose();

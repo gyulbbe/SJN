@@ -231,15 +231,13 @@ export function ensureMaterialUsage(
   return existing && JSON.stringify(existing) === JSON.stringify(state) ? existing : state;
 }
 
-function roomAreas(scene: Scene): Map<string, { areaM2: number | null; issue?: string }> {
+/** Net installation areas of the tiled surfaces, as the room renderer divides each face. */
+export function usageRoomAreas(scene: Scene): Map<string, { areaM2: number | null; issue?: string }> {
   if (
     scene.wallFeatures !== undefined &&
     !(Array.isArray(scene.wallFeatures) && scene.wallFeatures.length === 0)
   )
     return roomSurfaceAreas(scene);
-  const result = new Map<string, { areaM2: number | null; issue?: string }>();
-  const applicable = scene.surfaces.filter((s) => s.materialVersionId);
-  for (const s of applicable) result.set(s.id, { areaM2: null, issue: '순시공 면적을 직접 입력해 주세요.' });
   const room = scene.room;
   if (
     !room ||
@@ -247,52 +245,13 @@ function roomAreas(scene: Scene): Map<string, { areaM2: number | null; issue?: s
     !validUsageNumber(room.depthMm, 20_000, 500) ||
     !validUsageNumber(room.heightMm, 6_000, 1000)
   )
-    return result;
-  for (const face of ['floor', 'back', 'left', 'right'] as const) {
-    const surfaces = applicable.filter((s) => s.roomFace === face);
-    if (!surfaces.length) continue;
-    const invalid = surfaces.some(
-      (s) =>
-        s.geometryMode !== 'room' ||
-        (s.reconstructionBand &&
-          (face === 'floor' ||
-            !validUsageNumber(s.reconstructionBand.from, 1) ||
-            !validUsageNumber(s.reconstructionBand.to, 1) ||
-            s.reconstructionBand.to <= s.reconstructionBand.from)),
+    return new Map(
+      scene.surfaces
+        .filter((s) => s.materialVersionId)
+        .map((s) => [s.id, { areaM2: null, issue: '순시공 면적을 직접 입력해 주세요.' }]),
     );
-    const full = surfaces.filter(
-      (s) => !s.reconstructionBand || (s.reconstructionBand.from === 0 && s.reconstructionBand.to === 1),
-    );
-    const bands = surfaces.filter((s) => s.reconstructionBand && !full.includes(s));
-    const overlap = bands.some((s, i) =>
-      bands
-        .slice(i + 1)
-        .some(
-          (t) =>
-            Math.min(s.reconstructionBand!.to, t.reconstructionBand!.to) -
-              Math.max(s.reconstructionBand!.from, t.reconstructionBand!.from) >
-            1e-9,
-        ),
-    );
-    if (invalid || full.length > 1 || overlap) {
-      for (const s of surfaces)
-        result.set(s.id, {
-          areaM2: null,
-          issue: '영역 범위가 불명확하거나 겹칩니다. 순시공 면적을 확인해 주세요.',
-        });
-      continue;
-    }
-    const faceArea = (room.heightMm * (face === 'back' ? room.widthMm : room.depthMm)) / 1_000_000;
-    const total = face === 'floor' ? (room.widthMm * room.depthMm) / 1_000_000 : faceArea;
-    let used = 0;
-    for (const s of bands) {
-      const fraction = s.reconstructionBand!.to - s.reconstructionBand!.from;
-      result.set(s.id, { areaM2: total * fraction });
-      used += fraction;
-    }
-    for (const s of full) result.set(s.id, { areaM2: total * Math.max(0, 1 - used) });
-  }
-  return result;
+  // The tiled surfaces share each face as the room renderer draws it (room-face-partition.ts).
+  return roomSurfaceAreas(scene, { include: (s) => !!s.materialVersionId, ignorePhotoMasks: true });
 }
 function groupTerms(assignment: UsageAssignment, material?: MaterialVersion): string {
   const p = assignment.pricing;
@@ -391,7 +350,7 @@ function manualQuantityForGroup(
 function areaForSurface(
   surface: Surface,
   state: MaterialUsageState,
-  rooms: ReturnType<typeof roomAreas>,
+  rooms: ReturnType<typeof usageRoomAreas>,
 ): UsageArea {
   const room = rooms.get(surface.id);
   const override = state.areas[surface.id];
@@ -424,7 +383,7 @@ export function calculateMaterialUsage(
     if (group) group.entityIds.push(entity.id);
     else groups.set(terms, { assignment, entityIds: [entity.id] });
   }
-  const rooms = roomAreas(scene);
+  const rooms = usageRoomAreas(scene);
   const rows: MaterialUsageRow[] = [];
   for (const { assignment, entityIds } of groups.values()) {
     const { category, materialVersionId } = assignment;

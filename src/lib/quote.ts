@@ -1,4 +1,4 @@
-import { roomSurfaceAreas } from './room-surface-areas';
+import { roomSurfaceAreas, roomSurfaceAreasMm2 } from './room-surface-areas';
 import type { MaterialPricing, QuoteDocument, QuoteLine, QuoteUnit } from './quote-types';
 import { getActiveScene } from './designs';
 import type { MaterialCategory, MaterialVersion, ProjectInput, Scene } from './types';
@@ -95,36 +95,25 @@ export function roomAreaForSurfaces(scene: Scene, surfaceIds: string[], versionI
     }
     return area;
   }
-  const faces = new Map<string, { from: number; to: number }[]>();
+  // The tiled surfaces share each face as the room renderer draws it: a region's area leaves its base.
+  const areas = roomSurfaceAreasMm2(scene, {
+    include: (surface) => !!surface.materialVersionId,
+    ignorePhotoMasks: true,
+  });
   let area = 0;
   for (const id of surfaceIds) {
     const surface = scene.surfaces.find((item) => item.id === id);
+    const value = areas.get(id)?.areaMm2;
     if (
       !surface ||
       surface.geometryMode !== 'room' ||
       !surface.roomFace ||
-      (versionId && surface.materialVersionId !== versionId)
+      (versionId && surface.materialVersionId !== versionId) ||
+      value === null ||
+      value === undefined
     )
       return null;
-    const band = surface.reconstructionBand ?? { from: 0, to: 1 };
-    if (
-      !Number.isFinite(band.from) ||
-      !Number.isFinite(band.to) ||
-      band.from < 0 ||
-      band.to > 1 ||
-      band.from >= band.to ||
-      (surface.reconstructionBand && surface.roomFace === 'floor')
-    )
-      return null;
-    const intervals = faces.get(surface.roomFace) ?? [];
-    if (intervals.some((b) => Math.min(b.to, band.to) - Math.max(b.from, band.from) > 1e-9)) return null;
-    faces.set(surface.roomFace, [...intervals, band]);
-    const fraction = band.to - band.from;
-    if (surface.roomFace === 'floor') area += room.widthMm * room.depthMm;
-    else if (surface.roomFace === 'back') area += room.widthMm * room.heightMm * fraction;
-    else if (surface.roomFace === 'left' || surface.roomFace === 'right')
-      area += room.depthMm * room.heightMm * fraction;
-    else return null;
+    area += value;
   }
   return Math.round(area) / 1_000_000;
 }
