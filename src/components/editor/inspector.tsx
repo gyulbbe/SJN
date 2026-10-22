@@ -27,7 +27,23 @@ import { parseRangeInput, stepRangeValue } from '@/lib/range-input';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import ReconstructionProperties from '@/components/reconstruction/reconstruction-properties';
 import { useRepositories } from '@/components/repository-context';
-import { DEFAULT_COLOR, type ColorAdjust, type MaterialVersion, type Scene } from '@/lib/types';
+import {
+  DEFAULT_COLOR,
+  type ColorAdjust,
+  type MaterialVersion,
+  type Scene,
+  type Surface,
+  type SurfaceRegion,
+} from '@/lib/types';
+import { roomFaceSizeMm } from '@/lib/room-geometry';
+import { createRegionSurface, REGION_MIN_MM } from '@/lib/room-surface-regions';
+import {
+  regionPlacementIssue,
+  regionToolIssue,
+  setSurfaceRegion,
+  snappedRegion,
+  suggestedRegion,
+} from '@/lib/region-editing';
 import { useEditingCapabilities } from './editing-capabilities';
 import { AssetImage } from '../materials/asset-image';
 import styles from './inspector-angles.module.css';
@@ -123,6 +139,127 @@ export function Range({
     </div>
   );
 }
+/**
+ * A region's place in millimetres, named as a person sees the face: a wall from its left end (facing
+ * it from inside the room) and from the floor, the floor from the left wall and the front wall.
+ */
+function RegionFields({
+  scene,
+  surface,
+  materials,
+}: {
+  scene: Scene;
+  surface: Surface;
+  materials: Record<string, MaterialVersion>;
+}) {
+  const st = useEditor();
+  const [note, setNote] = useState('');
+  const face = surface.roomFace!,
+    region = surface.region!,
+    size = roomFaceSizeMm(scene.room!, face);
+  const wall = face !== 'floor';
+  const fromFloor = size.height - region.topMm - region.heightMm;
+  const apply = (next: SurfaceRegion, preview = true) => {
+    // Over another region or outside the face the value is not taken; the last good one stays.
+    const issue = regionPlacementIssue(scene, face, next, surface.id);
+    setNote(issue ?? '');
+    if (issue) return;
+    (preview ? st.preview : st.change)((draft) => {
+      const target = draft.surfaces.find((item) => item.id === surface.id);
+      if (target) setSurfaceRegion(target, next);
+    });
+  };
+  const field = (
+    label: string,
+    value: number,
+    min: number,
+    max: number,
+    set: (n: number) => SurfaceRegion,
+  ) => (
+    <Range
+      label={label}
+      value={value}
+      min={min}
+      max={Math.max(min, max)}
+      step={1}
+      unit=" mm"
+      onChange={(n) => apply(set(n))}
+      onCommit={st.commit}
+    />
+  );
+  return (
+    <section className="property-section" data-testid="region-fields">
+      <h4>부분 타일 위치</h4>
+      {wall ? (
+        <>
+          {field('왼쪽 끝에서', region.leftMm, 0, size.width - region.widthMm, (n) => ({
+            ...region,
+            leftMm: n,
+          }))}
+          {field('바닥에서', fromFloor, 0, size.height - region.heightMm, (n) => ({
+            ...region,
+            topMm: size.height - n - region.heightMm,
+          }))}
+          {field('폭', region.widthMm, REGION_MIN_MM, size.width - region.leftMm, (n) => ({
+            ...region,
+            widthMm: n,
+          }))}
+          {/* The height grows upward from the bottom edge, which stays where it is. */}
+          {field('높이', region.heightMm, REGION_MIN_MM, size.height - fromFloor, (n) => ({
+            ...region,
+            topMm: size.height - fromFloor - n,
+            heightMm: n,
+          }))}
+          <p className="muted" style={{ fontSize: 11 }}>
+            왼쪽은 방 안에서 이 벽을 마주 봤을 때의 왼쪽이에요.
+          </p>
+        </>
+      ) : (
+        <>
+          {field('왼쪽 벽에서', region.leftMm, 0, size.width - region.widthMm, (n) => ({
+            ...region,
+            leftMm: n,
+          }))}
+          {field('정면 벽에서', region.topMm, 0, size.height - region.heightMm, (n) => ({
+            ...region,
+            topMm: n,
+          }))}
+          {field('폭', region.widthMm, REGION_MIN_MM, size.width - region.leftMm, (n) => ({
+            ...region,
+            widthMm: n,
+          }))}
+          {field('길이', region.heightMm, REGION_MIN_MM, size.height - region.topMm, (n) => ({
+            ...region,
+            heightMm: n,
+          }))}
+        </>
+      )}
+      {note && (
+        <p role="status" className="muted" style={{ fontSize: 11 }} data-testid="region-fields-note">
+          {note}
+        </p>
+      )}
+      <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+        <button
+          className="btn small"
+          title="경계를 바탕 타일의 줄눈에 맞춰요"
+          onClick={() => apply(snappedRegion(scene, face, region, materials), false)}
+        >
+          경계 맞춤
+        </button>
+        <button
+          className="btn small"
+          title="부분 타일 삭제 (Delete)"
+          aria-keyshortcuts="Delete Backspace"
+          onClick={() => st.removeSurface(surface.id)}
+        >
+          <Trash2 size={13} />
+          부분 타일 삭제
+        </button>
+      </div>
+    </section>
+  );
+}
 export default function Inspector({
   embedded = false,
   materials,
@@ -155,6 +292,8 @@ export default function Inspector({
   const [modelError, setModelError] = useState('');
   // Which surface's settings were last copied to every surface; the notice hides once another is selected.
   const [tileShared, setTileShared] = useState<{ surfaceId: string; count: number } | null>(null);
+  // Why "부분 타일 추가" made nothing (no free place, the tool is not available here).
+  const [regionNote, setRegionNote] = useState('');
   const viewRequest = useRef(0);
   const projectId = st.project?.id;
   useEffect(() => {
@@ -392,6 +531,19 @@ export default function Inspector({
       if (viewRequest.current === request) setModelBusy(false);
     }
   }
+  function addRegion(shape: 'area' | 'band') {
+    const face = surface?.roomFace;
+    if (!s || !face) return;
+    const issue = regionToolIssue({ scene: s, editing: st.editing, writable });
+    const region = issue ? null : suggestedRegion(s, face, shape, materials);
+    if (!region) return setRegionNote(issue ?? '빈 자리가 없어요. 가운데 화면에서 끌어서 만들어 주세요.');
+    const created = createRegionSurface(s, face, region);
+    setRegionNote('');
+    st.change((draft) => {
+      draft.surfaces.push(structuredClone(created));
+    });
+    useEditor.getState().select(created.id);
+  }
   const changeSurface = (fn: (v: NonNullable<typeof surface>) => void, preview = false) => {
     (preview ? st.preview : st.change)((scene) => {
       const v = scene.surfaces.find((v) => v.id === surface?.id);
@@ -513,15 +665,59 @@ export default function Inspector({
             <section className="property-section">
               <h4>{surface.name}</h4>
               <p className="muted" style={{ fontSize: 12 }}>
-                {surface.widthMm.toLocaleString('ko-KR')} × {surface.heightMm.toLocaleString('ko-KR')}mm
+                {(surface.region ? Math.round(surface.region.widthMm) : surface.widthMm).toLocaleString(
+                  'ko-KR',
+                )}{' '}
+                ×{' '}
+                {(surface.region ? Math.round(surface.region.heightMm) : surface.heightMm).toLocaleString(
+                  'ko-KR',
+                )}
+                mm
                 {s.room && surface.roomFace && surface.geometryMode === 'room' && (
                   <>
                     <br />
-                    시공 면적 {roomSurfaceAreaM2(s, surface.id)?.toLocaleString('ko-KR') ?? '확인 필요'}㎡
+                    {surface.region && !surface.materialVersionId
+                      ? '타일을 고르면 시공 면적을 계산해요.'
+                      : `시공 면적 ${roomSurfaceAreaM2(s, surface.id)?.toLocaleString('ko-KR') ?? '확인 필요'}㎡`}
                   </>
                 )}
               </p>
             </section>
+            {surface.region && surface.roomFace && s.room && (
+              <RegionFields key={surface.id} scene={s} surface={surface} materials={materials} />
+            )}
+            {!surface.region &&
+              surface.roomFace &&
+              surface.geometryMode === 'room' &&
+              s.room &&
+              st.editing === 'after' && (
+                <section className="property-section">
+                  <h4>부분 타일</h4>
+                  <p className="muted" style={{ fontSize: 11 }}>
+                    이 면의 일부에만 다른 타일을 넣어요. 가운데 화면의 부분 타일 도구로 끌어서 만들 수도
+                    있어요.
+                  </p>
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <button className="btn small" data-testid="region-add" onClick={() => addRegion('area')}>
+                      부분 타일 추가
+                    </button>
+                    {surface.kind === 'wall' && (
+                      <button
+                        className="btn small"
+                        data-testid="region-add-band"
+                        onClick={() => addRegion('band')}
+                      >
+                        띠로 추가
+                      </button>
+                    )}
+                  </div>
+                  {regionNote && (
+                    <p role="status" className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+                      {regionNote}
+                    </p>
+                  )}
+                </section>
+              )}
             <section className="property-section">
               <div className="row between" style={{ marginBottom: 13 }}>
                 <h4 style={{ margin: 0 }}>타일 시공</h4>
@@ -629,15 +825,16 @@ export default function Inspector({
               <button
                 className="btn small"
                 style={{ marginTop: 12 }}
-                title="이 면의 타일 초기화 (Delete)"
-                aria-keyshortcuts="Delete Backspace"
+                title={surface.region ? '타일을 비우면 바탕 면이 보여요' : '이 면의 타일 초기화 (Delete)'}
+                aria-keyshortcuts={surface.region ? undefined : 'Delete Backspace'}
                 onClick={() =>
                   changeSurface((v) => {
                     delete v.materialVersionId;
                   })
                 }
               >
-                <RotateCcw size={13} />이 면의 타일 초기화
+                <RotateCcw size={13} />
+                {surface.region ? '이 부분 타일 비우기' : '이 면의 타일 초기화'}
               </button>
             </section>
           </>

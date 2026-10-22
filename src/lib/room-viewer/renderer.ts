@@ -35,7 +35,7 @@ import {
   type RenderSnapshot,
   type Scene,
 } from '../types';
-import { validateRoomDimensions } from '../room-geometry';
+import { roomFacePoint, validateRoomDimensions } from '../room-geometry';
 import type { RoomFace } from '../room-types';
 import { fitOutput } from '../render/math';
 import {
@@ -60,7 +60,7 @@ import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
 import { backgroundFromPixels, coverageMaterial, labelsFromPixels, regionMaskMaterial } from './region-mask';
 import { fitSourceDepthClip, visibleMeshBounds, type SourceDepthClip } from './depth-clip';
-import { buildViewerSurfaces, ViewerTileCache, type SurfaceNotice } from './surfaces';
+import { buildViewerSurfaces, viewerFaceIsVisible, ViewerTileCache, type SurfaceNotice } from './surfaces';
 import { createRoomViewCamera, normalizeRoomView, roomViewViewport, type RoomViewState } from './view-state';
 
 export type RoomViewerMode = 'before' | 'after' | 'split' | 'compare';
@@ -1112,6 +1112,63 @@ export class RoomViewerRenderer {
     return result;
   }
   /**
+   * The image box of each listed surface as this view shows it (0–1, y down): what a region covers
+   * in the AI input, from its drawn pieces (fixtureBounds' camera and photo rectangle).
+   */
+  surfaceBounds(
+    width: number,
+    height: number,
+    view: RoomViewState,
+    ids: readonly string[],
+  ): Record<string, [number, number, number, number]> {
+    this.assertOpen();
+    if (!this.prepared || !this.snapshot) throw new Error('공간을 준비하는 중입니다.');
+    const size = fitOutput(width, height, this.maxOutputEdge);
+    const state = normalizeRoomView(view);
+    const camera = createRoomViewCamera(
+      this.snapshot.scene.room!,
+      size.width / size.height,
+      state,
+      this.prepared.bounds,
+      this.prepared.structureBounds,
+    );
+    const rect = roomViewViewport(size.width, size.height, state);
+    const after = this.prepared.after;
+    after.surfaces.updateView(camera);
+    after.world.updateMatrixWorld(true);
+    const clamp = (value: number) => Math.max(0, Math.min(1, value));
+    const points = new Map<string, { xs: number[]; ys: number[] }>();
+    after.surfaces.group.traverseVisible((node) => {
+      const mesh = node as Mesh;
+      const id = mesh.userData.surfaceId;
+      if (!mesh.isMesh || typeof id !== 'string' || !ids.includes(id)) return;
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      const box = mesh.geometry.boundingBox!.clone().applyMatrix4(mesh.matrixWorld);
+      const entry = points.get(id) ?? { xs: [], ys: [] };
+      for (const x of [box.min.x, box.max.x])
+        for (const y of [box.min.y, box.max.y])
+          for (const z of [box.min.z, box.max.z]) {
+            const p = new Vector3(x, y, z).project(camera);
+            if (!Number.isFinite(p.x) || p.z < -1 || p.z > 1) continue;
+            entry.xs.push((rect.x + ((p.x + 1) / 2) * rect.width) / size.width);
+            entry.ys.push(1 - (rect.y + ((p.y + 1) / 2) * rect.height) / size.height);
+          }
+      points.set(id, entry);
+    });
+    const result: Record<string, [number, number, number, number]> = {};
+    for (const [id, { xs, ys }] of points) {
+      if (!xs.length) continue;
+      const box: [number, number, number, number] = [
+        clamp(Math.min(...xs)),
+        clamp(Math.min(...ys)),
+        clamp(Math.max(...xs)),
+        clamp(Math.max(...ys)),
+      ];
+      if (box[2] > box[0] && box[3] > box[1]) result[id] = box;
+    }
+    return result;
+  }
+  /**
    * Which wall or floor covers each pixel of an After frame of this size and view, for checking a
    * FLUX result's material colours: 0 nothing checked (ceiling, background), n `regions[n - 1]`
    * (one per scene surface, or per bare face), 255 a fixture (glass included). `outside` marks
@@ -1523,6 +1580,51 @@ export class RoomViewerRenderer {
       if (!hidden && selected) return selected;
     }
     return null;
+  }
+  /**
+   * The room face under a point, products ignored: where a region drag starts. A wall feature's
+   * inside counts as the wall it opens into; an alcove's floor as the floor.
+   */
+  pickFace(x: number, y: number): RoomFace | null {
+    const ray = this.pointerRay(x, y);
+    if (!ray || !this.prepared) return null;
+    for (const hit of ray.intersectObject(this.prepared.after.surfaces.group, true)) {
+      let object: Object3D | null = hit.object,
+        hidden = false;
+      for (; object; object = object.parent) if (!object.visible) hidden = true;
+      if (hidden) continue;
+      const face = /^room-face:(floor|left|back|right):/.exec(hit.object.name)?.[1] as RoomFace | undefined;
+      if (face) return face;
+      const piece = (hit.object as Mesh).geometry?.userData.wallFeature as
+        { ownerFace: RoomFace; role: string } | undefined;
+      if (piece) return piece.role === 'floor-extension' ? 'floor' : piece.ownerFace;
+    }
+    return null;
+  }
+  /**
+   * Where a face point is in the last After frame (0–1, y down), for drawing a region's outline
+   * over the canvas; null when the face is not shown from this camera.
+   */
+  faceToFrame(face: RoomFace, u: number, v: number): { x: number; y: number } | null {
+    this.assertOpen();
+    const frame = this.lastFrame,
+      room = this.snapshot?.scene.room;
+    if (!frame || frame.mode !== 'after' || !room || !this.prepared) return null;
+    const rect = roomViewViewport(frame.width, frame.height, frame.view);
+    const camera = createRoomViewCamera(
+      room,
+      frame.width / frame.height,
+      frame.view,
+      this.prepared.bounds,
+      this.prepared.structureBounds,
+    );
+    if (!viewerFaceIsVisible(room, face, camera.getWorldPosition(new Vector3()))) return null;
+    const p = roomFacePoint(room, face, u, v).project(camera);
+    if (![p.x, p.y, p.z].every(Number.isFinite) || p.z < -1 || p.z > 1) return null;
+    return {
+      x: (rect.x + ((p.x + 1) / 2) * rect.width) / frame.width,
+      y: 1 - (rect.y + ((p.y + 1) / 2) * rect.height) / frame.height,
+    };
   }
   /** A drag stays on the fixture's original installation plane in millimetres. */
   facePosition(x: number, y: number, face: RoomFace): { u: number; v: number } | null {

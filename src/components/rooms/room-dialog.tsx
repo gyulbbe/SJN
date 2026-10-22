@@ -3,14 +3,15 @@
 import Image from 'next/image';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Ruler, X } from 'lucide-react';
-import type { RoomDefinition } from '@/lib/room-types';
+import type { RoomDefinition, RoomDimensions } from '@/lib/room-types';
 import { renderRoomBackground } from '@/lib/room-background';
 import styles from './room-dialog.module.css';
 
 type Props = {
   initial: RoomDefinition;
   mode: 'create' | 'resize';
-  resetWarnings?: string[];
+  /** What applying the size resets; a function is given the size being typed (null while invalid). */
+  resetWarnings?: string[] | ((room: RoomDimensions | null) => string[]);
   affectedDesignCount?: number;
   onRestore?: () => void;
   onRedoRestore?: () => void;
@@ -55,7 +56,11 @@ export default function RoomDialog({
   const depthMm = dimension(depth, 0.5, 20);
   const heightMm = dimension(height, 1, 6);
   const valid = widthMm !== null && depthMm !== null && heightMm !== null;
-  const needsConfirmation = resetWarnings.length > 0;
+  const warnings =
+    typeof resetWarnings === 'function'
+      ? resetWarnings(valid ? { widthMm, depthMm, heightMm } : null)
+      : resetWarnings;
+  const needsConfirmation = warnings.length > 0;
 
   useEffect(() => {
     closeRef.current = onClose;
@@ -304,7 +309,7 @@ export default function RoomDialog({
             <section className={styles.warnings}>
               <h3>크기를 바꾸면 다음 수동 보정을 초기화해요</h3>
               <ul>
-                {resetWarnings.map((warning, index) => (
+                {warnings.map((warning, index) => (
                   <li key={index}>{warning}</li>
                 ))}
               </ul>
