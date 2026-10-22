@@ -245,6 +245,8 @@ export type FluxNoticeInput = {
   corrected: boolean;
   /** Tile-layout answers are shown only when they proved reliable enough. */
   showTiles: boolean;
+  /** Walls with a region: another tile there is intended, so a tile-layout answer about them is no warning. */
+  regionWalls?: readonly string[];
   /**
    * The outside view's white margin could not be put back: the model reframed the room, so the
    * capture's outline would not fit (what it drew around the room stays).
@@ -310,12 +312,11 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
             .join(', ')}`,
         ],
       });
-    if (input.showTiles && reading.tiles.length)
+    const tiles = reading.tiles.filter((face) => !input.regionWalls?.includes(face));
+    if (input.showTiles && tiles.length)
       warnings.push({
         key: 'tiles',
-        lines: [
-          `${reading.tiles.map((face) => FACE_LABELS[face]).join('·')} 타일 배열이 원본과 달라 보여요.`,
-        ],
+        lines: [`${tiles.map((face) => FACE_LABELS[face]).join('·')} 타일 배열이 원본과 달라 보여요.`],
       });
     retry = warnings.length > 0;
     if (composite)

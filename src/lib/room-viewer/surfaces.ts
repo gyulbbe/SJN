@@ -17,6 +17,8 @@ import {
   type Texture,
 } from 'three';
 import { roomFacePoint } from '../room-geometry';
+import { cellLeft, cellRight, partitionRoomFaces, type FaceCell } from '../room-face-partition';
+import { surfaceTileOffset } from '../room-surface-regions';
 import { finishAppearance, MATTE_FINISH } from '../render/finish';
 import { CORNER_OCCLUSION_GLSL, TONE_MAPPING_GLSL } from '../render/realistic-lighting';
 import { buildWallFeaturePieces, type WallFeaturePiece } from './wall-feature-geometry';
@@ -28,96 +30,28 @@ import {
   type ColorAdjust,
   type MaterialVersion,
   type Scene,
-  type Surface,
 } from '../types';
 
 export type SurfaceNotice = { id: string; name: string; message: string; severity: 'limitation' | 'error' };
-export type ViewerSurfacePatch = { face: RoomFace; from: number; to: number; surface?: Surface };
+/** A rectangle of a room face and its surface (see room-face-partition.ts). */
+export type ViewerSurfacePatch = FaceCell;
 export const VIEWER_FACE_COLORS: Record<RoomFace, string> = {
   floor: '#d5d1c9',
   left: '#e9e6df',
   back: '#f0ede7',
   right: '#dcd8d0',
 };
-const faces: RoomFace[] = ['floor', 'left', 'back', 'right'];
-const hasAdditionalMask = (s: Surface) =>
-  !!(s.mask.strokes.length || s.mask.holes?.length || s.mask.polygons?.length);
 
 /** Partition physical intervals instead of stacking coplanar materials. No photo quad is projected. */
 export function viewerSurfacePatches(scene: Scene): {
   patches: ViewerSurfacePatch[];
   notices: SurfaceNotice[];
 } {
-  const patches: ViewerSurfacePatch[] = [],
-    notices: SurfaceNotice[] = [];
-  const warn = (s: Surface, message: string) =>
-    notices.push({ id: s.id, name: s.name, message, severity: 'limitation' });
-  for (const s of scene.surfaces) {
-    if (!s.roomFace || s.geometryMode !== 'room')
-      warn(s, '사진 좌표로 편집한 면은 입체 위치를 확정할 수 없어 이 보기에서 자재를 표시하지 않아요.');
-    else if (hasAdditionalMask(s))
-      warn(s, '사진 좌표의 브러시·보호 구멍은 이 보기에서 재현하지 않으며, 알려진 공간 면 범위를 사용해요.');
-  }
-  for (const face of faces) {
-    const candidates = scene.surfaces.filter((s) => s.roomFace === face && s.geometryMode === 'room');
-    const valid = candidates.filter((s) => {
-      const b = s.reconstructionBand;
-      if (
-        b &&
-        (face === 'floor' ||
-          !Number.isFinite(b.from) ||
-          !Number.isFinite(b.to) ||
-          b.from < 0 ||
-          b.to > 1 ||
-          b.from >= b.to)
-      ) {
-        warn(s, '벽 높이 구간이 잘못되어 자재를 표시하지 않아요.');
-        return false;
-      }
-      return true;
-    });
-    const full = valid.filter(
-      (s) => !s.reconstructionBand || (s.reconstructionBand.from === 0 && s.reconstructionBand.to === 1),
-    );
-    const bands = valid.filter((s) => !full.includes(s));
-    const conflicting = new Set<Surface>();
-    for (const a of bands)
-      for (const b of bands)
-        if (
-          a !== b &&
-          Math.min(a.reconstructionBand!.to, b.reconstructionBand!.to) -
-            Math.max(a.reconstructionBand!.from, b.reconstructionBand!.from) >
-            1e-9
-        ) {
-          conflicting.add(a);
-          conflicting.add(b);
-        }
-    for (const s of conflicting)
-      warn(s, '겹치는 벽 구간의 앞뒤를 임의로 정하지 않아요. 해당 자재 구간을 확인해 주세요.');
-    if (full.length > 1)
-      full.forEach((s) => warn(s, '같은 공간 면에 전체 자재가 여러 개여서 자동 선택하지 않아요.'));
-    const boundaries = [
-      ...new Set([0, 1, ...bands.flatMap((s) => [s.reconstructionBand!.from, s.reconstructionBand!.to])]),
-    ].sort((a, b) => a - b);
-    for (let i = 0; i < boundaries.length - 1; i++) {
-      const from = boundaries[i],
-        to = boundaries[i + 1],
-        mid = (from + to) / 2;
-      const covering = bands.filter(
-        (s) => s.reconstructionBand!.from <= mid && s.reconstructionBand!.to >= mid,
-      );
-      const surface =
-        covering.length === 1 && !conflicting.has(covering[0])
-          ? covering[0]
-          : covering.length
-            ? undefined
-            : full.length === 1
-              ? full[0]
-              : undefined;
-      patches.push({ face, from, to, surface });
-    }
-  }
-  return { patches, notices };
+  const { faces, notices } = partitionRoomFaces(scene);
+  return {
+    patches: faces.flatMap((face) => face.cells),
+    notices: notices.map((notice) => ({ ...notice, severity: 'limitation' as const })),
+  };
 }
 
 export function viewerFaceIsVisible(room: RoomDefinition, face: RoomFace, cameraPosition: Vector3): boolean {
@@ -130,22 +64,30 @@ export function viewerFaceIsVisible(room: RoomDefinition, face: RoomFace, camera
 }
 
 export function viewerSurfaceGeometry(room: RoomDefinition, patch: ViewerSurfacePatch): BufferGeometry {
-  const uv = [
-    [0, patch.from],
-    [1, patch.from],
-    [1, patch.to],
-    [0, patch.to],
-  ];
+  return viewerCellsGeometry(room, [patch]);
+}
+
+/** One geometry for cells of one face drawn with one material; every corner is on the face grid. */
+export function viewerCellsGeometry(
+  room: RoomDefinition,
+  cells: readonly ViewerSurfacePatch[],
+): BufferGeometry {
+  const uv = cells.flatMap((cell) => [
+    [cellLeft(cell), cell.from],
+    [cellRight(cell), cell.from],
+    [cellRight(cell), cell.to],
+    [cellLeft(cell), cell.to],
+  ]);
   const geometry = new BufferGeometry();
   geometry.setAttribute(
     'position',
     new Float32BufferAttribute(
-      uv.flatMap(([u, v]) => roomFacePoint(room, patch.face, u, v).toArray()),
+      uv.flatMap(([u, v], index) => roomFacePoint(room, cells[Math.floor(index / 4)].face, u, v).toArray()),
       3,
     ),
   );
   geometry.setAttribute('uv', new Float32BufferAttribute(uv.flat(), 2));
-  geometry.setIndex([0, 2, 1, 0, 3, 2]);
+  geometry.setIndex(cells.flatMap((_, i) => [0, 2, 1, 0, 3, 2].map((corner) => corner + i * 4)));
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   return geometry;
@@ -371,7 +313,7 @@ function surfaceMaterial(
         ),
       },
       sjnTile: { value: new Vector2(product.widthMm, product.heightMm) },
-      sjnOffset: { value: new Vector2(tile.offsetX, tile.offsetY) },
+      sjnOffset: { value: new Vector2(surfaceTileOffset(surface).x, surfaceTileOffset(surface).y) },
       sjnAngle: { value: (tile.rotation * Math.PI) / 180 },
       sjnGrout: { value: Math.max(0, tile.groutWidth) },
       sjnGroutColor: { value: new Color(tile.groutColor) },
@@ -443,8 +385,24 @@ export async function buildViewerSurfaces(
     for (const material of ownedMaterials) material.dispose();
     group.clear();
   };
+  // One material per surface and height row; a region splits a row into cells drawn together.
+  const groups: ViewerSurfacePatch[][] = [];
+  for (const patch of patches) {
+    const row = patch.row ?? patch;
+    const same = groups.find(
+      ([first]) =>
+        first.face === patch.face &&
+        first.surface === patch.surface &&
+        (first.row ?? first).from === row.from &&
+        (first.row ?? first).to === row.to,
+    );
+    if (same) same.push(patch);
+    else groups.push([patch]);
+  }
   try {
-    for (const patch of patches) {
+    for (const cells of groups) {
+      const patch = cells[0],
+        row = patch.row ?? patch;
       let product = patch.surface?.materialVersionId ? materials[patch.surface.materialVersionId] : undefined;
       let atlas: Atlas | undefined;
       if (patch.surface?.materialVersionId) {
@@ -478,9 +436,9 @@ export async function buildViewerSurfaces(
             ':' +
             (patch.surface?.id ?? 'neutral') +
             ':' +
-            patch.from +
+            row.from +
             ':' +
-            patch.to;
+            row.to;
         if (patch.surface) mesh.userData.surfaceId = patch.surface.id;
         mesh.receiveShadow = true;
         mesh.castShadow = false;
@@ -488,11 +446,12 @@ export async function buildViewerSurfaces(
         meshes.push({ face: piece?.ownerFace ?? patch.face, mesh, piece });
       };
       if (!features?.affectedFaces.has(patch.face)) {
-        const geometry = viewerSurfaceGeometry(room, patch);
+        const geometry = viewerCellsGeometry(room, cells);
         ownedGeometry.add(geometry);
         add(geometry);
       }
-      for (const piece of features?.pieces ?? []) if (piece.parentPatch === patch) add(piece.geometry, piece);
+      for (const piece of features?.pieces ?? [])
+        if (cells.includes(piece.parentPatch)) add(piece.geometry, piece);
     }
   } catch (error) {
     dispose();

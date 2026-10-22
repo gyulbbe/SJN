@@ -17,6 +17,7 @@ import {
 import { roomDefinitionSchema, roomFaceSchema, roomPlacementSchema } from '../room-validation';
 import { z } from 'zod';
 import { validateQuad } from '../render/math';
+import { validateSurfaceRegions } from '../room-surface-regions';
 import { materialPricingSchema, quoteDocumentSchema } from '../quote-validation';
 
 const id = z.string().uuid();
@@ -74,8 +75,17 @@ export const reconstructionBandSchema = z
     to: z.number().finite().min(0).max(1),
   })
   .refine((b) => b.from < b.to, '벽 구간의 시작은 끝보다 작아야 해요.');
+const surfaceRegionSchema = z
+  .object({
+    leftMm: z.number().finite(),
+    topMm: z.number().finite(),
+    widthMm: z.number().finite(),
+    heightMm: z.number().finite(),
+  })
+  .strict();
 const surface = z.object({
   reconstructionBand: reconstructionBandSchema.optional(),
+  region: surfaceRegionSchema.optional(),
   roomFace: roomFaceSchema.optional(),
   geometryMode: z.enum(['room', 'manual']).optional(),
   id,
@@ -348,10 +358,17 @@ function refineSceneWallFeatures(value: z.infer<typeof sceneObject>, context: z.
   ];
   if (new Set(ids).size !== ids.length)
     context.addIssue({ code: 'custom', message: '같은 장면 안에 면·제품·벽 구조 ID가 중복되었어요.' });
+  for (const issue of validateSurfaceRegions(value))
+    context.addIssue({ code: 'custom', message: issue.message, path: issue.path });
 }
 const scene = sceneObject
   .refine(imageLimit, '최대 4천만 화소까지 지원해요.')
   .superRefine(refineSceneWallFeatures);
+/** Regions are After design work only; the shared Before and baseline never hold them. */
+const beforeScene = scene.refine(
+  (value) => !value.surfaces.some((surface) => surface.region),
+  '부분 타일은 After 시안에만 둘 수 있어요.',
+);
 const unit = z.number().finite().min(0).max(1);
 const reconstructionTileSchema = z.object({
   groutColor: z
@@ -608,7 +625,7 @@ export const comparisonSchema = z.object({
       materialVersionIds: z.array(id).max(2000),
     })
     .optional(),
-  before: scene,
+  before: beforeScene,
   room: roomDefinitionSchema,
   cameraVersion: z.literal(1),
   aspect: number.positive().max(100),
@@ -653,7 +670,7 @@ const designFrameSchema = z.object({
   quote: quoteDocumentSchema.optional(),
   materialUsage: materialUsageSchema.optional(),
 });
-const beforeFrameSchema = z.object({ baseline: scene, comparison: comparisonSchema.optional() });
+const beforeFrameSchema = z.object({ baseline: beforeScene, comparison: comparisonSchema.optional() });
 export const designDocumentSchema = z.object({
   id,
   name: z.string().trim().min(1).max(200),
@@ -672,7 +689,7 @@ export const designDocumentSchema = z.object({
   thumbnailAssetId: id.optional(),
 });
 const sharedWorkspaceSchema = z.object({
-  baseline: scene,
+  baseline: beforeScene,
   comparison: comparisonSchema.optional(),
   revision,
   beforeHistory: z.object({

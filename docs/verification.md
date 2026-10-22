@@ -2,6 +2,27 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-22 — 부분 타일: 벽·바닥의 네모 영역에 다른 타일
+
+- 무엇: After 시안에서 벽·바닥의 네모 영역에 다른 타일을 넣는다([결과](tile-regions-results-20261022.md)). 저장은 면 항목의 `region`(면 좌표 mm) 하나다. 면 나누기 함수 하나([room-face-partition](../src/lib/room-face-partition.ts))를 3D 렌더러·벽 구조 조각·면적·견적·사용량이 함께 쓴다. 2D 합성은 영역을 바탕 뒤에 그린다. AI 변환은 영역을 위치(%)와 함께 따로 적는다.
+- 사용자 결정: 네모만, After만, 모서리 시작 + 바탕 줄눈 맞춤, AI 프롬프트 + Cloudflare 4회(모두 추천안)
+- 같음 확인
+  - 이전 코드를 그대로 옮긴 `tests/helpers/legacy-face-bands.ts`와 무작위 장면 400개 비교: 칸·알림·면적·견적은 같고, 사용량은 1e-12 안
+  - 다른 경우는 "전체 면 + 일부 띠"의 견적 하나다. 실제 자료에는 없다.
+  - 렌더 48개(3D 네 방향·비교·면 마스크·알림, 2D After·면 마스크)가 바꾸기 전 기준과 픽셀까지 같았다(`tests/tile-regions-equality-browser.ts`). 렌더 버전은 그대로다.
+- 테스트
+  - 단위: `room-face-partition`, `room-surface-regions`, `region-editing`, `flux-regions`
+  - 브라우저: `tests/tile-regions-browser.ts` 29개(영역 안팎 픽셀 3D·2D, 면 마스크 라벨, 경계 바탕 줄눈 한 줄, 네 방향 보기의 왼쪽, AI 상자, 색 검사·되돌리기)
+  - e2e: `tile-regions`(2D·3D), `tile-regions-guest`(375px). 끄는 동안 프로젝트 요청 0, 그리기·숫자·이동마다 저장 1
+- 실제 호출: Cloudflare FLUX klein 4B 4회(지금·새 프롬프트 × seed 2), 모두 성공, 추정 약 460뉴런, 429 없음(사용자 확인: 그날 다른 사용 없음, 시험용 Worker, 재시도 없음). 뒤에 Worker와 :8799를 정리했다.
+- 확인
+  - e2e 회귀 15개 파일(`tile-regions`, `tile-regions-guest`, `editor`, `editor-four-view`, `editor-four-view-drag`, `editor-history-shortcuts`, `room-viewer`, `room-dimensions`, `room-fixtures`, `wall-features-ui`, `material-usage`, `material-usage-inputs`, `designs`, `guest-workspace`, `flux-export`): 64개 통과, 1개 건너뜀(실제 사진 보고서는 `SJN_VIEWER_REAL_REPORT=1`일 때만 도는 기존 선택 테스트), 53.4분
+  - `npx vitest run`: 3,628개 통과, 6개 실패, 1개 건너뜀
+    - 실패 6개(`reconstruction-corpus`의 봉인 해시, `reconstruction-source-plane-mapping` 5개)는 새 워크트리 환경 때문이다. 체크아웃 줄바꿈이 CRLF라 봉인 해시가 다르고, git 제외 자료(`test-results/reconstruction-product-color-20260914`)가 없다.
+    - 같은 두 파일은 main 체크아웃에서 31개 모두 통과했다. 병합 뒤 main에서 다시 확인한다.
+  - `npm run typecheck`, `npm run lint`, 바꾼 코드 파일의 Prettier 검사
+  - `next-env.d.ts`는 되돌렸다.
+
 ## 2026-10-22 — AI 방향 사진: 가이드를 다시 그리는 동안 만들기 막기 (e2e 간헐 실패)
 
 - 무엇: `direction-photo-ai` e2e의 후보 순서 검사가 가끔 실패했다(첫 후보 겹침 0.655, 기대 0.85 초과).

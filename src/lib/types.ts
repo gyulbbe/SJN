@@ -20,11 +20,18 @@ export type TileSettings = {
   seed: number;
   shading: number;
 };
+export type SurfaceRegion = { leftMm: number; topMm: number; widthMm: number; heightMm: number };
 export type Surface = {
   roomFace?: RoomFace;
   geometryMode?: 'room' | 'manual';
   /** Vertical interval of the whole generated wall, top=0 and floor=1. */
   reconstructionBand?: { from: number; to: number };
+  /**
+   * A rectangle of one room face with its own tile (an After design only), in face millimetres: a
+   * wall from its u=0 end and the ceiling, the floor from the left wall and the back wall. The
+   * surface keeps the whole face's quad and size; its mask is the rectangle (room-surface-regions.ts).
+   */
+  region?: SurfaceRegion;
   id: string;
   name: string;
   kind: 'floor' | 'wall';

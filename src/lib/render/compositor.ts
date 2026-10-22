@@ -33,6 +33,7 @@ import type {
   Scene as EditorScene,
   Surface,
 } from '../types';
+import { surfaceTileOffset } from '../room-surface-regions';
 import { fitOutput, homography, validateQuad } from './math';
 import { finishAppearance } from './finish';
 import { maskCanvas } from './mask';
@@ -750,7 +751,8 @@ export class PhotoCompositor {
     };
     // Wall planes share their own scene's light reference, never the other comparison side's.
     let wallReference: number | undefined;
-    const walls = scene.surfaces.filter((surface) => surface.kind === 'wall');
+    // Regions lie on these walls: counting them again would change the walls' reference.
+    const walls = scene.surfaces.filter((surface) => surface.kind === 'wall' && !surface.region);
     if (walls.length > 1 && walls.some((surface) => surface.materialVersionId)) {
       const fields = await Promise.all(walls.map(shadingFor));
       if (!current()) return;
@@ -767,16 +769,28 @@ export class PhotoCompositor {
         }
       }
     }
-    for (const surface of scene.surfaces) {
+    // A region's tile goes over the face it lies on, whatever the surfaces' order.
+    for (const surface of [
+      ...scene.surfaces.filter((s) => !s.region),
+      ...scene.surfaces.filter((s) => s.region),
+    ]) {
       if (!surface.materialVersionId) continue;
       const material = materials[surface.materialVersionId];
       if (!material) throw new Error(surface.name + ': 저장된 자재 버전을 찾지 못했습니다.');
       if (!validateQuad(surface.quad)) continue;
-      const [atlas, shading] = await Promise.all([
+      // A region is lit as the face under it, so its edge shows no step in brightness.
+      const base = surface.region
+        ? (scene.surfaces.find(
+            (s) => s.roomFace === surface.roomFace && !s.region && !s.reconstructionBand,
+          ) ?? scene.surfaces.find((s) => s.roomFace === surface.roomFace && !s.region))
+        : undefined;
+      const [atlas, shading, baseShading] = await Promise.all([
         this.atlasFor(material, quality.quality, quality.previewEdge !== undefined),
         shadingFor(surface),
+        base ? shadingFor(base) : undefined,
       ]);
       if (!current()) return;
+      const mean = (baseShading ?? shading).mean;
       const id = namespace + ':surface:' + surface.id;
       maskIds.push(id);
       tiles.push({
@@ -787,7 +801,7 @@ export class PhotoCompositor {
         mask: this.getMask(id, surface.mask, maskSize.width, maskSize.height, scene.protection, true),
         inverse: new Matrix3().set(...homography(surface.quad)),
         shading: shading.texture,
-        referenceLuminance: surface.kind === 'wall' ? (wallReference ?? shading.mean) : shading.mean,
+        referenceLuminance: surface.kind === 'wall' ? (wallReference ?? mean) : mean,
       });
     }
     for (const fixture of scene.fixtures) {
@@ -947,7 +961,7 @@ export class PhotoCompositor {
         inversePlane: inverse,
         planeSize: new Vector2(surface.widthMm, surface.heightMm),
         tileSize: new Vector2(material.widthMm, material.heightMm),
-        offset: new Vector2(surface.tile.offsetX, surface.tile.offsetY),
+        offset: new Vector2(surfaceTileOffset(surface).x, surfaceTileOffset(surface).y),
         angle: (surface.tile.rotation * Math.PI) / 180,
         groutWidth: Math.max(0, surface.tile.groutWidth),
         groutColor: new Color(surface.tile.groutColor),

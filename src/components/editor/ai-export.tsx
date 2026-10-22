@@ -212,6 +212,8 @@ export default function AiExport({
     color?: { capture: Pixels; mask: RegionMask; layout: FluxInputLayout };
     /** Walls in the captured view, asked about in the result check. */
     walls?: FluxCheckWall[];
+    /** Walls with a region, where another tile is intended (not a tile-layout warning). */
+    regionWalls?: string[];
     /** The composite export: the frame's layers and the fixtures' capture boxes. */
     composite?: { layers: RoomLayers; boxes: [number, number, number, number][] };
     /** The per-product export: the products to repaint and every close-up's silhouette on the frame. */
@@ -240,6 +242,7 @@ export default function AiExport({
     state.current.grounding = undefined;
     state.current.color = undefined;
     state.current.walls = undefined;
+    state.current.regionWalls = undefined;
     state.current.composite = undefined;
     state.current.refine = undefined;
     setRefineProgress(undefined);
@@ -303,6 +306,13 @@ export default function AiExport({
             layout: fluxInputLayout(pixels.width, pixels.height),
           };
           state.current.walls = visibleWalls(source.regions, source.snapshot.scene);
+          state.current.regionWalls = [
+            ...new Set(
+              source.snapshot.scene.surfaces
+                .filter((surface) => surface.region && surface.roomFace && surface.roomFace !== 'floor')
+                .map((surface) => surface.roomFace!),
+            ),
+          ];
         }
         state.current.composite = layers ? { layers, boxes: Object.values(source.boxes ?? {}) } : undefined;
         const bitmap = await createImageBitmap(source.blob);
@@ -315,6 +325,7 @@ export default function AiExport({
             capture: bitmap,
             layout: fluxInputLayout(bitmap.width, bitmap.height),
             boxes: source.boxes,
+            surfaceBoxes: source.surfaceBoxes,
             ceiling: source.ceiling,
             cutaway: source.cutaway,
             azimuth: source.azimuth,
@@ -560,6 +571,7 @@ export default function AiExport({
     colors: colors?.status === 'corrected' && !result.correctedUrl ? undefined : colors,
     corrected: !showOriginal,
     showTiles: FLUX_SHOW_TILE_NOTICE,
+    regionWalls: state.current.regionWalls,
     ...(mode ? { composite: { shifted, ...(refineSummary ? { refine: refineSummary } : {}) } } : {}),
     ...(marginKept ? { backdrop: 'reframed' as const } : {}),
   });

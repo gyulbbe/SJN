@@ -735,8 +735,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         if (requireLogin('정식 저장')) return;
         void save();
       }
-      // Delete (Backspace on Mac keyboards) removes the selected product or clears the selected
-      // surface's tile, exactly like the inspector buttons; Ctrl+Z restores either.
+      // Delete (Backspace on Mac keyboards) removes the selected product or region, or clears the
+      // selected surface's tile, exactly like the inspector buttons; Ctrl+Z restores either.
       if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const current = useEditor.getState();
         if (!writable || current.draft || detectionStatus || current.mode !== 'after') return;
@@ -746,6 +746,9 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         if (fixture && !fixture.locked) {
           e.preventDefault();
           current.removeFixture(fixture.id);
+        } else if (surface?.region) {
+          e.preventDefault();
+          current.removeSurface(surface.id);
         } else if (surface?.materialVersionId) {
           e.preventDefault();
           current.change((scene) => {
@@ -925,7 +928,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         setError('이 자재에는 타일 한 장의 텍스처를 먼저 등록해 주세요.');
         return;
       }
-      const targets = selected?.kind === kind ? [selected] : source.surfaces.filter((s) => s.kind === kind);
+      const targets =
+        selected?.kind === kind ? [selected] : source.surfaces.filter((s) => s.kind === kind && !s.region);
       const additions: typeof targets = [];
       const currentRequest = () => {
         const current = useEditor.getState();
@@ -1360,6 +1364,13 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         reader: assetReader,
         snapshot,
         boxes: roomRenderer.fixtureBounds(width, height, view),
+        // Where each region is in the frame, for the prompt to say so.
+        surfaceBoxes: roomRenderer.surfaceBounds(
+          width,
+          height,
+          view,
+          snapshot.scene.surfaces.filter((surface) => surface.region).map((surface) => surface.id),
+        ),
         regions,
         ...(visibleCeiling(regions) ? { ceiling: VIEWER_CEILING_COLOR } : {}),
         ...(view.projection === 'room-orbit' ? { cutaway: true } : {}),
@@ -2228,6 +2239,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 setInspectorOpen((value) => !value);
                 setCatalogOpen(false);
               }}
+              onRegionCreated={() => {
+                setCatalogOpen(true);
+                setInspectorOpen(false);
+              }}
             />
           ) : (
             <CanvasWorkspace
@@ -2244,6 +2259,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               showInspector={() => {
                 setInspectorOpen((v) => !v);
                 setCatalogOpen(false);
+              }}
+              onRegionCreated={() => {
+                setCatalogOpen(true);
+                setInspectorOpen(false);
               }}
             />
           )}
@@ -2601,12 +2620,12 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           affectedDesignCount={st.project.designs.length}
           onRestore={st.project.roomHistory?.past ? () => restoreRoom(false) : undefined}
           onRedoRestore={st.project.roomHistory?.future ? () => restoreRoom(true) : undefined}
-          resetWarnings={[
-            ...st.project.designs.flatMap((design) =>
-              roomResetWarnings(design.scene).map((w) => design.name + ': ' + w),
+          resetWarnings={(room) => [
+            ...st.project!.designs.flatMap((design) =>
+              roomResetWarnings(design.scene, room).map((w) => design.name + ': ' + w),
             ),
-            ...(st.project.shared.comparison
-              ? roomResetWarnings(st.project.shared.comparison.before).map((w) => 'Before: ' + w)
+            ...(st.project!.shared.comparison
+              ? roomResetWarnings(st.project!.shared.comparison.before, room).map((w) => 'Before: ' + w)
               : []),
           ]}
           onApply={resizeRoom}

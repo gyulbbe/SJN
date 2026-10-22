@@ -27,7 +27,8 @@ import {
 } from './comparison';
 import { createBlankDesign, copyDesignDocument, validDesignName } from './designs';
 
-export type Tool = 'select' | 'pan';
+/** `region` draws a rectangle of a room face for its own tile (an After design only). */
+export type Tool = 'select' | 'pan' | 'region';
 export type RoomResizeAssets = Pick<
   Scene,
   'originalAssetId' | 'previewAssetId' | 'imageWidth' | 'imageHeight'
@@ -52,6 +53,8 @@ type EditorState = {
   setSplit: (n: number) => void;
   change: (fn: (s: Scene) => void) => void;
   removeFixture: (id: string) => void;
+  /** Removes a region (never a whole face or band): one history step, selection cleared. */
+  removeSurface: (id: string) => void;
   changeProject: (fn: (p: ProjectDocument) => void) => void;
   createDesign: (name?: string) => string | null;
   copyDesign: (id?: string) => string | null;
@@ -386,6 +389,18 @@ export const useEditor = create<EditorState>((set, get) => {
       if (!fixture || fixture.locked) return;
       get().change((s) => {
         s.fixtures = s.fixtures.filter((item) => item.id !== id);
+      });
+      set({ selection: null });
+    },
+    removeSurface: (id) => {
+      const state = get(),
+        previous = state.project;
+      if (!previous || state.draft || state.mode !== 'after' || !activeWritable(previous, state.editing))
+        return;
+      const surface = getEditingScene(previous, state.editing).surfaces.find((item) => item.id === id);
+      if (!surface?.region) return;
+      get().change((s) => {
+        s.surfaces = s.surfaces.filter((item) => item.id !== id);
       });
       set({ selection: null });
     },

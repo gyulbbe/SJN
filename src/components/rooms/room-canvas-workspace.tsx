@@ -2,7 +2,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { useEditor } from '@/lib/editor-store';
 import { getEditingScene } from '@/lib/comparison';
-import type { MaterialVersion, Scene } from '@/lib/types';
+import type { MaterialVersion, Scene, Surface, SurfaceRegion } from '@/lib/types';
+import type { RoomFace } from '@/lib/room-types';
+import { roomFaceSizeMm } from '@/lib/room-geometry';
+import { createRegionSurface, REGION_MIN_MM, regionUv } from '@/lib/room-surface-regions';
+import {
+  draftRegionUv,
+  movedRegion,
+  REGION_DRAG_PX,
+  regionFromDrag,
+  regionPlacementIssue,
+  regionToolIssue,
+  setSurfaceRegion,
+  snappedRegion,
+  type FacePoint,
+} from '@/lib/region-editing';
 import type { AssetReader } from '@/lib/render/compositor';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
@@ -23,12 +37,15 @@ export default function RoomCanvasWorkspace({
   onError,
   showCatalog,
   showInspector,
+  onRegionCreated,
 }: {
   materials: Record<string, MaterialVersion>;
   assetReader: AssetReader;
   onError: (message: string) => void;
   showCatalog: () => void;
   showInspector: () => void;
+  /** A region was just drawn: the editor opens the material drawer on it. */
+  onRegionCreated?: (surface: Surface) => void;
 }) {
   const st = useEditor(),
     { writable } = useEditingCapabilities();
@@ -75,14 +92,26 @@ export default function RoomCanvasWorkspace({
   const schedule = useRef(() => {}),
     paint = useRef(() => {});
   const gesture = useRef<{
-    kind: 'fixture' | 'pan';
+    kind: 'fixture' | 'pan' | 'region-draw' | 'region-move';
     id?: string;
     start: { x: number; y: number };
     base: Scene;
     uv?: { u: number; v: number };
     view: typeof view;
     moved: boolean;
+    /** A region drag: the face it is on and the region before the move. */
+    face?: RoomFace;
+    region?: SurfaceRegion;
   } | null>(null);
+  // The rectangle being drawn with the region tool (not part of the scene until it is let go).
+  const [regionDraft, setRegionDraft] = useState<{ face: RoomFace; from: FacePoint; to: FacePoint } | null>(
+    null,
+  );
+  const [regionNote, setRegionNote] = useState('');
+  const [regionSnap, setRegionSnap] = useState(true);
+  // Advances after every drawn frame, so outlines are projected with the camera just used.
+  const [, setDrawn] = useState(0);
+  const regionIssue = regionToolIssue({ scene, editing: st.editing, writable });
 
   const frameKey = JSON.stringify([view, st.mode, st.split, size]);
   useEffect(() => {
@@ -128,6 +157,7 @@ export default function RoomCanvasWorkspace({
           c.mode,
           c.split,
         );
+        setDrawn((value) => value + 1);
       } catch (error) {
         life.ready = false;
         canPick.current = false;
@@ -214,13 +244,20 @@ export default function RoomCanvasWorkspace({
     paint.current();
   }, [frameKey]);
   useEffect(() => {
-    if (gesture.current?.kind === 'fixture') useEditor.getState().cancel();
+    if (gesture.current?.kind === 'fixture' || gesture.current?.kind === 'region-move')
+      useEditor.getState().cancel();
     gesture.current = null;
+    setRegionDraft(null);
+    setRegionNote('');
   }, [st.project?.id, st.project?.activeDesignId, st.editing, st.tool, st.mode, writable]);
+  useEffect(() => {
+    if (st.tool === 'region' && regionIssue) useEditor.getState().setTool('select');
+  }, [st.tool, regionIssue]);
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       gesture.current = null;
+      setRegionDraft(null);
       useEditor.getState().cancel();
     };
     window.addEventListener('keydown', cancel);
@@ -239,6 +276,23 @@ export default function RoomCanvasWorkspace({
     const rect = event.currentTarget.getBoundingClientRect();
     return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
   }
+  /** One history step for a drawn rectangle, snapped when asked; the drawer opens on it. */
+  function createRegion(face: RoomFace, region: SurfaceRegion | null) {
+    const state = useEditor.getState();
+    const latest = state.project ? getEditingScene(state.project, state.editing) : undefined;
+    if (!latest?.room) return;
+    if (!region) return setRegionNote(`가로·세로 ${REGION_MIN_MM}mm보다 크게 끌어 주세요.`);
+    const placed = regionSnap ? snappedRegion(latest, face, region, materials) : region;
+    const issue = regionPlacementIssue(latest, face, placed);
+    if (issue) return setRegionNote(issue);
+    const surface = createRegionSurface(latest, face, placed);
+    state.change((draft) => {
+      draft.surfaces.push(structuredClone(surface));
+    });
+    useEditor.getState().select(surface.id);
+    setRegionNote('');
+    onRegionCreated?.(surface);
+  }
   function begin(event: React.PointerEvent<HTMLDivElement>) {
     if (
       !scene ||
@@ -256,8 +310,41 @@ export default function RoomCanvasWorkspace({
       return;
     }
     if (st.mode !== 'after') return;
+    if (st.tool === 'region') {
+      if (event.button !== 0) return;
+      if (regionIssue) return setRegionNote(regionIssue);
+      const face = renderer.current.pickFace(start.x, start.y);
+      const uv = face && renderer.current.facePosition(start.x, start.y, face);
+      if (!face || !uv) return setRegionNote('벽이나 바닥 위에서 끌어 주세요.');
+      setRegionNote('');
+      gesture.current = { kind: 'region-draw', start, base: scene, uv, view, moved: false, face };
+      setRegionDraft({ face, from: uv, to: uv });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
     const picked = renderer.current.pick(start.x, start.y);
     st.select(picked?.id ?? null);
+    const region =
+      picked?.kind === 'surface'
+        ? scene.surfaces.find((item) => item.id === picked.id && item.region && item.roomFace)
+        : undefined;
+    if (region && writable && st.editing === 'after') {
+      const uv = renderer.current.facePosition(start.x, start.y, region.roomFace!);
+      if (!uv) return;
+      gesture.current = {
+        kind: 'region-move',
+        id: region.id,
+        start,
+        uv,
+        base: structuredClone(scene),
+        view,
+        moved: false,
+        face: region.roomFace,
+        region: region.region,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
     const fixture =
       picked?.kind === 'fixture' ? scene.fixtures.find((item) => item.id === picked.id) : undefined;
     if (!writable || !fixture?.roomPlacement || fixture.locked) return;
@@ -279,7 +366,11 @@ export default function RoomCanvasWorkspace({
     if (!g || !renderer.current || !canPick.current || preparedKey.current !== sceneKey) return;
     const p = point(event),
       rect = event.currentTarget.getBoundingClientRect();
-    if (!g.moved && Math.hypot((p.x - g.start.x) * rect.width, (p.y - g.start.y) * rect.height) < 5) return;
+    if (
+      !g.moved &&
+      Math.hypot((p.x - g.start.x) * rect.width, (p.y - g.start.y) * rect.height) < REGION_DRAG_PX
+    )
+      return;
     g.moved = true;
     if (g.kind === 'pan') {
       updateView({
@@ -288,9 +379,31 @@ export default function RoomCanvasWorkspace({
       });
       return;
     }
+    if (g.kind === 'region-draw') {
+      const uv = renderer.current.facePosition(p.x, p.y, g.face!);
+      if (uv) setRegionDraft({ face: g.face!, from: g.uv!, to: uv });
+      return;
+    }
     if (!writable) {
       gesture.current = null;
       st.cancel();
+      return;
+    }
+    if (g.kind === 'region-move') {
+      const uv = renderer.current.facePosition(p.x, p.y, g.face!);
+      if (!uv) return;
+      const next = movedRegion(
+        g.region!,
+        roomFaceSizeMm(g.base.room!, g.face!),
+        uv.u - g.uv!.u,
+        uv.v - g.uv!.v,
+      );
+      // Over another region the move stops at its last free place.
+      if (regionPlacementIssue(g.base, g.face!, next, g.id)) return;
+      st.preview((draft) => {
+        const target = draft.surfaces.find((item) => item.id === g.id);
+        if (target) setSurfaceRegion(target, next);
+      });
       return;
     }
     const original = g.base.fixtures.find((fixture) => fixture.id === g.id);
@@ -306,15 +419,54 @@ export default function RoomCanvasWorkspace({
         fixture.reconstruction.baseHeightMm = (1 - fixture.roomPlacement.v) * draft.room.heightMm;
     });
   }
-  function end(cancel = false) {
+  function end(cancel = false, event?: React.PointerEvent<HTMLDivElement>) {
     const g = gesture.current;
     gesture.current = null;
-    if (g?.kind === 'fixture' && g.moved) {
+    if (g?.kind === 'region-draw') {
+      setRegionDraft(null);
+      // A click is not a drag: nothing is made.
+      if (cancel || !g.moved || !event || !renderer.current) return;
+      const p = point(event);
+      const uv = renderer.current.facePosition(p.x, p.y, g.face!);
+      if (uv) createRegion(g.face!, regionFromDrag(roomFaceSizeMm(g.base.room!, g.face!), g.uv!, uv));
+      return;
+    }
+    if ((g?.kind === 'fixture' || g?.kind === 'region-move') && g.moved) {
       if (cancel || !writable) st.cancel();
       else st.commit();
     }
   }
   if (!scene || !st.project) return null;
+  // The rectangle being drawn, or else the selected region, projected with the last frame's camera.
+  const outline = (() => {
+    const engine = renderer.current;
+    if (!engine || loading || failure || st.mode !== 'after' || !scene.room) return null;
+    const selected = scene.surfaces.find((item) => item.id === st.selection && item.region && item.roomFace);
+    const box = regionDraft
+      ? {
+          face: regionDraft.face,
+          ...draftRegionUv(scene, regionDraft.face, regionDraft.from, regionDraft.to, regionSnap, materials),
+        }
+      : selected
+        ? {
+            face: selected.roomFace!,
+            ...regionUv(selected.region!, roomFaceSizeMm(scene.room, selected.roomFace!)),
+          }
+        : null;
+    if (!box) return null;
+    const clamp = (value: number) => Math.max(0, Math.min(1, value));
+    const points = [
+      [box.left, box.top],
+      [box.right, box.top],
+      [box.right, box.bottom],
+      [box.left, box.bottom],
+    ].map(([u, v]) => engine.faceToFrame(box.face, clamp(u), clamp(v)));
+    if (points.some((point) => !point)) return null;
+    return {
+      points: points as { x: number; y: number }[],
+      testId: regionDraft ? 'region-preview' : 'region-outline',
+    };
+  })();
   const aspect = scene.imageWidth / scene.imageHeight;
   const width = Math.max(1, Math.min(size.width, size.height * aspect));
   const name =
@@ -340,6 +492,32 @@ export default function RoomCanvasWorkspace({
         >
           화면 이동
         </button>
+        <button
+          className={'btn small ' + (st.tool === 'region' ? 'active' : '')}
+          aria-pressed={st.tool === 'region'}
+          data-testid="region-tool"
+          title={regionIssue ?? '벽이나 바닥을 끌어 네모 영역을 만들어요'}
+          disabled={!!regionIssue}
+          onClick={() => st.setTool('region')}
+        >
+          부분 타일
+        </button>
+        {st.tool === 'region' && (
+          <button
+            className={'btn small ' + (regionSnap ? 'active' : '')}
+            aria-pressed={regionSnap}
+            data-testid="region-snap"
+            title="경계를 바탕 타일 줄눈에 맞춤"
+            onClick={() => setRegionSnap((value) => !value)}
+          >
+            줄눈 맞춤
+          </button>
+        )}
+        {(st.tool === 'region' || regionNote) && (
+          <span className="tool-label" role="status" data-testid="region-note">
+            {regionNote || '벽이나 바닥을 끌어 네모 영역을 만드세요.'}
+          </span>
+        )}
         <button className="btn small" onClick={showInspector}>
           {name ? name + ' 속성' : '자재·공간 속성'}
         </button>
@@ -353,10 +531,27 @@ export default function RoomCanvasWorkspace({
           data-render-state={loading ? 'preparing' : failure ? 'error' : 'ready'}
           onPointerDown={begin}
           onPointerMove={move}
-          onPointerUp={() => end()}
+          onPointerUp={(event) => end(false, event)}
           onPointerCancel={() => end(true)}
         >
           <div ref={mount} style={{ width: '100%', height: '100%' }} />
+          {outline && (
+            <svg
+              viewBox="0 0 1 1"
+              preserveAspectRatio="none"
+              data-testid={outline.testId}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+            >
+              <polygon
+                points={outline.points.map((point) => point.x + ',' + point.y).join(' ')}
+                fill={outline.testId === 'region-preview' ? 'rgba(43, 151, 129, 0.16)' : 'none'}
+                stroke="#2b9781"
+                strokeWidth="2"
+                strokeDasharray="5 3"
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
+          )}
         </div>
         {loading && <div className="canvas-loading">입체 공간을 준비하고 있어요…</div>}
         {failure && (
