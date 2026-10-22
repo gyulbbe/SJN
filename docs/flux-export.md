@@ -96,6 +96,7 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
 - **장면 정보(`scene`, JSON)**: [장면 계약](../src/lib/ai-export/scene-contract.ts)의 zod 스키마로 클라이언트와 서버가 같은 형식을 쓴다. enum·숫자·`#rrggbb` 색만 있고 자유 문자열 필드는 없다. 사용자가 입력한 제품명·설명은 모델로 가지 않는다. 16KB를 넘거나 스키마에 맞지 않으면 400이다.
   - 설비 최대 12개: 종류(변기·세면대·하부장·욕조·샤워·수전·거울 등 15종), 형태(벽걸이·바닥형·원형 등 최대 4개), 설치 면(바닥·뒷벽·왼벽·오른벽), 색, 마감(무광·반광·유광·폴리싱·금속), 가로×높이×깊이 mm, 입력 이미지 기준 상자 `[left, top, right, bottom]`(0~1)
   - 타일 면 최대 8개: 면, 대표색, 타일 크기 mm, 배열(grid·brick), 줄눈 색·폭, 마감
+  - 부분 타일 영역(2026-10-22): 같은 항목에 `box`(image 0 기준 상자)를 더해 한 면의 네모로 보낸다. 바탕 면 문장 뒤에 면적 큰 순서로 넣고, 바탕과 같은 타일이거나 화면에 안 보이면 뺀다. 상자는 `RoomViewerRenderer.surfaceBounds`가 영역 칸을 투영해 구한다. 문장은 "On the back wall, the rectangular area at x …%, y …% of image 0 has … tiles; the rest of the back wall keeps its own tiles."이다. 영역이 있는 벽은 결과 확인의 타일 배열 답에서 뺀다([결과](tile-regions-results-20261022.md) 7절).
   - 천장(선택): `{ color, light: 'flat-panel' }`. 방 안 입력에서 마스크에 천장이 1% 이상 보일 때만 보낸다(`visibleCeiling`). 색은 뷰어 천장 도색(`#f3f2ee`)에 사진 조명을 곱한 값이다. 없는 요청(2D 합성, 이전 형식)도 받는다.
 - **상자**: 방 안 입력(방이 있는 모든 프로젝트)은 같은 카메라로 `RoomViewerRenderer.fixtureBounds`가 설비 메시 경계 상자를 투영해 구한다. 방이 없는 옛 장면의 2D 합성은 설비의 `position`·`width`·`height`·`anchor`·`rotation`(화면비 보정 회전) 또는 `projectedQuad`에서 구한다. 화면 밖이거나 면적 0.02% 미만인 설비, 욕조 테두리 연결이 보류되어 그려지지 않는 유리는 뺀다.
 - **색·마감**: 표준 모형은 `reconstruction.color`, 사진 제품은 자재 색 hex 또는 제품 이미지의 불투명 픽셀 평균(브라우저에서 읽기만 하고 보내지 않는다), 그 밖에는 렌더의 설비 영역 평균, 타일은 텍스처 평균을 쓴다. 마감은 자재 마감 글을 분류하고, 글이 없으면 도기(변기·세면대·욕조)는 유광, 수전·샤워는 금속으로 본다.
@@ -299,6 +300,7 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 결과 확인: 한 클릭에 변환 1·확인 1, 확인 요청 필드(JPEG·종류·상자·면뿐), 경고, 확인 실패 시 결과 유지
   - 궤도 입력: 빈 기본 방의 단면 표시(`view: cutaway`, 천장 없음), 시점 미리보기(방 안 버튼·시점 칩·위에서·옆에서 버튼 없음, 저장한 시점 무시·정면 시작, 90° 버튼·정면으로·방향키 ←→(↑↓ 무반응), 끌기·터치 끌기에 시점이 안 바뀜), 요청 입력이 미리보기 구도와 같음(다른 시점과 구별), 모의 결과의 여백 가짜 벽이 보이는 결과와 확인 요청 그림에서 흰색으로 되돌아옴, 돌리기만 하면 결과 유지·다시 변환하면 새 비교, 변환 중에만 잠금, 추가 물건·옮겨짐 알림, 390px 넘침 없음·터치 끌기에 시점이 안 바뀜, 다운로드, 창을 다시 열면 정면
 - 서버 결과 확인 단위 테스트(`tests/flux-check.test.ts`): 한 번 호출·게이트웨이, 결정적 질문(v2: 면·extras·walls), 추론 전 400·403, 한도 오류의 진단(개수·크기만), 엄격한 응답 파싱, v1 모양 응답
+- 부분 타일(`tests/flux-regions.test.ts`, `node tests/run-browser-test.mjs tests/tile-regions-browser.ts`): 영역 문장·상한·스키마·타일 배열 답 제외, 영역 상자 = 윤곽, 색 검사가 영역을 따로 보고 되돌림. 2026-10-22 사용자 확인(그날 다른 사용 없음)으로 실제 FLUX 4회(지금·새 프롬프트 × seed 2, 약 460뉴런)를 비교했다. 입력은 `node tests/run-browser-test.mjs tests/tile-regions-payload.ts`, 결과는 [부분 타일 결과](tile-regions-results-20261022.md) 7절.
 - 2026-09-27 사용자 승인으로 실제 FLUX 4회·Gemma 확인 12회를 로컬 임시 Worker로 비교했다. 결과는 [사실감 3단계 결과](export-realism-stage-3-results-20260927.md)에 있다.
 - 같은 날 사용자 승인으로 방 안 입력·확인 확장 비교(FLUX 8회·Gemma 9회, 약 990뉴런)를 했다. 결과는 [방 안 입력 결과](flux-input-in-room-results-20260927.md)에 있다. 오프라인 평가는 `node tests/run-browser-test.mjs tests/flux-input-in-room-evaluate.ts`다.
 - 같은 날 사용자 승인으로 자재 색 비교(FLUX 8회·Gemma 8회)를 했다. 결과는 [자재 색 결과](flux-material-color-results-20260927.md)에 있다.

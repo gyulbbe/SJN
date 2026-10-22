@@ -168,6 +168,8 @@ OAuth 토큰 암호화·HttpOnly 세션 쿠키·출처 검사·CSRF 검사를 �
 | `d1_project_versions`  | `project_id`, `version_id`                                                                                                 | 프로젝트가 참조하는 불변 자재 버전. 현재 자재 버전이 바뀌어도 기존 프로젝트 기준 유지                                                                                                       |
 | `d1_material_assets`   | `version_id`, `asset_id`                                                                                                   | 자재 버전에 사용된 자산. 참조 중인 파일의 정리 방지                                                                                                                                         |
 
+프로젝트 문서(R2 JSON, 형식은 [저장 검증](../src/lib/storage/validation.ts))의 면 항목에는 2026-10-22부터 선택 필드 `region: { leftMm, topMm, widthMm, heightMm }`(부분 타일, 면 좌표 mm)이 있다. After 시안의 장면에만 둘 수 있고(공통 Before·기본 공간은 거절), 면 안·50mm 이상·같은 면 영역끼리 겹치지 않음·높이 띠와 함께 두지 않음을 저장 전에 검사한다. 없으면 이전과 같다. D1 테이블·인덱스·SQL은 바뀌지 않았다([결과](tile-regions-results-20261022.md)).
+
 ### 기준 데이터와 자재 버전 연결 — 신규
 
 | 테이블                        | 컬럼                                                                                                 | 의미                                                                                                             |
