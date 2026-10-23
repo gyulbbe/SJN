@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0008_query_indexes.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼, `0008`로 재시도 기록 정리 인덱스를 추가한다. **0008은 2026-10-17 소스에만 추가했고 원격 `sjn`에는 미적용이다.** **2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다.**
+이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0009_material_list.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼, `0008`로 재시도 기록 정리 인덱스, `0009`로 자재 목록 페이징용 요약 표·트리거를 추가한다. **0008은 2026-10-17 소스에 추가했고 원격 `sjn`에는 2026-10-18 적용했다. 0009는 2026-10-22 소스에만 추가했고 원격에는 미적용이다(새 코드 배포 전에 적용해야 함, [결과](material-paging-results-20261022.md) 4절).** **2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다.**
 
 **코드·SQL 파일을 작성하는 것과 운영 DB에 적용하는 것은 별도 단계다.** 2026-09-17 사용자 승인 후 원격 D1 `sjn`의 기존 `0001~0004`에 `0005`·`0006`을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 `0001~0006`을 순서대로 적용했다. 양쪽 적용 이력·초기 데이터·무결성을 확인했다. 상세 확인값은 8절을 따른다. 앱의 운영 연결·실제 Google OAuth·운영 R2 검증과 관리자 지정·배포·R2 버킷 생성·AI 호출은 별도이며 이번 작업에서 수행하지 않았다. Google 비밀키, Better Auth secret, 로그인 토큰은 이 문서나 소스에 넣지 않는다.
 
@@ -59,9 +59,9 @@
 | 같은 탭 sessionStorage | `/try` 임시 공간·배치·공개 DTO·빈 방 재생성 정보 | 새로고침·OAuth 왕복 복원용. 사진 바이트·계정 자료를 넣지 않으며 익명 D1/R2 쓰기 없음 |
 | 진단 아카이브 D1/R2 | 진단 메타데이터와 JSON | 시작 계정에 고정, 계정별 최근 최대 20건·25MiB |
 
-`GET /api/catalog/materials`는 로그인 없이 `scope='shared' AND active=1 AND purpose='catalog'`이며 `reconstruction` 정보가 없는 자재의 **현재 버전**만 반환한다. 목록 DTO에는 표시 이름·규격·속성·가격·공개 이미지 API URL만 포함하고, 회원 정보·소유자 ID·프로젝트 JSON·R2 내부 키·전체 원본 payload는 넣지 않는다. 이 공개 경로는 D1/R2만 검사하고 OAuth secret·세션 준비와 분리한다. `/api/d1/**`와 관리자·사진/AI API는 기존 활성 회원 검증을 유지한다.
+`GET /api/catalog/materials`는 로그인 없이 `scope='shared' AND active=1 AND purpose='catalog'`이며 `reconstruction` 정보가 없는 자재의 **현재 버전**만 반환한다. 2026-10-22부터 48개씩 나눈 쪽(`category·usage·q·facets·options·cursor·limit`, 응답 `{items,nextCursor,total?,facets?}`)이다([결과](material-paging-results-20261022.md)). 목록 DTO에는 표시 이름·규격·속성·공개 이미지 API URL만 포함하고(가격은 2026-10-22에 뺐다), 회원 정보·소유자 ID·프로젝트 JSON·R2 내부 키·전체 원본 payload는 넣지 않는다. 이 공개 경로는 D1/R2만 검사하고 OAuth secret·세션 준비와 분리한다. `/api/d1/**`와 관리자·사진/AI API는 기존 활성 회원 검증을 유지한다.
 
-`GET /api/catalog/placement`는 `{placements}` 목록, `?materialId=...`는 현재 자재의 배치 DTO 한 건을 반환한다. [PublicPlacement](../src/lib/catalog/placement-contract.ts)는 실제 material/version ID·규격·설치 방식·타일 줄눈·텍스처·제품 방향/기준점과 표시 이미지 metadata만 포함한다. `sourceAssetId`, `product3d`, 입력 사진·메시 참조·전체 payload·가격은 배치 DTO에 없다. 표시 이미지가 일부만 공개 가능하면 해당 자재를 배치 목록에서 제외하고 단건은 404로 처리하여 로그인 전후 뷰 인덱스가 바뀌지 않게 한다. 임의 과거 버전 조회는 제공하지 않는다.
+`GET /api/catalog/placement`는 게스트 서랍의 쪽(`{placements,nextCursor,…}`, 예시 자재 제외), `?ids=a,b`는 쓴 자재(48개까지)의 현재 배치, `?materialId=...`는 현재 자재의 배치 DTO 한 건을 반환한다. 매개변수 없는 전체 목록은 없다. [PublicPlacement](../src/lib/catalog/placement-contract.ts)는 실제 material/version ID·규격·설치 방식·타일 줄눈·텍스처·제품 방향/기준점과 표시 이미지 metadata만 포함한다. `sourceAssetId`, `product3d`, 입력 사진·메시 참조·전체 payload·가격은 배치 DTO에 없다. 표시 이미지가 일부만 공개 가능하면 해당 자재를 배치 목록에서 제외하고 단건은 404로 처리하여 로그인 전후 뷰 인덱스가 바뀌지 않게 한다. 임의 과거 버전 조회는 제공하지 않는다.
 
 `GET /api/catalog/images?id=...`는 로그인 없이 현재 공용 버전에서 직접 사용하는 표시 이미지인지 서버에서 다시 확인한다. 종류는 texture/product/preview, 형식은 PNG/JPEG/WebP로 제한하고 no-store·nosniff 응답을 유지한다. 개인 프로젝트 사진, 분석 원본, 제품 메시, `source_asset_id`를 따라간 원본은 공개하지 않는다. 버킷을 공개로 바꾸지 않는다. 자재 비활성화나 버전 교체 후 이전 이미지 URL도 공개 조건을 다시 통과해야 한다.
 
@@ -167,6 +167,20 @@ OAuth 토큰 암호화·HttpOnly 세션 쿠키·출처 검사·CSRF 검사를 �
 | `d1_project_assets`    | `project_id`, `asset_id`                                                                                                   | 프로젝트에서 직접 쓰는 자산의 복합 PK/FK 연결                                                                                                                                               |
 | `d1_project_versions`  | `project_id`, `version_id`                                                                                                 | 프로젝트가 참조하는 불변 자재 버전. 현재 자재 버전이 바뀌어도 기존 프로젝트 기준 유지                                                                                                       |
 | `d1_material_assets`   | `version_id`, `asset_id`                                                                                                   | 자재 버전에 사용된 자산. 참조 중인 파일의 정리 방지                                                                                                                                         |
+
+**목록 요약(0009).** 목록을 쪽으로 읽으려고 자재·버전에서 파생한 표 3개를 둔다. 트리거가 `d1_materials`·`d1_material_versions`의 모든 쓰기와 같은 트랜잭션에서 갱신하므로 원본과 어긋나지 않는다([결과](material-paging-results-20261022.md) 4절).
+
+| 테이블 | 주요 컬럼 | 의미 |
+| --- | --- | --- |
+| `d1_material_list` | `version_id` PK, `material_id`, `owner_id`, `scope`, `purpose`, `active`, `updated_at`, `is_current`, `category`, `usage`, `lane`, `code`, `class`, `search_catalog`·`search_picker`·`search_library` | 버전마다 한 행. 자재 상태 사본과 payload에서 뽑은 거르기 값. `class`는 화면별 가시성(catalog 용도, reconstruction 종류, 예시 자재) |
+| `d1_material_list_facets` | `(version_id, facet, value)` PK와 상태 사본 | 사이즈·색상·표면 값(`facetValues`와 같은 규칙) |
+| `d1_material_list_counts` | `(active, lane, category, class, facet, value)` PK, `n` | 공유 현재 자재 수. 분류 목록과 결과 개수 |
+
+인덱스는 모두 `is_current=1`인 부분 인덱스다(`d1_list_material`·`d1_list_code` 제외).
+- `d1_list_lane`: 편집기 탭
+- `d1_list_category`·`d1_list_recent`: 공개·관리자 자재
+- `d1_list_personal`: 본인 개인 자재
+- `d1_list_facet_order`: 분류로 거를 때
 
 프로젝트 문서(R2 JSON, 형식은 [저장 검증](../src/lib/storage/validation.ts))의 면 항목에는 2026-10-22부터 선택 필드 `region: { leftMm, topMm, widthMm, heightMm }`(부분 타일, 면 좌표 mm)이 있다. After 시안의 장면에만 둘 수 있고(공통 Before·기본 공간은 거절), 면 안·50mm 이상·같은 면 영역끼리 겹치지 않음·높이 띠와 함께 두지 않음을 저장 전에 검사한다. 없으면 이전과 같다. D1 테이블·인덱스·SQL은 바뀌지 않았다([결과](tile-regions-results-20261022.md)).
 
