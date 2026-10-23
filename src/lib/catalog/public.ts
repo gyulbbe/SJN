@@ -7,6 +7,7 @@ import type { MaterialVersion } from '@/lib/types';
 import { getMaterialImageAssetId } from '@/lib/material-images';
 import { isRetiredDirection, readMaterialViews } from '@/lib/product-direction';
 import { identifierSchema } from '@/lib/storage/validation';
+import { listImageOf } from '@/lib/d1/list-images';
 import { z } from 'zod';
 export type PublicMaterial = {
   id: string;
@@ -123,8 +124,11 @@ export async function publicMaterials(env: D1Bindings, request: Request): Promis
   return json(result);
 }
 export async function publicImage(env: D1Bindings, request: Request): Promise<Response> {
-  const parsed = identifierSchema.safeParse(new URL(request.url).searchParams.get('id'));
+  const params = new URL(request.url).searchParams;
+  const parsed = identifierSchema.safeParse(params.get('id'));
   if (!parsed.success) throw new D1StorageError(404, '공개 이미지를 찾지 못했어요.');
+  const size = params.get('size');
+  if (size !== null && size !== 'list') throw new D1StorageError(400, '이미지 크기 요청을 확인해 주세요.');
   const id = parsed.data;
   // Only directly displayed images on the current published version; never follow source_asset_id.
   const row = await env.DB.prepare(
@@ -134,13 +138,22 @@ export async function publicImage(env: D1Bindings, request: Request): Promise<Re
     .bind(id)
     .first<{ object_key: string; metadata_json: string }>();
   if (!row) throw new D1StorageError(404, '공개 이미지를 찾지 못했어요.');
+  // A card asks for the image's list image (src/lib/d1/list-images.ts); the image itself is the one
+  // authorized above, its small copy goes out in its place (the image itself when there is none).
+  const list = size === 'list' ? await listImageOf(env.DB, id) : null;
+  if (list) Object.assign(row, list);
   const file = await env.ASSET_BUCKET.get(row.object_key);
   if (!file) throw new D1StorageError(404, '이미지를 찾지 못했어요.');
   const mime = JSON.parse(row.metadata_json).mime;
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(mime))
     throw new D1StorageError(404, '이미지를 찾지 못했어요.');
   return new Response(file.body, {
-    headers: { 'Content-Type': mime, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
+    headers: {
+      'Content-Type': mime,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      ...(size === 'list' ? { 'X-SJN-List-Image': list ? '1' : '0' } : {}),
+    },
   });
 }
 

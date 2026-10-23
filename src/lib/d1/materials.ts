@@ -24,6 +24,7 @@ import {
 } from './database';
 import { boundedDocument, conflict, D1StorageError, invalid, notFound } from './http';
 import { CLASSES, libraryCounts, listPage, type ListedRow, type ListGroup } from './material-list';
+import { listedSources, listImagePage } from './list-images';
 
 interface MaterialRow {
   id: string;
@@ -380,6 +381,19 @@ export async function materials(
       );
     case 'find':
       return findByCode(ctx, findSchema.parse(body.match));
+    // The administrator's list image backfill (src/lib/d1/list-images.ts): which card images lack one.
+    case 'listImages': {
+      if (!ctx.actor.isAdmin) throw forbidden();
+      const request = z
+        .object({
+          ids: z.array(identifierSchema).min(1).max(100).optional(),
+          cursor: z.string().max(512).optional(),
+        })
+        .strict()
+        .parse({ ids: body.ids, cursor: body.cursor });
+      if (request.ids) return { listed: [...(await listedSources(ctx.env.DB, request.ids))] };
+      return listImagePage(ctx.env.DB, request.cursor);
+    }
     case 'getVersion':
       return readMaterialViews(
         JSON.parse((await versionFor(ctx, identifierSchema.parse(body.id))).payload_json) as MaterialVersion,

@@ -952,7 +952,16 @@ export const assetMetadataSchema = z.discriminatedUnion('kind', [
     kind: z.enum(['original', 'preview', 'texture', 'product', 'background', 'thumbnail']),
     sourceAssetId: id.optional(),
     derivation: z
-      .enum(['upload-preview', 'manual-alpha', 'ai-alpha', 'ai-multiview', 'ai-product3d', 'rectified'])
+      .enum([
+        'upload-preview',
+        'manual-alpha',
+        'ai-alpha',
+        'ai-multiview',
+        'ai-product3d',
+        'rectified',
+        // A material card's small copy (src/lib/d1/list-images.ts), kind 'thumbnail' only.
+        'list',
+      ])
       .optional(),
   }),
   // 읽기 전용 호환: 옛 360° 메시 자산의 종류. 새 메시는 만들지 않는다(업로드는 거절, docs/product3d-removal.md).

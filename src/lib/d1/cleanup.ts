@@ -8,9 +8,12 @@ interface CleanupJob {
   asset_id: string | null;
   attempts: number;
 }
+// A list image is kept while a material version uses its source (src/lib/d1/list-images.ts).
 const noAssetReferences = `NOT EXISTS(SELECT 1 FROM d1_project_assets r WHERE r.asset_id=a.id)
   AND NOT EXISTS(SELECT 1 FROM d1_material_assets r WHERE r.asset_id=a.id)
-  AND NOT EXISTS(SELECT 1 FROM d1_assets child WHERE child.source_asset_id=a.id)`;
+  AND NOT EXISTS(SELECT 1 FROM d1_assets child WHERE child.source_asset_id=a.id)
+  AND NOT (a.source_asset_id IS NOT NULL AND json_extract(a.metadata_json,'$.derivation')='list'
+    AND EXISTS(SELECT 1 FROM d1_material_assets r WHERE r.asset_id=a.source_asset_id))`;
 /** Bounded, owner-scoped sweep. Immutable material versions and all their assets are retained. */
 export async function cleanup(ctx: Context, body: Record<string, unknown>): Promise<number> {
   if (body.operation !== 'run') throw invalid('지원하지 않는 정리 작업이에요.');
