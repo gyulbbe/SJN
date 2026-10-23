@@ -21,6 +21,7 @@ import type { AssetReader } from '@/lib/render/compositor';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
 import { RoomViewerRenderer } from '@/lib/room-viewer/renderer';
+import { applyWallContact, WALL_SNAP_MM, wallDistanceMm } from '@/lib/room-wall-contact';
 import {
   FOUR_DIRECTION_VIEWS,
   normalizeRoomView,
@@ -417,6 +418,12 @@ export default function RoomCanvasWorkspace({
       fixture.roomPlacement.v = Math.max(0, Math.min(1, original.roomPlacement!.v + uv.v - g.uv!.v));
       if (fixture.reconstruction && fixture.roomPlacement.face !== 'floor' && draft.room)
         fixture.reconstruction.baseHeightMm = (1 - fixture.roomPlacement.v) * draft.room.heightMm;
+      // A floor product brought near the wall behind it goes against it; pulled away, it lets go.
+      const distance = draft.room && wallDistanceMm(draft.room, fixture, materials);
+      if (distance !== undefined && distance <= WALL_SNAP_MM) {
+        fixture.roomPlacement.againstWall = true;
+        applyWallContact(draft.room!, fixture, materials);
+      } else delete fixture.roomPlacement.againstWall;
     });
   }
   function end(cancel = false, event?: React.PointerEvent<HTMLDivElement>) {

@@ -596,7 +596,16 @@ describe('angle names decide the way a product stands on its face', () => {
     fakeImage(cache);
     return buildViewerFixtures(scene([f]), { m }, async () => undefined, cache);
   };
-  const bounds = (group: Parameters<Box3['setFromObject']>[0]) => new Box3().setFromObject(group, true);
+  // The product's own bounds: the soft shadow on the floor under a floor photo is not the product.
+  const bounds = (group: Parameters<Box3['setFromObject']>[0]) => {
+    const box = new Box3();
+    group.updateWorldMatrix(true, true);
+    group.traverse((node) => {
+      if (node instanceof Mesh && !node.userData.groundShadow)
+        box.union(new Box3().setFromObject(node, true));
+    });
+    return box;
+  };
 
   it('no product is turned for its wall any more: every flat photo has rotation 0', async () => {
     for (const face of ['left', 'right', 'back', 'floor'] as const) {
@@ -643,6 +652,12 @@ describe('angle names decide the way a product stands on its face', () => {
     const ground = bounds(floor.group.children[0]);
     expect(ground.min.y).toBeCloseTo(0, 6);
     expect(ground.min.z).toBeCloseTo(1200, 6);
+    // A soft shadow lies on the floor under it, the size of its footprint (400 wide, 200 deep).
+    const shadow = floor.group.children[0].children.find((node) => node.userData.groundShadow) as Mesh;
+    const under = new Box3().setFromObject(shadow, true);
+    expect(under.min.y).toBeCloseTo(0.5, 6);
+    expect(under.max.z - under.min.z).toBeCloseTo(200, 6);
+    expect((under.min.z + under.max.z) / 2).toBeCloseTo(1200, 6);
     expect(floor.notices.some((n) => n.message.includes('어울리는 각도가 아니에요'))).toBe(false);
     floor.dispose();
   });

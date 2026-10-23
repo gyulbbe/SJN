@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 
 /**
- * Size filter order (docs/size-order-and-contact-results-20261023.md): the common tile sizes come first
+ * Size filter order (docs/size-order-and-contact-results-20261024.md): the common tile sizes come first
  * (600X1200, 1200X600, 600X600, 600X300, 300X600, 300X300), then largest first; product sizes keep
  * their order. The public list and the editor drawer show the order the server sorted.
  */

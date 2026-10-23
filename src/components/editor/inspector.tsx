@@ -49,6 +49,10 @@ import { AssetImage } from '../materials/asset-image';
 import styles from './inspector-angles.module.css';
 import PhotoLightingControl from './photo-lighting-control';
 import StandardModelSwitch from './standard-model-switch';
+import WallContactSwitch from './wall-contact-switch';
+import { applyWallContact, behindWall, freeWallSlot, type WallSide } from '@/lib/room-wall-contact';
+
+const WALL_NAMES: Record<WallSide, string> = { back: '정면 벽', left: '왼쪽 벽', right: '오른쪽 벽' };
 /**
  * A new installation face for a fixture. A standard model also moves its base: the floor is 0, a wall
  * is where its `v` puts its lower edge (the sync on every change keeps the two together afterwards).
@@ -330,6 +334,15 @@ export default function Inspector({
     !!s.room &&
     !!fixture &&
     (modelOn || canShowAsStandardModel(fixture, material));
+  // A floor product in a room can be kept against the wall behind it (none when it faces 뒤).
+  const behind = fixture && behindWall(fixture, materials);
+  const wallContact =
+    !!s.room && fixture?.roomPlacement?.face === 'floor'
+      ? {
+          on: !!fixture.roomPlacement.againstWall,
+          wallName: behind && WALL_NAMES[behind],
+        }
+      : undefined;
   // The photo's angle name is the direction the product faces; say where that is on this face, and
   // warn (never block) when the name does not suit the face.
   const facing = (() => {
@@ -859,6 +872,22 @@ export default function Inspector({
                   onModelCommit={st.commit}
                 />
               )}
+              {wallContact && (
+                <WallContactSwitch
+                  on={wallContact.on}
+                  wallName={wallContact.wallName}
+                  disabled={!writable || fixture.locked || !!st.draft}
+                  onToggle={(on) =>
+                    changeFixture((v) => {
+                      if (!v.roomPlacement) return;
+                      if (on) {
+                        v.roomPlacement.againstWall = true;
+                        if (s.room) applyWallContact(s.room, v, materials);
+                      } else delete v.roomPlacement.againstWall;
+                    })
+                  }
+                />
+              )}
               <div className={styles.heading}>
                 <span>제품 각도</span>
                 <span className={styles.count}>
@@ -953,16 +982,26 @@ export default function Inspector({
                     if (!writable) return;
                     // A copy goes to the free place nearest the original on the same face, not on top of it.
                     const ownBox = fixtureSlotBox(fixture, materials);
-                    const slot =
-                      fixture.roomPlacement && s.room && ownBox
-                        ? findFreeSlot(
+                    const obstacles =
+                      fixture.roomPlacement && slotObstacles(s, fixture.roomPlacement.face, materials);
+                    // A copy of a product against its wall goes along that wall when there is room.
+                    const atWall =
+                      fixture.roomPlacement?.againstWall && s.room && ownBox && obstacles
+                        ? freeWallSlot(
                             s.room,
-                            fixture.roomPlacement.face,
+                            { ...fixture, roomPlacement: { ...fixture.roomPlacement } },
+                            materials,
                             ownBox,
-                            slotObstacles(s, fixture.roomPlacement.face, materials),
-                            { defaultSlot: { u: fixture.roomPlacement.u, v: fixture.roomPlacement.v } },
+                            obstacles,
                           )
                         : undefined;
+                    const slot =
+                      atWall ??
+                      (fixture.roomPlacement && s.room && ownBox && obstacles
+                        ? findFreeSlot(s.room, fixture.roomPlacement.face, ownBox, obstacles, {
+                            defaultSlot: { u: fixture.roomPlacement.u, v: fixture.roomPlacement.v },
+                          })
+                        : undefined);
                     setViewError('');
                     setViewNotice(
                       slot?.status === 'crowded' ? '놓을 자리가 없어 겹쳐 놓았어요. 위치를 옮겨 주세요.' : '',
@@ -976,6 +1015,8 @@ export default function Inspector({
                               ...structuredClone(fixture.roomPlacement),
                               u: slot.u,
                               v: slot.v,
+                              // Off the wall when the wall had no room for it.
+                              ...(atWall ? {} : { againstWall: undefined }),
                             },
                           }
                         : {
@@ -1162,8 +1203,11 @@ export default function Inspector({
                         Math.round((fixture.roomPlacement?.u ?? fixture.position.x) * 100),
                         (n) =>
                           changeFixture((v) => {
-                            if (v.roomPlacement) v.roomPlacement.u = Math.max(0, Math.min(1, n / 100));
-                            else v.position.x = n / 100;
+                            if (v.roomPlacement) {
+                              v.roomPlacement.u = Math.max(0, Math.min(1, n / 100));
+                              // A typed distance from a side wall it was kept against lets it go.
+                              if (behind === 'left' || behind === 'right') delete v.roomPlacement.againstWall;
+                            } else v.position.x = n / 100;
                           }),
                         -100,
                       )}
@@ -1176,8 +1220,11 @@ export default function Inspector({
                         Math.round((fixture.roomPlacement?.v ?? fixture.position.y) * 100),
                         (n) =>
                           changeFixture((v) => {
-                            if (v.roomPlacement) v.roomPlacement.v = Math.max(0, Math.min(1, n / 100));
-                            else v.position.y = n / 100;
+                            if (v.roomPlacement) {
+                              v.roomPlacement.v = Math.max(0, Math.min(1, n / 100));
+                              // A typed depth for a product kept against the back wall lets it go.
+                              if (behind === 'back') delete v.roomPlacement.againstWall;
+                            } else v.position.y = n / 100;
                           }),
                         -100,
                       )}

@@ -4,11 +4,12 @@ import { reconstructionPositionFromPhoto, syncReconstructionHeight } from './rec
 import { applyRoomSurfaceBand } from './room-surface-bands';
 import { applyRoomSurfaceRegion, clipRegionToFace } from './room-surface-regions';
 import { projectReconstructionFixture } from './reconstruction/projection';
-import type { Scene, Surface } from './types';
+import type { FixtureInstance, MaterialVersion, Scene, Surface } from './types';
 import { EMPTY_MASK } from './types';
 import type { RoomDefinition, RoomDimensions } from './room-types';
 import { createRoomSurfaces, roomFaceSizeMm } from './room-geometry';
-import { projectRoomFixture, roomPositionFromPhoto } from './room-fixtures';
+import { floorShift, projectRoomFixture, roomPositionFromPhoto } from './room-fixtures';
+import { applyWallContact, behindWall, WALL_SNAP_MM, wallDistanceMm } from './room-wall-contact';
 import { validateWallFeatures, validateWallFeatureResize } from './wall-features';
 import type { ProjectDocument } from './types';
 
@@ -24,8 +25,15 @@ function roomShape(original: Surface, surface: Surface): Surface | null {
     return null;
   }
 }
-/** Normalize only generated rooms. Photo projects retain their original editing behavior. */
-export function normalizeRoomScene(previous: Scene, next: Scene): void {
+/**
+ * Normalize only generated rooms. Photo projects retain their original editing behavior. `materials`
+ * (the scene's versions, as far as they are read) keeps products marked against their wall there.
+ */
+export function normalizeRoomScene(
+  previous: Scene,
+  next: Scene,
+  materials: Record<string, Pick<MaterialVersion, 'depthMm' | 'views'> | undefined> = {},
+): void {
   const featureError = validateWallFeatures(next.room, next.wallFeatures)[0];
   if (featureError) throw new Error(featureError.message);
   if (!next.room) return;
@@ -81,20 +89,80 @@ export function normalizeRoomScene(previous: Scene, next: Scene): void {
       JSON.stringify(before.position) !== JSON.stringify(fixture.position) &&
       before.roomPlacement.u === fixture.roomPlacement.u &&
       before.roomPlacement.v === fixture.roomPlacement.v &&
-      before.roomPlacement.face === fixture.roomPlacement.face
+      before.roomPlacement.face === fixture.roomPlacement.face &&
+      !drawnAt(next.room, fixture, aspect, materials)
     ) {
+      // The drawn place is the anchor's floor point moved so the product stands on it: undo that first.
+      const anchorAt = { x: fixture.position.x, y: fixture.position.y + floorShift(fixture) };
       Object.assign(
         fixture.roomPlacement,
         fixture.reconstruction?.version === 2
           ? reconstructionPositionFromPhoto(next.room, fixture, fixture.position, aspect)
-          : roomPositionFromPhoto(next.room, fixture.roomPlacement.face, fixture.position, aspect),
+          : roomPositionFromPhoto(next.room, fixture.roomPlacement.face, anchorAt, aspect),
       );
+      // A floor product moved near the wall behind it goes against it; moved away, it lets go.
+      const distance = wallDistanceMm(next.room, fixture, materials);
+      if (distance !== undefined && distance <= WALL_SNAP_MM) fixture.roomPlacement.againstWall = true;
+      else if (distance !== undefined) delete fixture.roomPlacement.againstWall;
     }
     syncReconstructionHeight(next.room, fixture, before);
-    projectRoomFixture(next.room, fixture, aspect);
-    projectReconstructionFixture(next.room, fixture, aspect);
+    reprojectFixture(next.room, fixture, aspect, materials);
   }
   syncBathRimAttachments(next);
+}
+type Depths = Record<string, Pick<MaterialVersion, 'depthMm' | 'views'> | undefined>;
+/**
+ * Whether a photo product is drawn where its u/v draws it (a new photo or scale drew it again), so
+ * its place is not read back from the drawing: the floor correction would add rounding each time.
+ */
+function drawnAt(room: RoomDefinition, fixture: FixtureInstance, aspect: number, materials: Depths) {
+  if (fixture.reconstruction?.version === 2 || !fixture.roomPlacement) return false;
+  const drawn = structuredClone(fixture);
+  try {
+    projectRoomFixture(
+      room,
+      drawn,
+      aspect,
+      fixture.roomPlacement.againstWall ? behindWall(fixture, materials) : undefined,
+    );
+  } catch {
+    return false;
+  }
+  return Math.hypot(drawn.position.x - fixture.position.x, drawn.position.y - fixture.position.y) < 1e-9;
+}
+/**
+ * Draws a fixture's room place again: a product kept against its wall goes there first. One whose
+ * material is not read yet keeps the place it was drawn at (its depth and angle are unknown).
+ */
+function reprojectFixture(room: RoomDefinition, fixture: FixtureInstance, aspect: number, materials: Depths) {
+  const placement = fixture.roomPlacement;
+  if (!placement) return;
+  if (placement.againstWall && !fixture.reconstruction && !materials[fixture.materialVersionId]) return;
+  applyWallContact(room, fixture, materials);
+  projectRoomFixture(
+    room,
+    fixture,
+    aspect,
+    placement.againstWall ? behindWall(fixture, materials) : undefined,
+  );
+  projectReconstructionFixture(room, fixture, aspect);
+}
+/**
+ * Read migration when the scene's materials arrive: draws every room product again with today's
+ * rules (a floor photo on the floor, a product kept against its wall there). Not a change of its own:
+ * the next ordinary edit saves it, as with the material usage.
+ */
+export function reprojectRoomScene(scene: Scene, materials: Depths): void {
+  if (!scene.room) return;
+  for (const fixture of scene.fixtures) {
+    if (hasParentGlassSupport(fixture.reconstruction?.support)) continue;
+    try {
+      reprojectFixture(scene.room, fixture, scene.imageWidth / scene.imageHeight, materials);
+    } catch {
+      // A product too big for its room keeps its last drawing; editing it reports the problem.
+    }
+  }
+  syncBathRimAttachments(scene);
 }
 function hasMask(mask: Scene['protection']) {
   return (
@@ -167,6 +235,7 @@ export function resizedRoomScene(
     imageWidth: number;
     imageHeight: number;
   },
+  materials: Record<string, Pick<MaterialVersion, 'depthMm' | 'views'> | undefined> = {},
 ): Scene {
   const featureError = validateWallFeatureResize(scene, room)[0];
   if (featureError) throw new Error(featureError.message);
@@ -210,8 +279,7 @@ export function resizedRoomScene(
     fixture.occlusion = EMPTY_MASK();
     if (hasParentGlassSupport(fixture.reconstruction?.support)) continue;
     syncReconstructionHeight(room, fixture);
-    projectRoomFixture(room, fixture, assets.imageWidth / assets.imageHeight);
-    projectReconstructionFixture(room, fixture, assets.imageWidth / assets.imageHeight);
+    reprojectFixture(room, fixture, assets.imageWidth / assets.imageHeight, materials);
   }
   syncBathRimAttachments(next);
   return next;
