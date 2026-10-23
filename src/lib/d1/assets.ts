@@ -24,12 +24,25 @@ import {
   notFound,
 } from './http';
 import { validateD1Image } from './images';
+import { LIST_IMAGE_MAX_EDGE, LIST_IMAGE_OF, listImageOf } from './list-images';
 
 export async function assets(ctx: Context, request: Request): Promise<Response> {
   if (request.method === 'GET') {
     const url = new URL(request.url),
       id = identifierSchema.parse(url.searchParams.get('id'));
-    const row = await readableAsset(ctx, id);
+    const size = url.searchParams.get('size');
+    if (size !== null && (size !== 'list' || url.searchParams.get('raw') !== '1'))
+      throw invalid('이미지 크기 요청을 확인해 주세요.');
+    let row = await readableAsset(ctx, id);
+    // A card's list image: the source is authorized above; its small copy is sent in its place.
+    let listed = false;
+    if (size === 'list') {
+      const list = await listImageOf(ctx.env.DB, id);
+      if (list) {
+        row = { ...row, object_key: list.object_key, metadata_json: list.metadata_json };
+        listed = true;
+      }
+    }
     const metadata = JSON.parse(row.metadata_json);
     if (url.searchParams.get('raw') !== '1')
       return json({
@@ -53,6 +66,7 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff',
         'Content-Disposition': 'inline',
+        ...(size === 'list' ? { 'X-SJN-List-Image': listed ? '1' : '0' } : {}),
       },
     });
   }
@@ -78,7 +92,12 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
   const bytes = new Uint8Array(await file.arrayBuffer());
   // The 360° editor is gone: an older mesh asset is only read (docs/product3d-removal.md), never made.
   if (input.kind === 'product-mesh') throw invalid('360° 입체 형상은 더 이상 저장하지 않아요.');
+  const listImage = 'derivation' in input && input.derivation === 'list';
+  if (listImage && (input.kind !== 'thumbnail' || !input.sourceAssetId))
+    throw invalid('목록 이미지는 원본 이미지에서 만든 썸네일이어야 해요.');
   const format = validateD1Image(bytes);
+  if (listImage && Math.max(format.width, format.height) > LIST_IMAGE_MAX_EDGE)
+    throw invalid('목록 이미지가 너무 커요.');
   // Metadata is server-derived. A claimed MIME never chooses the decoder or response Content-Type.
   const contentHash = await hash(bytes);
   const metadata = { ...input, ...format, ownerId: dataOwnerId(ctx), size: bytes.length, createdAt: stamp() };
@@ -103,6 +122,8 @@ export async function assets(ctx: Context, request: Request): Promise<Response> 
   try {
     await batch(ctx, [
       assertion(ctx, 'conflict', 'NOT EXISTS(SELECT 1 FROM d1_assets WHERE id=?)', input.id),
+      // One list image per source: a second one (another tab, a retried backfill) is a conflict.
+      ...(listImage ? [assertion(ctx, 'conflict', `NOT EXISTS(${LIST_IMAGE_OF})`, input.sourceAssetId)] : []),
       assetAssertion(ctx, referenceJson(input.sourceAssetId ? [input.sourceAssetId] : [])),
       sql(
         ctx,

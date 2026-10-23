@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import type { Repositories, VersionBatch } from '../repositories/contracts';
 import { sharedAssetReads, versionBatches } from '../repositories/batches';
+import { listImageRecord } from '../list-images';
 import type { MaterialCard } from '../catalog/cards';
 import type { MaterialPage } from '../catalog/paging';
 import { CloudRequestError } from '../repositories/cloud';
@@ -84,6 +85,19 @@ export function createAdminProjectRepositories(projectId: string, actorUserId: s
     }
   }
   const reads = sharedAssetReads(readAsset);
+  const listReads = sharedAssetReads(async (id) => {
+    const response = await fetch(
+      `/api/admin/project-assets?projectId=${encodeURIComponent(projectId)}&id=${encodeURIComponent(id)}&raw=1&size=list`,
+      {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(30_000),
+        headers: { 'X-SJN-User-Id': actorUserId },
+      },
+    );
+    if (!response.ok) await responseJson(response);
+    return listImageRecord(id, await response.blob());
+  });
   const repositories: Repositories = {
     mode: 'd1',
     projects: {
@@ -135,6 +149,7 @@ export function createAdminProjectRepositories(projectId: string, actorUserId: s
         reads.forget(asset.id);
       },
       get: (id) => reads.get(id),
+      getListImage: (id) => listReads.get(id),
       // Ordinary owner maintenance handles unreferenced uploads after the grace period.
       removeUnused: async () => 0,
     },

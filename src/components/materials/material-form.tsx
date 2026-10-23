@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, type ChangeEvent, type FormEvent } from 'react';
 import { getRepositories } from '@/lib/repositories';
 import { importImage, makeAsset } from '@/lib/images';
+import { ensureListImage } from '@/lib/list-images';
+import { getMaterialImageAssetId } from '@/lib/material-images';
 import type { BackgroundRemovalResult } from '@/lib/background-removal/types';
 import { defaultMaterialPricing, QUOTE_UNIT_LABELS } from '@/lib/quote';
 import { packagingCoverage } from '@/lib/material-usage';
@@ -582,6 +584,8 @@ export function MaterialForm({
       const result = initial
         ? await repository.update(initial.materialId, input, initial.id)
         : await repository.create(input);
+      // The card's list image, after the save and without holding it up.
+      void ensureListImage(getRepositories(), getMaterialImageAssetId(result)).catch(() => undefined);
       onSaved(result);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '자재를 저장하지 못했어요.');

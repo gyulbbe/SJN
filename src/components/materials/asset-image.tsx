@@ -5,7 +5,8 @@ import { useRepositories } from '@/components/repository-context';
 import { isImageAsset, type ImageAssetRecord } from '@/lib/types';
 import { useVisible } from './use-material-pages';
 
-export function useAsset(assetId?: string) {
+/** `size: 'list'` reads a card's small copy (the image itself where the repository has none). */
+export function useAsset(assetId?: string, size?: 'list') {
   const repositories = useRepositories();
   const [state, setState] = useState<{
     asset?: ImageAssetRecord;
@@ -19,7 +20,11 @@ export function useAsset(assetId?: string) {
     setState({ loading: !!assetId });
     if (assetId) {
       Promise.resolve(repositories)
-        .then((repos) => repos.assets.get(assetId))
+        .then((repos) =>
+          size === 'list' && repos.assets.getListImage
+            ? repos.assets.getListImage(assetId)
+            : repos.assets.get(assetId),
+        )
         .then((asset) => {
           if (!alive) return;
           if (!isImageAsset(asset)) throw new Error('입체 데이터는 사진 미리보기로 열 수 없어요.');
@@ -38,7 +43,7 @@ export function useAsset(assetId?: string) {
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [assetId, repositories]);
+  }, [assetId, size, repositories]);
   return state;
 }
 
@@ -48,6 +53,7 @@ export function AssetImage({
   className,
   style,
   lazy = false,
+  size,
 }: {
   assetId?: string;
   alt: string;
@@ -55,11 +61,13 @@ export function AssetImage({
   style?: CSSProperties;
   /** Read the image only once it is on screen (list cards); it stays loaded after that. */
   lazy?: boolean;
+  /** 'list': a card's small copy (docs/list-thumbnails-results-20261023.md). */
+  size?: 'list';
 }) {
   const placeholder = useRef<HTMLSpanElement>(null);
   const [seen, setSeen] = useState(!lazy);
   useVisible(placeholder, () => setSeen(true), { enabled: !seen });
-  const { url, loading, error } = useAsset(seen ? assetId : undefined);
+  const { url, loading, error } = useAsset(seen ? assetId : undefined, size);
   if (!url)
     return (
       <span

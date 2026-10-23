@@ -4,6 +4,7 @@ import { isRetiredDirection } from '@/lib/product-direction';
 import { cardMaterial, materialCard, type MaterialCard } from '@/lib/catalog/cards';
 import type { MaterialPageQuery } from '@/lib/catalog/paging';
 import { LoadMore } from './load-more';
+import { ListImageBackfill } from './list-image-backfill';
 import { useMaterialPages, useSettled } from './use-material-pages';
 
 import Link from 'next/link';
@@ -208,6 +209,11 @@ export default function MaterialManager() {
             <span>사용 가능한 자재</span>
           </div>
         </section>
+        {isAdmin && (
+          <section className="mb-6">
+            <ListImageBackfill disabled={!writable} />
+          </section>
+        )}
         {error && (
           <div className={`notice error ${styles.message}`} role="alert">
             {error}
@@ -339,6 +345,7 @@ export default function MaterialManager() {
                 >
                   <AssetImage
                     lazy
+                    size="list"
                     assetId={row.imageAssetId}
                     alt={row.name}
                     style={{ objectFit: row.category === 'tile' ? 'cover' : 'contain' }}

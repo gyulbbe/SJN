@@ -326,7 +326,11 @@ export default function PublicCatalog() {
             {rows.map((row) => (
               <button className={styles.card} key={row.id} data-page-item onClick={() => setDetail(row)}>
                 <div className={styles.cardImage}>
-                  <MaterialImage src={row.images[0]?.url} alt={row.name} tile={row.category === 'tile'} />
+                  <MaterialImage
+                    src={row.images[0] && row.images[0].url + '&size=list'}
+                    alt={row.name}
+                    tile={row.category === 'tile'}
+                  />
                   <span className={styles.imageKind}>{categoryLabels[row.category]}</span>
                   <span className={styles.cardArrow}>
                     <ArrowUpRight size={18} aria-hidden="true" />

@@ -185,7 +185,8 @@ export type ImageAssetRecord = AssetBase & {
   height: number;
   kind: 'original' | 'preview' | 'texture' | 'product' | 'background' | 'thumbnail';
   /** Distinguishes a resized upload from a deliberately edited image. */
-  derivation?: 'upload-preview' | 'manual-alpha' | 'ai-alpha' | 'ai-multiview' | 'ai-product3d' | 'rectified';
+  derivation?:
+    'upload-preview' | 'manual-alpha' | 'ai-alpha' | 'ai-multiview' | 'ai-product3d' | 'rectified' | 'list';
 };
 export type ProductMeshAssetRecord = AssetBase & {
   kind: 'product-mesh';

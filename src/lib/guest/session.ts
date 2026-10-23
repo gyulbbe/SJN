@@ -25,6 +25,7 @@ import {
 } from '../catalog/placement-contract';
 import { facetSelectionSchema, PAGE_SIZE, pageSearchParams } from '../catalog/paging';
 import { materialCard } from '../catalog/cards';
+import { listImageRecord } from '../list-images';
 
 export const GUEST_DRAFT_KEY = 'sjn:guest-draft:v1';
 const pageSchema = z.object({
@@ -140,6 +141,7 @@ function validateDraft(value: unknown): GuestDraft {
 export function createGuestSessionManager(deps: GuestSessionDependencies) {
   let activeId = '';
   const memoryAssets = new Map<string, ImageAssetRecord>();
+  const listAssets = new Map<string, ImageAssetRecord>();
   const placements = new Map<string, PublicPlacement>();
   const pendingAssets = new Map<string, Promise<ImageAssetRecord>>();
   let pendingPromotion: Promise<string> | undefined;
@@ -183,6 +185,7 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
   function attach(draft: GuestDraft) {
     if (activeId !== draft.document.id) {
       memoryAssets.clear();
+      listAssets.clear();
       placements.clear();
       pendingAssets.clear();
       currentPlacements = undefined;
@@ -216,6 +219,33 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
         ? { sourceAssetId: recipe.sourceAssetId, derivation: 'upload-preview' as const }
         : {}),
     };
+  }
+  /** A card's list image of a public image (the image itself once it was read whole). */
+  async function getListImage(id: string): Promise<ImageAssetRecord> {
+    current();
+    const known = memoryAssets.get(id) ?? listAssets.get(id);
+    if (known) return known;
+    const image = [...placements.values()]
+      .flatMap((placement) => placement.images)
+      .find((item) => item.id === id);
+    if (!image) throw new StorageNotFoundError('체험 이미지');
+    const response = await deps.fetch(image.url + '&size=list', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok)
+      throw new Error('현재 공개된 자재 이미지를 불러오지 못했어요. 자재가 변경되었을 수 있어요.');
+    const blob = await response.blob();
+    if (
+      !/^image\/(png|jpeg|webp)$/.test(blob.type.split(';')[0]) ||
+      !blob.size ||
+      blob.size > 25 * 1024 * 1024
+    )
+      throw new Error('자재 이미지 응답을 확인할 수 없어요.');
+    const asset = listImageRecord(id, blob);
+    listAssets.set(id, asset);
+    return asset;
   }
   async function getAsset(id: string): Promise<ImageAssetRecord> {
     const draft = current();
@@ -354,6 +384,7 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
     },
     assets: {
       get: getAsset,
+      getListImage,
       async put(asset: AssetRecord) {
         current();
         if (asset.kind !== 'original' && asset.kind !== 'preview')
@@ -517,6 +548,7 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
     }
     activeId = '';
     memoryAssets.clear();
+    listAssets.clear();
     placements.clear();
     pendingAssets.clear();
     currentPlacements = undefined;
