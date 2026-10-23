@@ -16,7 +16,7 @@ import {
 } from '../src/lib/designs';
 import { projectV3Schema } from '../src/lib/storage/validation';
 import { createQuote, quoteSourceSignature } from '../src/lib/quote';
-import { DEFAULT_ROOM, createRoomSurfaces } from '../src/lib/room-geometry';
+import { DEFAULT_ROOM, createRoomSurfaces, projectRoomPoint, roomFacePoint } from '../src/lib/room-geometry';
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
@@ -714,4 +714,102 @@ it('retains independent pedestal shape through Before history, design copies and
   expect(
     projectV3Schema.parse(loaded).designs.find((d) => d.id === copiedId)!.scene.fixtures[0].reconstruction,
   ).toMatchObject({ pedestalShape: 'round', provenance: { pedestalShape: 'user' } });
+});
+
+it('keeps a floor product against its wall through undo, a room resize, a 2D drag, saving, loading and schema validation', async () => {
+  const { repo, project, material } = await pricedProject();
+  const source = getActiveDesign(project)!;
+  // The resized room's new picture (a room resize asks for one).
+  const roomPicture = crypto.randomUUID();
+  await repo.assets.put({
+    id: roomPicture,
+    ownerId: 'local',
+    name: 'resized.png',
+    mime: 'image/png',
+    kind: 'original',
+    width: 1200,
+    height: 800,
+    size: 3,
+    createdAt: stamp,
+    blob: new Blob(['png'], { type: 'image/png' }),
+  });
+  // The tile material stands in for a toilet 640 deep with a 정면 photo (only depth and angle count).
+  const toilet = {
+    ...material,
+    category: 'toilet' as const,
+    depthMm: 640,
+    views: [{ assetId: material.textureAssetIds[0], direction: '정면', anchor: { x: 0.5, y: 0.97 } }],
+  };
+  source.scene.fixtures.push({
+    id: crypto.randomUUID(),
+    name: '변기',
+    materialVersionId: material.id,
+    viewIndex: 0,
+    position: { x: 0.5, y: 0.7 },
+    width: 0.1,
+    height: 0.2,
+    rotation: 0,
+    anchor: { x: 0.5, y: 0.97 },
+    locked: false,
+    occlusion: EMPTY_MASK(),
+    color: { ...DEFAULT_COLOR },
+    shadow: { x: 0, y: 0, opacity: 0, blur: 0, scale: 1 },
+    roomPlacement: {
+      face: 'floor',
+      u: 0.5,
+      v: 0.55,
+      scale: 1,
+      widthMm: 370,
+      heightMm: 660,
+      imageAspect: 1,
+      contentBounds: { left: 0.272, top: 0.176, right: 0.686, bottom: 0.882 },
+    },
+  });
+  const st = useEditor.getState();
+  st.load(project);
+  st.initializeUsage({ [material.id]: toilet });
+  const fixture = () => getActiveDesign(useEditor.getState().project!)!.scene.fixtures.at(-1)!;
+  const placement = () => fixture().roomPlacement!;
+  // Opening draws it on the floor: what shows ends at the floor point, not the anchor 0.97.
+  expect('againstWall' in placement()).toBe(false);
+  const floorPoint = projectRoomPoint(DEFAULT_ROOM, roomFacePoint(DEFAULT_ROOM, 'floor', 0.5, 0.55));
+  expect(fixture().position.y + (0.882 - 0.97) * fixture().height).toBeCloseTo(floorPoint.y, 9);
+  // On: its back on the wall, 320 mm from it (one step back with undo).
+  st.change((scene) => {
+    scene.fixtures.at(-1)!.roomPlacement!.againstWall = true;
+  });
+  expect(placement()).toMatchObject({ againstWall: true, u: 0.5, v: 320 / 2400 });
+  st.undo();
+  expect(placement()).toMatchObject({ v: 0.55 });
+  expect('againstWall' in placement()).toBe(false);
+  st.redo();
+  expect(placement()).toMatchObject({ againstWall: true, v: 320 / 2400 });
+  // A deeper room: still on the wall.
+  st.resizeAll(
+    { ...DEFAULT_ROOM, depthMm: 3200 },
+    { originalAssetId: roomPicture, previewAssetId: roomPicture, imageWidth: 1200, imageHeight: 800 },
+  );
+  expect(placement()).toMatchObject({ againstWall: true, v: 0.1 });
+  // Dragged well away in the 2D editor: it lets go; dragged back near the wall: it is on it again.
+  const at = fixture().position;
+  st.change((scene) => {
+    scene.fixtures.at(-1)!.position = { x: at.x, y: at.y + 0.25 };
+  });
+  expect('againstWall' in placement()).toBe(false);
+  expect(placement().v).toBeGreaterThan(0.2);
+  const away = fixture().position;
+  st.change((scene) => {
+    scene.fixtures.at(-1)!.position = { x: away.x, y: at.y + 0.005 };
+  });
+  expect(placement()).toMatchObject({ againstWall: true, v: 0.1 });
+  const saved = await repo.projects.create(useEditor.getState().project!),
+    loaded = await repo.projects.load(saved.id);
+  expect(loaded).toEqual(saved);
+  expect(
+    getActiveDesign(projectV3Schema.parse(loaded))!.scene.fixtures.at(-1)!.roomPlacement!.againstWall,
+  ).toBe(true);
+  const invalid = structuredClone(loaded);
+  (getActiveDesign(invalid)!.scene.fixtures.at(-1)!.roomPlacement as { againstWall?: unknown }).againstWall =
+    false;
+  expect(projectV3Schema.safeParse(invalid).success).toBe(false);
 });

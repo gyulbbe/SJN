@@ -40,8 +40,15 @@ export function facetValues(item: Facetable, key: FacetKey): string[] {
 }
 
 const sizeNumbers = (size: string) => size.split('X').map(Number);
-/** Largest first, like a showroom size table: width, then height, then depth. */
+/**
+ * Tile sizes listed first, the ones most tiles are sold in (2026-10-23: 600X600, 600X1200, 600X300 and
+ * 300X300 are about 72% of the catalogue). A size and its turned twin are kept apart and both come early.
+ */
+export const PREFERRED_TILE_SIZES = ['600X1200', '1200X600', '600X600', '600X300', '300X600', '300X300'];
+/** The preferred tile sizes in their order, then largest first like a showroom size table: width, then height, then depth. */
 function compareSize(a: string, b: string) {
+  const [first, second] = [PREFERRED_TILE_SIZES.indexOf(a), PREFERRED_TILE_SIZES.indexOf(b)];
+  if (first >= 0 || second >= 0) return (first < 0 ? Infinity : first) - (second < 0 ? Infinity : second);
   const [left, right] = [sizeNumbers(a), sizeNumbers(b)];
   for (let i = 0; i < Math.max(left.length, right.length); i++) {
     const diff = (right[i] ?? 0) - (left[i] ?? 0);

@@ -13,6 +13,11 @@ export type RoomPlacement = {
   imageAspect: number;
   contentBounds: ProductBounds;
   /**
+   * A floor product kept with its back on the wall behind it (src/lib/room-wall-contact.ts): its
+   * distance from that wall follows its depth, angle and the room. Absent: where u/v put it.
+   */
+  againstWall?: true;
+  /**
    * @deprecated No longer set or used (2026-10-01): the direction a product faces comes from its
    * photo's angle name (product-direction.ts). Older saved projects may still carry 'front'; it is
    * read and ignored.

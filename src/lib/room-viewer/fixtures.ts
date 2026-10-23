@@ -2,6 +2,7 @@ import {
   Box3,
   Camera,
   CanvasTexture,
+  DataTexture,
   DoubleSide,
   Group,
   Mesh,
@@ -32,6 +33,8 @@ import {
 import { choosePhotoForView, viewPhotoNote } from './view-photo';
 import { cameraQuarterAzimuth, snapQuarter } from './view-state';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
+import { behindWall, productDepthMm, wallContactPlace, type WallSide } from '../room-wall-contact';
+import { FLOOR_SNAP_MM, FLOOR_SNAP_SHARE } from './floor-contact';
 import type { ReconstructionKind } from '../reconstruction/types';
 
 export type ViewerFixtureNotice = {
@@ -41,7 +44,19 @@ export type ViewerFixtureNotice = {
   severity: 'limitation' | 'error';
 };
 export type ViewerAssetReader = (id: string) => Promise<AssetRecord | undefined>;
-type DecodedImage = { texture: Texture; bounds: ProductBounds; aspect: number; canvas: HTMLCanvasElement };
+type DecodedImage = {
+  texture: Texture;
+  bounds: ProductBounds;
+  aspect: number;
+  canvas: HTMLCanvasElement;
+  /**
+   * The lowest row (0–1 down) more than half opaque: where the product meets the floor. A soft
+   * ground shadow or a background removal's faint edge below it counts in `bounds` but not here.
+   */
+  solidBottom?: number;
+};
+/** Alpha above this is the product itself (`solidBottom`); `bounds` counts anything above 8. */
+const SOLID_ALPHA = 128;
 
 /** One cache per viewer, shared by Before and every After. No asset writes, inference, or object URLs. */
 export class ProductAssetCache {
@@ -99,14 +114,17 @@ export class ProductAssetCache {
           let left = canvas.width,
             right = 0,
             top = canvas.height,
-            bottom = 0;
+            bottom = 0,
+            solid = 0;
           for (let y = 0; y < canvas.height; y++)
             for (let x = 0; x < canvas.width; x++) {
-              if (data[(y * canvas.width + x) * 4 + 3] <= 8) continue;
+              const alpha = data[(y * canvas.width + x) * 4 + 3];
+              if (alpha <= 8) continue;
               left = Math.min(left, x);
               right = Math.max(right, x + 1);
               top = Math.min(top, y);
               bottom = Math.max(bottom, y + 1);
+              if (alpha > SOLID_ALPHA) solid = Math.max(solid, y + 1);
             }
           if (!right || !bottom) throw new Error('제품 이미지가 모두 투명해요.');
           const texture = new CanvasTexture(canvas);
@@ -121,6 +139,7 @@ export class ProductAssetCache {
               right: right / canvas.width,
               bottom: bottom / canvas.height,
             },
+            solidBottom: (solid || bottom) / canvas.height,
           };
           if (this.disposed) {
             texture.dispose();
@@ -191,16 +210,123 @@ function visibleBounds(root: Object3D): Box3 {
   root.updateMatrixWorld(true);
   const box = new Box3();
   root.traverseVisible((node) => {
-    if (node instanceof Mesh) box.union(new Box3().setFromObject(node, true));
+    if (node instanceof Mesh && !node.userData.groundShadow) box.union(new Box3().setFromObject(node, true));
   });
   return box;
 }
+let groundShadowTexture: DataTexture | undefined;
 /**
- * A flat photo floating or sinking by less than this (mm) because of where its anchor sits is put
- * on the floor; a bigger gap is taken to be what the anchor was set to.
+ * A soft dark ellipse on the floor under a floor product's photo, the size of its footprint: a flat
+ * photo casts no shadow under itself, so without it the product seems to hover. Not part of the
+ * product's size or place (visibleBounds skips it).
  */
-const FLOOR_SNAP_MM = 20;
-const FLOOR_SNAP_SHARE = 0.05;
+function groundShadow(widthMm: number, depthMm: number): Mesh {
+  if (!groundShadowTexture) {
+    // Black, darkest in the middle and gone at the edge (computed: no canvas needed).
+    const size = 64,
+      data = new Uint8Array(size * size * 4);
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++) {
+        const r = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2) / (size / 2);
+        data[(y * size + x) * 4 + 3] = Math.round(255 * 0.5 * Math.max(0, 1 - r) ** 1.5);
+      }
+    groundShadowTexture = new DataTexture(data, size, size);
+    groundShadowTexture.needsUpdate = true;
+  }
+  const mesh = new Mesh(
+    // Within the footprint (it fades out at its edge), so it never reaches through a wall it stands at.
+    new PlaneGeometry(widthMm * 1.1, depthMm).rotateX(-Math.PI / 2).translate(0, 0.5, 0),
+    new MeshBasicMaterial({
+      map: groundShadowTexture,
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  mesh.userData.groundShadow = true;
+  mesh.renderOrder = 1;
+  return mesh;
+}
+/**
+ * The opaque part of the photos shown (the planes' `contentBounds` down to their `solidBottom`, not
+ * their transparent margin or a faint shadow), in world space: its lowest point and its height.
+ * Undefined when no photo plane shows.
+ */
+function visibleContent(root: Object3D): { bottom: number; height: number } | undefined {
+  root.updateMatrixWorld(true);
+  let bottom = Infinity,
+    top = -Infinity;
+  root.traverseVisible((node) => {
+    const bounds = node.userData.contentBounds as ProductBounds | undefined;
+    if (!(node instanceof Mesh) || !bounds) return;
+    // The product's own lowest row (a faint shadow under it is not the product).
+    const solid = Math.min(bounds.bottom, (node.userData.solidBottom as number | undefined) ?? bounds.bottom);
+    node.geometry.computeBoundingBox();
+    const local = node.geometry.boundingBox!;
+    const w = local.max.x - local.min.x,
+      h = local.max.y - local.min.y;
+    for (const x of [local.min.x + bounds.left * w, local.min.x + bounds.right * w])
+      for (const down of [bounds.top, solid]) {
+        const y = new Vector3(x, local.max.y - down * h, local.min.z).applyMatrix4(node.matrixWorld).y;
+        bottom = Math.min(bottom, y);
+        top = Math.max(top, y);
+      }
+  });
+  return Number.isFinite(bottom) ? { bottom, height: top - bottom } : undefined;
+}
+/**
+ * A floor product against its wall, seen from its front or back: the photo stands this share of half
+ * its depth from the middle of its footprint towards the wall (0 the middle, 1 on the wall).
+ */
+export const WALL_PLANE_SHARE = 1;
+/** The wall's inner face along its axis and the way into the room. */
+function wallPlane(room: RoomDimensions, wall: WallSide) {
+  return wall === 'back'
+    ? { axis: 'z' as const, at: 0, inward: 1 }
+    : {
+        axis: 'x' as const,
+        at: wall === 'left' ? -room.widthMm / 2 : room.widthMm / 2,
+        inward: wall === 'left' ? 1 : -1,
+      };
+}
+/** The opaque part of the photos shown, along one world axis (min and max). */
+function contentAlong(root: Object3D, axis: 'x' | 'z') {
+  root.updateMatrixWorld(true);
+  let min = Infinity,
+    max = -Infinity;
+  root.traverseVisible((node) => {
+    const bounds = node.userData.contentBounds as ProductBounds | undefined;
+    if (!(node instanceof Mesh) || !bounds) return;
+    node.geometry.computeBoundingBox();
+    const local = node.geometry.boundingBox!;
+    const w = local.max.x - local.min.x;
+    for (const x of [local.min.x + bounds.left * w, local.min.x + bounds.right * w]) {
+      const at = new Vector3(x, 0, local.min.z).applyMatrix4(node.matrixWorld)[axis];
+      min = Math.min(min, at);
+      max = Math.max(max, at);
+    }
+  });
+  return { min, max };
+}
+/**
+ * Moves a floor product's photo (not its footprint or ground shadow) against the wall behind it. Seen
+ * from the side the photo shows the product's depth: its back edge goes on the wall. Seen from the
+ * front or back the photo is one flat layer: it stands WALL_PLANE_SHARE of half the depth towards the
+ * wall, never closer than 1 mm (a click on it picks the product, not the wall).
+ */
+function leanOnWall(content: Object3D, room: RoomDimensions, wall: WallSide, depthMm: number) {
+  const { axis, at, inward } = wallPlane(room, wall);
+  const extent = contentAlong(content, axis);
+  if (!Number.isFinite(extent.min)) return;
+  const back = inward > 0 ? extent.min : extent.max;
+  const flat = extent.max - extent.min < 1;
+  const target = flat ? back - inward * WALL_PLANE_SHARE * (depthMm / 2) : at + inward;
+  // Never into the wall: the photo's back stays at least 1 mm inside.
+  const limit = at + inward;
+  const goal = inward > 0 ? Math.max(target, limit) : Math.min(target, limit);
+  content.position[axis] += goal - back;
+}
+
 /**
  * Stands a product on its face once the picture has decided which way it looks: the side that
  * meets a wall touches the wall's inner face (nothing inside the wall, nothing floating off it), a
@@ -221,8 +347,10 @@ function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: 
   if (face === 'left' || face === 'right' || face === 'floor')
     move.z = product.position.z - (box.min.z + box.max.z) / 2;
   if (face === 'floor') {
-    const snap = Math.max(FLOOR_SNAP_MM, (box.max.y - box.min.y) * FLOOR_SNAP_SHARE);
-    if (Math.abs(box.min.y) <= snap) move.y = -box.min.y;
+    // What shows of the product meets the floor, not the picture's transparent margin around it.
+    const shown = visibleContent(product) ?? { bottom: box.min.y, height: box.max.y - box.min.y };
+    const snap = Math.max(FLOOR_SNAP_MM, shown.height * FLOOR_SNAP_SHARE);
+    if (shown.bottom > 0 || -shown.bottom <= snap) move.y = -shown.bottom;
   }
   // Tiny moves are rounding only: leave the anchor's exact place alone.
   for (const axis of ['x', 'y', 'z'] as const)
@@ -350,7 +478,10 @@ export async function buildViewerFixtures(
     let shownIndex = fixture.viewIndex;
     try {
       if (!room) throw new Error('공간 크기와 설치면이 없어 3D 위치를 계산할 수 없어요.');
-      const p = checkPlacement(fixture);
+      const saved = checkPlacement(fixture);
+      // A product kept against its wall stands there whatever its saved u/v (room-wall-contact.ts).
+      const wall = saved.face === 'floor' && saved.againstWall ? behindWall(fixture, materials) : undefined;
+      const p = { ...saved, ...(wall ? wallContactPlace(room, fixture, materials, wall) : {}) };
       if (
         !fixture.color ||
         ![
@@ -450,6 +581,8 @@ export async function buildViewerFixtures(
             );
             plane.visible = index === shownIndex;
             plane.userData.viewIndex = index;
+            plane.userData.contentBounds = bounds;
+            plane.userData.solidBottom = image.solidBottom;
             planes.set(index, plane);
             content.add(plane);
           } catch (error) {
@@ -470,11 +603,13 @@ export async function buildViewerFixtures(
         const gapAt = (quarter: number) =>
           back || ((p.face === 'left' || p.face === 'right') && Math.abs(quarter) === 90) ? 1 : 0;
         const stands = new Map<string, Vector3>();
+        const depthMm = productDepthMm(fixture, materials);
         const standAt = (index: number, quarter: number) => {
           for (const [i, plane] of planes) {
             plane.visible = i === index;
             plane.rotation.y = (quarter * Math.PI) / 180;
           }
+          content.position.set(0, 0, 0);
           const key = `${index}:${quarter}`;
           let place = stands.get(key);
           let beyond = false;
@@ -484,9 +619,19 @@ export async function buildViewerFixtures(
             place = target.position.clone();
             stands.set(key, place);
           } else target.position.copy(place);
+          if (wall) leanOnWall(content, room, wall, depthMm);
           target.updateMatrixWorld(true);
           return beyond;
         };
+        if (p.face === 'floor') {
+          // The footprint turns with the product: one facing a side wall is deep along the room's width.
+          const sideways =
+            Math.abs(
+              Math.sin(((viewDirectionAngle(material.views[shownIndex]?.direction) ?? 0) * Math.PI) / 180),
+            ) > 0.5;
+          const across = p.widthMm * p.scale;
+          product.add(sideways ? groundShadow(depthMm, across) : groundShadow(across, depthMm));
+        }
         reachesBeyond = standAt(shownIndex, 0);
         const look = new Quaternion();
         update.push((camera) => {

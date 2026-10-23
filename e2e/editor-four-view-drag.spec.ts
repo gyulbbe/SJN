@@ -82,7 +82,9 @@ async function reopenWith(page: Page, face: RoomFace, u: number, v: number) {
   const stored = await storedProject(page);
   const design = active(stored);
   const fixture = design.scene.fixtures[0];
+  // Exactly there: not kept against a wall (a new floor product is, docs/size-order-and-contact-results-20261024.md).
   fixture.roomPlacement = { ...fixture.roomPlacement!, face, u, v };
+  delete fixture.roomPlacement.againstWall;
   const next = { ...stored, roomView: defaultRoomView() };
   await page.evaluate(
     async ({ document }) => {

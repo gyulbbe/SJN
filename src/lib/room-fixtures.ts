@@ -3,6 +3,8 @@ import type { RoomDefinition, RoomFace, RoomPlacement, ProductBounds } from './r
 import type { AssetRecord, FixtureInstance, MaterialVersion, Point, Quad } from './types';
 import { createRoomCamera, roomFacePoint } from './room-geometry';
 import { homography, transformPoint } from './render/math';
+import type { WallSide } from './room-wall-contact';
+import { FLOOR_SNAP_MM, FLOOR_SNAP_SHARE } from './room-viewer/floor-contact';
 
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
 const projections = new Map<string, ReturnType<typeof createRoomCamera>>();
@@ -31,11 +33,57 @@ export function roomPositionFromPhoto(room: RoomDefinition, face: RoomFace, phot
   return { u: clamp(uv.x), v: clamp(uv.y) };
 }
 
-/** The product keeps its image aspect; its visible alpha bounds fit its physical W×H envelope. */
-export function projectRoomFixture(room: RoomDefinition, fixture: FixtureInstance, aspect: number): void {
+/** The whole picture in mm, as the 3D room sizes the photo shown (photoPlaneSize). */
+function pictureMm(placement: RoomPlacement) {
+  const b = placement.contentBounds;
+  const width =
+    Math.min(
+      placement.widthMm / (b.right - b.left),
+      (placement.heightMm * placement.imageAspect) / (b.bottom - b.top),
+    ) * placement.scale;
+  return { width, height: width / placement.imageAspect };
+}
+/**
+ * How far the 2D drawing moves a floor photo up so what shows of it stands on its floor point
+ * (a fraction of the canvas height; `height` is the fixture's drawn height). Zero for a wall
+ * product, a standard model, and a photo whose anchor was set well above its bottom.
+ */
+export function floorShift(fixture: FixtureInstance, height = fixture.height): number {
+  const placement = fixture.roomPlacement;
+  if (!placement || placement.face !== 'floor' || fixture.reconstruction) return 0;
+  const b = placement.contentBounds;
+  const imageHeightMm = pictureMm(placement).height;
+  // How far what shows ends below the anchor (negative: above it, floating).
+  const below = (b.bottom - fixture.anchor.y) * height * Math.cos((fixture.rotation * Math.PI) / 180);
+  const sinkMm = (b.bottom - fixture.anchor.y) * imageHeightMm;
+  const snap = Math.max(FLOOR_SNAP_MM, (b.bottom - b.top) * imageHeightMm * FLOOR_SNAP_SHARE);
+  return below < 0 || sinkMm <= snap ? below : 0;
+}
+/**
+ * The product keeps its image aspect; its visible alpha bounds fit its physical W×H envelope. On the
+ * floor what shows of it stands on the floor point, as in the 3D room (room-viewer/fixtures.ts): one
+ * floating above it because of its anchor is put down, one sinking a little is lifted, one sinking
+ * more is left as its anchor says. `wall` (a product kept against that wall, room-wall-contact.ts)
+ * draws it on the wall as the 3D room does from the front.
+ */
+export function projectRoomFixture(
+  room: RoomDefinition,
+  fixture: FixtureInstance,
+  aspect: number,
+  wall?: WallSide,
+): void {
   const placement = fixture.roomPlacement;
   if (!placement) return;
+  const b = placement.contentBounds;
+  const floorPhoto = placement.face === 'floor' && !fixture.reconstruction;
+  const imageWidthMm = pictureMm(placement).width;
   const origin = roomFacePoint(room, placement.face, placement.u, placement.v);
+  if (floorPhoto && wall === 'back') origin.z = 1;
+  else if (floorPhoto && wall)
+    origin.x =
+      wall === 'left'
+        ? -room.widthMm / 2 + 1 + (fixture.anchor.x - b.left) * imageWidthMm
+        : room.widthMm / 2 - 1 - (b.right - fixture.anchor.x) * imageWidthMm;
   const p = project(room, origin, aspect);
   const right = project(
     room,
@@ -47,7 +95,6 @@ export function projectRoomFixture(room: RoomDefinition, fixture: FixtureInstanc
     origin.clone().add(new Vector3(0, placement.heightMm * placement.scale, 0)),
     aspect,
   );
-  const b = placement.contentBounds;
   const width = Math.min(
     Math.abs(right.x - p.x) / (b.right - b.left),
     (Math.abs(top.y - p.y) * placement.imageAspect) / (aspect * (b.bottom - b.top)),
@@ -62,6 +109,7 @@ export function projectRoomFixture(room: RoomDefinition, fixture: FixtureInstanc
     height > 10
   )
     throw new Error('제품이 공간에 비해 너무 커요. 등록 규격과 공간 크기를 확인해 주세요.');
+  p.y -= floorShift(fixture, height);
   fixture.position = p;
   fixture.width = width;
   fixture.height = height;

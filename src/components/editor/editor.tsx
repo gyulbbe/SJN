@@ -2,6 +2,7 @@
 import { getPlacementViewIndex, getPreferredProductViewIndex } from '@/lib/material-images';
 import { readProductDirection } from '@/lib/product-direction';
 import { findFreeSlot, slotBox, slotObstacles, type FreeSlot } from '@/lib/room-slot';
+import { freeWallSlot } from '@/lib/room-wall-contact';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -1148,17 +1149,23 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             u: previous.roomPlacement.u,
             v: previous.roomPlacement.v,
             scale: previous.roomPlacement.scale,
+            // The new product stays against the wall the old one was against (at its own depth).
+            ...(previous.roomPlacement.againstWall ? { againstWall: true as const } : {}),
           });
         else if (s.room && fixture.roomPlacement) {
-          // A new product goes where no other product on its face stands (the default place when free).
-          slot = findFreeSlot(
-            s.room,
-            fixture.roomPlacement.face,
-            slotBox(fixture.roomPlacement, fixture.anchor, m.depthMm),
-            slotObstacles(s, fixture.roomPlacement.face, materialsRef.current, [fixtureId]),
-          );
+          // A new product goes where no other product on its face stands: a floor product against the
+          // wall behind it first, along that wall; else the default place when free.
+          const box = slotBox(fixture.roomPlacement, fixture.anchor, m.depthMm),
+            obstacles = slotObstacles(s, fixture.roomPlacement.face, materialsRef.current, [fixtureId]);
+          const versions = { ...materialsRef.current, [m.id]: m };
+          const atWall =
+            fixture.roomPlacement.face === 'floor'
+              ? freeWallSlot(s.room, fixture, versions, box, obstacles)
+              : undefined;
+          slot = atWall ?? findFreeSlot(s.room, fixture.roomPlacement.face, box, obstacles);
           fixture.roomPlacement.u = slot.u;
           fixture.roomPlacement.v = slot.v;
+          if (atWall) fixture.roomPlacement.againstWall = true;
         }
         if (s.room) projectRoomFixture(s.room, fixture, s.imageWidth / s.imageHeight);
         if (previous) s.fixtures = s.fixtures.map((item) => (item.id === previous.id ? fixture : item));

@@ -1,6 +1,11 @@
 import { normalizeRoomView, resetRoomView, type RoomViewState } from './room-viewer/view-state';
 import { create } from 'zustand';
-import { normalizeRoomScene, resizedRoomScene, projectWallFeatureResizeError } from './room-editing';
+import {
+  normalizeRoomScene,
+  reprojectRoomScene,
+  resizedRoomScene,
+  projectWallFeatureResizeError,
+} from './room-editing';
 import { validateRoomDimensions } from './room-geometry';
 import { ensureMaterialUsage } from './material-usage';
 import type { MaterialUsageState } from './material-usage-types';
@@ -11,6 +16,7 @@ import {
   captureBeforeFrame,
   captureDesignFrame,
   captureWorkspace,
+  projectScenes,
   projectWorkspaces,
   getActiveDesign,
   getEditingScene,
@@ -120,13 +126,18 @@ function documentEdit(previous: ProjectDocument, next: ProjectDocument) {
   assertProject(next, previous);
   return next;
 }
-function recordEdits(previous: ProjectDocument, next: ProjectDocument) {
+function recordEdits(
+  previous: ProjectDocument,
+  next: ProjectDocument,
+  materials: Record<string, MaterialVersion> = {},
+) {
   const now = stamp();
-  normalizeRoomScene(previous.shared.baseline, next.shared.baseline);
+  normalizeRoomScene(previous.shared.baseline, next.shared.baseline, materials);
   if (next.shared.comparison)
     normalizeRoomScene(
       previous.shared.comparison?.before ?? next.shared.comparison.before,
       next.shared.comparison.before,
+      materials,
     );
   if (!same(captureBeforeFrame(previous), captureBeforeFrame(next))) {
     next.shared.beforeHistory = {
@@ -138,7 +149,7 @@ function recordEdits(previous: ProjectDocument, next: ProjectDocument) {
   for (const design of next.designs) {
     const old = previous.designs.find((item) => item.id === design.id);
     if (!old) continue;
-    normalizeRoomScene(old.scene, design.scene);
+    normalizeRoomScene(old.scene, design.scene, materials);
     const sceneChanged = !same(old.scene, design.scene);
     if (sceneChanged || !same(old.quote, design.quote) || !same(old.materialUsage, design.materialUsage)) {
       design.history = {
@@ -327,6 +338,9 @@ export const useEditor = create<EditorState>((set, get) => {
               frame.quote,
             );
         }
+      // Room products drawn with today's rules: a floor photo on the floor, one kept against its
+      // wall there (room-editing.ts reprojectRoomScene).
+      for (const scene of projectScenes(project, false)) reprojectRoomScene(scene, materials);
       // Read migration only: the next ordinary transaction persists this state.
       if (!same(current, project)) set({ project });
     },
@@ -344,7 +358,7 @@ export const useEditor = create<EditorState>((set, get) => {
       );
       fn(design.materialUsage);
       if (same(getActiveDesign(previous)?.materialUsage, design.materialUsage)) return;
-      publish(recordEdits(previous, syncUsage(next)));
+      publish(recordEdits(previous, syncUsage(next), materialVersions ?? {}));
     },
     setEditing: (side) => {
       get().commit();
@@ -368,7 +382,7 @@ export const useEditor = create<EditorState>((set, get) => {
         scene = getEditingScene(next, editing);
       fn(scene);
       setScene(next, editing, scene);
-      publish(recordEdits(previous, syncUsage(next)));
+      publish(recordEdits(previous, syncUsage(next), materialVersions ?? {}));
     },
     changeProject: (fn) => {
       get().commit();
@@ -377,7 +391,7 @@ export const useEditor = create<EditorState>((set, get) => {
       const next = structuredClone(previous);
       fn(next);
       const side = get().editing === 'before' && next.shared.comparison ? 'before' : 'after';
-      publish(recordEdits(previous, syncUsage(next)), side);
+      publish(recordEdits(previous, syncUsage(next), materialVersions ?? {}), side);
     },
     removeFixture: (id) => {
       const state = get(),
@@ -498,16 +512,21 @@ export const useEditor = create<EditorState>((set, get) => {
       // A fitted photo camera refers to the old physical dimensions. Keep its record for restore,
       // but do not silently stretch its optics to a different room.
       if (previous.roomView?.sourceCamera) next.roomView = resetRoomView(previous.roomView, 'room-fit');
-      next.shared.baseline = resizedRoomScene(previous.shared.baseline, room, assets);
+      next.shared.baseline = resizedRoomScene(previous.shared.baseline, room, assets, materialVersions ?? {});
       if (next.shared.comparison) {
-        next.shared.comparison.before = resizedRoomScene(previous.shared.comparison!.before, room, assets);
+        next.shared.comparison.before = resizedRoomScene(
+          previous.shared.comparison!.before,
+          room,
+          assets,
+          materialVersions ?? {},
+        );
         next.shared.comparison.room = structuredClone(room);
         next.shared.comparison.aspect = assets.imageWidth / assets.imageHeight;
       }
       next.shared.beforeHistory = { past: [], future: [] };
       next.shared.revision = previous.shared.revision + 1;
       next.designs.forEach((design) => {
-        design.scene = resizedRoomScene(design.scene, room, assets);
+        design.scene = resizedRoomScene(design.scene, room, assets, materialVersions ?? {});
         if (materialVersions)
           design.materialUsage = ensureMaterialUsage(
             design.scene,
@@ -533,7 +552,7 @@ export const useEditor = create<EditorState>((set, get) => {
       const previous = getEditingScene(project, editing),
         draft = structuredClone(previous);
       fn(draft);
-      normalizeRoomScene(previous, draft);
+      normalizeRoomScene(previous, draft, materialVersions ?? {});
       set({ draft });
     },
     commit: () => {
@@ -541,7 +560,7 @@ export const useEditor = create<EditorState>((set, get) => {
       if (!previous || !draft || !activeWritable(previous, editing)) return;
       const next = structuredClone(previous);
       setScene(next, editing, structuredClone(draft));
-      publish(recordEdits(previous, syncUsage(next)));
+      publish(recordEdits(previous, syncUsage(next), materialVersions ?? {}));
     },
     cancel: () => set({ draft: null }),
     undo: () => history('past'),

@@ -156,7 +156,13 @@ export function findFreeSlot(
   face: RoomFace,
   item: SlotBox,
   obstacles: readonly PlacedBox[],
-  options: { defaultSlot?: { u: number; v: number }; stepMm?: number; gapMm?: number } = {},
+  options: {
+    defaultSlot?: { u: number; v: number };
+    stepMm?: number;
+    gapMm?: number;
+    /** Only places in line with the default one along this axis (a product against a wall stays on it). */
+    along?: 'u' | 'v';
+  } = {},
 ): FreeSlot {
   const start = options.defaultSlot ?? DEFAULT_SLOT,
     step = Math.max(1, options.stepMm ?? SLOT_STEP_MM),
@@ -183,11 +189,16 @@ export function findFreeSlot(
     return out;
   };
   const candidates: { s: number; t: number; distance: number }[] = [];
-  for (const s of steps(s0, length.u))
-    for (const t of steps(t0, length.v)) candidates.push({ s, t, distance: Math.hypot(s - s0, t - t0) });
+  for (const s of options.along === 'v' ? [s0] : steps(s0, length.u))
+    for (const t of options.along === 'u' ? [t0] : steps(t0, length.v))
+      candidates.push({ s, t, distance: Math.hypot(s - s0, t - t0) });
   candidates.sort((a, b) => a.distance - b.distance || a.t - b.t || a.s - b.s);
-  for (const { s, t } of candidates)
-    if (inside(s, t) && free(s, t))
-      return { u: round4(s / length.u), v: round4(t / length.v), status: 'moved' };
+  for (const { s, t } of candidates) {
+    // Checked where it is stored: rounded to 4 places it can move a fraction of a millimetre.
+    const u = round4(s / length.u),
+      v = round4(t / length.v);
+    if (inside(u * length.u, v * length.v) && free(u * length.u, v * length.v))
+      return { u, v, status: 'moved' };
+  }
   return { ...start, status: free(s0, t0) ? 'default' : 'crowded' };
 }

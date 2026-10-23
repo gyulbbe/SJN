@@ -4,6 +4,7 @@ import { Vector3 } from 'three';
 import { createRoomSurfaces, DEFAULT_ROOM, projectRoomPoint, roomFacePoint } from '../src/lib/room-geometry';
 import {
   createRoomPlacement,
+  floorShift,
   productContentBounds,
   projectRoomFixture,
   roomPositionFromPhoto,
@@ -152,7 +153,16 @@ describe('room-scaled 2D fixtures', () => {
           expect(heightRatio).toBeLessThanOrEqual(1 + 1e-12);
           expect(Math.max(widthRatio, heightRatio)).toBeCloseTo(1, 12);
           expect((product.width * aspect) / product.height).toBeCloseTo(imageAspect, 12);
-          expect(product.position).toEqual(origin);
+          // On a wall the anchor is the place; on the floor what shows stands on the floor point
+          // (the anchor is below the visible bottom here, so the picture moves up by that much).
+          if (face === 'floor') {
+            expect(product.position.x).toBe(origin.x);
+            expect(product.position.y + (bounds.bottom - anchor.y) * product.height).toBeCloseTo(
+              origin.y,
+              12,
+            );
+            expect(product.position.y).toBeCloseTo(origin.y - floorShift(product), 12);
+          } else expect(product.position).toEqual(origin);
           expect(product.anchor).toEqual(anchor);
         }
   });

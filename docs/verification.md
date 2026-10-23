@@ -2,6 +2,35 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-24 — 사이즈 분류 순서, 바닥 제품을 바닥·벽에 붙이기
+
+- 무엇([결과](size-order-and-contact-results-20261024.md))
+  - 타일 사이즈 분류가 600X1200·1200X600·600X600·600X300·300X600·300X300부터 보인다.
+  - 바닥 사진 제품은 보이는 제품이 바닥에 닿고, 접지 그림자가 생긴다.
+  - "벽에 붙이기"(`roomPlacement.againstWall`)로 뒤를 뒤 벽에 붙인다. 새 바닥 제품은 벽을 따라 붙여 놓고, 끌어서 벽 100mm 안이면 붙는다.
+  - 렌더 버전은 `room-view-v9-floor-contact`다.
+- 사용자 결정: Q1~Q7 모두 추천안. 운영 D1 읽기 1회(타일 사이즈 분포, 260행, 승인)
+- 원인 측정(`tests/fixture-contact-measure.test.ts`)
+  - 기본 기준점 0.97로 등록한 정면 사진이 투명 여백만큼 떴다(곰 변기 105.5mm, 스마트 변기 48.8mm). 사진 사각형으로 바닥에 맞췄기 때문이다.
+  - 발판 뒤를 벽에 둬도 정면 사진판은 벽에서 320~350mm 떨어져 있었다.
+- 결과
+  - 네 방향 모두 보이는 아래 끝과 바닥 0mm, 벽에 붙였을 때 사진 뒤와 벽 1mm(표준 모형 0mm). `tests/fixture-contact.test.ts`는 고치기 전 코드에서 10개 중 9개가 실패한다.
+  - 새 단위 시험: `room-wall-contact`·`fixture-contact`. 고친 단위 시험: `catalog-facets`, `room-viewer-fixtures`(그림자), `room-fixtures`(2D 바닥 규칙), `design-storage`(저장소·저장·스키마), `room-shadow`(렌더 버전)
+  - vitest 3,660개 통과. 실패 6개는 알려진 워크트리 전용 실패다(reconstruction-corpus 1, source-plane-mapping 5).
+  - typecheck, eslint(바꾼 파일), Prettier 통과
+  - e2e 새 2개 통과: `size-order`, `fixture-contact`(놓기 → 스위치 → 실행 취소 → Space → 끌어서 떨어짐·붙음, 끄는 동안 저장 0회 → 다시 열기 → 네 방향 → 375px)
+  - e2e 회귀
+    - 처음 실행: 12개 파일 59개 중 52개 통과, 6개 실패, 1개 건너뜀
+    - 실패한 6개를 고친 뒤 4개 파일 16개 통과
+    - 다른 파일 다시 실행: 54개 통과, 1개 건너뜀(room-viewer의 조건부 건너뜀)
+    - 대상: room-fixtures, editor-four-view(·drag), four-view-photos, room-viewer, room-dimensions, standard-model-switch, designs, flux-export, guest-workspace, editor-history-shortcuts, editor, catalog-access, material-panel-layout
+- 회귀에서 고친 것
+  - 빈 자리는 저장될(반올림된) 자리로 50mm 간격을 검사한다(연달아 놓기·복제).
+  - 벽 자리는 반올림하지 않는다(표준 모형 스위치).
+  - 2D 그림은 u/v로 다시 그린 것이면 자리를 되읽지 않는다(각도 썸네일 전환).
+  - four-view-drag 시험 도우미는 정해진 자리에 둘 때 벽 붙이기를 뺀다.
+- 사진: `test-results/fixture-contact/`(before·floor-a/b/c·plane-center/mid/back·e2e, 로컬 전용)
+
 ## 2026-10-23 — 자재 카드 목록 이미지(긴 변 256px WebP)
 
 - 무엇: 목록 카드가 원본 대신 작은 사본을 받는다([결과](list-thumbnails-results-20261023.md)).

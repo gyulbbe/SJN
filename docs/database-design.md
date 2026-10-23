@@ -182,7 +182,7 @@ OAuth 토큰 암호화·HttpOnly 세션 쿠키·출처 검사·CSRF 검사를 �
 - `d1_list_personal`: 본인 개인 자재
 - `d1_list_facet_order`: 분류로 거를 때
 
-프로젝트 문서(R2 JSON, 형식은 [저장 검증](../src/lib/storage/validation.ts))의 면 항목에는 2026-10-22부터 선택 필드 `region: { leftMm, topMm, widthMm, heightMm }`(부분 타일, 면 좌표 mm)이 있다. After 시안의 장면에만 둘 수 있고(공통 Before·기본 공간은 거절), 면 안·50mm 이상·같은 면 영역끼리 겹치지 않음·높이 띠와 함께 두지 않음을 저장 전에 검사한다. 없으면 이전과 같다. D1 테이블·인덱스·SQL은 바뀌지 않았다([결과](tile-regions-results-20261022.md)).
+프로젝트 문서(R2 JSON, 형식은 [저장 검증](../src/lib/storage/validation.ts))의 면 항목에는 2026-10-22부터 선택 필드 `region: { leftMm, topMm, widthMm, heightMm }`(부분 타일, 면 좌표 mm)이 있다. After 시안의 장면에만 둘 수 있고(공통 Before·기본 공간은 거절), 면 안·50mm 이상·같은 면 영역끼리 겹치지 않음·높이 띠와 함께 두지 않음을 저장 전에 검사한다. 없으면 이전과 같다. D1 테이블·인덱스·SQL은 바뀌지 않았다([결과](tile-regions-results-20261022.md)). 제품 항목의 `roomPlacement`에는 2026-10-24부터 선택 필드 `againstWall: true`(바닥 제품을 뒤 벽에 붙여 둠)가 있다. 없으면 이전과 같고, 다른 값은 거절한다. D1은 바뀌지 않았다([결과](size-order-and-contact-results-20261024.md)).
 
 ### 기준 데이터와 자재 버전 연결 — 신규
 
