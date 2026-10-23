@@ -50,19 +50,25 @@ function compareSize(a: string, b: string) {
   return 0;
 }
 
+/** The order a facet group lists its values in (also for values the server collected). */
+export const sortFacetValues = (key: FacetKey, values: string[]) =>
+  [...new Set(values)].sort(key === 'size' ? compareSize : (a, b) => a.localeCompare(b, 'ko-KR'));
+
 export function facetOptions(items: Facetable[]): FacetSelection {
   const options = emptyFacets();
-  for (const key of facetKeys) {
-    const values = [...new Set(items.flatMap((item) => facetValues(item, key)))];
-    options[key] = values.sort(key === 'size' ? compareSize : (a, b) => a.localeCompare(b, 'ko-KR'));
-  }
+  for (const key of facetKeys)
+    options[key] = sortFacetValues(
+      key,
+      items.flatMap((item) => facetValues(item, key)),
+    );
   return options;
 }
 
 /** Drops selections that the current category/tab no longer offers, so they cannot hide every row. */
 export function effectiveFacets(selection: FacetSelection, options: FacetSelection): FacetSelection {
   const effective = emptyFacets();
-  for (const key of facetKeys) effective[key] = selection[key].filter((value) => options[key].includes(value));
+  for (const key of facetKeys)
+    effective[key] = selection[key].filter((value) => options[key].includes(value));
   return effective;
 }
 
@@ -71,7 +77,6 @@ export const hasFacets = (selection: FacetSelection) => facetKeys.some((key) => 
 /** OR within a group, AND across groups. */
 export function matchesFacets(item: Facetable, selection: FacetSelection) {
   return facetKeys.every(
-    (key) =>
-      !selection[key].length || facetValues(item, key).some((value) => selection[key].includes(value)),
+    (key) => !selection[key].length || facetValues(item, key).some((value) => selection[key].includes(value)),
   );
 }

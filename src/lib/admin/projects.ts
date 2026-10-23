@@ -198,7 +198,7 @@ export async function adminProjectMaterials(ctx: Context, request: Request): Pro
     await requireActiveAdmin(ctx);
     if (request.method !== 'POST') throw methods();
     const body = await bodyJson(request);
-    if (!['list', 'getVersion', 'create'].includes(String(body.operation)))
+    if (!['list', 'getVersion', 'create', 'page', 'getVersions', 'find'].includes(String(body.operation)))
       throw invalid('프로젝트 자재는 조회 또는 새 모형 생성만 할 수 있어요.');
     const scope = await scoped(ctx, body.projectId);
     if (body.operation === 'create')

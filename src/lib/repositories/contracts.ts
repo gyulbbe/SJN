@@ -7,6 +7,8 @@ import type {
   ProjectInput,
   ProjectSummary,
 } from '../types';
+import type { MaterialCard } from '../catalog/cards';
+import type { LibraryScope, MaterialPage, MaterialPageQuery } from '../catalog/paging';
 /** A complete in-memory project export; imported together or not at all. */
 export type ProjectResourceBundle = {
   document: ProjectDocument;
@@ -21,9 +23,22 @@ export interface ProjectRepository {
   duplicate(id: string): Promise<ProjectDocument>;
   remove(id: string): Promise<void>;
 }
+export type MaterialEntry = { material: Material; version: MaterialVersion };
+/** `getVersions`: the readable versions asked for, and (when asked) each one's material as lists show it. */
+export type VersionBatch = { versions: MaterialVersion[]; current: MaterialEntry[] };
+/** A reconstruction material the photo analysis made before (same code and kind). */
+export type ReconstructionMatch = {
+  code: string;
+  reconstruction: { version: 1 | 2 } | { kind: 'tile' };
+};
+export type MaterialListOptions = { view?: 'picker' | 'library'; scope?: LibraryScope; active?: boolean };
 export interface MaterialRepository {
   createProjectResource?(input: MaterialInput): Promise<MaterialVersion>;
-  list(): Promise<{ material: Material; version: MaterialVersion }[]>;
+  /** One page of the list a screen shows (docs/material-paging-results-20261022.md). */
+  page(query: MaterialPageQuery, options?: MaterialListOptions): Promise<MaterialPage<MaterialCard>>;
+  /** Versions in one request (up to 100 per call; more are split). */
+  getVersions(ids: string[], options?: { withCurrent?: boolean }): Promise<VersionBatch>;
+  find(match: ReconstructionMatch): Promise<MaterialVersion | null>;
   getVersion(id: string): Promise<MaterialVersion>;
   create(input: MaterialInput): Promise<MaterialVersion>;
   update(id: string, input: MaterialInput, expectedVersionId: string): Promise<MaterialVersion>;

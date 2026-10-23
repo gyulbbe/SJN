@@ -47,7 +47,8 @@ export async function handleD1Request(
     const operation = body.operation;
     if (
       resource === 'catalog' ||
-      (resource === 'materials' && !['list', 'getVersion'].includes(String(operation)))
+      (resource === 'materials' &&
+        !['list', 'getVersion', 'page', 'getVersions', 'find'].includes(String(operation)))
     ) {
       if (!actor.isAdmin)
         throw new D1StorageError(403, '자재와 분류는 관리자만 변경할 수 있어요.', 'FORBIDDEN');
