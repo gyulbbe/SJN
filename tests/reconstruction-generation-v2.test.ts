@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AssetRecord, MaterialInput, MaterialVersion } from '../src/lib/types';
-import type { RepositoryOperations } from '../src/lib/repositories/contracts';
+import type { ReconstructionMatch, RepositoryOperations } from '../src/lib/repositories/contracts';
+import { matchesReconstruction } from '../src/lib/repositories/batches';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
 
 const render = vi.hoisted(() =>
@@ -68,7 +69,8 @@ function repositories() {
       put,
     },
     materials: {
-      list: async () => versions.map((version) => ({ version })),
+      find: async (match: ReconstructionMatch) =>
+        versions.find((version) => matchesReconstruction(version as MaterialVersion, match)) ?? null,
       createProjectResource: async (input: MaterialInput) => {
         const version = {
           ...input,

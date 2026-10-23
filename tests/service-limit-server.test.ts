@@ -196,7 +196,7 @@ describe('a spent D1 daily limit on every route that reads D1', () => {
 
   it('the public catalogue and the administrator’s pages', async () => {
     runtime.value = { ...ready, DB: limited(all) };
-    await expectLimit(await catalogRoute());
+    await expectLimit(await catalogRoute(new Request('https://sjn.test/api/catalog/materials')));
     await expectLimit(await adminProjectsRoute(request('/api/admin/projects')));
     // Past the sign-in check, in the administrator's own query.
     runtime.value = {

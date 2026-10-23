@@ -224,7 +224,7 @@ describe('disposable reconstruction lab orchestration (model/renderer mocked)', 
       } as never);
       version.name = 'modified copy';
       expect((await repos.materials.getVersion(version.id)).name).toBe('test');
-      expect((await repos.materials.list())[0].material.currentVersionId).toBe(version.id);
+      expect((await repos.materials.page({})).items[0].versionId).toBe(version.id);
       await expect(repos.materials.update(version.materialId, version, version.id)).rejects.toThrow(
         '기존 자재 변경',
       );
@@ -232,7 +232,7 @@ describe('disposable reconstruction lab orchestration (model/renderer mocked)', 
       return project;
     });
     await runReconstructionLabCase(file(), DEFAULT_ROOM);
-    await expect(used.materials.list()).rejects.toThrow('정리된');
+    await expect(used.materials.page({})).rejects.toThrow('정리된');
   });
   it('releases memory on pipeline errors without trying to render partial results', async () => {
     hooks.create.mockImplementation(async (_f, _r, options) => {

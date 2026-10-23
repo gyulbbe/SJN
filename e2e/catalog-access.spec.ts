@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
-import { catalogSeed } from '../src/lib/catalog/seed';
+import { facetOptions, type Facetable } from '../src/lib/catalog/facets';
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 
@@ -60,7 +60,10 @@ async function cloud(page: Page, options: { member?: boolean; broken?: boolean }
       case '/api/d1/role':
         return route.fulfill({ json: { isAdmin: false } });
       case '/api/catalog/materials':
-        return route.fulfill({ json: { materials: [sample], catalog: catalogSeed } });
+        // One page of the public list (docs/material-paging-results-20261022.md).
+        return route.fulfill({
+          json: { items: [sample], nextCursor: null, total: 1, facets: facetOptions([sample as Facetable]) },
+        });
       case '/api/catalog/images':
         return route.fulfill({ contentType: 'image/png', body: pixel });
       case '/api/auth/sign-in/social':

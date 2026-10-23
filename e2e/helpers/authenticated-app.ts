@@ -81,7 +81,7 @@ export async function authenticatedApp(
           ? new Uint8Array(original.postDataBuffer()!)
           : undefined,
     });
-    if (path === '/api/catalog/materials') return fulfill(route, await publicMaterials(env));
+    if (path === '/api/catalog/materials') return fulfill(route, await publicMaterials(env, request));
     if (path === '/api/catalog/images') return fulfill(route, await publicImage(env, request));
     if (path === '/api/catalog/placement') return fulfill(route, await publicPlacement(env, request));
     if (!signedIn) return route.fulfill({ status: 401, json: { error: '로그인이 필요해요.' } });
@@ -99,7 +99,7 @@ export async function authenticatedApp(
           ? await readAiUsage({}).then((usage) => Response.json(usage), serverError)
           : Response.json({ error: '관리자만 사용할 수 있어요.' }, { status: 403 }),
       );
-    if (path === '/api/catalog/materials') return fulfill(route, await publicMaterials(env));
+    if (path === '/api/catalog/materials') return fulfill(route, await publicMaterials(env, request));
     if (path === '/api/catalog/images') return fulfill(route, await publicImage(env, request));
     if (path === '/api/reconstruction/diagnostics')
       return fulfill(route, await diagnosticArchiveRequest({ env, actor }, request));

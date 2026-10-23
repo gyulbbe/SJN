@@ -14,8 +14,9 @@ import {
   placementToMaterialVersion,
   type PublicPlacement,
 } from '../src/lib/catalog/placement-contract';
-import { emptySelection, type CatalogData, type CatalogSelection } from '../src/lib/catalog/contract';
+import { emptySelection, type CatalogSelection } from '../src/lib/catalog/contract';
 import { readCatalog } from '../src/lib/catalog/server';
+import type { MaterialPage } from '../src/lib/catalog/paging';
 import type { MaterialInput, MaterialVersion } from '../src/lib/types';
 import { allD1Migrations, applyD1Migrations } from './helpers/d1-migrations';
 
@@ -90,8 +91,19 @@ async function optionId(kind: string, name: string) {
 async function image(id: string) {
   return publicImage(env, new Request(`https://sjn.test/api/catalog/images?id=${id}`));
 }
+/** Every page of the public list. */
 async function listPublic() {
-  return (await (await publicMaterials(env)).json()) as { materials: PublicMaterial[]; catalog: CatalogData };
+  const materials: PublicMaterial[] = [];
+  let cursor: string | null = null;
+  do {
+    const url = 'https://sjn.test/api/catalog/materials' + (cursor ? '?cursor=' + cursor : '');
+    const page = (await (
+      await publicMaterials(env, new Request(url))
+    ).json()) as MaterialPage<PublicMaterial>;
+    materials.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return { materials };
 }
 
 beforeAll(async () => {
@@ -215,10 +227,10 @@ describe('catalog additive D1 migrations', () => {
     expect(
       await db.prepare('SELECT purpose FROM d1_materials WHERE id=?').bind(oldSharedModel.materialId).first(),
     ).toEqual({ purpose: 'project' });
-    const publicLegacy = (await (await publicMaterials({ ...env, DB: db })).json()) as {
-      materials: PublicMaterial[];
-    };
-    expect(publicLegacy.materials.map((row) => row.id)).toEqual([first.materialId]);
+    const publicLegacy = (await (
+      await publicMaterials({ ...env, DB: db }, new Request('https://sjn.test/api/catalog/materials'))
+    ).json()) as MaterialPage<PublicMaterial>;
+    expect(publicLegacy.items.map((row) => row.id)).toEqual([first.materialId]);
 
     await db
       .prepare(
@@ -277,7 +289,8 @@ describe('catalog master permissions and controlled IDs', () => {
       name: '새 브랜드',
       active: false,
     });
-    expect((await listPublic()).catalog.options.some((row) => row.id === id)).toBe(false);
+    // What the public reads of the catalogue (the material form's lists) leaves the inactive one out.
+    expect((await readCatalog(env.DB)).options.some((row) => row.id === id)).toBe(false);
     expect(
       (await call('catalog', { operation: 'create', input: { ...input, colorHex: '#ff00ff' } })).status,
     ).toBe(400);
@@ -730,10 +743,10 @@ describe('material role isolation and public media', () => {
     const original = await upload(admin, 'original');
     const displayed = await upload(admin, 'product', original.id);
     const version = await create(material(displayed.id));
-    const response = await publicMaterials(env);
+    const response = await publicMaterials(env, new Request('https://sjn.test/api/catalog/materials'));
     const body = await response.text();
-    const data = JSON.parse(body) as { materials: PublicMaterial[] };
-    const entry = data.materials.find((row) => row.id === version.materialId)!;
+    const data = JSON.parse(body) as MaterialPage<PublicMaterial>;
+    const entry = data.items.find((row) => row.id === version.materialId)!;
     expect(entry).toBeTruthy();
     expect(entry.images).toEqual([{ url: `/api/catalog/images?id=${displayed.id}`, label: '정면' }]);
     const objectKey = await env.DB.prepare('SELECT object_key FROM d1_assets WHERE id=?')

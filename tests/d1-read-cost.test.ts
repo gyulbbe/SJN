@@ -353,8 +353,11 @@ async function measure(db: D1DatabaseLike, scale: number) {
     old: scale === 1 ? await route(db, placements, true) : { rows: NaN, ms: NaN },
     now: await route(db, placements),
   };
-  const publicList = await route(db, (env) => publicMaterials(env));
-  results['L 공개 자재 목록(라우트, 변경 없음)'] = { old: publicList, now: publicList };
+  // The public list is paged now (tests/d1-material-paging-cost.test.ts measures it); its first page:
+  const publicList = await route(db, (env) =>
+    publicMaterials(env, new Request('https://sjn.test/api/catalog/materials')),
+  );
+  results['L 공개 자재 목록 첫 쪽(라우트)'] = { old: publicList, now: publicList };
   const memberList = await route(db, (env) => materials({ env, actor: member.actor }, { operation: 'list' }));
   results['L 회원 자재 목록(변경 없음)'] = { old: memberList, now: memberList };
   const plan = async (condition: string) =>

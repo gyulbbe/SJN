@@ -192,7 +192,8 @@ type Measure = {
     swatch: { width: number; height: number };
     top: number;
     bottom: number;
-    image: { fit: string };
+    /** null: a card off screen has not asked for its image yet (lazy). */
+    image: { fit: string | null };
     name: { height: number; visible: boolean; lineHeight: number; fontSize: number };
     size: { fontSize: number };
     height: number;
@@ -223,7 +224,7 @@ const measure = (page: Page) =>
         swatch,
         top: rect.top,
         bottom: rect.bottom,
-        image: { fit: image ? getComputedStyle(image).objectFit : 'none' },
+        image: { fit: image ? getComputedStyle(image).objectFit : null },
         name: {
           height: nameRect.height,
           // Inside its card, not clipped by it.
@@ -354,8 +355,10 @@ test('material library thumbnails keep their shape at every screen size; the lis
             expect(tile.name.height, `${name}: one line of name`).toBeLessThan(tile.name.lineHeight * 1.5);
             expect(tile.name.fontSize).toBeGreaterThanOrEqual(11);
             expect(tile.size.fontSize).toBeGreaterThanOrEqual(11);
-            expect(tile.image.fit).toBe(tab === 'fixtures' ? 'contain' : 'cover');
+            if (tile.image.fit !== null)
+              expect(tile.image.fit).toBe(tab === 'fixtures' ? 'contain' : 'cover');
           }
+          expect(m.tiles.some((tile) => tile.image.fit !== null)).toBe(true);
           // Every card keeps its full height; a long list scrolls.
           const tallest = Math.max(...m.tiles.map((t) => t.height));
           expect(Math.min(...m.tiles.map((t) => t.height))).toBeGreaterThan(tallest - 1);

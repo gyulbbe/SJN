@@ -18,7 +18,13 @@ import type {
   ProjectDocument,
   ProjectInput,
 } from '../../src/lib/types';
-import type { ProjectResourceBundle, RepositoryOperations } from '../../src/lib/repositories/contracts';
+import type {
+  MaterialEntry,
+  ProjectResourceBundle,
+  RepositoryOperations,
+} from '../../src/lib/repositories/contracts';
+import { materialCard } from '../../src/lib/catalog/cards';
+import { matchesReconstruction } from '../../src/lib/repositories/batches';
 import {
   materialReferences,
   isDisposableReconstructionVersion,
@@ -65,7 +71,12 @@ export type LegacyProjectRepository = RepositoryOperations['projects'] & {
     options?: { signal?: AbortSignal },
   ): Promise<ProjectDocument>;
 };
-export type LegacyRepositories = RepositoryOperations & { mode: 'local'; projects: LegacyProjectRepository };
+export type LegacyRepositories = RepositoryOperations & {
+  mode: 'local';
+  projects: LegacyProjectRepository;
+  /** The old local store listed everything at once; the paged calls read that list. */
+  materials: RepositoryOperations['materials'] & { list(): Promise<MaterialEntry[]> };
+};
 
 /** Test fixture only: preserve historical IndexedDB format coverage without an application adapter. */
 export function createLegacyLocalRepositories(databaseName: string): LegacyRepositories {
@@ -349,6 +360,27 @@ export function createLegacyLocalRepositories(databaseName: string): LegacyRepos
         }
         await tx.done;
         return result.sort((a, b) => b.material.updatedAt.localeCompare(a.material.updatedAt));
+      },
+      async page() {
+        const rows = await repositories.materials.list();
+        return {
+          items: rows.map(({ material, version }) => materialCard(material, version)),
+          nextCursor: null,
+        };
+      },
+      async getVersions(ids) {
+        const versions: MaterialVersion[] = [];
+        for (const id of new Set(ids)) {
+          const value = await (await db()).get('versions', id);
+          if (value) versions.push(value);
+        }
+        return { versions, current: [] };
+      },
+      async find(match) {
+        const rows = await repositories.materials.list();
+        return (
+          rows.map(({ version }) => version).find((version) => matchesReconstruction(version, match)) ?? null
+        );
       },
       async getVersion(id) {
         const value = await (await db()).get('versions', id);

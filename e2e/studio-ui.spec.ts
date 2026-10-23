@@ -3,6 +3,8 @@ import sharp from 'sharp';
 import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { handleD1Request } from '../src/lib/d1';
 import { publicMaterials, type PublicMaterial } from '../src/lib/catalog/public';
+import type { MaterialPage } from '../src/lib/catalog/paging';
+import { effectiveFacets, emptyFacets, facetOptions, matchesFacets } from '../src/lib/catalog/facets';
 import { getActiveDesign, duplicateProjectDocument } from '../src/lib/designs';
 import type { ProjectDocument, MaterialInput, MaterialVersion } from '../src/lib/types';
 let app: AuthenticatedApp;
@@ -225,8 +227,14 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
   });
   try {
     versions = await seed();
-    const base = (await (await publicMaterials(app.env)).json()) as { materials: PublicMaterial[] };
-    const rows = Array.from({ length: 28 }, (_, i) => ({
+    const base = {
+      materials: (
+        (await (
+          await publicMaterials(app.env, new Request('https://sjn.test/api/catalog/materials'))
+        ).json()) as MaterialPage<PublicMaterial>
+      ).items,
+    };
+    const rows: PublicMaterial[] = Array.from({ length: 28 }, (_, i) => ({
       ...base.materials[i % base.materials.length],
       id: 'studio-' + i,
       color: ['화이트', '그레이', '베이지'][i % 3],
@@ -248,14 +256,34 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
     }));
     let state: 'rows' | 'empty' | 'error' = 'rows';
     await page.route('**/studio-missing-image.png', (route) => route.fulfill({ status: 404, body: '' }));
-    await page.route('**/api/catalog/materials', async (route) => {
-      await ready;
-      await route.fulfill(
-        state === 'error'
-          ? { status: 503, json: { error: '검증용 연결 오류' } }
-          : { json: { materials: state === 'empty' ? [] : rows } },
-      );
-    });
+    // These 28 cards are not in the database: answer the paged list the way the server does.
+    await page.route(
+      (url) => url.pathname === '/api/catalog/materials',
+      async (route) => {
+        await ready;
+        if (state === 'error') return route.fulfill({ status: 503, json: { error: '검증용 연결 오류' } });
+        const params = new URL(route.request().url()).searchParams;
+        const scoped = (state === 'empty' ? [] : rows).filter(
+          (row) => !params.get('category') || row.category === params.get('category'),
+        );
+        const options = facetOptions(scoped);
+        const selected = effectiveFacets(
+          params.get('facets') ? JSON.parse(params.get('facets')!) : emptyFacets(),
+          options,
+        );
+        const query = (params.get('q') ?? '').normalize('NFKC').trim().toLowerCase();
+        const items = scoped.filter(
+          (row) =>
+            matchesFacets(row, selected) &&
+            [row.name, row.brand, row.code, row.subcategoryName, row.color, row.composition, row.finish]
+              .join(' ')
+              .normalize('NFKC')
+              .toLowerCase()
+              .includes(query),
+        );
+        await route.fulfill({ json: { items, nextCursor: null, total: items.length, facets: options } });
+      },
+    );
     await page.goto('/materials');
     await expect(page.getByRole('status').filter({ hasText: '자재를 불러오는 중' })).toBeVisible();
     release();
@@ -267,7 +295,7 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
     await expect(page.getByText('조건에 맞는 자재가 없어요.', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '조건 초기화', exact: true }).click();
     await expect(page.getByLabel('자재 검색', { exact: true })).toHaveValue('');
-    const count = page.getByRole('status').filter({ hasText: '개의 자재' });
+    const count = page.getByRole('status').filter({ hasText: '전체' });
     const colorToggle = page.getByRole('button', { name: /^색상/ });
     await colorToggle.click();
     await expect(colorToggle).toHaveAttribute('aria-expanded', 'true');
@@ -275,7 +303,7 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
       .getByRole('group', { name: '색상' })
       .getByRole('checkbox', { name: '베이지', exact: true });
     await beige.check();
-    await expect(count).toContainText('9개의 자재');
+    await expect(count).toContainText('전체 9개 중 9개');
     await expect(colorToggle).toHaveAccessibleName('색상 1개 선택');
     await capture(page, 'catalog-facets-color');
     await beige.focus();
@@ -289,10 +317,10 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
       .getByRole('group', { name: '표면' })
       .getByRole('checkbox', { name: '유광', exact: true })
       .check();
-    await expect(count).toContainText('4개의 자재');
+    await expect(count).toContainText('전체 4개 중 4개');
     await expect(finishToggle).toHaveAccessibleName('표면 1개 선택');
     await page.getByRole('button', { name: '조건 초기화', exact: true }).click();
-    await expect(count).toContainText('28개의 자재');
+    await expect(count).toContainText('전체 28개 중 28개');
     await expect(colorToggle).toHaveAccessibleName('색상');
     await page.getByRole('button', { name: /^사이즈/ }).click();
     const sizes = page.getByRole('group', { name: '사이즈' }).getByRole('checkbox');
@@ -300,11 +328,11 @@ test('카탈로그 상태·검색 초기화·긴 이름·이미지 대체·팝�
     await expect(sizes).toHaveCount(2);
     await expect(sizes.first()).toHaveAccessibleName('600X600');
     await sizes.first().check();
-    await expect(count).toContainText('14개의 자재');
+    await expect(count).toContainText('전체 14개 중 14개');
     await capture(page, 'catalog-facets-open');
     await page.getByRole('button', { name: '조건 초기화', exact: true }).click();
     await expect(sizes.first()).not.toBeChecked();
-    await expect(count).toContainText('28개의 자재');
+    await expect(count).toContainText('전체 28개 중 28개');
     await page.getByLabel('자재 검색', { exact: true }).fill('쇼룸 자재 3');
     const card = page
       .getByRole('button')
