@@ -6,6 +6,8 @@ import {
   facetValues,
   hasFacets,
   matchesFacets,
+  PREFERRED_TILE_SIZES,
+  sortFacetValues,
   type Facetable,
 } from '../src/lib/catalog/facets';
 
@@ -34,7 +36,7 @@ describe('material facets', () => {
     expect(facetValues(tile({ finish: '' }), 'finish')).toEqual([]);
   });
 
-  it('collects unique options with sizes largest first, like a size table', () => {
+  it('collects unique options with the common tile sizes first, then largest first', () => {
     const options = facetOptions([
       tile({ widthMm: 1200, color: '화이트' }),
       tile({ widthMm: 300, color: '그레이 · 화이트', finish: '유광' }),
@@ -44,6 +46,45 @@ describe('material facets', () => {
     expect(options.size).toEqual(['1200X600', '600X600', '300X600', '300X300']);
     expect(options.color).toEqual(['그레이', '화이트']);
     expect(options.finish).toEqual(['무광', '유광']);
+  });
+
+  it('puts the common tile sizes first in their order, a size and its turned twin both early', () => {
+    const sizes = [
+      '1200X2400',
+      '300X300',
+      '400X250',
+      '600X300',
+      '1200X1200',
+      '600X1200',
+      '600X600',
+      '300X600',
+      '200X200',
+      '1200X600',
+    ];
+    expect(sortFacetValues('size', sizes)).toEqual([
+      ...PREFERRED_TILE_SIZES,
+      '1200X2400',
+      '1200X1200',
+      '400X250',
+      '200X200',
+    ]);
+    // Missing ones are skipped; the rest stays largest first (width, then height).
+    expect(sortFacetValues('size', ['300X300', '800X800', '600X600', '800X400', '400X800'])).toEqual([
+      '600X600',
+      '300X300',
+      '800X800',
+      '800X400',
+      '400X800',
+    ]);
+  });
+
+  it('keeps product sizes (three dimensions) largest first, after the common tile sizes', () => {
+    expect(sortFacetValues('size', ['600X450X400', '600X600', '700X800X400', '300X300'])).toEqual([
+      '600X600',
+      '300X300',
+      '700X800X400',
+      '600X450X400',
+    ]);
   });
 
   it('matches any value within a group and every selected group', () => {
