@@ -16,7 +16,8 @@ import { useCloudAnalysisWait } from '@/components/server-wait-progress';
 export default function ReconstructionRebuild({
   onMaterialsChanged,
 }: {
-  onMaterialsChanged: () => Promise<void>;
+  /** Reads the versions a change just made (by id) before the scene uses them. */
+  onMaterialsChanged: (versionIds: string[]) => Promise<void>;
 }) {
   const repositories = useRepositories();
   const adminProjectScope = useAdminProjectScope();
@@ -145,7 +146,14 @@ export default function ReconstructionRebuild({
       );
       if (!current()) return;
       cloudWait.reset();
-      await onMaterialsChanged();
+      const before = next.shared.comparison?.before;
+      await onMaterialsChanged(
+        before
+          ? [...before.surfaces, ...before.fixtures].flatMap((item) =>
+              item.materialVersionId ? [item.materialVersionId] : [],
+            )
+          : [],
+      );
       if (!current()) return;
       useEditor.getState().changeProject((p) => {
         if (!p.shared.comparison || !next.shared.comparison) return;

@@ -45,7 +45,9 @@ import { canvasBlob, readImageHeader } from '../images';
 import { sourceRoomView, type RoomViewState } from '../room-viewer/view-state';
 import { renderRoomSnapshotImage } from '../room-viewer/render-snapshot';
 import { ROOM_VIEWER_RENDERER_REVISION } from '../room-viewer/render-version';
-import type { RepositoryOperations } from '../repositories/contracts';
+import type { MaterialEntry, RepositoryOperations } from '../repositories/contracts';
+import { materialCard } from '../catalog/cards';
+import { matchesReconstruction } from '../repositories/batches';
 import type { AssetRecord, FixtureInstance, Material, MaterialVersion } from '../types';
 import type { RoomDefinition } from '../room-types';
 import type { ReconstructionReview } from './types';
@@ -162,7 +164,14 @@ export function memoryRepositories() {
   const forbidden = async (): Promise<never> => {
     throw new Error('사진 테스트에서는 프로젝트 저장이나 기존 자재 변경을 수행하지 않아요.');
   };
-  const repositories: RepositoryOperations = {
+  const entries = () =>
+    [...materials.values()].map((material) => ({
+      material: structuredClone(material),
+      version: structuredClone(versions.get(material.currentVersionId)!),
+    }));
+  const repositories: RepositoryOperations & {
+    materials: RepositoryOperations['materials'] & { list(): Promise<MaterialEntry[]> };
+  } = {
     projects: {
       list: forbidden,
       load: forbidden,
@@ -208,12 +217,34 @@ export function memoryRepositories() {
         });
         return structuredClone(version);
       },
+      /** Everything this test made (it never pages: it holds only its own reconstruction models). */
       async list() {
         assertOpen();
-        return [...materials.values()].map((material) => ({
-          material: structuredClone(material),
-          version: structuredClone(versions.get(material.currentVersionId)!),
-        }));
+        return entries();
+      },
+      async page() {
+        assertOpen();
+        return {
+          items: entries().map(({ material, version }) => materialCard(material, version)),
+          nextCursor: null,
+        };
+      },
+      async getVersions(ids) {
+        assertOpen();
+        return {
+          versions: [...new Set(ids)].flatMap((id) =>
+            versions.has(id) ? [structuredClone(versions.get(id)!)] : [],
+          ),
+          current: [],
+        };
+      },
+      async find(match) {
+        assertOpen();
+        return (
+          entries()
+            .map(({ version }) => version)
+            .find((version) => matchesReconstruction(version, match)) ?? null
+        );
       },
       async getVersion(id) {
         assertOpen();

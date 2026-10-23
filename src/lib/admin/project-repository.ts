@@ -7,7 +7,10 @@ import type {
   MaterialVersion,
   ProjectInput,
 } from '../types';
-import type { Repositories } from '../repositories/contracts';
+import type { Repositories, VersionBatch } from '../repositories/contracts';
+import { sharedAssetReads, versionBatches } from '../repositories/batches';
+import type { MaterialCard } from '../catalog/cards';
+import type { MaterialPage } from '../catalog/paging';
 import { CloudRequestError } from '../repositories/cloud';
 import { StorageConflictError } from '../repositories/references';
 import type { AdminProjectDetail } from './contracts';
@@ -80,7 +83,8 @@ export function createAdminProjectRepositories(projectId: string, actorUserId: s
       throw error;
     }
   }
-  return {
+  const reads = sharedAssetReads(readAsset);
+  const repositories: Repositories = {
     mode: 'd1',
     projects: {
       list: reject,
@@ -102,7 +106,15 @@ export function createAdminProjectRepositories(projectId: string, actorUserId: s
       },
     },
     materials: {
-      list: () => invoke('project-materials', 'list'),
+      page: (query) => invoke<MaterialPage<MaterialCard>>('project-materials', 'page', { query }),
+      getVersions: (ids, options = {}) =>
+        versionBatches(ids, (chunk) =>
+          invoke<VersionBatch>('project-materials', 'getVersions', {
+            ids: chunk,
+            withCurrent: !!options.withCurrent,
+          }),
+        ),
+      find: (match) => invoke<MaterialVersion | null>('project-materials', 'find', { match }),
       getVersion: (id) => invoke<MaterialVersion>('project-materials', 'getVersion', { id }),
       createProjectResource: (input) =>
         invoke<MaterialVersion>('project-materials', 'create', { input: stripLegacyMaterialImages(input) }),
@@ -120,26 +132,29 @@ export function createAdminProjectRepositories(projectId: string, actorUserId: s
           method: 'POST',
           body: form,
         });
+        reads.forget(asset.id);
       },
-      async get(id) {
-        const base = `/api/admin/project-assets?projectId=${encodeURIComponent(projectId)}&id=${encodeURIComponent(id)}`;
-        const result = await request<{
-          asset: Omit<ImageAssetRecord, 'blob'> | Omit<ProductMeshAssetRecord, 'blob'>;
-          url: string;
-        }>(base, actorUserId);
-        if (result.url !== `${base}&raw=1` || result.asset.id !== id)
-          throw new Error('프로젝트 자산 응답이 일치하지 않아요.');
-        const response = await fetch(result.url, {
-          credentials: 'same-origin',
-          cache: 'no-store',
-          signal: AbortSignal.timeout(30_000),
-          headers: { 'X-SJN-User-Id': actorUserId },
-        });
-        if (!response.ok) await responseJson(response);
-        return { ...result.asset, blob: await response.blob() } as AssetRecord;
-      },
+      get: (id) => reads.get(id),
       // Ordinary owner maintenance handles unreferenced uploads after the grace period.
       removeUnused: async () => 0,
     },
   };
+  return repositories;
+  async function readAsset(id: string): Promise<AssetRecord> {
+    const base = `/api/admin/project-assets?projectId=${encodeURIComponent(projectId)}&id=${encodeURIComponent(id)}`;
+    const result = await request<{
+      asset: Omit<ImageAssetRecord, 'blob'> | Omit<ProductMeshAssetRecord, 'blob'>;
+      url: string;
+    }>(base, actorUserId);
+    if (result.url !== `${base}&raw=1` || result.asset.id !== id)
+      throw new Error('프로젝트 자산 응답이 일치하지 않아요.');
+    const response = await fetch(result.url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(30_000),
+      headers: { 'X-SJN-User-Id': actorUserId },
+    });
+    if (!response.ok) await responseJson(response);
+    return { ...result.asset, blob: await response.blob() } as AssetRecord;
+  }
 }

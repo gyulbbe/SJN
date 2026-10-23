@@ -23,8 +23,25 @@ import {
   publicPlacementSchema,
   type PublicPlacement,
 } from '../catalog/placement-contract';
+import { facetSelectionSchema, PAGE_SIZE, pageSearchParams } from '../catalog/paging';
+import { materialCard } from '../catalog/cards';
 
 export const GUEST_DRAFT_KEY = 'sjn:guest-draft:v1';
+const pageSchema = z.object({
+  placements: z.array(publicPlacementSchema),
+  nextCursor: z.string().nullable(),
+  total: z.number().int().nonnegative().optional(),
+  facets: facetSelectionSchema.optional(),
+});
+/** A public material as the editor's lists hold it. */
+const placementMaterial = (placement: PublicPlacement): Material => ({
+  id: placement.materialId,
+  ownerId: 'guest-public',
+  currentVersionId: placement.versionId,
+  active: true,
+  scope: 'shared',
+  updatedAt: '',
+});
 /** Leave room for browser bookkeeping; image bytes never enter sessionStorage. */
 export const MAX_GUEST_DRAFT_BYTES = 3 * 1024 * 1024;
 
@@ -126,8 +143,8 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
   const placements = new Map<string, PublicPlacement>();
   const pendingAssets = new Map<string, Promise<ImageAssetRecord>>();
   let pendingPromotion: Promise<string> | undefined;
-  let catalogRows:
-    { material: Material; version: ReturnType<typeof placementToMaterialVersion> }[] | undefined;
+  /** The current public placement of each material this draft uses (checked when the draft opens). */
+  let currentPlacements: Map<string, PublicPlacement> | undefined;
   const warnings: string[] = [];
 
   function read(): GuestDraft | null {
@@ -168,7 +185,7 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
       memoryAssets.clear();
       placements.clear();
       pendingAssets.clear();
-      catalogRows = undefined;
+      currentPlacements = undefined;
       warnings.length = 0;
       activeId = draft.document.id;
     }
@@ -288,6 +305,36 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
     }
     write({ ...draft, document: structuredClone(document), versions, roomAssets });
   }
+  async function placementRequest(search: string): Promise<unknown> {
+    const response = await deps.fetch('/api/catalog/placement' + (search ? '?' + search : ''), {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error('공용 자재를 불러오지 못했어요. 다시 시도해 주세요.');
+    return response.json();
+  }
+  /** The current public placements of these materials (asked once per draft opening, a page at a time). */
+  async function currentOf(materialIds: string[]): Promise<Map<string, PublicPlacement>> {
+    currentPlacements ??= new Map();
+    const missingIds = [...new Set(materialIds)].filter((id) => !currentPlacements!.has(id));
+    for (let start = 0; start < missingIds.length; start += PAGE_SIZE) {
+      const chunk = missingIds.slice(start, start + PAGE_SIZE);
+      const data = z
+        .object({ placements: z.array(publicPlacementSchema) })
+        .parse(await placementRequest('ids=' + chunk.join(',')));
+      for (const placement of data.placements) {
+        placements.set(placement.versionId, placement);
+        currentPlacements.set(placement.materialId, placement);
+      }
+    }
+    return new Map(
+      materialIds.flatMap((id) => {
+        const placement = currentPlacements!.get(id);
+        return placement ? [[id, placement] as const] : [];
+      }),
+    );
+  }
   const repositories: GuestRepositories = {
     mode: 'guest',
     projects: {
@@ -320,32 +367,41 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
       create: denied,
       update: denied,
       setActive: denied,
-      async list() {
+      async page(query) {
         const draft = current();
-        if (catalogRows) return structuredClone(catalogRows);
-        const response = await deps.fetch('/api/catalog/placement', {
-          credentials: 'same-origin',
-          cache: 'no-store',
-          signal: AbortSignal.timeout(30_000),
-        });
-        if (!response.ok) throw new Error('공용 자재를 불러오지 못했어요. 다시 시도해 주세요.');
-        const data = z.object({ placements: z.array(publicPlacementSchema) }).parse(await response.json());
+        const data = pageSchema.parse(await placementRequest(pageSearchParams(query).toString()));
         if (read()?.document.id !== draft.document.id) throw new Error('체험 공간이 바뀌었어요.');
-        catalogRows = data.placements.map((placement) => {
-          placements.set(placement.versionId, placement);
-          const version = placementToMaterialVersion(placement);
-          const material: Material = {
-            id: placement.materialId,
-            ownerId: 'guest-public',
-            currentVersionId: version.id,
-            active: true,
-            scope: 'shared',
-            updatedAt: '',
-          };
-          return { material, version };
-        });
-        return structuredClone(catalogRows);
+        for (const placement of data.placements) placements.set(placement.versionId, placement);
+        return {
+          items: data.placements.map((placement) =>
+            materialCard(placementMaterial(placement), placementToMaterialVersion(placement)),
+          ),
+          nextCursor: data.nextCursor,
+          ...(data.total === undefined ? {} : { total: data.total }),
+          ...(data.facets ? { facets: data.facets } : {}),
+        };
       },
+      async getVersions(ids, options = {}) {
+        const draft = current();
+        const versions = [...new Set(ids)]
+          .map((id) => placements.get(id))
+          .filter((placement): placement is PublicPlacement => !!placement)
+          .map(placementToMaterialVersion);
+        if (!options.withCurrent) return { versions, current: [] };
+        // The current versions only inform (latest prices); an unreachable public list leaves them out.
+        const latest = await currentOf(versions.map((version) => version.materialId)).catch(
+          () => new Map<string, PublicPlacement>(),
+        );
+        if (read()?.document.id !== draft.document.id) throw new Error('체험 공간이 바뀌었어요.');
+        return {
+          versions,
+          current: [...latest.values()].map((placement) => ({
+            material: placementMaterial(placement),
+            version: placementToMaterialVersion(placement),
+          })),
+        };
+      },
+      find: denied,
       async getVersion(id) {
         current();
         const placement = placements.get(id);
@@ -436,16 +492,17 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
     if (!read()) return null;
     const draft = current();
     warnings.length = 0;
-    catalogRows = undefined;
+    currentPlacements = undefined;
     try {
-      const rows = await repositories.materials.list();
-      const currentVersions = new Set(rows.map((row) => row.version.id));
-      if (projectReferences(draft.document).versions.some((id) => !currentVersions.has(id)))
+      // Only the materials this draft uses are checked against the public list.
+      const used = projectReferences(draft.document).versions;
+      const latest = await currentOf(used.map((id) => draft.versions[id].materialId));
+      if (used.some((id) => latest.get(draft.versions[id].materialId)?.versionId !== id))
         warnings.push(
           '사용한 자재 중 현재 공개 목록에서 변경되거나 내려간 자재가 있어요. 배치는 보존했으며, 표시되지 않는 자재는 바꾸거나 삭제할 수 있어요.',
         );
     } catch {
-      catalogRows = [];
+      currentPlacements = new Map();
       warnings.push(
         '공용 자재 목록을 불러오지 못했어요. 체험 배치는 보존했어요. 새로고침하면 다시 확인해요.',
       );
@@ -462,7 +519,7 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
     memoryAssets.clear();
     placements.clear();
     pendingAssets.clear();
-    catalogRows = undefined;
+    currentPlacements = undefined;
     warnings.length = 0;
   }
   async function promote(repo: Repositories, userId: string): Promise<string> {
@@ -517,11 +574,14 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
       }
       assertAccount();
       const refs = projectReferences(document);
+      // One request for every version the draft uses (the member API's visibility).
+      const checked = refs.versions.length ? (await repo.materials.getVersions(refs.versions)).versions : [];
+      assertAccount();
       for (const id of refs.versions) {
-        const verified = await repo.materials.getVersion(id);
-        assertAccount();
+        const verified = checked.find((version) => version.id === id);
         const original = draft.versions[id];
         if (
+          !verified ||
           !original ||
           verified.id !== id ||
           verified.scope !== 'shared' ||

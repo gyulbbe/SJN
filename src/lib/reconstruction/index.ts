@@ -354,9 +354,8 @@ export async function createReconstructionFixture(
   const repos = options.repositories ?? getRepositories(),
     code = await materialCode({ templateRevision: TEMPLATE_RENDERER_REVISION, ...params });
   checkAbort(options.signal);
-  let version = (await repos.materials.list()).find(
-    ({ version }) => version.reconstruction?.version === versionNumber && version.code === code,
-  )?.version;
+  let version =
+    (await repos.materials.find({ code, reconstruction: { version: versionNumber } })) ?? undefined;
   checkAbort(options.signal);
   if (!version) {
     const rendered = params.appearanceAssetId ? undefined : await renderReconstructionTemplate(params);
@@ -557,9 +556,7 @@ export async function createReconstructionTile(options: {
       pattern: options.pattern ?? 'grid',
     });
   checkAbort(options.signal);
-  const existing = (await repos.materials.list()).find(
-    ({ version }) => version.reconstruction?.kind === 'tile' && version.code === code,
-  )?.version;
+  const existing = await repos.materials.find({ code, reconstruction: { kind: 'tile' } });
   if (existing) return existing;
   const canvas = document.createElement('canvas');
   canvas.width = 16;
