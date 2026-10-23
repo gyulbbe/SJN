@@ -1,10 +1,14 @@
 'use client';
 import { getMaterialImageAssetId, stripLegacyMaterialImages } from '@/lib/material-images';
 import { isRetiredDirection } from '@/lib/product-direction';
+import { cardMaterial, materialCard, type MaterialCard } from '@/lib/catalog/cards';
+import type { MaterialPageQuery } from '@/lib/catalog/paging';
+import { LoadMore } from './load-more';
+import { useMaterialPages, useSettled } from './use-material-pages';
 
 import Link from 'next/link';
 import AdminLinks from '@/components/admin/admin-links';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Archive,
   ArrowUpRight,
@@ -17,7 +21,6 @@ import {
   Search,
 } from 'lucide-react';
 import { getRepositories } from '@/lib/repositories';
-import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
 import { defaultMaterialPricing, QUOTE_UNIT_LABELS } from '@/lib/quote';
 import {
   categoryLabels,
@@ -33,12 +36,11 @@ import { useSharedCatalogAdmin } from './shared-access';
 import styles from './materials.module.css';
 
 type MaterialRow = { material: Material; version: MaterialVersion };
+const noCounts = { all: 0, personal: 0, shared: 0, active: 0 };
 
 export default function MaterialManager() {
   const { writable, ready } = useAccess();
   const isAdmin = useSharedCatalogAdmin();
-  const [rows, setRows] = useState<MaterialRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [scope, setScope] = useState<'all' | 'personal' | 'shared'>('all');
   const [category, setCategory] = useState<'all' | MaterialCategory>('all');
@@ -48,27 +50,53 @@ export default function MaterialManager() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [reload, setReload] = useState(0);
+  const grid = useRef<HTMLDivElement>(null);
+  const settled = useSettled(search);
+  const listQuery: MaterialPageQuery = {
+    ...(category === 'all' ? {} : { category }),
+    ...(settled.trim() ? { q: settled } : {}),
+  };
+  const key = JSON.stringify([listQuery, scope, inactive, reload]);
+  const fetchPage = useCallback(
+    (query: MaterialPageQuery) =>
+      getRepositories().materials.page(query, { view: 'library', scope, active: !inactive }),
+    [scope, inactive],
+  );
+  const pages = useMaterialPages(fetchPage, listQuery, key, ready);
+  // A change made here moves the counts without asking for the list again.
+  const [moved, setMoved] = useState({ key: '', ...noCounts });
+  const shift = moved.key === key ? moved : { key, ...noCounts };
+  const counts = pages.counts
+    ? {
+        all: pages.counts.all + shift.all,
+        personal: pages.counts.personal + shift.personal,
+        shared: pages.counts.shared + shift.shared,
+        active: pages.counts.active + shift.active,
+      }
+    : undefined;
+  const loading = pages.status === 'loading' && !pages.items.length;
 
-  const refresh = useCallback(async () => {
-    try {
-      setRows((await getRepositories().materials.list()).filter((row) => !isBuiltInExampleMaterial(row)));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '자재 목록을 불러오지 못했어요.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
   useEffect(() => {
-    void refresh();
+    // Another tab saved a material: show the list again from the first page.
     const channel = new BroadcastChannel('gongganmiri');
-    channel.onmessage = () => void refresh();
-    const onFocus = () => void refresh();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      channel.close();
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [refresh]);
+    channel.onmessage = () => setReload((value) => value + 1);
+    return () => channel.close();
+  }, []);
+  /** The whole version of a card (detail, edit and duplicate read it only then). */
+  const versionOf = async (card: MaterialCard) => {
+    const [version] = (await getRepositories().materials.getVersions([card.versionId])).versions;
+    if (!version) throw new Error('자재 정보를 불러오지 못했어요.');
+    return version;
+  };
+  const open = async (card: MaterialCard, action: (row: MaterialRow) => void) => {
+    setError('');
+    try {
+      action({ material: cardMaterial(card), version: await versionOf(card) });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '자재 정보를 불러오지 못했어요.');
+    }
+  };
   const duplicate = async (version: MaterialVersion) => {
     if (!writable || !isAdmin) return;
     setBusy(version.materialId);
@@ -84,44 +112,40 @@ export default function MaterialManager() {
       setNotice('새 공용 자재로 복제했어요. 원래 자재에 영향을 주지 않고 수정할 수 있어요.');
       setDetail(undefined);
       setForm(result);
-      await refresh();
+      setReload((value) => value + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '자재를 복제하지 못했어요.');
     } finally {
       setBusy('');
     }
   };
-  const toggleActive = async (row: MaterialRow) => {
+  const toggleActive = async (card: MaterialCard) => {
     if (!writable || !isAdmin) return;
-    setBusy(row.material.id);
+    setBusy(card.materialId);
     setError('');
     try {
-      await getRepositories().materials.setActive(row.material.id, !row.material.active);
+      await getRepositories().materials.setActive(card.materialId, !card.active);
       setNotice(
-        row.material.active
+        card.active
           ? '자재를 비활성화했어요. 기존 프로젝트에 적용한 모습은 유지돼요.'
           : '자재를 다시 사용할 수 있어요.',
       );
       setDetail(undefined);
-      await refresh();
+      // It leaves this list (active or deactivated ones); only the counts move.
+      pages.update((items) => items.filter((item) => item.materialId !== card.materialId));
+      setMoved({
+        key,
+        all: shift.all - 1,
+        personal: shift.personal - (card.scope === 'personal' ? 1 : 0),
+        shared: shift.shared - (card.scope === 'shared' ? 1 : 0),
+        active: shift.active + (card.active ? -1 : 1),
+      });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '자재 상태를 변경하지 못했어요.');
     } finally {
       setBusy('');
     }
   };
-
-  const matching = rows.filter(
-    (row) =>
-      (inactive ? !row.material.active : row.material.active) &&
-      (scope === 'all' || row.material.scope === scope) &&
-      (category === 'all' || row.version.category === category) &&
-      [row.version.name, row.version.brand, row.version.code, row.version.color, row.version.finish]
-        .join(' ')
-        .toLocaleLowerCase('ko-KR')
-        .includes(search.trim().toLocaleLowerCase('ko-KR')),
-  );
-  const activeCount = rows.filter((row) => row.material.active).length;
   const detailPricing = detail
     ? (detail.version.pricing ?? defaultMaterialPricing(detail.version.category))
     : undefined;
@@ -180,7 +204,7 @@ export default function MaterialManager() {
             <p>타일 한 장의 무늬와 제품 사진을 등록하면 실제 규격을 기준으로 배치할 수 있어요.</p>
           </div>
           <div className={styles.libraryCount}>
-            <strong>{activeCount.toString().padStart(2, '0')}</strong>
+            <strong>{(counts?.active ?? 0).toString().padStart(2, '0')}</strong>
             <span>사용 가능한 자재</span>
           </div>
         </section>
@@ -191,7 +215,7 @@ export default function MaterialManager() {
               className={styles.textButton}
               onClick={() => {
                 setError('');
-                void refresh();
+                if (pages.status === 'error') pages.retry();
               }}
             >
               다시 불러오기
@@ -221,15 +245,7 @@ export default function MaterialManager() {
                 onClick={() => setScope(value)}
               >
                 {label}
-                <span>
-                  {
-                    rows.filter(
-                      (row) =>
-                        (inactive ? !row.material.active : row.material.active) &&
-                        (value === 'all' || row.material.scope === value),
-                    ).length
-                  }
-                </span>
+                <span>{counts ? counts[value] : '–'}</span>
               </button>
             ))}
           </div>
@@ -275,12 +291,19 @@ export default function MaterialManager() {
             공용 자재는 새 공용 자재로 복제하면 개인 버전으로 수정할 수 있어요.
           </p>
         )}
-        {loading ? (
+        {pages.status === 'error' && !pages.items.length ? (
+          <div className={`notice error ${styles.message}`} role="alert">
+            {pages.error}
+            <button className={styles.textButton} onClick={pages.retry}>
+              다시 불러오기
+            </button>
+          </div>
+        ) : loading ? (
           <div className={styles.empty} role="status">
             <Package size={30} strokeWidth={1.2} />
             <p>자재 라이브러리를 불러오고 있어요…</p>
           </div>
-        ) : !matching.length ? (
+        ) : !pages.items.length ? (
           <div className={styles.empty}>
             <Package size={35} strokeWidth={1.15} />
             <h3>
@@ -302,52 +325,50 @@ export default function MaterialManager() {
             )}
           </div>
         ) : (
-          <div className={styles.materialGrid}>
-            {matching.map((row) => (
+          <div className={styles.materialGrid} ref={grid}>
+            {pages.items.map((row) => (
               <article
-                key={row.material.id}
-                className={`${styles.materialCard} ${!row.material.active ? styles.inactiveCard : ''}`}
+                key={row.materialId}
+                className={`${styles.materialCard} ${!row.active ? styles.inactiveCard : ''}`}
               >
                 <button
                   className={styles.cardImage}
-                  onClick={() => setDetail(row)}
-                  aria-label={`${row.version.name} 상세 보기`}
+                  data-page-item
+                  onClick={() => void open(row, setDetail)}
+                  aria-label={`${row.name} 상세 보기`}
                 >
                   <AssetImage
-                    assetId={getMaterialImageAssetId(row.version)}
-                    alt={row.version.name}
-                    style={{ objectFit: row.version.category === 'tile' ? 'cover' : 'contain' }}
+                    lazy
+                    assetId={row.imageAssetId}
+                    alt={row.name}
+                    style={{ objectFit: row.category === 'tile' ? 'cover' : 'contain' }}
                   />
-                  <span className={styles.cardCategory}>{categoryLabels[row.version.category]}</span>
+                  <span className={styles.cardCategory}>{categoryLabels[row.category]}</span>
                   <span className={styles.cardExpand}>
                     <ArrowUpRight size={16} />
                   </span>
                 </button>
                 <div className={styles.cardBody}>
                   <div className={styles.cardLabel}>
-                    <span>
-                      {row.version.brand || (row.material.scope === 'shared' ? '공용 자재' : '나의 자재')}
-                    </span>
-                    <span>v{row.version.version}</span>
+                    <span>{row.brand || (row.scope === 'shared' ? '공용 자재' : '나의 자재')}</span>
+                    <span>v{row.version}</span>
                   </div>
-                  <button className={styles.cardTitle} onClick={() => setDetail(row)}>
-                    {row.version.name}
+                  <button className={styles.cardTitle} onClick={() => void open(row, setDetail)}>
+                    {row.name}
                   </button>
                   <p>
-                    {row.version.widthMm} × {row.version.heightMm}
-                    {row.version.category !== 'tile' ? ` × ${row.version.depthMm}` : ''} mm
-                    <span> · {row.version.finish || categoryLabels[row.version.category]}</span>
+                    {row.widthMm} × {row.heightMm}
+                    {row.category !== 'tile' ? ` × ${row.depthMm}` : ''} mm
+                    <span> · {row.finish || categoryLabels[row.category]}</span>
                   </p>
                   <div className={styles.cardTags}>
-                    <span className={`badge ${row.material.scope === 'shared' ? '' : 'green'}`}>
-                      {row.material.scope === 'shared' ? '공용' : '내 자재'}
+                    <span className={`badge ${row.scope === 'shared' ? '' : 'green'}`}>
+                      {row.scope === 'shared' ? '공용' : '내 자재'}
                     </span>
                     <span className="badge">
-                      {row.version.category === 'tile'
-                        ? `텍스처 ${row.version.textureAssetIds.length}장`
-                        : `2D · ${row.version.views.filter((view) => !isRetiredDirection(view.direction)).length}방향`}
+                      {row.category === 'tile' ? `텍스처 ${row.textureCount}장` : `2D · ${row.viewCount}방향`}
                     </span>
-                    {!row.material.active && <span className="badge amber">비활성</span>}
+                    {!row.active && <span className="badge amber">비활성</span>}
                   </div>
                 </div>
                 <div className={styles.cardFooter}>
@@ -355,29 +376,29 @@ export default function MaterialManager() {
                     className={styles.textButton}
                     disabled={!writable || !!busy}
                     onClick={() =>
-                      row.material.scope === 'personal' || isAdmin
-                        ? setForm(row.version)
-                        : void duplicate(row.version)
+                      void open(row, ({ version }) =>
+                        row.scope === 'personal' || isAdmin ? setForm(version) : void duplicate(version),
+                      )
                     }
                   >
-                    {row.material.scope === 'personal' || isAdmin ? '정보 수정' : '새 공용 자재로 복제'}
+                    {row.scope === 'personal' || isAdmin ? '정보 수정' : '새 공용 자재로 복제'}
                   </button>
                   <div className={styles.toolbar}>
-                    {(row.material.scope === 'personal' || isAdmin) && (
+                    {(row.scope === 'personal' || isAdmin) && (
                       <>
                         <button
                           className="icon-btn"
-                          aria-label={`${row.version.name} 복제`}
+                          aria-label={`${row.name} 복제`}
                           title="복제"
                           disabled={!writable || !!busy}
-                          onClick={() => void duplicate(row.version)}
+                          onClick={() => void open(row, ({ version }) => void duplicate(version))}
                         >
                           <Copy size={14} />
                         </button>
                         <button
                           className="icon-btn"
-                          aria-label={`${row.version.name} ${row.material.active ? '비활성화' : '다시 활성화'}`}
-                          title={row.material.active ? '비활성화' : '다시 활성화'}
+                          aria-label={`${row.name} ${row.active ? '비활성화' : '다시 활성화'}`}
+                          title={row.active ? '비활성화' : '다시 활성화'}
                           disabled={!writable || !!busy}
                           onClick={() => void toggleActive(row)}
                         >
@@ -389,6 +410,10 @@ export default function MaterialManager() {
                 </div>
               </article>
             ))}
+            <LoadMore
+              pages={pages}
+              focusItem={(index) => grid.current?.querySelectorAll<HTMLElement>('[data-page-item]')[index]}
+            />
           </div>
         )}
         <footer className="home-footer">
@@ -409,11 +434,22 @@ export default function MaterialManager() {
               initial={form === 'new' ? undefined : form}
               onCancel={() => setForm(undefined)}
               onSaved={(version) => {
+                const edited =
+                  form !== 'new' && pages.items.find((item) => item.materialId === version.materialId);
                 setForm(undefined);
                 setNotice(
                   `${version.name} · v${version.version} 저장 완료. 편집기에서 바로 선택할 수 있어요.`,
                 );
-                void refresh();
+                // An edit replaces its card (now the newest); a new material shows the list again.
+                if (edited)
+                  pages.update((items) => [
+                    materialCard(
+                      { ...cardMaterial(edited), currentVersionId: version.id, updatedAt: version.createdAt },
+                      version,
+                    ),
+                    ...items.filter((item) => item.materialId !== version.materialId),
+                  ]);
+                else setReload((value) => value + 1);
               }}
             />
           </div>

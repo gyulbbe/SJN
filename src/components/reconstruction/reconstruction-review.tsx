@@ -43,7 +43,8 @@ export default function ReconstructionReviewPanel({
 }: {
   open: boolean;
   onClose: () => void;
-  onMaterialsChanged: () => Promise<void>;
+  /** Reads the versions a change just made (by id) before the scene uses them. */
+  onMaterialsChanged: (versionIds: string[]) => Promise<void>;
   onError: (message: string) => void;
   onShowProperties: () => void;
 }) {
@@ -245,7 +246,7 @@ export default function ReconstructionReviewPanel({
         aspect: captured.shared.comparison.aspect,
       });
       if (!current()) return;
-      await onMaterialsChanged();
+      await onMaterialsChanged([fixture.materialVersionId]);
       if (!current()) return;
       st.changeProject((p) => {
         if (!p.shared.comparison) return;

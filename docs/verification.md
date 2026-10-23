@@ -2,6 +2,36 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-22 — 자재 목록 페이징: 한 쪽(48개)씩, 서버가 거름
+
+- 무엇: 공개 목록·편집기 서랍·관리자 자재·관리자 프로젝트 서랍·게스트 서랍이 한 쪽씩 받는다([결과](material-paging-results-20261022.md)).
+  - 검색·종류·분류도 서버가 거르고, 분류 목록과 결과 개수는 전체 기준이다.
+  - 이미지는 화면에 보이는 카드만 받는다.
+  - 장면 자재는 `getVersions` 한 번으로 받는다.
+  - 목록 요약은 0009 표 3개와 트리거다(로컬·테스트 DB만, 원격 미적용).
+- 사용자 결정
+  - 서버 쪽 나누기 + 요약, 자동 + "더 보기", 48개(모두 추천안)
+  - 첫 쪽 이미지 6.0MB(원격 읽기 1회, 승인) → 목록용 작은 이미지는 다음 작업
+- 같은 결과
+  - `tests/d1-material-paging-equivalence.test.ts`가 옛 전체 목록·브라우저 거르기 고정 사본과 쪽을 이어 붙인 결과를 비교한다.
+  - 대상: 회원 서랍·관리자 자재·관리자 프로젝트·공개·게스트, `find`, `getVersions`
+  - 요약 동기화는 `tests/d1-material-list-sync.test.ts`가 본다. 기존 행 채우기 = 트리거, counts = 다시 센 값, 분류 = `facetValues`.
+- 비용: `tests/d1-material-paging-cost.test.ts`. 목록 쪽은 N과 5N에서 읽은 행과 쿼리 수가 같고, 커지는 표의 `SCAN`은 없다. 검색·분류 첫 쪽은 맞는 항목을 한 번 읽는다(문서화한 예외).
+- 화면: `e2e/material-paging.spec.ts` 4개. 쪽 넘기기·키보드 "더 보기"·오류 다시 시도·60초 대기·375px·요청 수를 본다.
+- 결과(2026-10-23)
+  - 기록용 동등성 증명 `SJN_EQ_SEEDS=6`: 6개 seed 모두 불일치 0
+  - 운영 규모 비용 `SJN_D1_COST=1`: 목록 쪽은 960개와 4,800개에서 읽은 행이 같다. 공개 첫 쪽은 4,908행에서 507행, 게스트는 7,680행에서 658행, 회원 서랍은 2,880행에서 390행이 됐다.
+  - 저장 쓰기는 늘었다. 새 자재 +19행, 새 버전 +29행, 활성 전환 +26행이다.
+  - vitest 3,636개 통과. 실패 6개는 알려진 워크트리 전용 실패다(reconstruction-corpus 1, source-plane-mapping 5).
+  - e2e 회귀 15개 파일 82개 통과. 대상: catalog-access, catalog-selection-completion, material-images, material-usage(·inputs), editor, guest-workspace, guest-promotion-recovery, designs, admin-management, d1-storage-policy, storage-bootstrap, studio-ui, material-panel-layout, material-paging
+  - 재구성 e2e 5개 파일은 앞선 재실행에서 통과했다.
+- 시험을 바꾼 곳
+  - 공개 목록의 모의 응답을 쪽 형식으로 바꿨다(catalog-access, storage-bootstrap, studio-ui).
+  - 썸네일 맞춤은 이미지를 받은 카드만 확인한다(material-panel-layout, 화면 밖 카드는 지연 불러오기).
+- 오는 길에 고친 것
+  - 같은 자산 읽기를 5초 다시 쓰면 제품 사진을 다시 고를 때 서버 확인 없이 열렸다. 그래서 진행 중인 요청만 합치도록 바꿨다(editor e2e).
+  - 검색어를 바꾸면 목록을 비웠다 채워 상세 창을 연 카드의 초점이 사라졌다. 그래서 새 첫 쪽이 올 때까지 이전 카드를 그대로 둔다(studio-ui e2e).
+
 ## 2026-10-22 — 부분 타일: 벽·바닥의 네모 영역에 다른 타일
 
 - 무엇: After 시안에서 벽·바닥의 네모 영역에 다른 타일을 넣는다([결과](tile-regions-results-20261022.md)). 저장은 면 항목의 `region`(면 좌표 mm) 하나다. 면 나누기 함수 하나([room-face-partition](../src/lib/room-face-partition.ts))를 3D 렌더러·벽 구조 조각·면적·견적·사용량이 함께 쓴다. 2D 합성은 영역을 바탕 뒤에 그린다. AI 변환은 영역을 위치(%)와 함께 따로 적는다.

@@ -13,13 +13,10 @@ import {
 } from 'lucide-react';
 import { useAccess } from '../app-provider';
 import type { PublicMaterial } from '@/lib/catalog/public';
-import {
-  effectiveFacets,
-  emptyFacets,
-  facetOptions,
-  hasFacets,
-  matchesFacets,
-} from '@/lib/catalog/facets';
+import { effectiveFacets, emptyFacets, hasFacets } from '@/lib/catalog/facets';
+import { pageSearchParams, type MaterialPage, type MaterialPageQuery } from '@/lib/catalog/paging';
+import { LoadMore } from './load-more';
+import { useMaterialPages, useSettled, useVisible } from './use-material-pages';
 import { categoryLabels } from '@/lib/types';
 import WorkspaceNav from '@/components/workspace-nav';
 import { MaterialFacets } from './material-facets';
@@ -37,12 +34,16 @@ function MaterialImage({
   tile?: boolean;
   eager?: boolean;
 }) {
+  const frame = useRef<HTMLDivElement>(null);
   const [failedSource, setFailedSource] = useState<string>();
+  // A card asks for its image only once it is on screen (the browser's lazy loading reads far ahead).
+  const [seen, setSeen] = useState(eager);
+  useVisible(frame, () => setSeen(true), { enabled: !seen });
   const failed = !!src && failedSource === src;
   return (
-    <div className={styles.imageFrame} data-kind={tile ? 'tile' : 'product'}>
+    <div className={styles.imageFrame} data-kind={tile ? 'tile' : 'product'} ref={frame}>
       {src && !failed ? (
-        <img src={src} alt={alt} loading={eager ? 'eager' : 'lazy'} onError={() => setFailedSource(src)} />
+        seen && <img src={src} alt={alt} onError={() => setFailedSource(src)} />
       ) : (
         <div className={styles.imageFallback}>
           <ImageOff size={28} strokeWidth={1.4} aria-hidden="true" />
@@ -166,54 +167,40 @@ function MaterialDetail({
   );
 }
 
+async function fetchPublicPage(query: MaterialPageQuery, signal: AbortSignal) {
+  const response = await fetch('/api/catalog/materials?' + pageSearchParams(query), {
+    signal,
+    cache: 'no-store',
+  });
+  const data = await response.json();
+  // A spent daily limit says when the list comes back (and shows the banner).
+  const limit = noteServiceAnswer(response.ok, data, 'db');
+  if (limit) throw new Error(serviceLimitMessage(limit));
+  if (!response.ok) throw new Error(data.error ?? '자재 목록을 불러오지 못했어요.');
+  return data as MaterialPage<PublicMaterial>;
+}
+
 export default function PublicCatalog() {
   const access = useAccess();
   const member = !!access.userId && !access.expired;
-  const [rows, setRows] = useState<PublicMaterial[]>([]),
-    [query, setQuery] = useState(''),
+  const [query, setQuery] = useState(''),
     [category, setCategory] = useState(''),
     [facets, setFacets] = useState(emptyFacets),
-    [detail, setDetail] = useState<PublicMaterial>(),
-    [error, setError] = useState(''),
-    [loading, setLoading] = useState(true),
-    [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    setError('');
-    fetch('/api/catalog/materials', { signal: controller.signal, cache: 'no-store' })
-      .then(async (r) => {
-        const data = await r.json();
-        // A spent daily limit says when the list comes back (and shows the banner).
-        const limit = noteServiceAnswer(r.ok, data, 'db');
-        if (limit) throw new Error(serviceLimitMessage(limit));
-        if (!r.ok) throw new Error(data.error ?? '자재 목록을 불러오지 못했어요.');
-        if (!controller.signal.aborted) {
-          setRows(data.materials);
-          setError('');
-        }
-      })
-      .catch((e: unknown) => {
-        if (!controller.signal.aborted)
-          setError(e instanceof Error ? e.message : '자재 목록을 불러오지 못했어요.');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [attempt]);
-  const scoped = rows.filter((row) => !category || row.category === category);
-  const options = facetOptions(scoped);
+    [detail, setDetail] = useState<PublicMaterial>();
+  const grid = useRef<HTMLDivElement>(null);
+  const search = useSettled(query);
+  const listQuery: MaterialPageQuery = {
+    ...(category ? { category: category as MaterialPageQuery['category'] } : {}),
+    ...(search.trim() ? { q: search } : {}),
+    ...(hasFacets(facets) ? { facets } : {}),
+    options: true,
+  };
+  const pages = useMaterialPages(fetchPublicPage, listQuery, JSON.stringify(listQuery));
+  const rows = pages.items;
+  const options = pages.facets ?? emptyFacets();
   const activeFacets = effectiveFacets(facets, options);
-  const matching = scoped.filter(
-    (row) =>
-      matchesFacets(row, activeFacets) &&
-      [row.name, row.brand, row.code, row.subcategoryName, row.color, row.composition, row.finish]
-        .join(' ')
-        .normalize('NFKC')
-        .toLowerCase()
-        .includes(query.normalize('NFKC').trim().toLowerCase()),
-  );
+  const loading = pages.status === 'loading' && !rows.length;
+  const error = !rows.length && pages.status === 'error' ? pages.error : '';
   const filtered = !!query.trim() || !!category || hasFacets(activeFacets);
   function clearFilters() {
     setQuery('');
@@ -277,8 +264,8 @@ export default function PublicCatalog() {
                 '자재 연결을 확인해 주세요.'
               ) : (
                 <>
-                  <strong>{matching.length.toLocaleString('ko-KR')}</strong>개의 자재
-                  {filtered && <span> · 전체 {rows.length.toLocaleString('ko-KR')}개</span>}
+                  전체 <strong>{(pages.total ?? rows.length).toLocaleString('ko-KR')}</strong>개 중{' '}
+                  {rows.length.toLocaleString('ko-KR')}개
                 </>
               )}
             </p>
@@ -306,11 +293,11 @@ export default function PublicCatalog() {
             </div>
             <h2>자재 목록을 불러오지 못했어요.</h2>
             <p>{error}</p>
-            <button className="btn" onClick={() => setAttempt((value) => value + 1)}>
+            <button className="btn" onClick={pages.retry}>
               <RotateCcw size={16} aria-hidden="true" /> 다시 시도
             </button>
           </div>
-        ) : !rows.length ? (
+        ) : !rows.length && !filtered ? (
           <div className={styles.empty}>
             <div className={styles.stateIcon}>
               <Layers3 size={26} aria-hidden="true" />
@@ -326,7 +313,7 @@ export default function PublicCatalog() {
               <ArrowRight size={16} aria-hidden="true" />
             </Link>
           </div>
-        ) : !matching.length ? (
+        ) : !rows.length ? (
           <div className={styles.empty}>
             <div className={styles.stateIcon}>
               <Search size={26} aria-hidden="true" />
@@ -335,9 +322,9 @@ export default function PublicCatalog() {
             <p>검색어·제품 종류·사이즈·색상·표면 조건을 바꿔보세요.</p>
           </div>
         ) : (
-          <div className={styles.grid}>
-            {matching.map((row) => (
-              <button className={styles.card} key={row.id} onClick={() => setDetail(row)}>
+          <div className={styles.grid} ref={grid}>
+            {rows.map((row) => (
+              <button className={styles.card} key={row.id} data-page-item onClick={() => setDetail(row)}>
                 <div className={styles.cardImage}>
                   <MaterialImage src={row.images[0]?.url} alt={row.name} tile={row.category === 'tile'} />
                   <span className={styles.imageKind}>{categoryLabels[row.category]}</span>
@@ -357,6 +344,10 @@ export default function PublicCatalog() {
                 </div>
               </button>
             ))}
+            <LoadMore
+              pages={pages}
+              focusItem={(index) => grid.current?.querySelectorAll<HTMLElement>('[data-page-item]')[index]}
+            />
           </div>
         )}
       </main>

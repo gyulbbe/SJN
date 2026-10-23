@@ -69,30 +69,35 @@ test('OAuth 준비 실패와 무관하게 메인에서 공용 자재를 구경�
       json: { ...status, ready: false, reason: 'invalid_configuration' },
     }),
   );
-  await page.route('**/api/catalog/materials', (r) =>
-    r.fulfill({
-      json: {
-        materials: [
-          {
-            id: '33333333-3333-4333-8333-333333333333',
-            name: '로그인 없이 보는 공용 타일',
-            brand: '',
-            category: 'tile',
-            subcategoryName: '',
-            color: '',
-            composition: '',
-            finish: '',
-            description: '',
-            code: '',
-            widthMm: 600,
-            heightMm: 600,
-            depthMm: 10,
-            images: [],
-          },
-        ],
-        catalog: { options: [], subcategories: [] },
-      },
-    }),
+  // One page of the public list (it carries its query: category, search, facets).
+  await page.route(
+    (url) => url.pathname === '/api/catalog/materials',
+    (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: '33333333-3333-4333-8333-333333333333',
+              name: '로그인 없이 보는 공용 타일',
+              brand: '',
+              category: 'tile',
+              subcategoryName: '',
+              color: '',
+              composition: '',
+              finish: '',
+              description: '',
+              code: '',
+              widthMm: 600,
+              heightMm: 600,
+              depthMm: 10,
+              images: [],
+            },
+          ],
+          nextCursor: null,
+          total: 1,
+          facets: { size: ['600X600'], color: [], finish: [] },
+        },
+      }),
   );
   await page.goto('/');
   await publicHome(page);

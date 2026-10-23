@@ -7,7 +7,10 @@ import type {
   MaterialVersion,
   ProjectInput,
 } from '../types';
-import type { Repositories } from './contracts';
+import type { Repositories, VersionBatch } from './contracts';
+import { sharedAssetReads, versionBatches } from './batches';
+import type { MaterialCard } from '../catalog/cards';
+import type { MaterialPage } from '../catalog/paging';
 import { StorageConflictError } from './references';
 import { noteServiceAnswer } from '../service-limit-notice';
 import {
@@ -105,7 +108,8 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
       throw error;
     }
   }
-  return {
+  const reads = sharedAssetReads(readAsset);
+  const repositories: Repositories = {
     mode,
     projects: {
       list: () => invoke('projects', 'list'),
@@ -127,13 +131,16 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
     materials: {
       createProjectResource: (input) =>
         invoke<MaterialVersion>('project-materials', 'create', { input: stripLegacyMaterialImages(input) }),
-      list: async () => {
-        const rows = await invoke<Awaited<ReturnType<Repositories['materials']['list']>>>(
-          'materials',
-          'list',
-        );
-        return rows;
-      },
+      page: (query, options = {}) =>
+        invoke<MaterialPage<MaterialCard>>('materials', 'page', { query, ...options }),
+      getVersions: (ids, options = {}) =>
+        versionBatches(ids, (chunk) =>
+          invoke<VersionBatch>('materials', 'getVersions', {
+            ids: chunk,
+            withCurrent: !!options.withCurrent,
+          }),
+        ),
+      find: (match) => invoke<MaterialVersion | null>('materials', 'find', { match }),
       getVersion: (id) => invoke<MaterialVersion>('materials', 'getVersion', { id }),
       create: (input) =>
         invoke<MaterialVersion>('materials', 'create', { input: stripLegacyMaterialImages(input) }),
@@ -160,45 +167,45 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
           }),
         );
         if (userId) await cacheCloudAsset(namespace, asset);
+        reads.forget(asset.id);
       },
-      async get(id) {
-        try {
-          const result = await responseJson<{
-            asset: Omit<ImageAssetRecord, 'blob'> | Omit<ProductMeshAssetRecord, 'blob'>;
-            url: string;
-            contentHash: string;
-          }>(
-            await request(base + '/assets?id=' + encodeURIComponent(id), {
-              credentials: 'same-origin',
-              cache: 'no-store',
-              headers: identityHeaders,
-            }),
-          );
-          if (
-            result.asset.id !== id ||
-            result.url !== base + '/assets?id=' + encodeURIComponent(id) + '&raw=1'
-          )
-            throw new Error('자산 응답 경로를 확인할 수 없어요.');
-          if (userId) {
-            const cached = await readCachedCloudAsset(namespace, result.asset, result.contentHash);
-            if (cached) return cached;
-          }
-          const response = await request(result.url, {
-            credentials: 'same-origin',
-            cache: 'no-store',
-            headers: identityHeaders,
-          });
-          if (!response.ok) await responseJson(response);
-          const asset = { ...result.asset, blob: await response.blob() } as AssetRecord;
-          if (userId) await cacheCloudAsset(namespace, asset, result.contentHash);
-          return asset;
-        } catch (error) {
-          const denied = error instanceof CloudRequestError && [400, 401, 403, 404].includes(error.status);
-          if (denied) await invalidateCachedCloudAsset(namespace, id);
-          throw error;
-        }
-      },
+      get: (id) => reads.get(id),
       removeUnused: () => invoke<number>('cleanup', 'run'),
     },
   };
+  return repositories;
+  async function readAsset(id: string): Promise<AssetRecord> {
+    try {
+      const result = await responseJson<{
+        asset: Omit<ImageAssetRecord, 'blob'> | Omit<ProductMeshAssetRecord, 'blob'>;
+        url: string;
+        contentHash: string;
+      }>(
+        await request(base + '/assets?id=' + encodeURIComponent(id), {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: identityHeaders,
+        }),
+      );
+      if (result.asset.id !== id || result.url !== base + '/assets?id=' + encodeURIComponent(id) + '&raw=1')
+        throw new Error('자산 응답 경로를 확인할 수 없어요.');
+      if (userId) {
+        const cached = await readCachedCloudAsset(namespace, result.asset, result.contentHash);
+        if (cached) return cached;
+      }
+      const response = await request(result.url, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: identityHeaders,
+      });
+      if (!response.ok) await responseJson(response);
+      const asset = { ...result.asset, blob: await response.blob() } as AssetRecord;
+      if (userId) await cacheCloudAsset(namespace, asset, result.contentHash);
+      return asset;
+    } catch (error) {
+      const denied = error instanceof CloudRequestError && [400, 401, 403, 404].includes(error.status);
+      if (denied) await invalidateCachedCloudAsset(namespace, id);
+      throw error;
+    }
+  }
 }

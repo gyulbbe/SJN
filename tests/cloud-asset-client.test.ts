@@ -75,6 +75,17 @@ describe('D1-authorized binary cache transport', () => {
       ),
     ).toBe(true);
   });
+  it('shares one read of the same asset asked at once (a page opening), then asks again', async () => {
+    const f = await fixture();
+    const reads = await Promise.all([1, 2, 3].map(() => f.repository.assets.get(f.value.id)));
+    expect(await Promise.all(reads.map((read) => read.blob.text()))).toEqual(
+      Array(3).fill('verified R2 bytes'),
+    );
+    expect(f.fetcher).toHaveBeenCalledTimes(2);
+    await f.repository.assets.get(f.value.id);
+    expect(f.fetcher).toHaveBeenCalledTimes(3);
+    expect(f.rawReads()).toBe(1);
+  });
   it('reuses an acknowledged upload only after a fresh authorized metadata request', async () => {
     const f = await fixture();
     await f.repository.assets.put(f.value);

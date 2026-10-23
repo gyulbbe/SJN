@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useRepositories } from '@/components/repository-context';
 import { isImageAsset, type ImageAssetRecord } from '@/lib/types';
+import { useVisible } from './use-material-pages';
 
 export function useAsset(assetId?: string) {
   const repositories = useRepositories();
@@ -46,22 +47,29 @@ export function AssetImage({
   alt,
   className,
   style,
+  lazy = false,
 }: {
   assetId?: string;
   alt: string;
   className?: string;
   style?: CSSProperties;
+  /** Read the image only once it is on screen (list cards); it stays loaded after that. */
+  lazy?: boolean;
 }) {
-  const { url, loading, error } = useAsset(assetId);
+  const placeholder = useRef<HTMLSpanElement>(null);
+  const [seen, setSeen] = useState(!lazy);
+  useVisible(placeholder, () => setSeen(true), { enabled: !seen });
+  const { url, loading, error } = useAsset(seen ? assetId : undefined);
   if (!url)
     return (
       <span
+        ref={placeholder}
         className={className}
         style={{ display: 'grid', placeItems: 'center', color: '#88897f', background: '#f2f2ed', ...style }}
         role="img"
         aria-label={alt}
       >
-        {loading ? '불러오는 중' : error ? '이미지 없음' : '사진 등록'}
+        {loading || (!seen && assetId) ? '불러오는 중' : error ? '이미지 없음' : '사진 등록'}
       </span>
     );
   // Local object URLs retain original image fidelity without a remote image optimizer.

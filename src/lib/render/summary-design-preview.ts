@@ -42,11 +42,11 @@ export function prepareSummaryRoomThumbnail(
         project.shared.revision !== identity.sharedRevision
       )
         throw new DesignPreviewCancelled();
-      const entries = await Promise.all(
-        designPreviewMaterialIds(design.scene, roomContext).map(
-          async (id) => [id, await repositories.materials.getVersion(id)] as const,
-        ),
-      );
+      const ids = designPreviewMaterialIds(design.scene, roomContext);
+      const { versions } = ids.length ? await repositories.materials.getVersions(ids) : { versions: [] };
+      // A version the list cannot read stops the preview, as one failed read did before.
+      if (versions.length !== new Set(ids).size) throw new Error('시안에 쓴 자재를 불러오지 못했어요.');
+      const entries = versions.map((version) => [version.id, version] as const);
       current();
       const service = new DesignPreviewService((id) => repositories.assets.get(id));
       const cancel = () => service.dispose();

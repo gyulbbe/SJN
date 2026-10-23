@@ -73,7 +73,15 @@ function setup() {
   }));
   const request = vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
-    if (url === '/api/catalog/placement') return Response.json({ placements: [placement] });
+    // The drawer's page, and the used materials asked by id when a draft opens.
+    if (url.startsWith('/api/catalog/placement?category=') || url === '/api/catalog/placement')
+      return Response.json({ placements: [placement], nextCursor: null });
+    if (url.startsWith('/api/catalog/placement?ids='))
+      return Response.json({
+        placements: url.slice('/api/catalog/placement?ids='.length).split(',').includes(placement.materialId)
+          ? [placement]
+          : [],
+      });
     if (url.startsWith('/api/catalog/images?id='))
       return new Response(new Blob(['texture'], { type: 'image/png' }));
     throw new Error('Unexpected request: ' + url);
@@ -128,7 +136,9 @@ function memberRepositories() {
     },
     materials: {
       createProjectResource: forbidden,
-      list: forbidden,
+      page: forbidden,
+      getVersions: forbidden,
+      find: forbidden,
       create: forbidden,
       update: forbidden,
       setActive: forbidden,
@@ -139,10 +149,10 @@ function memberRepositories() {
 }
 async function applyTile(s: ReturnType<typeof setup>) {
   const session = await s.engine.openGuestSession();
-  const list = await session!.repositories.materials.list();
+  const page = await session!.repositories.materials.page({ category: 'tile', usage: 'floor' });
   useEditor.getState().load(session!.draft.document);
   useEditor.getState().change((scene) => {
-    scene.surfaces[0].materialVersionId = list[0].version.id;
+    scene.surfaces[0].materialVersionId = page.items[0].versionId;
   });
   const document = useEditor.getState().project!;
   await s.engine.checkpointGuestDraft(document);
@@ -367,10 +377,15 @@ describe('게스트의 탭 세션', () => {
     s.request.mockRejectedValueOnce(new Error('offline'));
     const session = await s.engine.openGuestSession();
     expect(session!.warnings[0]).toContain('불러오지 못했어요');
-    expect(await session!.repositories.materials.list()).toEqual([]);
+    // The draft's own versions still open; only the public check failed.
     expect((await session!.repositories.materials.getVersion(s.placement.versionId)).id).toBe(
       s.placement.versionId,
     );
+    expect(
+      (await session!.repositories.materials.getVersions([s.placement.versionId])).versions.map(
+        (version) => version.id,
+      ),
+    ).toEqual([s.placement.versionId]);
     const requestCount = s.request.mock.calls.length;
     await expect(session!.repositories.projects.duplicate('any')).rejects.toThrow('로그인');
     await expect(session!.repositories.assets.removeUnused()).rejects.toThrow('로그인');
@@ -386,10 +401,14 @@ describe('체험을 본인 프로젝트로 이어 저장', () => {
     await s.engine.createGuestDraft(DEFAULT_ROOM);
     const document = await applyTile(s);
     const member = memberRepositories();
-    member.repo.materials.getVersion = vi.fn(async () => placementToMaterialVersion(s.placement));
+    member.repo.materials.getVersions = vi.fn(async () => ({
+      versions: [placementToMaterialVersion(s.placement)],
+      current: [],
+    }));
     const id = await s.engine.promoteGuestDraft(member.repo, s.auth.userId);
     expect(id).toBe(document.id);
-    expect(member.repo.materials.getVersion).toHaveBeenCalledWith(s.placement.versionId);
+    // Every used version in one request.
+    expect(member.repo.materials.getVersions).toHaveBeenCalledWith([s.placement.versionId]);
     expect(member.assets.size).toBe(2);
     expect(getActiveDesign(member.documents.get(id)!)!.scene).toEqual(getActiveDesign(document)!.scene);
     expect(s.engine.readGuestDraft()).toBeNull();
@@ -453,16 +472,16 @@ describe('체험을 본인 프로젝트로 이어 저장', () => {
     await s.engine.createGuestDraft(DEFAULT_ROOM);
     await applyTile(s);
     const member = memberRepositories();
-    member.repo.materials.getVersion = vi.fn(async () => ({
-      ...placementToMaterialVersion(s.placement),
-      scope: 'personal' as const,
+    member.repo.materials.getVersions = vi.fn(async () => ({
+      versions: [{ ...placementToMaterialVersion(s.placement), scope: 'personal' as const }],
+      current: [],
     }));
     const results = await Promise.allSettled([
       s.engine.promoteGuestDraft(member.repo, 'member-a'),
       s.engine.promoteGuestDraft(member.repo, 'member-a'),
     ]);
     expect(results.every((value) => value.status === 'rejected')).toBe(true);
-    expect(member.repo.materials.getVersion).toHaveBeenCalledTimes(1);
+    expect(member.repo.materials.getVersions).toHaveBeenCalledTimes(1);
     expect(member.repo.assets.put).not.toHaveBeenCalled();
     expect(s.engine.readGuestDraft()).not.toBeNull();
   });

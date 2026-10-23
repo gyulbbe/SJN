@@ -1,9 +1,5 @@
 'use client';
-import {
-  getMaterialImageAssetId,
-  getPlacementViewIndex,
-  getPreferredProductViewIndex,
-} from '@/lib/material-images';
+import { getPlacementViewIndex, getPreferredProductViewIndex } from '@/lib/material-images';
 import { readProductDirection } from '@/lib/product-direction';
 import { findFreeSlot, slotBox, slotObstacles, type FreeSlot } from '@/lib/room-slot';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -67,7 +63,6 @@ import reconstructionStyles from '@/components/reconstruction/reconstruction.mod
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
-  type Material,
   type MaterialVersion,
   type Scene,
   type ProjectDocument,
@@ -87,9 +82,14 @@ import { refineTargets, visibleCeiling, type FluxCaptureSource } from '@/lib/ai-
 import { FLUX_BACKDROP, fluxRoom } from '@/lib/ai-export/view';
 import type { RoomViewState } from '@/lib/room-viewer/view-state';
 import type { PhotoCompositor } from '@/lib/render/compositor';
-import { isBuiltInExampleMaterial } from '@/lib/catalog-visibility';
 import { accountLabel } from '@/lib/auth/credential-account';
-import { effectiveFacets, emptyFacets, facetOptions, matchesFacets } from '@/lib/catalog/facets';
+import { effectiveFacets, emptyFacets, hasFacets } from '@/lib/catalog/facets';
+import { editorTabQuery, type MaterialPageQuery } from '@/lib/catalog/paging';
+import type { MaterialCard } from '@/lib/catalog/cards';
+import type { MaterialEntry, VersionBatch } from '@/lib/repositories/contracts';
+import { LoadMore } from '@/components/materials/load-more';
+import { useMaterialPages, useSettled } from '@/components/materials/use-material-pages';
+import { withSceneVersions } from './scene-versions';
 import { importImage } from '@/lib/images';
 import RoomDialog from '@/components/rooms/room-dialog';
 import RoomViewer from '@/components/rooms/room-viewer';
@@ -171,7 +171,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   );
   const catalogAdmin = useSharedCatalogAdmin();
   const canManageCatalog = catalogAdmin && !adminContext && !isGuest;
-  const [catalog, setCatalog] = useState<{ material: Material; version: MaterialVersion }[]>([]),
+  // Each used material's current version (the usage panel's latest prices); the drawer pages its own list.
+  const [latest, setLatest] = useState<MaterialEntry[]>([]),
     [materials, setMaterials] = useState<Record<string, MaterialVersion>>({}),
     [error, setError] = useState(''),
     [tab, setTab] = useState<'wall' | 'floor' | 'fixtures'>('floor'),
@@ -200,7 +201,9 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     [savingPreview, setSavingPreview] = useState(false),
     [detectionStatus, setDetectionStatus] = useState(''),
     detectionModel = useModelLoadingProgress(DEEPLAB_LOAD),
-    [detectionNotice, setDetectionNotice] = useState('');
+    [detectionNotice, setDetectionNotice] = useState(''),
+    [drawerReload, setDrawerReload] = useState(0),
+    [picking, setPicking] = useState('');
   /** Samples averaged so far while a 3D download is made in high quality. */
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const exportAbort = useRef<AbortController | null>(null);
@@ -303,11 +306,38 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     renderer.current = r;
   }, []);
   const onError = useCallback((message: string) => setError(message), []);
-  const refresh = useCallback(async () => {
-    const list = await repositories.materials.list();
-    setCatalog(list.filter((row) => !isBuiltInExampleMaterial(row)));
-    setMaterials((prev) => ({ ...prev, ...Object.fromEntries(list.map((v) => [v.version.id, v.version])) }));
-  }, [repositories]);
+  /** A new material in the drawer: its first page again (the scene keeps the versions it uses). */
+  const refresh = useCallback(() => setDrawerReload((value) => value + 1), []);
+  /** Versions a reconstruction change just made, read before the scene refers to them. */
+  const readVersions = useCallback(
+    async (versionIds: string[]) => {
+      const missing = [...new Set(versionIds)].filter((versionId) => !materialsRef.current[versionId]);
+      if (!missing.length) return;
+      const { versions } = await repositories.materials.getVersions(missing);
+      const read = Object.fromEntries(versions.map((version) => [version.id, version]));
+      materialsRef.current = { ...materialsRef.current, ...read };
+      setMaterials((previous) => ({ ...previous, ...read }));
+    },
+    [repositories],
+  );
+  const settledSearch = useSettled(search);
+  const drawerQuery: MaterialPageQuery = {
+    ...editorTabQuery(tab),
+    ...(settledSearch ? { q: settledSearch } : {}),
+    ...(hasFacets(facets) ? { facets } : {}),
+    options: true,
+  };
+  const fetchDrawerPage = useCallback(
+    (query: MaterialPageQuery) => repositories.materials.page(query),
+    [repositories],
+  );
+  const drawer = useMaterialPages(
+    fetchDrawerPage,
+    drawerQuery,
+    JSON.stringify([drawerQuery, scopeKey, drawerReload]),
+    loaded,
+  );
+  const drawerGrid = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const requests = applyRequest;
     setDetectionStatus('');
@@ -359,14 +389,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           project = recovery.document;
           unavailable = true;
         }
-        const list = await repo.materials.list().catch((e) => {
-          if (!recovery) throw e;
-          return [] as { material: Material; version: MaterialVersion }[];
-        });
-        const versions: Record<string, MaterialVersion> = {
-          ...recovery?.versions,
-          ...Object.fromEntries(list.map((v) => [v.version.id, v.version])),
-        };
         const scenes = [...projectScenes(project), ...(recovery ? projectScenes(recovery.document) : [])];
         const ids = new Set(
           scenes
@@ -376,7 +398,19 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             ])
             .filter(Boolean) as string[],
         );
-        for (const v of ids) if (!versions[v]) versions[v] = await repo.materials.getVersion(v);
+        // Every version the scenes use, in one request, with each material's current version.
+        let batch: VersionBatch = { versions: [], current: [] };
+        if (ids.size)
+          try {
+            batch = await repo.materials.getVersions([...ids], { withCurrent: true });
+          } catch (e) {
+            if (!recovery) throw e;
+          }
+        const versions: Record<string, MaterialVersion> = {
+          ...recovery?.versions,
+          ...Object.fromEntries(batch.versions.map((version) => [version.id, version])),
+        };
+        if ([...ids].some((v) => !versions[v])) throw new Error('사용한 자재를 찾을 수 없어요.');
         if (operation.dead || currentScopeKey.current !== scopeKey) return;
         cloudCommittedContent.current = unavailable ? '' : projectContentKey(project);
         useEditor.getState().load(project);
@@ -385,7 +419,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           useEditor.getState().setEditing('after');
           useEditor.getState().setMode('after');
         }
-        setCatalog(list.filter((row) => !isBuiltInExampleMaterial(row)));
+        setLatest(batch.current);
         setMaterials(versions);
         if (recovery && scope) {
           const kind = unavailable ? 'unavailable' : inspectRecovery(recovery, project);
@@ -611,7 +645,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           roomRequest.current++;
           setLoaded(false);
           setMaterials({});
-          setCatalog([]);
+          setLatest([]);
           setAdminServer(null);
           useEditor.setState({ project: null, draft: null, selection: null, saveStatus: 'saved', error: '' });
           return;
@@ -638,7 +672,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         // Durable recovery/asset caches stay in their original account namespace.
         setLoaded(false);
         setMaterials({});
-        setCatalog([]);
+        setLatest([]);
         setRecoveryPrompt(null);
         setRecoveryArchives([]);
         useEditor.setState({ project: null, draft: null, selection: null, saveStatus: 'saved', error: '' });
@@ -830,16 +864,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         setRecoveryPrompt(null);
       } else if (action === 'server') {
         const server = await operation.repo.projects.load(id);
-        const versions = { ...materialsRef.current };
-        for (const scene of projectScenes(server)) {
-          for (const versionId of [
-            ...scene.surfaces.map((surface) => surface.materialVersionId),
-            ...scene.fixtures.map((fixture) => fixture.materialVersionId),
-          ].filter((value): value is string => !!value)) {
-            if (!versions[versionId])
-              versions[versionId] = await operation.repo.materials.getVersion(versionId);
-          }
-        }
+        const versions = await withSceneVersions(operation.repo, materialsRef.current, server);
         if (operation.dead || currentScopeKey.current !== scopeKey) return;
         await cloudRecovery.archive(scope, prompt.kind === 'conflict' ? 'conflict' : 'dismissed');
         setRecoveryArchives(await cloudRecovery.archives(scope));
@@ -907,6 +932,33 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       wallSeams: geometry.wallSeams,
     });
     return { ...detected, geometry, warnings: [...detected.warnings, ...geometry.warnings] };
+  }
+  /** A drawer card: its whole version is read now (once), then applied as before. */
+  async function pickMaterial(card: MaterialCard) {
+    if (!writable) return;
+    setPicking(card.versionId);
+    try {
+      let version: MaterialVersion | undefined = materialsRef.current[card.versionId];
+      if (!version) {
+        const batch = await repositories.materials.getVersions([card.versionId], { withCurrent: true });
+        version = batch.versions[0];
+        if (!version) throw new Error('자재 정보를 불러오지 못했어요. 목록을 다시 열어 주세요.');
+        const picked = version;
+        materialsRef.current = { ...materialsRef.current, [picked.id]: picked };
+        setMaterials((previous) => ({ ...previous, [picked.id]: picked }));
+        setLatest((previous) => [
+          ...previous.filter(
+            (entry) => !batch.current.some((item) => item.material.id === entry.material.id),
+          ),
+          ...batch.current,
+        ]);
+      }
+      await applyMaterial(version);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPicking('');
+    }
   }
   async function applyMaterial(m: MaterialVersion) {
     if (!writable || !scene || !activeDesign) return;
@@ -1515,20 +1567,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         </div>
       </main>
     );
-  const scopedItems = catalog.filter(
-    ({ material, version: v }) =>
-      material.active &&
-      (tab === 'fixtures'
-        ? v.category !== 'tile'
-        : v.category === 'tile' && (v.usage === 'both' || v.usage === tab)),
-  );
-  const catalogFacets = facetOptions(scopedItems.map(({ version }) => version));
+  const catalogFacets = drawer.facets ?? emptyFacets();
   const activeFacets = effectiveFacets(facets, catalogFacets);
-  const items = scopedItems.filter(
-    ({ version: v }) =>
-      `${v.name} ${v.brand} ${v.code}`.toLowerCase().includes(search.toLowerCase()) &&
-      matchesFacets(v, activeFacets),
-  );
+  const items = drawer.items;
+  const drawerFiltered = !!search || hasFacets(activeFacets);
   const hasSaveError = st.saveStatus === 'error' || (!!scope && !!lastSaveError.current);
   const status = isGuest
     ? '비로그인 체험 · 이 탭에 임시 보관'
@@ -1561,7 +1603,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             scene: structuredClone(getEditingScene(current.project, current.editing)),
           });
         }}
-        onMaterialsChanged={refresh}
+        onMaterialsChanged={readVersions}
       />
     </details>
   );
@@ -2024,7 +2066,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             <ReconstructionReviewPanel
               open={reviewOpen}
               onClose={() => setReviewOpen(false)}
-              onMaterialsChanged={refresh}
+              onMaterialsChanged={readVersions}
               onError={onError}
               onShowProperties={() => {
                 setInspectorOpen(true);
@@ -2149,10 +2191,15 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 value={facets}
                 onChange={setFacets}
               />
-              <div className="catalog-grid">
-                {items.length === 0 && (
+              <div className="catalog-grid" ref={drawerGrid}>
+                {items.length === 0 && drawer.status === 'loading' && (
+                  <div className="empty-catalog" role="status">
+                    자재를 불러오는 중…
+                  </div>
+                )}
+                {items.length === 0 && (drawer.status === 'done' || drawer.status === 'idle') && (
                   <div className="empty-catalog">
-                    {scopedItems.length > 0 ? (
+                    {drawerFiltered ? (
                       <>
                         조건에 맞는 자재가 없어요.
                         <br />
@@ -2176,39 +2223,49 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                     )}
                   </div>
                 )}
-                {items.map(({ version: v }) => (
+                {items.map((card) => (
                   <button
-                    key={v.id}
-                    className={`material-tile ${applicableSurfaces.length > 0 && applicableSurfaces.every((s) => s.materialVersionId === v.id) ? 'selected' : ''}`}
+                    key={card.versionId}
+                    data-page-item
+                    className={`material-tile ${applicableSurfaces.length > 0 && applicableSurfaces.every((s) => s.materialVersionId === card.versionId) ? 'selected' : ''}`}
                     aria-pressed={
                       applicableSurfaces.length > 0 &&
-                      applicableSurfaces.every((surface) => surface.materialVersionId === v.id)
+                      applicableSurfaces.every((surface) => surface.materialVersionId === card.versionId)
                     }
-                    disabled={!writable}
-                    onClick={() =>
-                      void applyMaterial(v).catch((e) => setError(e instanceof Error ? e.message : String(e)))
-                    }
-                    title={`${v.name} 적용`}
+                    aria-busy={picking === card.versionId}
+                    disabled={!writable || !!picking}
+                    onClick={() => void pickMaterial(card)}
+                    title={`${card.name} 적용`}
                   >
                     <div className="swatch">
                       {applicableSurfaces.length > 0 &&
-                        applicableSurfaces.every((surface) => surface.materialVersionId === v.id) && (
+                        applicableSurfaces.every(
+                          (surface) => surface.materialVersionId === card.versionId,
+                        ) && (
                           <span className="material-selection-mark" aria-hidden="true">
                             <Check size={14} />
                           </span>
                         )}
                       <AssetImage
-                        assetId={getMaterialImageAssetId(v)}
-                        alt={v.name}
-                        className={v.category === 'tile' ? '' : 'product-image'}
+                        lazy
+                        assetId={card.imageAssetId}
+                        alt={card.name}
+                        className={card.category === 'tile' ? '' : 'product-image'}
                       />
                     </div>
-                    <strong>{v.name}</strong>
+                    <strong>{card.name}</strong>
                     <small>
-                      {v.widthMm} × {v.heightMm} mm{v.scope === 'shared' ? ' · 공용' : ''}
+                      {card.widthMm} × {card.heightMm} mm{card.versionScope === 'shared' ? ' · 공용' : ''}
                     </small>
                   </button>
                 ))}
+                <LoadMore
+                  pages={drawer}
+                  root={drawerGrid}
+                  focusItem={(index) =>
+                    drawerGrid.current?.querySelectorAll<HTMLElement>('[data-page-item]')[index]
+                  }
+                />
               </div>
               <div className="catalog-footer">
                 {canManageCatalog && (
@@ -2271,7 +2328,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               key={activeDesign.id}
               design={activeDesign}
               materials={materials}
-              currentCatalog={catalog}
+              currentCatalog={latest}
               assetReader={assetReader}
               writable={writable && st.editing === 'after' && !st.draft && !detectionStatus}
               beforeViewing={st.mode !== 'after' || st.editing === 'before'}
@@ -2383,7 +2440,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               onCancel={() => setForm(false)}
               onSaved={(v) => {
                 setMaterials((prev) => ({ ...prev, [v.id]: v }));
-                void refresh();
+                refresh();
                 setForm(false);
               }}
             />
@@ -2433,14 +2490,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                     if (!confirm('현재 메모리 초안을 버리고 확인한 서버 저장본으로 바꿀까요?')) return;
                     setAdminReloadBusy(true);
                     try {
-                      const versions = { ...materials };
-                      for (const scene of projectScenes(adminServer))
-                        for (const versionId of [
-                          ...scene.surfaces.map((item) => item.materialVersionId),
-                          ...scene.fixtures.map((item) => item.materialVersionId),
-                        ])
-                          if (versionId && !versions[versionId])
-                            versions[versionId] = await repositories.materials.getVersion(versionId);
+                      const versions = await withSceneVersions(repositories, materials, adminServer);
                       setMaterials(versions);
                       st.load(adminServer);
                       scheduler.start();

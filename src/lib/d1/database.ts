@@ -285,6 +285,9 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     'd1_project_assets',
     'd1_project_versions',
     'd1_material_assets',
+    'd1_material_list',
+    'd1_material_list_facets',
+    'd1_material_list_counts',
     'd1_cleanup_jobs',
     'd1_mutations',
     'd1_checks',
@@ -328,6 +331,14 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     env.DB.prepare('SELECT project_id,asset_id FROM d1_project_assets LIMIT 0'),
     env.DB.prepare('SELECT project_id,version_id FROM d1_project_versions LIMIT 0'),
     env.DB.prepare('SELECT version_id,asset_id FROM d1_material_assets LIMIT 0'),
+    // 0009: the paged lists read these (no meta version: the migration only adds).
+    env.DB.prepare(
+      'SELECT version_id,material_id,owner_id,scope,purpose,active,updated_at,is_current,lane,category,code,class,search_catalog,search_picker,search_library FROM d1_material_list LIMIT 0',
+    ),
+    env.DB.prepare(
+      'SELECT version_id,facet,value,material_id,scope,active,is_current,updated_at,lane,category,class FROM d1_material_list_facets LIMIT 0',
+    ),
+    env.DB.prepare('SELECT active,lane,category,class,facet,value,n FROM d1_material_list_counts LIMIT 0'),
     env.DB.prepare(
       'SELECT object_key,owner_id,asset_id,eligible_at,attempts,lease_token,lease_until,next_attempt_at FROM d1_cleanup_jobs LIMIT 0',
     ),

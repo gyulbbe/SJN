@@ -7,7 +7,8 @@ import type {
   MaterialVersion,
   RenderSnapshot,
 } from '../src/lib/types';
-import type { RepositoryOperations } from '../src/lib/repositories/contracts';
+import type { ReconstructionMatch, RepositoryOperations } from '../src/lib/repositories/contracts';
+import { matchesReconstruction } from '../src/lib/repositories/batches';
 import type { ReconstructionReview } from '../src/lib/reconstruction/types';
 import type { SceneUnderstanding } from '../src/lib/reconstruction/pipeline-contract';
 import { DEFAULT_ROOM } from '../src/lib/room-geometry';
@@ -260,7 +261,8 @@ function repositories() {
         versions.set(value.id, value);
         return structuredClone(value);
       },
-      list: async () => [...versions.values()].map((version) => ({ version })),
+      find: async (match: ReconstructionMatch) =>
+        [...versions.values()].find((version) => matchesReconstruction(version, match)) ?? null,
       getVersion: async (id: string) => structuredClone(versions.get(id)),
       update: forbidden,
       setActive: forbidden,

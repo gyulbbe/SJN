@@ -100,7 +100,9 @@ async function identity(p: ProjectDocument) {
 function repository(p: ProjectDocument) {
   return {
     projects: { load: vi.fn(async () => structuredClone(p)), save: vi.fn(), create: vi.fn() },
-    materials: { getVersion: vi.fn(async (id: string) => ({ id })) },
+    materials: {
+      getVersions: vi.fn(async (ids: string[]) => ({ versions: ids.map((id) => ({ id })), current: [] })),
+    },
     assets: { get: vi.fn(), put: vi.fn() },
   } as unknown as RepositoryOperations;
 }
@@ -146,7 +148,8 @@ describe('summary room image preparation — mock renderer, real context/cache b
       roomContext: projectDesignPreviewRoomContext(p),
       materials: { 'before-tile': { id: 'before-tile' } },
     });
-    expect(repo.materials.getVersion).toHaveBeenCalledWith('before-tile');
+    // Every fit-scene material in one request.
+    expect(repo.materials.getVersions).toHaveBeenCalledWith(['before-tile']);
     expect(repo.projects.save).not.toHaveBeenCalled();
     expect(repo.assets.put).not.toHaveBeenCalled();
     expect(p).toEqual(original);

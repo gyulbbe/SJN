@@ -275,7 +275,7 @@ export default function Inspector({
   onClose: () => void;
   onRoomResize: () => void;
   onWallFeatures?: () => void;
-  onMaterialsChanged: () => Promise<void>;
+  onMaterialsChanged: (versionIds: string[]) => Promise<void>;
 }) {
   const repositories = useRepositories();
   const st = useEditor(),

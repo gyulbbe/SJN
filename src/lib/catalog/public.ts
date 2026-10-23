@@ -1,11 +1,13 @@
-import { readCatalog } from './server';
 import { publicPlacementSchema, type PublicPlacement } from './placement-contract';
+import { parsePageSearchParams, PAGE_SIZE, type MaterialPage } from './paging';
+import { CLASSES, listPage, type ListedRow } from '@/lib/d1/material-list';
 import { json, D1StorageError } from '@/lib/d1/http';
 import type { D1Bindings } from '@/lib/d1/types';
 import type { MaterialVersion } from '@/lib/types';
 import { getMaterialImageAssetId } from '@/lib/material-images';
 import { isRetiredDirection, readMaterialViews } from '@/lib/product-direction';
 import { identifierSchema } from '@/lib/storage/validation';
+import { z } from 'zod';
 export type PublicMaterial = {
   id: string;
   name: string;
@@ -20,7 +22,6 @@ export type PublicMaterial = {
   widthMm: number;
   heightMm: number;
   depthMm: number;
-  pricing: MaterialVersion['pricing'];
   images: { url: string; label: string }[];
 };
 const visible =
@@ -30,7 +31,7 @@ const visible =
  * listed (flagged `retired`) because the placement projection must keep the photo numbers; the
  * public list leaves it out. A product's 대표 이미지 is one of them.
  */
-function displayImages(v: MaterialVersion) {
+export function displayImages(v: MaterialVersion) {
   const images: { id: string; label: string; retired?: boolean }[] =
     v.category === 'tile'
       ? v.textureAssetIds.map((id) => ({ id, label: '타일 텍스처' }))
@@ -70,22 +71,29 @@ export const publiclyDisplayed = `EXISTS(SELECT 1 FROM d1_material_assets r
   CROSS JOIN d1_material_versions v CROSS JOIN d1_materials m
   WHERE r.asset_id=a.id AND v.id=r.version_id AND m.id=v.material_id AND m.current_version_id=v.id
   AND ${visible} AND ${directDisplay})`;
-export async function publicMaterials(env: D1Bindings): Promise<Response> {
-  const rows = await env.DB.prepare(
-    `SELECT m.id,v.payload_json FROM d1_materials m JOIN d1_material_versions v ON v.id=m.current_version_id WHERE ${visible} ORDER BY m.updated_at DESC`,
-  ).all<{ id: string; payload_json: string }>();
-  const versions = rows.results.map((row) => ({
-    id: row.id,
+function pageQuery(params: URLSearchParams) {
+  try {
+    return parsePageSearchParams(params);
+  } catch {
+    throw new D1StorageError(400, '목록 조건을 확인해 주세요.');
+  }
+}
+/** Public cards for listed rows: the display images that are still public, preferred first. */
+async function publicItems(env: D1Bindings, rows: ListedRow[]): Promise<PublicMaterial[]> {
+  const versions = rows.map((row) => ({
+    id: row.material_id,
     v: readMaterialViews(JSON.parse(row.payload_json) as MaterialVersion),
   }));
   const ids = [...new Set(versions.flatMap(({ v }) => displayImages(v).map((image) => image.id)))];
-  const imageRows = await env.DB.prepare(
-    `SELECT id FROM d1_assets WHERE deleting=0 AND json_extract(metadata_json,'$.kind') IN ('texture','product','preview') AND id IN(SELECT value FROM json_each(?))`,
-  )
-    .bind(JSON.stringify(ids))
-    .all<{ id: string }>();
+  const imageRows = ids.length
+    ? await env.DB.prepare(
+        `SELECT id FROM d1_assets WHERE deleting=0 AND json_extract(metadata_json,'$.kind') IN ('texture','product','preview') AND id IN(SELECT value FROM json_each(?))`,
+      )
+        .bind(JSON.stringify(ids))
+        .all<{ id: string }>()
+    : { results: [] };
   const allowedImages = new Set(imageRows.results.map((row) => row.id));
-  const materials: PublicMaterial[] = versions.map(({ id, v }) => ({
+  return versions.map(({ id, v }) => ({
     id,
     name: v.name,
     brand: v.brand,
@@ -99,12 +107,20 @@ export async function publicMaterials(env: D1Bindings): Promise<Response> {
     widthMm: v.widthMm,
     heightMm: v.heightMm,
     depthMm: v.depthMm,
-    pricing: v.pricing,
     images: displayImages(v)
       .filter((ref) => !ref.retired && allowedImages.has(ref.id))
       .map((ref) => ({ url: '/api/catalog/images?id=' + encodeURIComponent(ref.id), label: ref.label })),
   }));
-  return json({ materials, catalog: await readCatalog(env.DB) });
+}
+/**
+ * GET /api/catalog/materials: one page of the public catalogue (category, search, facets; the first
+ * page also counts the matches and, with options=1, lists the facet options).
+ */
+export async function publicMaterials(env: D1Bindings, request: Request): Promise<Response> {
+  const query = pageQuery(new URL(request.url).searchParams);
+  const page = await listPage(env.DB, query, 'catalog', [[{ kind: 'shared', classes: CLASSES.public }]]);
+  const result: MaterialPage<PublicMaterial> = { ...page, items: await publicItems(env, page.items) };
+  return json(result);
 }
 export async function publicImage(env: D1Bindings, request: Request): Promise<Response> {
   const parsed = identifierSchema.safeParse(new URL(request.url).searchParams.get('id'));
@@ -128,28 +144,68 @@ export async function publicImage(env: D1Bindings, request: Request): Promise<Re
   });
 }
 
-type PublicVersionRow = {
+export type PublicVersionRow = {
   id: string;
   version_id: string;
   version: number;
   payload_json: string;
 };
 
-/** Current active catalog projections only; older versions stay behind the member API. */
+/**
+ * GET /api/catalog/placement. Current active catalog projections only; older versions stay behind the
+ * member API. `materialId` reads one; `ids` (comma separated, up to a page) reads the ones still
+ * placeable; otherwise one page of the guest drawer (the public list without the bundled samples, the
+ * editor's search; a material whose display images are not all public is left out, so a page can be
+ * shorter than its limit).
+ */
 export async function publicPlacement(env: D1Bindings, request: Request): Promise<Response> {
   const params = new URL(request.url).searchParams;
-  if ([...params.keys()].some((key) => key !== 'materialId') || params.getAll('materialId').length > 1)
-    throw new D1StorageError(400, '공용 자재 요청을 확인해 주세요.');
-  const requested = params.has('materialId');
-  const parsed = identifierSchema.safeParse(params.get('materialId'));
-  if (requested && !parsed.success) throw new D1StorageError(404, '배치할 공용 자재를 찾지 못했어요.');
-  const statement = env.DB.prepare(
-    `SELECT m.id,v.id AS version_id,v.version,v.payload_json FROM d1_materials m
-     JOIN d1_material_versions v ON v.id=m.current_version_id
-     WHERE ${visible}${requested ? ' AND m.id=?' : ''} ORDER BY m.updated_at DESC`,
+  if (params.has('materialId')) {
+    if ([...params.keys()].some((key) => key !== 'materialId') || params.getAll('materialId').length > 1)
+      throw new D1StorageError(400, '공용 자재 요청을 확인해 주세요.');
+    const parsed = identifierSchema.safeParse(params.get('materialId'));
+    if (!parsed.success) throw new D1StorageError(404, '배치할 공용 자재를 찾지 못했어요.');
+    const [placement] = await placementsOf(env, await currentPublic(env, [parsed.data]));
+    if (!placement) throw new D1StorageError(404, '배치할 공용 자재를 찾지 못했어요.');
+    return json(placement);
+  }
+  if (params.has('ids')) {
+    if ([...params.keys()].some((key) => key !== 'ids') || params.getAll('ids').length > 1)
+      throw new D1StorageError(400, '공용 자재 요청을 확인해 주세요.');
+    const ids = z.array(identifierSchema).min(1).max(PAGE_SIZE).safeParse(params.get('ids')!.split(','));
+    if (!ids.success) throw new D1StorageError(400, '공용 자재 요청을 확인해 주세요.');
+    return json({ placements: await placementsOf(env, await currentPublic(env, [...new Set(ids.data)])) });
+  }
+  const page = await listPage(env.DB, pageQuery(params), 'picker', [
+    [{ kind: 'shared', classes: CLASSES.publicListed }],
+  ]);
+  const { items, ...rest } = page;
+  const placements = await placementsOf(
+    env,
+    items.map((row) => ({
+      id: row.material_id,
+      version_id: row.version_id,
+      version: row.version,
+      payload_json: row.payload_json,
+    })),
   );
-  const rows = await (requested ? statement.bind(parsed.data) : statement).all<PublicVersionRow>();
-  const versions = rows.results.map((row) => ({
+  return json({ ...rest, placements });
+}
+/** The current public versions of these materials (the old list's condition, by id). */
+async function currentPublic(env: D1Bindings, materialIds: string[]): Promise<PublicVersionRow[]> {
+  const rows = await env.DB.prepare(
+    `SELECT m.id,v.id AS version_id,v.version,v.payload_json FROM json_each(?) q CROSS JOIN d1_materials m
+     CROSS JOIN d1_material_versions v WHERE m.id=q.value AND v.id=m.current_version_id AND ${visible}
+     ORDER BY m.updated_at DESC`,
+  )
+    .bind(JSON.stringify(materialIds))
+    .all<PublicVersionRow>();
+  return rows.results;
+}
+/** Placement projections of public versions whose display images are all public (others are left out). */
+export async function placementsOf(env: D1Bindings, rows: PublicVersionRow[]): Promise<PublicPlacement[]> {
+  if (!rows.length) return [];
+  const versions = rows.map((row) => ({
     row,
     v: readMaterialViews(JSON.parse(row.payload_json) as MaterialVersion),
   }));
@@ -237,9 +293,5 @@ export async function publicPlacement(env: D1Bindings, request: Request): Promis
       }),
     );
   }
-  if (requested) {
-    if (!placements[0]) throw new D1StorageError(404, '배치할 공용 자재를 찾지 못했어요.');
-    return json(placements[0]);
-  }
-  return json({ placements });
+  return placements;
 }

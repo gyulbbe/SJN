@@ -18,7 +18,8 @@ vi.mock('../src/lib/catalog/public', () => ({
 import { GET as catalog } from '../src/app/api/catalog/materials/route';
 import { GET as image } from '../src/app/api/catalog/images/route';
 import { GET as placement } from '../src/app/api/catalog/placement/route';
-const routes = [() => catalog(), image, placement];
+const listRequest = () => new Request('https://sjn.test/api/catalog/materials');
+const routes = [() => catalog(listRequest()), image, placement];
 beforeEach(() => {
   vi.resetAllMocks();
   state.env = {
@@ -67,16 +68,16 @@ describe('public catalog routes are independent of account and OAuth readiness',
     'rejects an invalid runtime without querying public data: %j',
     async (change) => {
       Object.assign(state.env, change);
-      expect((await catalog()).status).toBe(503);
+      expect((await catalog(listRequest())).status).toBe(503);
       expect(state.materials).not.toHaveBeenCalled();
     },
   );
   it('uses only the public data helpers', async () => {
-    await catalog();
+    await catalog(listRequest());
     const request = new Request('https://sjn.test/api/catalog/placement');
     await placement(request);
     await image(request);
-    expect(state.materials).toHaveBeenCalledWith(state.env);
+    expect(state.materials).toHaveBeenCalledWith(state.env, expect.any(Request));
     expect(state.placement).toHaveBeenCalledWith(state.env, request);
     expect(state.image).toHaveBeenCalledWith(state.env, request);
     expect(state.actor).not.toHaveBeenCalled();

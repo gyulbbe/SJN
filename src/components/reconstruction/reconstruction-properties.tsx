@@ -41,7 +41,8 @@ export default function ReconstructionProperties({
   fixture?: FixtureInstance;
   surface?: Surface;
   materials: Record<string, MaterialVersion>;
-  onMaterialsChanged: () => Promise<void>;
+  /** Reads the versions a change just made (by id) before the scene uses them. */
+  onMaterialsChanged: (versionIds: string[]) => Promise<void>;
 }) {
   const original = fixture?.reconstruction;
   const material = materials[surface?.materialVersionId || fixture?.materialVersionId || ''];
@@ -318,7 +319,7 @@ export default function ReconstructionProperties({
           },
         );
         if (!current()) return;
-        await onMaterialsChanged();
+        await onMaterialsChanged([next.materialVersionId]);
         if (!current()) return;
         useEditor.getState().changeProject((p) => {
           const comparison = p.shared.comparison;
@@ -344,7 +345,7 @@ export default function ReconstructionProperties({
           groutWidth: grout,
         });
         if (!current()) return;
-        await onMaterialsChanged();
+        await onMaterialsChanged([version.id]);
         if (!current()) return;
         useEditor.getState().change((s) => {
           const target = s.surfaces.find((v) => v.id === surface.id);
