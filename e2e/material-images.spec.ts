@@ -32,10 +32,11 @@ async function imageFile(name: string, color: number[]) {
     .toBuffer();
   return { name, mimeType: 'image/png', buffer };
 }
+/** Which photo an image shows: cards show the lossy WebP list image, so each channel may be off by 3. */
 async function imageColor(locator: Locator, expected: number[]) {
   await expect
     .poll(async () => {
-      return locator.evaluate((element) => {
+      const color = await locator.evaluate((element) => {
         if (!(element instanceof HTMLImageElement) || !element.complete || !element.naturalWidth) return [];
         const canvas = document.createElement('canvas');
         canvas.width = 1;
@@ -44,6 +45,9 @@ async function imageColor(locator: Locator, expected: number[]) {
         context.drawImage(element, 0, 0, 1, 1);
         return [...context.getImageData(0, 0, 1, 1).data];
       });
+      return color.length === expected.length && color.every((value, i) => Math.abs(value - expected[i]) <= 3)
+        ? expected
+        : color;
     })
     .toEqual(expected);
 }
