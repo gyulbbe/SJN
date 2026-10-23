@@ -2248,6 +2248,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                         )}
                       <AssetImage
                         lazy
+                        size="list"
                         assetId={card.imageAssetId}
                         alt={card.name}
                         className={card.category === 'tile' ? '' : 'product-image'}

@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import type { Repositories, VersionBatch } from './contracts';
 import { sharedAssetReads, versionBatches } from './batches';
+import { listImageRecord } from '../list-images';
 import type { MaterialCard } from '../catalog/cards';
 import type { MaterialPage } from '../catalog/paging';
 import { StorageConflictError } from './references';
@@ -109,6 +110,16 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
     }
   }
   const reads = sharedAssetReads(readAsset);
+  // A card's list image: one request (the server authorizes the source image on it); not cached.
+  const listReads = sharedAssetReads(async (id) => {
+    const response = await request(base + '/assets?id=' + encodeURIComponent(id) + '&raw=1&size=list', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: identityHeaders,
+    });
+    if (!response.ok) await responseJson(response);
+    return listImageRecord(id, await response.blob());
+  });
   const repositories: Repositories = {
     mode,
     projects: {
@@ -141,6 +152,7 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
           }),
         ),
       find: (match) => invoke<MaterialVersion | null>('materials', 'find', { match }),
+      listImages: (request) => invoke('materials', 'listImages', request),
       getVersion: (id) => invoke<MaterialVersion>('materials', 'getVersion', { id }),
       create: (input) =>
         invoke<MaterialVersion>('materials', 'create', { input: stripLegacyMaterialImages(input) }),
@@ -170,6 +182,7 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
         reads.forget(asset.id);
       },
       get: (id) => reads.get(id),
+      getListImage: (id) => listReads.get(id),
       removeUnused: () => invoke<number>('cleanup', 'run'),
     },
   };

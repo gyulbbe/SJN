@@ -8,6 +8,7 @@ import type {
   ProjectSummary,
 } from '../types';
 import type { MaterialCard } from '../catalog/cards';
+import type { ListImagePage } from '../d1/list-images';
 import type { LibraryScope, MaterialPage, MaterialPageQuery } from '../catalog/paging';
 /** A complete in-memory project export; imported together or not at all. */
 export type ProjectResourceBundle = {
@@ -39,6 +40,10 @@ export interface MaterialRepository {
   /** Versions in one request (up to 100 per call; more are split). */
   getVersions(ids: string[], options?: { withCurrent?: boolean }): Promise<VersionBatch>;
   find(match: ReconstructionMatch): Promise<MaterialVersion | null>;
+  /** Administrator list image backfill: card images and whether each has a list image (by ids or a page). */
+  listImages?(
+    request: { ids: string[] } | { cursor?: string },
+  ): Promise<ListImagePage | { listed: string[] }>;
   getVersion(id: string): Promise<MaterialVersion>;
   create(input: MaterialInput): Promise<MaterialVersion>;
   update(id: string, input: MaterialInput, expectedVersionId: string): Promise<MaterialVersion>;
@@ -47,6 +52,8 @@ export interface MaterialRepository {
 export interface AssetRepository {
   put(asset: AssetRecord): Promise<void>;
   get(id: string): Promise<AssetRecord>;
+  /** A card's small copy of image `id` (the image itself when it has none); same permission as `get`. */
+  getListImage?(id: string): Promise<AssetRecord>;
   removeUnused(): Promise<number>;
 }
 /** Storage operations usable by temporary analysis stores as well as authenticated repositories. */
