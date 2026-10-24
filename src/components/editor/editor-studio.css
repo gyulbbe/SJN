@@ -142,12 +142,6 @@
   background: var(--accent-light);
   box-shadow: inset 0 -2px var(--accent);
 }
-.studio-editor .catalog-hint {
-  margin: 8px var(--catalog-pad) 0;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--muted);
-}
 .studio-editor .catalog-query {
   display: flex;
   flex-direction: column;

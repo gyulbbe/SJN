@@ -2156,6 +2156,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                   위생도기
                 </button>
               </div>
+              {/* The kinds take the place of the old placing tip: two rows of cards stay in view. */}
               {tab === 'fixtures' && (
                 <FixtureKindChips
                   value={fixtureKind}
@@ -2165,12 +2166,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                     setDetectionStatus('');
                   }}
                 />
-              )}
-              {tab === 'fixtures' && (
-                <p className="catalog-hint">
-                  등록한 도기를 눌러 배치하고, 화면에서 선택해 이동·삭제할 수 있어요. 기본 벽과 바닥은
-                  유지돼요.
-                </p>
               )}
               {/* One row in a wide panel (the drawer), two rows in the narrow desktop panel. */}
               <div className="catalog-query">

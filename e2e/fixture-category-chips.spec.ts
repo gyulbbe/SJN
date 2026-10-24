@@ -96,6 +96,10 @@ test('편집 화면 위생도기: 종류 칩으로 고르고(요청 1회씩), �
     await chips.evaluate((row) => row.clientHeight - row.querySelector('button')!.offsetHeight),
   ).toBeGreaterThanOrEqual(0);
   expect(await chips.evaluate((row) => row.scrollWidth > row.clientWidth)).toBe(true);
+  // No scrollbar takes the cards' height; the far side fades to say there is more.
+  expect(await chips.evaluate((row) => row.offsetHeight - row.clientHeight)).toBe(0);
+  const mask = () => chips.evaluate((row) => getComputedStyle(row).maskImage);
+  expect(await mask()).toContain('linear-gradient');
   // A mouse wheel over the row moves it sideways (the panel stays where it is), then back.
   const scrolled = () => chips.evaluate((row) => row.scrollLeft);
   const panelTop = () => panel.evaluate((node) => node.scrollTop);
