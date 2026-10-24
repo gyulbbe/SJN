@@ -2,6 +2,33 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-24 — 벽에 설치한 제품은 항상 벽에 붙게(샤워 설비가 떠 보이던 문제)
+
+- 무엇([결과](wall-contact-results-20261024.md))
+  - 벽 면 사진 제품은 보이는 영역의 벽 쪽 끝이 벽 1mm 앞이다(2D·3D 네 방향).
+  - 정면·뒤 사진은 벽면에 붙는다. 옆벽에서는 2D도 벽면 위 원근 사각형이다.
+  - 벽 그림자, 속성 패널 한 줄 안내와 설치 방식 불일치 버튼, `againstWall` 정리
+  - 렌더 버전은 `room-view-v11-wall-contact`다.
+- 사용자 결정
+  - 옆벽 정면 사진은 벽면에 붙여 그리기
+  - Q1 한 줄, Q2 안내와 옮기기 버튼, Q3 천장 제품도 붙이기
+  - 그림자 (c) 옅은 벽 그림자(비교 시트 보고 결정)
+- 원인 측정(`tests/wall-contact-measure.test.ts`)
+  - 보고 화면(2D, 오른쪽 벽, 정면 샤워): 화면을 보는 카드라 벽에서 324mm 튀어나왔다.
+  - 3D: 투명 여백을 포함한 사각형으로 맞춰 판이 벽과 수직인 보기에서 샤워 406mm, 세면대 109~141mm 떴다.
+  - 표준 모형은 0mm였다.
+- 결과
+  - `tests/wall-contact.test.ts` 7개 통과(고치기 전 측정값이 위처럼 기준 2mm를 크게 넘음)
+  - 옛 규칙을 기대하던 단위 시험을 고쳤다: `room-viewer-fixtures` 3, `room-fixtures` 2, `product-direction` 1, `room-shadow`(렌더 버전)
+  - vitest 3,671개 통과. 실패 6개는 알려진 워크트리 전용 실패다(reconstruction-corpus 1, source-plane-mapping 5).
+  - typecheck, eslint, Prettier 통과
+  - e2e 회귀 13개 파일 56개: 53개 통과(guest-workspace 고친 뒤), 2개 건너뜀(조건부), 실패 1개
+    - 대상: fixture-contact, editor-four-view(·drag), four-view-photos, standard-model-switch, reconstruction-standard, designs, flux-export, guest-workspace, product-scale, room-viewer, editor, wall-contact
+    - `guest-workspace`의 체험 세면대 끌기는 선택 테두리가 다각형이 되어 선택자를 `[data-entity]`로 고쳤다(다시 돌려 14개 통과).
+    - `reconstruction-standard`의 "이전 사진 거울은 명시 변환만…"은 고치기 전 main에서도 같은 차이로 실패한다(기존 실패, 이번 범위 밖).
+  - AI(FLUX·Cloudflare) 호출 없음, 운영 DB 사용 없음
+- 사진: `test-results/wall-contact/`(before/, after-geometry/, shadow-compare.png, e2e/, 로컬 전용)
+
 ## 2026-10-24 — 방 안 제품을 등록 높이로(작게 보이던 문제)
 
 - 무엇([결과](product-scale-results-20261024.md))
