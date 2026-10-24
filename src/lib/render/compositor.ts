@@ -68,6 +68,12 @@ type TilePass = {
 };
 type ShadingField = { texture: Texture; mean: number; histogram: Uint32Array; samples: number };
 type LuminanceImage = { width: number; height: number; values: Float32Array };
+/**
+ * A photo product on a room wall: its shadow is its own outline on the wall, a little lower and soft
+ * (docs/wall-contact-results-20261024.md), not the floor product's ellipse under its anchor.
+ */
+const onRoomWall = (fixture: FixtureInstance) =>
+  !fixture.reconstruction && !!fixture.roomPlacement && fixture.roomPlacement.face !== 'floor';
 type FixturePass = {
   fixture: FixtureInstance;
   texture?: Texture;
@@ -178,26 +184,47 @@ const fixtureShader = `
 varying vec2 vUv;uniform sampler2D previousImage;uniform sampler2D product;uniform sampler2D occlusion;
 uniform vec2 photoSize;uniform vec2 productPosition;uniform vec2 productSize;uniform vec2 anchor;
 uniform float angle;uniform float projective;uniform mat3 inverseProduct;uniform vec4 adjustment;uniform vec2 shadowOffset;uniform float shadowOpacity;
-uniform float shadowBlur;uniform float shadowScale;uniform float shadowOnly;
+uniform float shadowBlur;uniform float shadowScale;uniform float shadowOnly;uniform float wallShadow;
 ${colorFunctions}
+vec2 productLocal(vec2 photo){
+  if(projective>.5){
+    vec3 projected=inverseProduct*vec3(photo,1.);
+    return abs(projected.z)<.0000001?vec2(-1.):projected.xy/projected.z;
+  }
+  vec2 d=(photo-productPosition)*photoSize;
+  float c=cos(angle),s=sin(angle);
+  return vec2(c*d.x+s*d.y,-s*d.x+c*d.y)/(productSize*photoSize)+anchor;
+}
+float productCover(vec2 photo){
+  vec2 l=productLocal(photo);
+  return texture2D(product,vec2(l.x,1.-l.y)).a*step(0.,l.x)*step(0.,l.y)*step(l.x,1.)*step(l.y,1.);
+}
 void main(){
   vec3 background=texture2D(previousImage,vUv).rgb;
   vec2 photo=vec2(vUv.x,1.-vUv.y);
   float visibility=1.-texture2D(occlusion,vUv).a;
-  vec2 shadowCenter=productPosition+shadowOffset;
-  vec2 sd=(photo-shadowCenter)*photoSize;
-  float halfWidth=max(.0001,productSize.x*photoSize.x*shadowScale*.5);
-  float halfHeight=max(.0001,productSize.y*photoSize.y*.065*shadowScale);
-  float blur=max(.0001,shadowBlur*photoSize.x);
-  float shadow=exp(-2.*dot(sd/vec2(halfWidth+blur,halfHeight+blur),sd/vec2(halfWidth+blur,halfHeight+blur)));
-  background*=1.-shadow*shadowOpacity*visibility;
-  vec2 d=(photo-productPosition)*photoSize;
-  float c=cos(angle),s=sin(angle);
-  vec2 local=vec2(c*d.x+s*d.y,-s*d.x+c*d.y)/(productSize*photoSize)+anchor;
-  if(projective>.5){
-    vec3 projected=inverseProduct*vec3(photo,1.);
-    local=abs(projected.z)<.0000001?vec2(-1.):projected.xy/projected.z;
+  float shadow=0.;
+  if(wallShadow>.5){
+    // A wall product's shadow on its wall: its own outline moved by the offset and softened.
+    vec2 at=photo-shadowOffset;
+    float radius=max(.0001,shadowBlur*.5*photoSize.x);
+    shadow=productCover(at);
+    for(int i=0;i<6;i++){
+      float turn=float(i)*1.0471976;
+      vec2 ring=vec2(cos(turn),sin(turn))*radius/photoSize;
+      shadow+=productCover(at+ring*.5)+productCover(at+ring);
+    }
+    shadow/=13.;
+  } else {
+    vec2 shadowCenter=productPosition+shadowOffset;
+    vec2 sd=(photo-shadowCenter)*photoSize;
+    float halfWidth=max(.0001,productSize.x*photoSize.x*shadowScale*.5);
+    float halfHeight=max(.0001,productSize.y*photoSize.y*.065*shadowScale);
+    float blur=max(.0001,shadowBlur*photoSize.x);
+    shadow=exp(-2.*dot(sd/vec2(halfWidth+blur,halfHeight+blur),sd/vec2(halfWidth+blur,halfHeight+blur)));
   }
+  background*=1.-shadow*shadowOpacity*visibility;
+  vec2 local=productLocal(photo);
   vec4 productColor=texture2D(product,vec2(local.x,1.-local.y));
   float inside=step(0.,local.x)*step(0.,local.y)*step(local.x,1.)*step(local.y,1.);
   float alpha=productColor.a*inside*visibility*(1.-shadowOnly);
@@ -1000,6 +1027,7 @@ export class PhotoCompositor {
         shadowOpacity: fixture.shadow.opacity,
         shadowBlur: fixture.shadow.blur,
         shadowScale: fixture.shadow.scale,
+        wallShadow: onRoomWall(fixture) ? 1 : 0,
       };
       Object.entries(values).forEach(([key, value]) => uniform(shader, key, value));
       index = 1 - index;

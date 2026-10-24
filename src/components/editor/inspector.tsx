@@ -49,7 +49,7 @@ import { AssetImage } from '../materials/asset-image';
 import styles from './inspector-angles.module.css';
 import PhotoLightingControl from './photo-lighting-control';
 import StandardModelSwitch from './standard-model-switch';
-import WallContactSwitch from './wall-contact-switch';
+import WallContactSwitch, { WallInstallNote } from './wall-contact-switch';
 import { applyWallContact, behindWall, freeWallSlot, type WallSide } from '@/lib/room-wall-contact';
 
 const WALL_NAMES: Record<WallSide, string> = { back: '정면 벽', left: '왼쪽 벽', right: '오른쪽 벽' };
@@ -61,6 +61,8 @@ function setFace(scene: Scene, id: string, face: RoomFace) {
   const product = scene.fixtures.find((item) => item.id === id);
   if (!product?.roomPlacement) return;
   product.roomPlacement.face = face;
+  // A wall product always touches its wall; "벽에 붙이기" is a floor product's.
+  if (face !== 'floor') delete product.roomPlacement.againstWall;
   if (product.reconstruction?.version === 2 && scene.room)
     product.reconstruction.baseHeightMm =
       face === 'floor' ? 0 : (1 - product.roomPlacement.v) * scene.room.heightMm;
@@ -343,6 +345,22 @@ export default function Inspector({
           wallName: behind && WALL_NAMES[behind],
         }
       : undefined;
+  // A wall product always touches its wall; one standing on the other kind of face than its
+  // installation says (wall, embedded and suspended ones go on a wall) offers to move there.
+  const installation =
+    !!s.room && fixture?.roomPlacement && material && !material.reconstruction
+      ? material.installation
+      : undefined;
+  const onWall = !!s.room && !!fixture?.roomPlacement && fixture.roomPlacement.face !== 'floor';
+  const moveTo =
+    installation && (installation === 'floor') === onWall
+      ? installation === 'floor'
+        ? ('floor' as const)
+        : ('back' as const)
+      : undefined;
+  // A photo product on a room wall casts its outline on the wall (render/compositor.ts), not the
+  // floor's ellipse: its width does nothing.
+  const wallShadow = onWall && !fixture?.reconstruction;
   // The photo's angle name is the direction the product faces; say where that is on this face, and
   // warn (never block) when the name does not suit the face.
   const facing = (() => {
@@ -888,6 +906,15 @@ export default function Inspector({
                   }
                 />
               )}
+              {(onWall || moveTo) && (
+                <WallInstallNote
+                  onWall={onWall}
+                  installation={installation}
+                  moveTo={moveTo}
+                  disabled={!writable || fixture.locked || !!st.draft}
+                  onMove={(face) => void changeFixtureFace(face)}
+                />
+              )}
               <div className={styles.heading}>
                 <span>제품 각도</span>
                 <span className={styles.count}>
@@ -1239,7 +1266,7 @@ export default function Inspector({
               )}
             </section>
             <section className="property-section">
-              <h4>접지 그림자</h4>
+              <h4>{wallShadow ? '벽 그림자' : '접지 그림자'}</h4>
               <Range
                 label="그림자 진하기"
                 value={fixture.shadow.opacity}
@@ -1275,14 +1302,16 @@ export default function Inspector({
                 onChange={(n) => changeFixture((v) => (v.shadow.y = n), true)}
                 onCommit={st.commit}
               />
-              <Range
-                label="그림자 너비"
-                value={fixture.shadow.scale}
-                min={0.1}
-                max={2}
-                onChange={(n) => changeFixture((v) => (v.shadow.scale = n), true)}
-                onCommit={st.commit}
-              />
+              {!wallShadow && (
+                <Range
+                  label="그림자 너비"
+                  value={fixture.shadow.scale}
+                  min={0.1}
+                  max={2}
+                  onChange={(n) => changeFixture((v) => (v.shadow.scale = n), true)}
+                  onCommit={st.commit}
+                />
+              )}
               <div className="row">
                 <button className="btn small" onClick={() => moveFixture(1)}>
                   <ArrowUp size={13} />
