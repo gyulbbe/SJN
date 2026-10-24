@@ -17,7 +17,7 @@ import { effectiveFacets, emptyFacets, hasFacets } from '@/lib/catalog/facets';
 import { pageSearchParams, type MaterialPage, type MaterialPageQuery } from '@/lib/catalog/paging';
 import { LoadMore } from './load-more';
 import { useMaterialPages, useSettled, useVisible } from './use-material-pages';
-import { categoryLabels } from '@/lib/types';
+import { categoryLabels, listedCategories } from '@/lib/types';
 import WorkspaceNav from '@/components/workspace-nav';
 import { MaterialFacets } from './material-facets';
 import { noteServiceAnswer, serviceLimitMessage } from '@/lib/service-limit-notice';
@@ -247,9 +247,9 @@ export default function PublicCatalog() {
                 onChange={(event) => setCategory(event.target.value)}
               >
                 <option value="">전체</option>
-                {Object.entries(categoryLabels).map(([key, value]) => (
+                {listedCategories.map((key) => (
                   <option key={key} value={key}>
-                    {value}
+                    {categoryLabels[key]}
                   </option>
                 ))}
               </select>

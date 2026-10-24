@@ -884,6 +884,7 @@ export const materialInputSchema = z
       'wallCabinet',
       'lowPartition',
       'showerCurtain',
+      'other',
     ]),
     scope: z.enum(['personal', 'shared']),
     description: z.string().max(10000),

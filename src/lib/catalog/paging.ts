@@ -45,8 +45,12 @@ export type MaterialPage<T> = {
 };
 
 export type EditorTab = 'wall' | 'floor' | 'fixtures';
-export const editorTabQuery = (tab: EditorTab): Pick<MaterialPageQuery, 'category' | 'usage'> =>
-  tab === 'fixtures' ? { category: 'fixtures' } : { category: 'tile', usage: tab };
+/** A tab's list; the 위생도기 tab narrows to one kind when its chip is picked. */
+export const editorTabQuery = (
+  tab: EditorTab,
+  kind?: MaterialCategory,
+): Pick<MaterialPageQuery, 'category' | 'usage'> =>
+  tab === 'fixtures' ? { category: kind ?? 'fixtures' } : { category: 'tile', usage: tab };
 
 /** The public GET form of a query (empty values left out). */
 export function pageSearchParams(query: MaterialPageQuery): URLSearchParams {

@@ -25,6 +25,7 @@ import { getRepositories } from '@/lib/repositories';
 import { defaultMaterialPricing, QUOTE_UNIT_LABELS } from '@/lib/quote';
 import {
   categoryLabels,
+  listedCategories,
   type Material,
   type MaterialCategory,
   type MaterialInput,
@@ -273,13 +274,13 @@ export default function MaterialManager() {
             >
               전체
             </button>
-            {Object.entries(categoryLabels).map(([value, label]) => (
+            {listedCategories.map((value) => (
               <button
                 key={value}
                 className={category === value ? styles.categoryActive : ''}
-                onClick={() => setCategory(value as MaterialCategory)}
+                onClick={() => setCategory(value)}
               >
-                {label}
+                {categoryLabels[value]}
               </button>
             ))}
           </div>

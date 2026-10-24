@@ -2,6 +2,24 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-24 — 편집 화면 위생도기 종류 칩, 라이브러리 "기타" 추가·"샤워 커튼" 제외
+
+- 무엇
+  - 편집 화면 위생도기 탭에 라이브러리와 같은 종류 칩 줄(타일·샤워 커튼 제외, 기타 마지막)을 두었다. 고르면 그 종류의 첫 쪽만 받는다(`editorTabQuery(tab, kind)`). 서버 SQL은 그대로다(`category=?` 범위가 원래 있음).
+  - 사람이 고르는 종류 목록(라이브러리 칩, 공개 자재 종류, 등록 양식, 관리자 하위 카테고리의 상위)은 `listedCategories`다. 기타(`other`)를 더하고 샤워 커튼은 뺐다. 샤워 커튼은 사진 분석 표준 모형의 내부 종류로 남는다.
+  - 기타에는 하위 카테고리가 없다(0003의 CHECK 때문, 서버 400). 표준 모형, AI 방향 사진도 없고, AI 내보내기 문장에서 빠진다.
+  - 칩 줄은 배치 안내 문구 자리를 대신한다. 스크롤바는 없고, 더 있는 쪽을 흐리게 하며, 휠로도 가로로 움직인다. 고른 칩은 늘 보인다.
+- 결과
+  - 새 단위 시험 `tests/fixture-categories.test.ts` 3개 통과. `d1-catalog`에 기타 하위 카테고리 거절을 추가했다.
+  - D1 비용(`tests/d1-material-paging-cost.test.ts`, 작은 규모와 `SJN_D1_COST=1` 운영 규모): 종류 칩 경로 회원 6쿼리 199행, 게스트 5쿼리 218행, 관리자 프로젝트 7쿼리 292행(첫 쪽 8개). N과 5N이 같고 커지는 표 SCAN은 없다. 하루 약 9.3만 행 증가로 추정한다([페이징 결과](material-paging-results-20261022.md)).
+  - e2e `e2e/fixture-category-chips.spec.ts` 3개 통과: 칩마다 첫 쪽 1회, 같은 칩 다시 누르면 0회, 기타 제품 배치·저장, 라이브러리·양식·분류 관리·공개 자재 종류, 게스트, 375px
+  - e2e 회귀 `material-panel-layout`, `material-paging`, `guest-workspace`, `editor`, `studio-ui`, `material-usage` 42개 통과
+    - 처음에는 `material-panel-layout`의 1097×617 위생도기에서 카드 둘째 줄이 화면 밖이었다. 칩 줄이 안내 문구 자리를 대신하게 고친 뒤 통과했다.
+  - vitest 3,671개 통과. 실패 6개는 알려진 워크트리 전용 실패다(reconstruction-corpus 1, source-plane-mapping 5). `d1-material-paging-equivalence`는 전체 실행에서 Miniflare 시작이 10초를 넘어 건너뛰어졌고, 따로 돌려 3개 모두 통과했다.
+  - typecheck, eslint, Prettier 통과
+  - AI 호출과 운영 DB 사용, 마이그레이션은 없다.
+- 사진: `test-results/fixture-chips/`(로컬 전용)
+
 ## 2026-10-24 — 벽에 설치한 제품은 항상 벽에 붙게(샤워 설비가 떠 보이던 문제)
 
 - 무엇([결과](wall-contact-results-20261024.md))
