@@ -308,6 +308,13 @@ describe('catalog master permissions and controlled IDs', () => {
         })
       ).status,
     ).toBe(400);
+    // 기타 has no subcategories (migration 0003's CHECK has no such kind): a clear 400, not a 500.
+    const other = await call('catalog', {
+      operation: 'create',
+      input: { kind: 'subcategory', category: 'other', name: '기타 분류', active: true, sortOrder: 0 },
+    });
+    expect(other.status).toBe(400);
+    expect((await other.json()).error).toBe('기타에는 하위 카테고리를 둘 수 없어요.');
     const sub = await call('catalog', {
       operation: 'create',
       input: { kind: 'subcategory', category: 'basin', name: '테스트 분류', active: true, sortOrder: 90 },

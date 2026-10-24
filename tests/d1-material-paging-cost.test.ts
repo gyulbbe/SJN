@@ -277,6 +277,16 @@ const PATHS: Path[] = [
     category: 'fixtures',
     options: true,
   }),
+  // The 위생도기 tab's kind chips (one kind's range).
+  ...twoPages('회원 위생도기 세면대 칩', (q) => memberPage(member, { query: q }), {
+    category: 'basin',
+    options: true,
+  }),
+  ...twoPages('게스트 위생도기 세면대 칩', guestPage, { category: 'basin', options: true }),
+  ...twoPages('관리자 프로젝트 세면대 칩', (q) => memberPage(editor, { query: q }, project), {
+    category: 'basin',
+    options: true,
+  }),
   ...twoPages(
     '회원 분류 1개',
     (q) => memberPage(member, { query: q }),
