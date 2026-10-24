@@ -2,6 +2,31 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-24 — 방 안 제품을 등록 높이로(작게 보이던 문제)
+
+- 무엇([결과](product-scale-results-20261024.md))
+  - 제품 사진은 보이는 영역을 등록 높이로 그리고, 가로는 사진 비율을 따른다(`product-photo-size.ts`). 3D와 2D 편집 화면이 같은 규칙을 쓴다.
+  - 렌더 버전은 `room-view-v10-product-size`다.
+- 사용자 결정
+  - 확대 기능은 만들지 않고 원인을 고친다.
+  - 맞춤 방식은 높이에 맞추기(비교 시트 보고 결정)
+- 원인 측정(`tests/product-scale-measure.test.ts`)
+  - 2D 편집 화면은 옆 사진도 가로로 맞췄다(변기 옆모습 높이 60%).
+  - 깊이 없는 자재의 옆 사진은 3D에서 가로로 그렸다(60%, 보고 화면과 같음).
+  - 비스듬히 찍은 사진은 "상자 안에 넣기"로 낮아졌다(스마트 변기 정면 82%).
+  - 바닥 가운데와 구석의 mm 크기는 같았다. 흐린 픽셀은 1% 안이었다.
+- 결과
+  - 모든 경우 높이 100%, 2D와 3D 같음. 위에서 찍은 욕조 정면 사진은 가로 53%가 남는다(선택에 따른 차이).
+  - `tests/product-scale.test.ts`는 고치기 전 코드에서 4개 중 3개 실패
+  - `e2e/product-scale.spec.ts`는 고치기 전 코드에서 2D 높이가 39% 작아 실패
+  - 옛 맞춤 규칙을 기대하던 단위 시험 4개를 고쳤다(`room-viewer-fixtures` 3, `room-fixtures` 1).
+  - vitest 3,664개 통과. 실패 6개는 알려진 워크트리 전용 실패다(reconstruction-corpus 1, source-plane-mapping 5).
+  - typecheck, eslint(바꾼 파일), Prettier 통과
+  - e2e 회귀 12개 파일 41개 통과, 1개 건너뜀(room-viewer의 조건부 건너뜀)
+    - 대상: room-fixtures, room-viewer, editor-four-view(·drag), four-view-photos, standard-model-switch, designs, flux-export, fixture-contact, editor, product-scale, direction-photo-ai
+  - AI(FLUX·Cloudflare) 호출 없음
+- 사진: `test-results/product-scale/`(before-after.png, fit-compare.png, e2e/, 로컬 전용)
+
 ## 2026-10-24 — 사이즈 분류 순서, 바닥 제품을 바닥·벽에 붙이기
 
 - 무엇([결과](size-order-and-contact-results-20261024.md))

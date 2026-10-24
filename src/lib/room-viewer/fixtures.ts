@@ -31,6 +31,7 @@ import {
   type ProductDirection,
 } from '../product-direction';
 import { choosePhotoForView, viewPhotoNote } from './view-photo';
+import { fitPhotoWidth, photoAcross } from '../product-photo-size';
 import { cameraQuarterAzimuth, snapQuarter } from './view-state';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import { behindWall, productDepthMm, wallContactPlace, type WallSide } from '../room-wall-contact';
@@ -181,10 +182,10 @@ export function photoViewAngle(view: MaterialVersion['views'][number]): number |
   return declaredProductDirection(view.direction);
 }
 /**
- * The drawn picture of one product photo (mm, the whole image including its transparent margin).
- * What a photo shows across is not the same for every photo: 정면 and 뒤 show the product's width,
- * 왼쪽 and 오른쪽 its depth, so the photo's visible area (`bounds`) is fitted into width × height or
- * depth × height, keeping its aspect. Without a depth the side photos use the width (`estimated`).
+ * The drawn picture of one product photo (mm, the whole image including its transparent margin), by
+ * the rule the 2D editor shares (product-photo-size.ts): the visible area at the registered height,
+ * across as the photo shows it. `across` says what that is (the width for 정면·뒤, the depth for
+ * 옆); `estimated`, a side photo of a material without a depth.
  */
 export type PhotoPlaneSize = { width: number; height: number; across: 'width' | 'depth'; estimated: boolean };
 export function photoPlaneSize(
@@ -194,15 +195,9 @@ export function photoPlaneSize(
   bounds: ProductBounds,
   aspect: number,
 ): PhotoPlaneSize {
-  const side = name === '왼쪽' || name === '오른쪽';
-  const known = typeof depthMm === 'number' && Number.isFinite(depthMm) && depthMm > 0;
-  const across = side && known ? depthMm : placement.widthMm;
-  const width =
-    Math.min(
-      across / (bounds.right - bounds.left),
-      (placement.heightMm * aspect) / (bounds.bottom - bounds.top),
-    ) * placement.scale;
-  return { width, height: width / aspect, across: side ? 'depth' : 'width', estimated: side && !known };
+  const across = photoAcross(name, depthMm);
+  const width = fitPhotoWidth(placement.heightMm, bounds, aspect) * placement.scale;
+  return { width, height: width / aspect, across: across.across, estimated: across.estimated };
 }
 
 /** World bounds of what shows of a product (the visible meshes only), from their vertices. */
@@ -658,7 +653,7 @@ export async function buildViewerFixtures(
         if (depthEstimated)
           notice(
             fixture,
-            '왼쪽·오른쪽 사진은 제품의 깊이로 그려야 하는데 자재에 깊이가 없어 가로 값으로 그렸어요. 자재에 깊이를 등록해 주세요.',
+            '자재에 깊이가 없어 바닥 자리와 벽 붙이기에는 가로의 절반을 깊이로 써요. 자재에 깊이를 등록하면 더 정확해요.',
           );
       }
       if (!fixture.reconstruction) {

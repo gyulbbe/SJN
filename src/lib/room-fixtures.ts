@@ -5,6 +5,7 @@ import { createRoomCamera, roomFacePoint } from './room-geometry';
 import { homography, transformPoint } from './render/math';
 import type { WallSide } from './room-wall-contact';
 import { FLOOR_SNAP_MM, FLOOR_SNAP_SHARE } from './room-viewer/floor-contact';
+import { fitPhotoWidth } from './product-photo-size';
 
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
 const projections = new Map<string, ReturnType<typeof createRoomCamera>>();
@@ -33,14 +34,10 @@ export function roomPositionFromPhoto(room: RoomDefinition, face: RoomFace, phot
   return { u: clamp(uv.x), v: clamp(uv.y) };
 }
 
-/** The whole picture in mm, as the 3D room sizes the photo shown (photoPlaneSize). */
+/** The whole picture in mm, as the 3D room sizes the photo shown (photoPlaneSize, product-photo-size.ts). */
 function pictureMm(placement: RoomPlacement) {
-  const b = placement.contentBounds;
   const width =
-    Math.min(
-      placement.widthMm / (b.right - b.left),
-      (placement.heightMm * placement.imageAspect) / (b.bottom - b.top),
-    ) * placement.scale;
+    fitPhotoWidth(placement.heightMm, placement.contentBounds, placement.imageAspect) * placement.scale;
   return { width, height: width / placement.imageAspect };
 }
 /**
@@ -60,7 +57,8 @@ export function floorShift(fixture: FixtureInstance, height = fixture.height): n
   return below < 0 || sinkMm <= snap ? below : 0;
 }
 /**
- * The product keeps its image aspect; its visible alpha bounds fit its physical W×H envelope. On the
+ * The product keeps its image aspect; what shows of it (its visible alpha bounds) is drawn at its
+ * registered height, as in the 3D room (product-photo-size.ts). On the
  * floor what shows of it stands on the floor point, as in the 3D room (room-viewer/fixtures.ts): one
  * floating above it because of its anchor is put down, one sinking a little is lifted, one sinking
  * more is left as its anchor says. `wall` (a product kept against that wall, room-wall-contact.ts)
@@ -85,20 +83,13 @@ export function projectRoomFixture(
         ? -room.widthMm / 2 + 1 + (fixture.anchor.x - b.left) * imageWidthMm
         : room.widthMm / 2 - 1 - (b.right - fixture.anchor.x) * imageWidthMm;
   const p = project(room, origin, aspect);
-  const right = project(
-    room,
-    origin.clone().add(new Vector3(placement.widthMm * placement.scale, 0, 0)),
-    aspect,
-  );
   const top = project(
     room,
     origin.clone().add(new Vector3(0, placement.heightMm * placement.scale, 0)),
     aspect,
   );
-  const width = Math.min(
-    Math.abs(right.x - p.x) / (b.right - b.left),
-    (Math.abs(top.y - p.y) * placement.imageAspect) / (aspect * (b.bottom - b.top)),
-  );
+  // The registered height at the floor point, in canvas-height units, then as a canvas width.
+  const width = fitPhotoWidth(Math.abs(top.y - p.y), b, placement.imageAspect) / aspect;
   const height = (width * aspect) / placement.imageAspect;
   if (
     !Number.isFinite(width) ||

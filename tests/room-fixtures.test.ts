@@ -128,7 +128,7 @@ function mockRaster(alphas: number[], width = 4, height = 4) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('room-scaled 2D fixtures', () => {
-  it('fits visible alpha bounds into physical dimensions while retaining full image aspect and anchor', () => {
+  it('draws visible alpha bounds at the registered height while retaining full image aspect and anchor', () => {
     for (const bounds of [fullBounds, { left: 0.2, top: 0.15, right: 0.8, bottom: 0.9 }])
       for (const imageAspect of [0.5, 1, 2])
         for (const face of ['floor', 'left', 'back', 'right'] as RoomFace[]) {
@@ -139,19 +139,14 @@ describe('room-scaled 2D fixtures', () => {
           projectRoomFixture(DEFAULT_ROOM, product, aspect);
           const world = roomFacePoint(DEFAULT_ROOM, face, placement.u, placement.v);
           const origin = projectRoomPoint(DEFAULT_ROOM, world);
-          const right = projectRoomPoint(
-            DEFAULT_ROOM,
-            world.clone().add(new Vector3(placement.widthMm, 0, 0)),
-          );
           const top = projectRoomPoint(
             DEFAULT_ROOM,
             world.clone().add(new Vector3(0, placement.heightMm, 0)),
           );
-          const widthRatio = (product.width * (bounds.right - bounds.left)) / Math.abs(right.x - origin.x);
+          // The height is the registered one (as in the 3D room, product-photo-size.ts); across
+          // follows the picture, so a picture wider than the product is wider, never lower.
           const heightRatio = (product.height * (bounds.bottom - bounds.top)) / Math.abs(top.y - origin.y);
-          expect(widthRatio).toBeLessThanOrEqual(1 + 1e-12);
-          expect(heightRatio).toBeLessThanOrEqual(1 + 1e-12);
-          expect(Math.max(widthRatio, heightRatio)).toBeCloseTo(1, 12);
+          expect(heightRatio).toBeCloseTo(1, 12);
           expect((product.width * aspect) / product.height).toBeCloseTo(imageAspect, 12);
           // On a wall the anchor is the place; on the floor what shows stands on the floor point
           // (the anchor is below the visible bottom here, so the picture moves up by that much).

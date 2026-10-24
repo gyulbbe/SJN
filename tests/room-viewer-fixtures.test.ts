@@ -513,30 +513,31 @@ describe('room viewer immutable physical fixtures', () => {
     result.dispose();
     cache.dispose();
   });
-  it('draws a side photo as the product depth and the front and back photos as its width', () => {
+  it('draws every photo at the registered height, across as the photo shows it (the width or the depth)', () => {
     const placement = { widthMm: 400, heightMm: 800, scale: 1 };
     const whole = { left: 0, top: 0, right: 1, bottom: 1 };
-    // 정면 and 뒤 show the width: 400 across, the height binds nothing (aspect 0.5 → 400 wide, 800 high).
+    // 정면 and 뒤 show the width: a photo with the product's proportions (aspect 0.5) is 400 × 800.
     for (const name of ['정면', '뒤'] as const) {
       const size = photoPlaneSize(placement, 200, name, whole, 0.5);
       expect([size.width, size.height, size.across, size.estimated]).toEqual([400, 800, 'width', false]);
     }
-    // 왼쪽 and 오른쪽 show the depth: 200 across.
+    // 왼쪽 and 오른쪽 show the depth: a side photo with the side's proportions (200 : 800) is 200 across.
     for (const name of ['왼쪽', '오른쪽'] as const) {
-      const size = photoPlaneSize(placement, 200, name, whole, 0.5);
-      expect([size.width, size.height, size.across, size.estimated]).toEqual([200, 400, 'depth', false]);
+      const size = photoPlaneSize(placement, 200, name, whole, 0.25);
+      expect([size.width, size.height, size.across, size.estimated]).toEqual([200, 800, 'depth', false]);
     }
-    // The height still fits: a tall narrow depth keeps the picture inside width × height.
-    expect(photoPlaneSize({ ...placement, heightMm: 300 }, 200, '오른쪽', whole, 0.5).height).toBe(300);
-    // Visible area with a margin: it is the content that is fitted, and the scale multiplies.
+    // A photo wider than the product (taken at an angle) keeps the height; it is wider, never lower
+    // (it was 400 × 400 when it was fitted into width × height, docs/product-scale-results-20261024.md).
+    expect(photoPlaneSize(placement, 200, '정면', whole, 1)).toMatchObject({ width: 800, height: 800 });
+    // Visible area with a margin: the content is the registered height, and the scale multiplies.
     const margin = { left: 0.1, top: 0.1, right: 0.9, bottom: 0.9 };
-    expect(photoPlaneSize({ ...placement, scale: 2 }, 200, '오른쪽', margin, 0.5).width).toBeCloseTo(
-      (200 / 0.8) * 2,
-      9,
-    );
-    // No depth registered: the width stands in, flagged; the front photo is never flagged.
-    expect(photoPlaneSize(placement, undefined, '오른쪽', whole, 0.5)).toMatchObject({
-      width: 400,
+    const scaled = photoPlaneSize({ ...placement, scale: 2 }, 200, '오른쪽', margin, 0.25);
+    expect(scaled.height * 0.8).toBeCloseTo(800 * 2, 9);
+    expect(scaled.width).toBeCloseTo(((800 * 0.25) / 0.8) * 2, 9);
+    // No depth registered: the same size (the height decides), flagged; the front photo is never flagged.
+    expect(photoPlaneSize(placement, undefined, '오른쪽', whole, 0.25)).toMatchObject({
+      width: 200,
+      height: 800,
       across: 'depth',
       estimated: true,
     });
@@ -545,7 +546,13 @@ describe('room viewer immutable physical fixtures', () => {
   it('shows a side photo at the product depth in the room, with the stand held on the floor', async () => {
     const reader = vi.fn(async () => undefined),
       cache = new ProductAssetCache(reader);
-    fakeImage(cache);
+    // The side photo shows the side's proportions (200 deep : 800 high); the front photo 400 : 800.
+    vi.spyOn(cache, 'image').mockImplementation(async (id: string) => ({
+      texture: new Texture(),
+      bounds: { left: 0, top: 0, right: 1, bottom: 1 },
+      aspect: id === 'side' ? 0.25 : 0.5,
+      canvas: { width: 100, height: 200 } as HTMLCanvasElement,
+    }));
     const m = material();
     m.views.push({ assetId: 'side', direction: '오른쪽', anchor: { x: 0.5, y: 1 } });
     const result = await buildViewerFixtures(scene(), { m }, reader, cache);
@@ -679,8 +686,9 @@ describe('angle names decide the way a product stands on its face', () => {
 
   it('name × wall: a flat photo has its edge on the wall for every name, never inside it, never off it', async () => {
     for (const name of ['정면', '오른쪽', '왼쪽', '뒤'] as const) {
-      // What it shows across: the side photos show the depth (200), the front and back the width.
-      const across = name === '오른쪽' || name === '왼쪽' ? 200 : 400;
+      // Every photo is the registered height (800) across as it shows it: this photo (aspect 0.5)
+      // is 400 across whatever its name (docs/product-scale-results-20261024.md).
+      const across = 400;
       const left = bounds((await photoBuild(placed('left'), name)).group);
       expect(left.min.x).toBeCloseTo(-half, 4);
       expect(left.getSize(new Vector3()).x).toBeCloseTo(across, 4);
