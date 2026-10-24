@@ -87,7 +87,8 @@ export type MaterialCategory =
   | 'wallShelf'
   | 'wallCabinet'
   | 'lowPartition'
-  | 'showerCurtain';
+  | 'showerCurtain'
+  | 'other';
 /**
  * Read-only compatibility: what a material saved with the removed 360° editor still carries (the
  * stored shape is checked by product3dReferenceSchema). Nothing writes it any more and nothing
@@ -353,4 +354,17 @@ export const categoryLabels: Record<MaterialCategory, string> = {
   wallCabinet: '벽 수납장',
   lowPartition: '낮은 칸막이',
   showerCurtain: '샤워 커튼',
+  other: '기타',
 };
+/**
+ * The kinds people pick from: the library, the public catalogue and the material form. 샤워 커튼 stays
+ * a stored kind for the photo-analysis standard model (the form cannot save one: it needs the
+ * suspended installation the form does not offer), so it is not offered.
+ */
+export const listedCategories: MaterialCategory[] = (
+  Object.keys(categoryLabels) as MaterialCategory[]
+).filter((category) => category !== 'showerCurtain');
+/** The editor's 위생도기 kinds: the listed ones without tiles. */
+export const fixtureCategories: MaterialCategory[] = listedCategories.filter(
+  (category) => category !== 'tile',
+);

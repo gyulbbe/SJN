@@ -11,6 +11,7 @@ import { packagingCoverage } from '@/lib/material-usage';
 import type { MaterialPricing, QuoteUnit } from '@/lib/quote-types';
 import {
   categoryLabels,
+  listedCategories,
   type MaterialCategory,
   type MaterialInput,
   type MaterialVersion,
@@ -666,9 +667,13 @@ export function MaterialForm({
                     setPendingQueries((q) => ({ ...q, subcategoryId: false }));
                   }}
                 >
-                  {Object.entries(categoryLabels).map(([key, label]) => (
+                  {/* A saved kind that is no longer offered (샤워 커튼) stays shown for that material. */}
+                  {(listedCategories.includes(form.category)
+                    ? listedCategories
+                    : [...listedCategories, form.category]
+                  ).map((key) => (
                     <option key={key} value={key}>
-                      {label}
+                      {categoryLabels[key]}
                     </option>
                   ))}
                 </select>

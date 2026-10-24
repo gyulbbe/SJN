@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useAccess } from '../app-provider';
 import { loadCatalog, saveCatalog } from '@/lib/catalog/client';
 import { optionKinds, optionLabels, type CatalogData, type OptionKind } from '@/lib/catalog/contract';
-import { categoryLabels, type MaterialCategory } from '@/lib/types';
+import { categoryLabels, listedCategories, type MaterialCategory } from '@/lib/types';
 import styles from './catalog.module.css';
 const empty = () => ({
   id: undefined as string | undefined,
@@ -94,9 +94,14 @@ export default function CatalogAdmin() {
               value={form.category}
               onChange={(e) => setForm({ ...form, category: e.target.value as MaterialCategory })}
             >
-              {Object.entries(categoryLabels).map(([k, v]) => (
+              {/* 기타 has no subcategories (the subcategory table's kinds are fixed by migration 0003);
+                  an existing subcategory of a kind no longer offered keeps showing its own. */}
+              {[
+                ...listedCategories.filter((k) => k !== 'other'),
+                ...(listedCategories.includes(form.category) ? [] : [form.category]),
+              ].map((k) => (
                 <option key={k} value={k}>
-                  {v}
+                  {categoryLabels[k]}
                 </option>
               ))}
             </select>

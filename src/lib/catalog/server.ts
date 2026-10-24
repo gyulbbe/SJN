@@ -56,6 +56,9 @@ export async function manageCatalog(ctx: Context, body: Record<string, unknown>)
   if (!normalized) throw invalid('이름을 입력해 주세요.');
   if (row.kind === 'subcategory' && !Object.hasOwn(categoryLabels, row.category ?? ''))
     throw invalid('상위 카테고리를 선택해 주세요.');
+  // The subcategory table's kinds are fixed by migration 0003 (its CHECK has no 기타).
+  if (row.kind === 'subcategory' && row.category === 'other')
+    throw invalid('기타에는 하위 카테고리를 둘 수 없어요.');
   if (row.kind !== 'color' && row.colorHex) throw invalid('색상에서만 HEX 값을 지정할 수 있어요.');
   const table = row.kind === 'subcategory' ? 'd1_material_subcategories' : 'd1_catalog_options';
   const grouping = row.kind === 'subcategory' ? 'category_code' : 'kind';

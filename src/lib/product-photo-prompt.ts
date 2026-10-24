@@ -52,6 +52,7 @@ const NAMES: Record<MaterialCategory, string> = {
   wallCabinet: 'wall cabinet',
   lowPartition: 'low partition wall',
   showerCurtain: 'shower curtain',
+  other: 'bathroom product',
 };
 
 /** Which side of each kind of product is its front (the side the 정면 photo shows). */
