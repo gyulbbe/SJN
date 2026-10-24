@@ -64,6 +64,7 @@ import reconstructionStyles from '@/components/reconstruction/reconstruction.mod
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
+  type MaterialCategory,
   type MaterialVersion,
   type Scene,
   type ProjectDocument,
@@ -91,6 +92,7 @@ import type { MaterialEntry, VersionBatch } from '@/lib/repositories/contracts';
 import { LoadMore } from '@/components/materials/load-more';
 import { useMaterialPages, useSettled } from '@/components/materials/use-material-pages';
 import { withSceneVersions } from './scene-versions';
+import { FixtureKindChips } from './fixture-kind-chips';
 import { importImage } from '@/lib/images';
 import RoomDialog from '@/components/rooms/room-dialog';
 import RoomViewer from '@/components/rooms/room-viewer';
@@ -177,6 +179,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     [materials, setMaterials] = useState<Record<string, MaterialVersion>>({}),
     [error, setError] = useState(''),
     [tab, setTab] = useState<'wall' | 'floor' | 'fixtures'>('floor'),
+    // The 위생도기 tab's kind chip; kept while the editor is open.
+    [fixtureKind, setFixtureKind] = useState<'all' | MaterialCategory>('all'),
     [search, setSearch] = useState(''),
     [facets, setFacets] = useState(emptyFacets),
     [form, setForm] = useState(false),
@@ -323,7 +327,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   );
   const settledSearch = useSettled(search);
   const drawerQuery: MaterialPageQuery = {
-    ...editorTabQuery(tab),
+    ...editorTabQuery(tab, fixtureKind === 'all' ? undefined : fixtureKind),
     ...(settledSearch ? { q: settledSearch } : {}),
     ...(hasFacets(facets) ? { facets } : {}),
     options: true,
@@ -1584,7 +1588,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   const catalogFacets = drawer.facets ?? emptyFacets();
   const activeFacets = effectiveFacets(facets, catalogFacets);
   const items = drawer.items;
-  const drawerFiltered = !!search || hasFacets(activeFacets);
+  const drawerFiltered = !!search || hasFacets(activeFacets) || (tab === 'fixtures' && fixtureKind !== 'all');
   const hasSaveError = st.saveStatus === 'error' || (!!scope && !!lastSaveError.current);
   const status = isGuest
     ? '비로그인 체험 · 이 탭에 임시 보관'
@@ -2153,6 +2157,16 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 </button>
               </div>
               {tab === 'fixtures' && (
+                <FixtureKindChips
+                  value={fixtureKind}
+                  onChange={(kind) => {
+                    setFixtureKind(kind);
+                    applyRequest.current++;
+                    setDetectionStatus('');
+                  }}
+                />
+              )}
+              {tab === 'fixtures' && (
                 <p className="catalog-hint">
                   등록한 도기를 눌러 배치하고, 화면에서 선택해 이동·삭제할 수 있어요. 기본 벽과 바닥은
                   유지돼요.
@@ -2222,6 +2236,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                           onClick={() => {
                             setSearch('');
                             setFacets(emptyFacets());
+                            setFixtureKind('all');
                           }}
                         >
                           필터 초기화
