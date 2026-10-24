@@ -342,14 +342,29 @@ test('이전 사진 거울은 명시 변환만 새 모형으로 바뀌고 크기
     .first()
     .click();
   await expect(page.getByRole('button', { name: '표준 모형으로 변환', exact: true })).toBeVisible();
+  // Opening and selecting save nothing: the stored fixture is still the legacy seed.
   const readOnlyOld = (await stored(page)).shared.comparison!.before.fixtures[0];
+  expect(readOnlyOld).toEqual(fixture);
   expect(readOnlyOld.reconstruction?.version).toBe(1);
   expect(readOnlyOld.reconstruction?.appearanceAssetId).toBe(comparison.referencePreviewAssetId);
   await page.getByRole('button', { name: '표준 모형으로 변환', exact: true }).click();
   await expect
     .poll(async () => (await stored(page)).shared.comparison!.before.fixtures[0].reconstruction?.version)
     .toBe(2);
-  const converted = (await stored(page)).shared.comparison!.before.fixtures[0];
+  const conversion = await stored(page),
+    converted = conversion.shared.comparison!.before.fixtures[0];
+  // The undo point is the fixture as the editor showed it. Opening draws room products again with
+  // today's rules (room-editing.ts reprojectRoomScene, saved with the next edit), so only its drawn
+  // place and size differ from the stored legacy fixture.
+  const shown = conversion.shared.beforeHistory.past.at(-1)!.comparison!.before.fixtures[0];
+  expect(shown).toEqual({
+    ...readOnlyOld,
+    position: shown.position,
+    width: shown.width,
+    height: shown.height,
+    projectedQuad: shown.projectedQuad,
+  });
+  expect(shown.projectedQuad).toHaveLength(4);
   expect(converted.reconstruction).toMatchObject({
     sourceMaterialVersionId: fixture.materialVersionId,
     widthMm: 420,
@@ -363,7 +378,7 @@ test('이전 사진 거울은 명시 변환만 새 모형으로 바뀌고 크기
   await expect
     .poll(async () => (await stored(page)).shared.comparison!.before.fixtures[0].reconstruction?.version)
     .toBe(1);
-  expect((await stored(page)).shared.comparison!.before.fixtures[0]).toEqual(readOnlyOld);
+  expect((await stored(page)).shared.comparison!.before.fixtures[0]).toEqual(shown);
   await page.reload();
   await ready(page);
   const restored = (await stored(page)).shared.comparison!.before.fixtures[0];
