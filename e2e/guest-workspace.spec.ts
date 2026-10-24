@@ -495,7 +495,9 @@ test('체험 제품과 오른쪽 공간 크기를 조절하고 상단 보호 기
   await create(page);
   await place(page);
   const before = getActiveDesign(await draft(page))!.scene.fixtures[0];
-  const box = await page.locator('rect[data-entity="' + before.id + '"]').boundingBox();
+  // The wall basin's 정면 photo lies on its side wall: its outline is the picture's polygon there
+  // (docs/wall-contact-results-20261024.md), a rectangle elsewhere.
+  const box = await page.locator('[data-entity="' + before.id + '"]').boundingBox();
   expect(box).not.toBeNull();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.down();

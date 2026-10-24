@@ -1,6 +1,6 @@
 'use client';
 import { getPlacementViewIndex, getPreferredProductViewIndex } from '@/lib/material-images';
-import { readProductDirection } from '@/lib/product-direction';
+import { readProductDirection, viewDirection } from '@/lib/product-direction';
 import { findFreeSlot, slotBox, slotObstacles, type FreeSlot } from '@/lib/room-slot';
 import { freeWallSlot } from '@/lib/room-wall-contact';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -1167,7 +1167,14 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           fixture.roomPlacement.v = slot.v;
           if (atWall) fixture.roomPlacement.againstWall = true;
         }
-        if (s.room) projectRoomFixture(s.room, fixture, s.imageWidth / s.imageHeight);
+        if (s.room)
+          projectRoomFixture(
+            s.room,
+            fixture,
+            s.imageWidth / s.imageHeight,
+            undefined,
+            viewDirection(view.direction) ?? '정면',
+          );
         if (previous) s.fixtures = s.fixtures.map((item) => (item.id === previous.id ? fixture : item));
         else s.fixtures.push(fixture);
       });

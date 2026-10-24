@@ -8,7 +8,13 @@ import type { FixtureInstance, MaterialVersion, Scene, Surface } from './types';
 import { EMPTY_MASK } from './types';
 import type { RoomDefinition, RoomDimensions } from './room-types';
 import { createRoomSurfaces, roomFaceSizeMm } from './room-geometry';
-import { floorShift, projectRoomFixture, roomPositionFromPhoto } from './room-fixtures';
+import {
+  floorShift,
+  projectRoomFixture,
+  roomPositionFromPhoto,
+  shownDirection,
+  wallDrawnAt,
+} from './room-fixtures';
 import { applyWallContact, behindWall, WALL_SNAP_MM, wallDistanceMm } from './room-wall-contact';
 import { validateWallFeatures, validateWallFeatureResize } from './wall-features';
 import type { ProjectDocument } from './types';
@@ -83,6 +89,8 @@ export function normalizeRoomScene(
     if (hasParentGlassSupport(fixture.reconstruction?.support)) continue;
     const before = previous.fixtures.find((f) => f.id === fixture.id);
     if (!fixture.roomPlacement) continue;
+    // "벽에 붙이기" is a floor product's: a wall product always touches its wall (the next save drops it).
+    if (fixture.roomPlacement.face !== 'floor') delete fixture.roomPlacement.againstWall;
     if (
       sameRoom &&
       before?.roomPlacement &&
@@ -94,11 +102,17 @@ export function normalizeRoomScene(
     ) {
       // The drawn place is the anchor's floor point moved so the product stands on it: undo that first.
       const anchorAt = { x: fixture.position.x, y: fixture.position.y + floorShift(fixture) };
+      // A photo on a wall is drawn against it (wallDrawnAt): read its place back there.
+      const face = fixture.roomPlacement.face;
+      const across =
+        face !== 'floor' && !fixture.reconstruction
+          ? wallDrawnAt(next.room, fixture, face, !!fixture.projectedQuad)
+          : undefined;
       Object.assign(
         fixture.roomPlacement,
         fixture.reconstruction?.version === 2
           ? reconstructionPositionFromPhoto(next.room, fixture, fixture.position, aspect)
-          : roomPositionFromPhoto(next.room, fixture.roomPlacement.face, anchorAt, aspect),
+          : roomPositionFromPhoto(next.room, face, anchorAt, aspect, across),
       );
       // A floor product moved near the wall behind it goes against it; moved away, it lets go.
       const distance = wallDistanceMm(next.room, fixture, materials);
@@ -124,6 +138,7 @@ function drawnAt(room: RoomDefinition, fixture: FixtureInstance, aspect: number,
       drawn,
       aspect,
       fixture.roomPlacement.againstWall ? behindWall(fixture, materials) : undefined,
+      shownDirection(fixture, materials),
     );
   } catch {
     return false;
@@ -132,18 +147,25 @@ function drawnAt(room: RoomDefinition, fixture: FixtureInstance, aspect: number,
 }
 /**
  * Draws a fixture's room place again: a product kept against its wall goes there first. One whose
- * material is not read yet keeps the place it was drawn at (its depth and angle are unknown).
+ * material is not read yet keeps the place it was drawn at (its depth and angle are unknown), as does
+ * a picture drawn on its wall (its photo's direction is unknown).
  */
 function reprojectFixture(room: RoomDefinition, fixture: FixtureInstance, aspect: number, materials: Depths) {
   const placement = fixture.roomPlacement;
   if (!placement) return;
-  if (placement.againstWall && !fixture.reconstruction && !materials[fixture.materialVersionId]) return;
+  if (
+    (placement.againstWall || fixture.projectedQuad) &&
+    !fixture.reconstruction &&
+    !materials[fixture.materialVersionId]
+  )
+    return;
   applyWallContact(room, fixture, materials);
   projectRoomFixture(
     room,
     fixture,
     aspect,
     placement.againstWall ? behindWall(fixture, materials) : undefined,
+    shownDirection(fixture, materials),
   );
   projectReconstructionFixture(room, fixture, aspect);
 }

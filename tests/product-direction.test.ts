@@ -105,12 +105,15 @@ describe('names against the wall a product stands on', () => {
     expect(describeProductFacing('right', '왼쪽')).toBe('방 안쪽을 봐요.');
     expect(describeProductFacing('back', '정면')).toBe('정면(방 안쪽)을 봐요.');
     expect(describeProductFacing('floor', '정면')).toBe('정면(열린 쪽)을 봐요.');
-    expect(describeProductFacing('left', '정면')).toBe('정면(열린 쪽)을 봐요.');
+    // On a wall a 정면 or 뒤 photo lies on it (docs/wall-contact-results-20261024.md).
+    expect(describeProductFacing('left', '정면')).toBe('벽에 붙어 정면 보기에서 비스듬히 보여요.');
+    expect(describeProductFacing('back', '뒤')).toBe('벽에 붙어 제품의 뒤가 보여요.');
+    expect(describeProductFacing('right', '오른쪽')).toBe('오른쪽 벽 쪽을 봐요.');
     expect(describeProductFacing('floor', '뒤')).toBe('뒤 벽 쪽을 봐요.');
     expect(mismatchMessage('left', '오른쪽')).toBe('');
     expect(mismatchMessage('floor', '뒤')).toBe('');
     expect(mismatchMessage('left', '정면')).toBe(
-      '왼쪽 벽에는 ‘오른쪽’ 각도가 어울려요. 지금은 ‘정면’ 각도라 정면(열린 쪽)을 봐요.',
+      '왼쪽 벽에는 ‘오른쪽’ 각도가 어울려요. 지금은 ‘정면’ 각도라 벽에 붙어 정면 보기에서 비스듬히 보여요.',
     );
   });
 });

@@ -136,12 +136,18 @@ const FACING_WORD: Record<ProductFacing, string> = {
   left: '왼쪽 벽 쪽',
   back: '뒤 벽 쪽',
 };
-/** Where a product looks, in words for the inspector ("방 안쪽을 봐요", "정면을 봐요"). */
+/**
+ * Where a product looks, in words for the inspector ("방 안쪽을 봐요", "정면을 봐요"). On a wall a
+ * 정면 or 뒤 photo lies on the wall (room-fixtures.ts liesOnWall): on a side wall the front view sees
+ * it at a slant.
+ */
 export function describeProductFacing(face: RoomFace, name: ProductDirection): string {
   const facing = facingOfDirection(name);
   if (face === 'left' && facing === 'right') return '방 안쪽을 봐요.';
   if (face === 'right' && facing === 'left') return '방 안쪽을 봐요.';
   if (face === 'back' && facing === 'front') return '정면(방 안쪽)을 봐요.';
+  if (face !== 'floor' && facing === 'front') return '벽에 붙어 정면 보기에서 비스듬히 보여요.';
+  if (face !== 'floor' && facing === 'back') return '벽에 붙어 제품의 뒤가 보여요.';
   return `${FACING_WORD[facing]}을 봐요.`;
 }
 /** The warning for a direction that does not suit its face (empty when it suits). */

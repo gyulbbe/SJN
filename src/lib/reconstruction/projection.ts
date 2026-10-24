@@ -111,7 +111,9 @@ export function projectReconstructionFixture(
 ): void {
   const placement = fixture.roomPlacement;
   const reconstruction = fixture.reconstruction;
-  if (!placement || !reconstruction) {
+  // A photo product's picture on its wall is projectRoomFixture's.
+  if (!reconstruction) return;
+  if (!placement) {
     delete fixture.projectedQuad;
     return;
   }

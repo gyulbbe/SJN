@@ -2,6 +2,7 @@ import type { AssetRepository } from './repositories/contracts';
 import { productContentBounds, projectRoomFixture } from './room-fixtures';
 import type { ProductBounds } from './room-types';
 import type { MaterialVersion, Point, Scene } from './types';
+import { viewDirection } from './product-direction';
 
 /** What a product needs to show another of its photos: read once, before the scene is changed. */
 export type PreparedFixtureView = {
@@ -11,6 +12,8 @@ export type PreparedFixtureView = {
   assetHeight: number;
   /** The photo's visible area; only a product placed in a room (with a roomPlacement) needs it. */
   contentBounds?: ProductBounds;
+  /** The photo's angle name, as stored: on a wall a 정면 or 뒤 photo lies on it (room-fixtures.ts). */
+  direction?: string;
 };
 
 /** Reads the photo of view `index` of a material (its size and visible area) for `applyFixtureView`. */
@@ -32,6 +35,7 @@ export async function prepareFixtureView(
   return {
     index,
     anchor: { ...view.anchor },
+    direction: view.direction,
     assetWidth: asset.width,
     assetHeight: asset.height,
     contentBounds: inRoom ? { ...(await productContentBounds(asset)) } : undefined,
@@ -54,6 +58,13 @@ export function applyFixtureView(scene: Scene, fixtureId: string, prepared: Prep
   }
   product.height =
     (((product.width * scene.imageWidth) / scene.imageHeight) * prepared.assetHeight) / prepared.assetWidth;
-  if (scene.room) projectRoomFixture(scene.room, product, scene.imageWidth / scene.imageHeight);
+  if (scene.room)
+    projectRoomFixture(
+      scene.room,
+      product,
+      scene.imageWidth / scene.imageHeight,
+      undefined,
+      prepared.direction === undefined ? undefined : (viewDirection(prepared.direction) ?? '정면'),
+    );
   return product;
 }

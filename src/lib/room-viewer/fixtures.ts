@@ -5,6 +5,7 @@ import {
   DataTexture,
   DoubleSide,
   Group,
+  LinearFilter,
   Mesh,
   MeshBasicMaterial,
   Object3D,
@@ -32,6 +33,7 @@ import {
 } from '../product-direction';
 import { choosePhotoForView, viewPhotoNote } from './view-photo';
 import { fitPhotoWidth, photoAcross } from '../product-photo-size';
+import { liesOnWall } from '../room-fixtures';
 import { cameraQuarterAzimuth, snapQuarter } from './view-state';
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import { behindWall, productDepthMm, wallContactPlace, type WallSide } from '../room-wall-contact';
@@ -55,6 +57,8 @@ type DecodedImage = {
    * ground shadow or a background removal's faint edge below it counts in `bounds` but not here.
    */
   solidBottom?: number;
+  /** The photo's outline, black and soft, for its shadow on a wall (wallShadow). */
+  outline?: Texture;
 };
 /** Alpha above this is the product itself (`solidBottom`); `bounds` counts anything above 8. */
 const SOLID_ALPHA = 128;
@@ -132,6 +136,7 @@ export class ProductAssetCache {
           texture.colorSpace = SRGBColorSpace;
           const image = {
             texture,
+            outline: softOutline(canvas),
             canvas,
             aspect: bitmap.width / bitmap.height,
             bounds: {
@@ -144,6 +149,7 @@ export class ProductAssetCache {
           };
           if (this.disposed) {
             texture.dispose();
+            image.outline.dispose();
             canvas.width = canvas.height = 0;
             this.assertOpen();
           }
@@ -163,6 +169,7 @@ export class ProductAssetCache {
       void task.then(
         (image) => {
           image.texture.dispose();
+          image.outline?.dispose();
           image.canvas.width = image.canvas.height = 0;
         },
         () => {},
@@ -200,14 +207,85 @@ export function photoPlaneSize(
   return { width, height: width / aspect, across: across.across, estimated: across.estimated };
 }
 
-/** World bounds of what shows of a product (the visible meshes only), from their vertices. */
+/** World bounds of what shows of a product (the visible meshes only, not a shadow), from their vertices. */
 function visibleBounds(root: Object3D): Box3 {
   root.updateMatrixWorld(true);
   const box = new Box3();
   root.traverseVisible((node) => {
-    if (node instanceof Mesh && !node.userData.groundShadow) box.union(new Box3().setFromObject(node, true));
+    if (node instanceof Mesh && !node.userData.groundShadow && !node.userData.wallShadow)
+      box.union(new Box3().setFromObject(node, true));
   });
   return box;
+}
+/**
+ * A photo's outline as a soft black picture (its alpha, small and blurred): the shadow a product
+ * hanging on a wall casts on the wall just under and around it.
+ */
+function softOutline(source: HTMLCanvasElement): DataTexture {
+  const scale = 96 / Math.max(source.width, source.height);
+  const w = Math.max(1, Math.round(source.width * scale)),
+    h = Math.max(1, Math.round(source.height * scale));
+  const small = document.createElement('canvas');
+  small.width = w;
+  small.height = h;
+  const context = small.getContext('2d', { willReadFrequently: true })!;
+  context.drawImage(source, 0, 0, w, h);
+  const pixels = context.getImageData(0, 0, w, h).data;
+  small.width = small.height = 0;
+  let alpha = Float32Array.from({ length: w * h }, (_, i) => pixels[i * 4 + 3] / 255);
+  // Three box passes each way, 2 px: close to a gaussian of about 3 px (3% of the picture).
+  for (let pass = 0; pass < 3; pass++)
+    for (const [step, count, lines, stride] of [
+      [1, w, h, w],
+      [w, h, w, 1],
+    ] as const) {
+      const next = new Float32Array(w * h);
+      for (let line = 0; line < lines; line++)
+        for (let i = 0; i < count; i++) {
+          let sum = 0;
+          for (let k = -2; k <= 2; k++) {
+            const j = Math.max(0, Math.min(count - 1, i + k));
+            sum += alpha[line * stride + j * step];
+          }
+          next[line * stride + i * step] = sum / 5;
+        }
+      alpha = next;
+    }
+  // A data texture's first row is its bottom.
+  const data = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) data[((h - 1 - y) * w + x) * 4 + 3] = Math.round(alpha[y * w + x] * 255);
+  const texture = new DataTexture(data, w, h);
+  texture.magFilter = texture.minFilter = LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+/** How far below its photo a wall product's shadow falls (mm), as the 2D editor's default offset. */
+export const WALL_SHADOW_DROP_MM = 15;
+/**
+ * A wall product's shadow on its wall (docs/wall-contact-results-20261024.md): its photo's outline,
+ * soft, a little lower, between the photo and the wall. Not part of its size or place. `strength` is
+ * the fixture's shadow strength (0 none), as the 2D editor draws it.
+ */
+function wallShadow(geometry: PlaneGeometry, outline: Texture, strength: number): Mesh {
+  const mesh = new Mesh(
+    geometry.clone(),
+    new MeshBasicMaterial({
+      map: outline,
+      color: 0x000000,
+      transparent: true,
+      opacity: strength,
+      depthWrite: false,
+      toneMapped: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -2,
+    }),
+  );
+  mesh.position.set(0, -WALL_SHADOW_DROP_MM, -0.5);
+  mesh.userData.wallShadow = true;
+  mesh.renderOrder = 1;
+  return mesh;
 }
 let groundShadowTexture: DataTexture | undefined;
 /**
@@ -284,24 +362,45 @@ function wallPlane(room: RoomDimensions, wall: WallSide) {
         inward: wall === 'left' ? 1 : -1,
       };
 }
-/** The opaque part of the photos shown, along one world axis (min and max). */
-function contentAlong(root: Object3D, axis: 'x' | 'z') {
+/** The corners of the opaque part of the photos shown, in world space (a turned photo too). */
+function contentCorners(root: Object3D): Vector3[] {
   root.updateMatrixWorld(true);
-  let min = Infinity,
-    max = -Infinity;
+  const corners: Vector3[] = [];
   root.traverseVisible((node) => {
     const bounds = node.userData.contentBounds as ProductBounds | undefined;
     if (!(node instanceof Mesh) || !bounds) return;
     node.geometry.computeBoundingBox();
     const local = node.geometry.boundingBox!;
-    const w = local.max.x - local.min.x;
-    for (const x of [local.min.x + bounds.left * w, local.min.x + bounds.right * w]) {
-      const at = new Vector3(x, 0, local.min.z).applyMatrix4(node.matrixWorld)[axis];
-      min = Math.min(min, at);
-      max = Math.max(max, at);
-    }
+    const w = local.max.x - local.min.x,
+      h = local.max.y - local.min.y;
+    for (const x of [bounds.left, bounds.right])
+      for (const y of [bounds.top, bounds.bottom])
+        corners.push(
+          new Vector3(local.min.x + x * w, local.max.y - y * h, local.min.z).applyMatrix4(node.matrixWorld),
+        );
   });
+  return corners;
+}
+/** The opaque part of the photos shown, along one world axis (min and max). */
+function contentAlong(root: Object3D, axis: 'x' | 'z') {
+  let min = Infinity,
+    max = -Infinity;
+  for (const corner of contentCorners(root)) {
+    min = Math.min(min, corner[axis]);
+    max = Math.max(max, corner[axis]);
+  }
   return { min, max };
+}
+/** The way (degrees, as the planes turn to a camera) into the room from `wall`. */
+const intoRoom = (wall: WallSide) => (wall === 'back' ? 0 : wall === 'left' ? 90 : -90);
+/**
+ * The way (degrees, as the planes turn to a camera) a photo lying on `wall` faces: into the room, or
+ * out of it when the camera looks from behind that wall, so the photo never reads mirrored.
+ */
+function wallFacing(wall: WallSide, quarter: number) {
+  const into = intoRoom(wall);
+  const off = ((((quarter - into + 180) % 360) + 360) % 360) - 180;
+  return Math.abs(off) > 90 ? into + 180 : into;
 }
 /**
  * Moves a floor product's photo (not its footprint or ground shadow) against the wall behind it. Seen
@@ -323,23 +422,26 @@ function leanOnWall(content: Object3D, room: RoomDimensions, wall: WallSide, dep
 }
 
 /**
- * Stands a product on its face once the picture has decided which way it looks: the side that
- * meets a wall touches the wall's inner face (nothing inside the wall, nothing floating off it), a
- * product on a side wall stands centred on its place along the wall, one on the floor centred on
- * its place and on the floor. Its height on a wall and its place across the back wall are the
- * anchor's, as in the 2D editor. `gap` keeps a flat photo a hair off its wall: a photo that turns to
- * face a side wall would otherwise lie exactly on it, and a click would pick the wall, not the product. Returns whether
- * it then reaches beyond the room.
+ * Stands a product on its face once the picture has decided which way it looks. On a wall, what
+ * shows of it touches the wall's inner face, 1 mm in front of it so a click picks the product, not
+ * the wall (docs/wall-contact-results-20261024.md): a photo lying on the wall all over, a photo
+ * standing (facing the camera) by its wall side, never by its transparent margin. A photo standing on
+ * a side wall is centred on its place along the wall, one lying on it has its anchor there, as in the
+ * 2D editor; one on the floor is centred on its place and on the floor. Its height on a wall and its
+ * place across the back wall are the anchor's, as in the 2D editor. Returns whether what shows of it
+ * then reaches beyond the room.
  */
-function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: number): boolean {
+function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, flat: boolean): boolean {
   const box = visibleBounds(product);
   if (box.isEmpty()) return false;
   const wall = room.widthMm / 2;
   const move = new Vector3();
-  if (face === 'left') move.x = -wall + gap - box.min.x;
-  else if (face === 'right') move.x = wall - gap - box.max.x;
-  else if (face === 'back') move.z = gap - box.min.z;
-  if (face === 'left' || face === 'right' || face === 'floor')
+  if (face !== 'floor') {
+    const { axis, at, inward } = wallPlane(room, face);
+    const extent = contentAlong(product, axis);
+    if (Number.isFinite(extent.min)) move[axis] = at + inward - (inward > 0 ? extent.min : extent.max);
+  }
+  if (((face === 'left' || face === 'right') && !flat) || face === 'floor')
     move.z = product.position.z - (box.min.z + box.max.z) / 2;
   if (face === 'floor') {
     // What shows of the product meets the floor, not the picture's transparent margin around it.
@@ -350,7 +452,9 @@ function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, gap: 
   // Tiny moves are rounding only: leave the anchor's exact place alone.
   for (const axis of ['x', 'y', 'z'] as const)
     if (Math.abs(move[axis]) > 1e-6) product.position[axis] += move[axis];
-  const seated = visibleBounds(product);
+  // What shows of it: a photo's transparent margin may reach into a wall.
+  const corners = contentCorners(product);
+  const seated = corners.length ? new Box3().setFromPoints(corners) : visibleBounds(product);
   const slack = 1;
   return (
     seated.min.z < -slack ||
@@ -543,9 +647,10 @@ export async function buildViewerFixtures(
         product = new Group();
         product.position.copy(roomFacePoint(room, p.face, p.u, p.v));
         // No turn for the wall: the photo's angle name decides which way the product looks (as in 2D),
-        // then seatProduct stands it on its face.
+        // then seatProduct stands it on its face. On a wall the photo turns within its own plane.
+        const roll = (-fixture.rotation * Math.PI) / 180;
         const content = new Group();
-        content.rotation.z = (-fixture.rotation * Math.PI) / 180;
+        if (p.face === 'floor') content.rotation.z = roll;
         product.add(content);
         // The viewer and the AI input look from one of four sides, and a product is a flat photo
         // facing the camera: every photo of a horizontal direction gets its own plane (its size
@@ -575,7 +680,17 @@ export async function buildViewerFixtures(
               }),
             );
             plane.visible = index === shownIndex;
+            plane.rotation.order = 'YXZ';
+            // A photo lying on its wall casts its outline on it (shown only from the room side).
+            if (
+              p.face !== 'floor' &&
+              image.outline &&
+              fixture.shadow.opacity > 0 &&
+              liesOnWall(p.face, viewDirection(view.direction))
+            )
+              plane.add(wallShadow(plane.geometry, image.outline, Math.min(1, fixture.shadow.opacity)));
             plane.userData.viewIndex = index;
+            plane.userData.direction = viewDirection(view.direction);
             plane.userData.contentBounds = bounds;
             plane.userData.solidBottom = image.solidBottom;
             planes.set(index, plane);
@@ -590,19 +705,23 @@ export async function buildViewerFixtures(
           }
         }
         // Standing on its face is decided per side (the plane turns to the camera, so its extent
-        // along the wall changes); the first stand is the front's, as in 2D.
+        // along the wall changes); the first stand is the front's, as in 2D. On a wall a 정면 or 뒤
+        // photo (the product's face or back, flat on the wall) lies on it whatever the side; a side
+        // photo (its profile) turns to the camera (docs/wall-contact-results-20261024.md).
         const target = product,
           base = product.position.clone(),
-          back = p.face === 'back' ? 1 : 0;
-        // A photo turned to face a side wall lies on it: keep it a hair off (see seatProduct).
-        const gapAt = (quarter: number) =>
-          back || ((p.face === 'left' || p.face === 'right') && Math.abs(quarter) === 90) ? 1 : 0;
+          wallFace = p.face === 'floor' ? undefined : p.face;
+        const lies = (plane: Mesh) => !!wallFace && liesOnWall(p.face, plane.userData.direction);
         const stands = new Map<string, Vector3>();
         const depthMm = productDepthMm(fixture, materials);
         const standAt = (index: number, quarter: number) => {
           for (const [i, plane] of planes) {
             plane.visible = i === index;
-            plane.rotation.y = (quarter * Math.PI) / 180;
+            const yaw = wallFace && lies(plane) ? wallFacing(wallFace, quarter) : quarter;
+            plane.rotation.set(0, (yaw * Math.PI) / 180, wallFace ? roll : 0);
+            // Seen from behind its wall (the wall is cut away) the shadow would hang in the air.
+            for (const child of plane.children)
+              if (child.userData.wallShadow) child.visible = !!wallFace && yaw === intoRoom(wallFace);
           }
           content.position.set(0, 0, 0);
           const key = `${index}:${quarter}`;
@@ -610,7 +729,8 @@ export async function buildViewerFixtures(
           let beyond = false;
           if (!place) {
             target.position.copy(base);
-            beyond = seatProduct(target, room, p.face, gapAt(quarter));
+            const shown = planes.get(index);
+            beyond = seatProduct(target, room, p.face, !!shown && lies(shown));
             place = target.position.clone();
             stands.set(key, place);
           } else target.position.copy(place);
@@ -680,7 +800,8 @@ export async function buildViewerFixtures(
         fixture.occlusion.holes?.length
       )
         notice(fixture, '정면 사진의 가림 마스크는 새 방향에 적용하지 않으며 공간 깊이로 가림을 계산해요.');
-      if (fixture.shadow.opacity > 0)
+      // A photo on a wall casts its own outline on it, as in 2D (wallShadow).
+      if (fixture.shadow.opacity > 0 && (p.face === 'floor' || fixture.reconstruction))
         notice(fixture, '정면 사진의 접지 그림자는 회전하지 않으며 공간 광원과 형상으로 그림자를 계산해요.');
     } catch (error) {
       if (product) disposeTemplateModel(product);

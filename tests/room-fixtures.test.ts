@@ -8,6 +8,7 @@ import {
   productContentBounds,
   projectRoomFixture,
   roomPositionFromPhoto,
+  wallDrawnAt,
 } from '../src/lib/room-fixtures';
 import { normalizeRoomScene, resizedRoomScene, roomResetWarnings } from '../src/lib/room-editing';
 import { projectReferences } from '../src/lib/repositories/references';
@@ -138,6 +139,9 @@ describe('room-scaled 2D fixtures', () => {
           const anchor = structuredClone(product.anchor);
           projectRoomFixture(DEFAULT_ROOM, product, aspect);
           const world = roomFacePoint(DEFAULT_ROOM, face, placement.u, placement.v);
+          // On a wall the standing picture touches it by what shows of it, 1 mm off (wallDrawnAt).
+          if (face !== 'floor')
+            world[face === 'back' ? 'z' : 'x'] = wallDrawnAt(DEFAULT_ROOM, product, face, false);
           const origin = projectRoomPoint(DEFAULT_ROOM, world);
           const top = projectRoomPoint(
             DEFAULT_ROOM,
@@ -212,8 +216,9 @@ describe('room-scaled 2D fixtures', () => {
     explicit.fixtures[0].color.warmth = 0.5;
     normalizeRoomScene(before, explicit);
     expect(explicit.fixtures[0].roomPlacement).toMatchObject({ face: 'back', u: 0.1, v: 0.3, scale: 1.2 });
+    // On the back wall the picture stands 1 mm in front of it (wallDrawnAt).
     expect(explicit.fixtures[0].position).toEqual(
-      projectRoomPoint(DEFAULT_ROOM, roomFacePoint(DEFAULT_ROOM, 'back', 0.1, 0.3)),
+      projectRoomPoint(DEFAULT_ROOM, roomFacePoint(DEFAULT_ROOM, 'back', 0.1, 0.3).setZ(1)),
     );
     expect(explicit.fixtures[0].color.warmth).toBe(0.5);
   });

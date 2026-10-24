@@ -1,6 +1,7 @@
 import { Vector3 } from 'three';
-import type { RoomDefinition, RoomFace, RoomPlacement, ProductBounds } from './room-types';
+import type { RoomDefinition, RoomDimensions, RoomFace, RoomPlacement, ProductBounds } from './room-types';
 import type { AssetRecord, FixtureInstance, MaterialVersion, Point, Quad } from './types';
+import { viewDirection, type ProductDirection } from './product-direction';
 import { createRoomCamera, roomFacePoint } from './room-geometry';
 import { homography, transformPoint } from './render/math';
 import type { WallSide } from './room-wall-contact';
@@ -23,13 +24,27 @@ function project(room: RoomDefinition, world: Vector3, aspect: number): Point {
   const p = world.clone().project(camera(room, aspect));
   return { x: (p.x + 1) / 2, y: (1 - p.y) / 2 };
 }
-export function roomPositionFromPhoto(room: RoomDefinition, face: RoomFace, photo: Point, aspect: number) {
+/**
+ * The face place (u, v) of a point drawn on the picture. `across`: the drawing stands off its wall
+ * (a wall product, see wallDrawnAt), at this coordinate on the wall's axis.
+ */
+export function roomPositionFromPhoto(
+  room: RoomDefinition,
+  face: RoomFace,
+  photo: Point,
+  aspect: number,
+  across?: number,
+) {
   const corners = [
     [0, 0],
     [1, 0],
     [1, 1],
     [0, 1],
-  ].map(([u, v]) => project(room, roomFacePoint(room, face, u, v), aspect)) as Quad;
+  ].map(([u, v]) => {
+    const point = roomFacePoint(room, face, u, v);
+    if (across !== undefined && face !== 'floor') point[face === 'back' ? 'z' : 'x'] = across;
+    return project(room, point, aspect);
+  }) as Quad;
   const uv = transformPoint(homography(corners), photo);
   return { u: clamp(uv.x), v: clamp(uv.y) };
 }
@@ -57,31 +72,67 @@ export function floorShift(fixture: FixtureInstance, height = fixture.height): n
   return below < 0 || sinkMm <= snap ? below : 0;
 }
 /**
+ * Whether a wall product's photo lies on its wall (docs/wall-contact-results-20261024.md): its 정면
+ * and 뒤 photos show its face and its back, which are flat on the wall, so they are drawn on the wall
+ * in perspective. A side photo (its profile) stands as a picture facing the camera. Unknown (no
+ * material read yet): a standing picture.
+ */
+export function liesOnWall(face: RoomFace, direction: ProductDirection | undefined): boolean {
+  return face !== 'floor' && (direction === '정면' || direction === '뒤');
+}
+/** The direction of the photo a fixture shows in 2D (a retired 위·아래 photo reads as 정면), once its material is read. */
+export function shownDirection(
+  fixture: FixtureInstance,
+  materials: Record<string, Pick<MaterialVersion, 'views'> | undefined>,
+): ProductDirection | undefined {
+  const material = materials[fixture.materialVersionId];
+  if (!material) return undefined;
+  return viewDirection(material.views[fixture.viewIndex]?.direction) ?? '정면';
+}
+/**
+ * Where the 2D drawing puts a photo product's anchor on its wall's axis (z for the back wall, x for a
+ * side wall; mm), as the 3D room seats it: a picture lying on the wall 1 mm in front of it; one
+ * standing (facing the camera) so that the wall side of what shows of it is 1 mm in front of the
+ * wall. The 1 mm lets a click pick the product, not the wall.
+ */
+export function wallDrawnAt(room: RoomDimensions, fixture: FixtureInstance, wall: WallSide, onWall: boolean) {
+  const placement = fixture.roomPlacement!;
+  const b = placement.contentBounds;
+  const imageWidthMm = pictureMm(placement).width;
+  if (wall === 'back') return 1;
+  if (onWall) return wall === 'left' ? -room.widthMm / 2 + 1 : room.widthMm / 2 - 1;
+  return wall === 'left'
+    ? -room.widthMm / 2 + 1 + (fixture.anchor.x - b.left) * imageWidthMm
+    : room.widthMm / 2 - 1 - (b.right - fixture.anchor.x) * imageWidthMm;
+}
+/**
  * The product keeps its image aspect; what shows of it (its visible alpha bounds) is drawn at its
  * registered height, as in the 3D room (product-photo-size.ts). On the
  * floor what shows of it stands on the floor point, as in the 3D room (room-viewer/fixtures.ts): one
  * floating above it because of its anchor is put down, one sinking a little is lifted, one sinking
  * more is left as its anchor says. `wall` (a product kept against that wall, room-wall-contact.ts)
  * draws it on the wall as the 3D room does from the front.
+ *
+ * A photo product on a wall always touches it (wallDrawnAt). `direction` is the shown photo's: a
+ * 정면 or 뒤 photo on a side wall is drawn on the wall in perspective (`projectedQuad`, as a planar
+ * standard model is), its anchor on its place; on the back wall that is the same picture as one
+ * facing the camera.
  */
 export function projectRoomFixture(
   room: RoomDefinition,
   fixture: FixtureInstance,
   aspect: number,
   wall?: WallSide,
+  direction?: ProductDirection,
 ): void {
   const placement = fixture.roomPlacement;
   if (!placement) return;
   const b = placement.contentBounds;
-  const floorPhoto = placement.face === 'floor' && !fixture.reconstruction;
-  const imageWidthMm = pictureMm(placement).width;
+  const photo = !fixture.reconstruction;
+  const side = !photo ? undefined : placement.face === 'floor' ? wall : placement.face;
+  const onWall = photo && placement.face !== 'back' && liesOnWall(placement.face, direction);
   const origin = roomFacePoint(room, placement.face, placement.u, placement.v);
-  if (floorPhoto && wall === 'back') origin.z = 1;
-  else if (floorPhoto && wall)
-    origin.x =
-      wall === 'left'
-        ? -room.widthMm / 2 + 1 + (fixture.anchor.x - b.left) * imageWidthMm
-        : room.widthMm / 2 - 1 - (b.right - fixture.anchor.x) * imageWidthMm;
+  if (side) origin[side === 'back' ? 'z' : 'x'] = wallDrawnAt(room, fixture, side, onWall);
   const p = project(room, origin, aspect);
   const top = project(
     room,
@@ -102,6 +153,37 @@ export function projectRoomFixture(
     throw new Error('제품이 공간에 비해 너무 커요. 등록 규격과 공간 크기를 확인해 주세요.');
   p.y -= floorShift(fixture, height);
   fixture.position = p;
+  if (onWall) {
+    // The whole picture on the wall, its corners top-left, top-right, bottom-right, bottom-left.
+    const picture = pictureMm(placement);
+    const along = placement.face === 'left' ? new Vector3(0, 0, -1) : new Vector3(0, 0, 1);
+    const up = new Vector3(0, 1, 0);
+    const angle = (fixture.rotation * Math.PI) / 180;
+    const axisX = along.clone().multiplyScalar(Math.cos(angle)).addScaledVector(up, -Math.sin(angle));
+    const axisY = along.clone().multiplyScalar(Math.sin(angle)).addScaledVector(up, Math.cos(angle));
+    const corner = (x: number, y: number) =>
+      project(
+        room,
+        origin
+          .clone()
+          .addScaledVector(axisX, x * picture.width)
+          .addScaledVector(axisY, y * picture.height),
+        aspect,
+      );
+    const a = fixture.anchor;
+    fixture.projectedQuad = [
+      corner(-a.x, a.y),
+      corner(1 - a.x, a.y),
+      corner(1 - a.x, a.y - 1),
+      corner(-a.x, a.y - 1),
+    ] as Quad;
+    const xs = fixture.projectedQuad.map((c) => c.x),
+      ys = fixture.projectedQuad.map((c) => c.y);
+    fixture.width = Math.max(...xs) - Math.min(...xs);
+    fixture.height = Math.max(...ys) - Math.min(...ys);
+    return;
+  }
+  if (photo) delete fixture.projectedQuad;
   fixture.width = width;
   fixture.height = height;
 }

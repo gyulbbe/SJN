@@ -622,27 +622,29 @@ describe('angle names decide the way a product stands on its face', () => {
     }
   });
 
-  it('a flat 정면 photo on the left wall stands facing the front with its edge on the wall', async () => {
+  it('a 정면 photo on the left wall lies on the wall, 1 mm in front of it, its anchor on its place', async () => {
+    // The product's face is flat on the wall (docs/wall-contact-results-20261024.md): it does not
+    // stand out into the room facing the camera (it did until 2026-10-24).
     const result = await photoBuild(placed('left'), '정면');
     const b = bounds(result.group.children[0]);
-    expect(b.min.x).toBeCloseTo(-half, 6);
-    expect(b.getSize(new Vector3()).x).toBeCloseTo(400, 6);
-    expect(b.getSize(new Vector3()).z).toBeCloseTo(0, 6);
-    // Centred on its place along the wall (z 1200), as high as the anchor says.
-    expect(b.min.z).toBeCloseTo(1200, 6);
+    expect(b.min.x).toBeCloseTo(-half + 1, 6);
+    expect(b.getSize(new Vector3()).x).toBeCloseTo(0, 6);
+    expect(b.getSize(new Vector3()).z).toBeCloseTo(400, 6);
+    // Its anchor (the middle) on its place along the wall (z 1200), as high as the anchor says.
+    expect((b.min.z + b.max.z) / 2).toBeCloseTo(1200, 6);
     expect((b.min.y + b.max.y) / 2).toBeCloseTo(1200, 4);
-    // 정면 does not suit the left wall: it says so, and says where the product looks.
+    // 정면 does not suit the left wall as well as its profile: it says so, and says what it looks like.
     const note = result.notices.find((n) => n.message.includes('각도 사진이 제품이 놓인 방향이에요'));
     expect(note?.message).toContain('‘정면’ 각도 사진');
-    expect(note?.message).toContain('정면(열린 쪽)을 봐요');
+    expect(note?.message).toContain('벽에 붙어 정면 보기에서 비스듬히 보여요');
     expect(note?.message).toContain('어울리는 각도가 아니에요');
     result.dispose();
   });
 
-  it('a 오른쪽 photo on the left wall suits it: no warning, the same stand, looking into the room', async () => {
+  it('a 오른쪽 photo on the left wall suits it: no warning, its profile stands with its back on the wall', async () => {
     const result = await photoBuild(placed('left'), '오른쪽');
     const b = bounds(result.group.children[0]);
-    expect(b.min.x).toBeCloseTo(-half, 6);
+    expect(b.min.x).toBeCloseTo(-half + 1, 6);
     const note = result.notices.find((n) => n.message.includes('각도 사진이 제품이 놓인 방향이에요'));
     expect(note?.message).toContain('방 안쪽을 봐요');
     expect(note?.message).not.toContain('어울리는 각도가 아니에요');
@@ -684,17 +686,19 @@ describe('angle names decide the way a product stands on its face', () => {
     }
   });
 
-  it('name × wall: a flat photo has its edge on the wall for every name, never inside it, never off it', async () => {
+  it('name × wall: a photo touches its wall 1 mm off for every name, never inside it, never off it', async () => {
     for (const name of ['정면', '오른쪽', '왼쪽', '뒤'] as const) {
       // Every photo is the registered height (800) across as it shows it: this photo (aspect 0.5)
-      // is 400 across whatever its name (docs/product-scale-results-20261024.md).
-      const across = 400;
+      // is 400 across whatever its name (docs/product-scale-results-20261024.md). A 정면 or 뒤 photo
+      // lies on a side wall (400 along it); a side photo stands out of it (400 into the room).
+      const lies = name === '정면' || name === '뒤';
       const left = bounds((await photoBuild(placed('left'), name)).group);
-      expect(left.min.x).toBeCloseTo(-half, 4);
-      expect(left.getSize(new Vector3()).x).toBeCloseTo(across, 4);
+      expect(left.min.x).toBeCloseTo(-half + 1, 4);
+      expect(left.getSize(new Vector3()).x).toBeCloseTo(lies ? 0 : 400, 4);
+      expect(left.getSize(new Vector3()).z).toBeCloseTo(lies ? 400 : 0, 4);
       expect((left.min.z + left.max.z) / 2).toBeCloseTo(1200, 4);
       const right = bounds((await photoBuild(placed('right'), name)).group);
-      expect(right.max.x).toBeCloseTo(half, 4);
+      expect(right.max.x).toBeCloseTo(half - 1, 4);
       const back = bounds((await photoBuild(placed('back'), name)).group);
       expect(back.min.z).toBeCloseTo(1, 4);
       expect((back.min.x + back.max.x) / 2).toBeCloseTo(0, 4);
