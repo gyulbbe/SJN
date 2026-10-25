@@ -1,4 +1,5 @@
 import { getRuntimeEnvironment } from '@/lib/platform/runtime';
+import { pooledBinding, type AiAccountLabel } from '@/lib/ai-pool/pool';
 import { readImageHeader } from '@/lib/images';
 import { assertCloudGemmaRequest } from '@/lib/reconstruction/cloud-gemma-server';
 import {
@@ -19,6 +20,9 @@ type FluxBinding = {
     input: { multipart: { body: ReadableStream; contentType: string } },
     options: { returnRawResponse: true; signal: AbortSignal },
   ) => Promise<Response>;
+  /** Who answered the last call (`extra-1` / `own`) and who was passed over, by number only. */
+  account?: AiAccountLabel;
+  skipped?: string[];
 };
 export function fail(message: string, status = 400): never {
   throw new CloudGemmaError(message, status === 400 ? 'invalid_input' : 'invalid_response', status);
@@ -58,11 +62,18 @@ export async function bounded(message: Request | Response, limit: number, signal
   }
   return result;
 }
-/** Same-origin and login checks, then the Workers AI binding (absent in a plain Next dev server). */
+/**
+ * Same-origin and login checks, then Workers AI: the extra account first, then the binding (absent in
+ * a plain Next dev server, where the extra account alone can answer).
+ */
 export async function openFluxRequest(request: Request, environment: FluxEnvironment) {
   await assertCloudGemmaRequest(request, environment);
-  const ai = environment.AI as FluxBinding | undefined;
-  if (environment.platform !== 'cloudflare' || typeof ai?.run !== 'function')
+  const own = environment.AI as FluxBinding | undefined;
+  const ai = pooledBinding<FluxBinding>(
+    environment,
+    environment.platform === 'cloudflare' && typeof own?.run === 'function' ? own : undefined,
+  );
+  if (!ai)
     throw new CloudGemmaError(
       'Cloudflare AI 연결이 없는 실행 환경이에요. Cloudflare에 배포하거나 Workers 개발 서버에서 실행해 주세요.',
       'binding_unavailable',
@@ -157,6 +168,8 @@ export async function callFlux(input: {
     diagnostics.upstreamStatus = response.status;
     diagnostics.providerRequestId =
       response.headers.get('cf-aig-log-id') ?? response.headers.get('cf-ray') ?? undefined;
+    diagnostics.aiAccount = ai.account;
+    if (ai.skipped?.length) diagnostics.aiSkipped = ai.skipped;
     const raw = await bounded(response, 12 * 1024 * 1024, controller.signal, 502);
     const text = new TextDecoder().decode(raw);
     if (!response.ok) {
@@ -198,6 +211,8 @@ export async function callFlux(input: {
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff',
         'X-SJN-Image-Model': FLUX_MODEL,
+        // Which account answered, by number only (docs/ai-account-pool-results-20261025.md).
+        ...(ai.account ? { 'X-SJN-AI-Account': ai.account } : {}),
       },
     });
   } catch (error) {

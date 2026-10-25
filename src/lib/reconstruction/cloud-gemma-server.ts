@@ -1,3 +1,4 @@
+import { pooledBinding, type AiAccountLabel } from '@/lib/ai-pool/pool';
 import {
   CLOUD_GEMMA_GROUPED_INVENTORY_METADATA,
   cloudGemmaGroupedInventoryJsonSchema,
@@ -117,6 +118,7 @@ const MAX_REQUEST = MAX_IMAGE * 2 + 800_000;
 const MAX_RESPONSE = 240_000;
 const DEADLINE_MS = 120_000;
 type Environment = ReturnType<typeof getRuntimeEnvironment>;
+export type PooledGemmaBinding = CloudGemmaBinding & { account?: AiAccountLabel; skipped: string[] };
 const metadata = {
   provider: CLOUD_GEMMA_PROVIDER,
   modelId: CLOUD_GEMMA_MODEL,
@@ -185,21 +187,26 @@ export async function assertCloudGemmaRequest(request: Request, environment: Env
   }
   throw new CloudGemmaError('Google 로그인과 D1 연결 설정이 필요해요.', 'authentication_unavailable', 503);
 }
-export function binding(environment: Environment): CloudGemmaBinding {
-  const ai = environment.AI;
-  if (
-    environment.platform !== 'cloudflare' ||
-    !ai ||
-    typeof ai !== 'object' ||
-    !('run' in ai) ||
-    typeof ai.run !== 'function'
-  )
+/** Workers AI: the extra account first, then this Worker's binding (docs/ai-account-pool-results-20261025.md). */
+export function binding(environment: Environment): PooledGemmaBinding {
+  const own = environment.AI;
+  const ai = pooledBinding<CloudGemmaBinding>(
+    environment,
+    environment.platform === 'cloudflare' &&
+      own &&
+      typeof own === 'object' &&
+      'run' in own &&
+      typeof own.run === 'function'
+      ? (own as CloudGemmaBinding)
+      : undefined,
+  );
+  if (!ai)
     throw new CloudGemmaError(
       '이 실행 환경에 Cloudflare Workers AI 바인딩이 없어요. Cloudflare 실행 환경에서 연결해 주세요.',
       'binding_unavailable',
       503,
     );
-  return ai as CloudGemmaBinding;
+  return ai;
 }
 /** Checks binding and access only: neither a model request nor a promise of quota/auth upstream readiness. */
 export async function cloudGemmaAvailability(request: Request, environment = getRuntimeEnvironment()) {
@@ -650,6 +657,8 @@ export async function runCloudGemmaModel(request: Request, environment = getRunt
     diagnostics.upstreamStatus = response.status;
     diagnostics.providerRequestId =
       response.headers.get('cf-aig-log-id') ?? response.headers.get('cf-ray') ?? undefined;
+    diagnostics.aiAccount = ai.account;
+    if (ai.skipped.length) diagnostics.aiSkipped = ai.skipped;
     const bytes = await boundedBytes(response, MAX_RESPONSE, signal, 'response');
     let body: unknown;
     const text = new TextDecoder().decode(bytes);

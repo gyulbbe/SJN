@@ -183,6 +183,8 @@ export async function runFluxCheck(request: Request, environment = getRuntimeEnv
     diagnostics.upstreamStatus = response.status;
     diagnostics.providerRequestId =
       response.headers.get('cf-aig-log-id') ?? response.headers.get('cf-ray') ?? undefined;
+    diagnostics.aiAccount = ai.account;
+    if (ai.skipped.length) diagnostics.aiSkipped = ai.skipped;
     const text = new TextDecoder().decode(await boundedBytes(response, MAX_RESPONSE, signal, 'response'));
     let body: unknown;
     try {
@@ -203,7 +205,13 @@ export async function runFluxCheck(request: Request, environment = getRuntimeEnv
         promptRevision: FLUX_CHECK_PROMPT_REVISION,
         elapsedMs: Math.round(performance.now() - started),
       },
-      { headers: { 'Cache-Control': 'private, no-store' } },
+      {
+        headers: {
+          'Cache-Control': 'private, no-store',
+          // Which account answered, by number only (docs/ai-account-pool-results-20261025.md).
+          ...(ai.account ? { 'X-SJN-AI-Account': ai.account } : {}),
+        },
+      },
     );
   } catch (error) {
     const failure = request.signal.aborted
