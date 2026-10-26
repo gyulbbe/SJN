@@ -10,7 +10,7 @@
 
 ## 연결
 
-- 기존 Wrangler `AI` 바인딩을 쓰되 AI Gateway(`sjn-gateway`)는 거치지 않는다. FLUX는 입력 이미지를 multipart 스트림으로 받는데, 게이트웨이는 스트림 본문을 받지 않는다(`AI Gateway does not support ReadableStreams yet.`). 게이트웨이를 거치던 이전 코드는 운영에서 모든 변환이 "Cloudflare AI 요청을 완료하지 못했어요"로 실패했다. Gemma 설비 분석은 JSON 요청이라 지금처럼 게이트웨이를 쓴다. 추가 토큰 설정은 없다.
+- 기존 Wrangler `AI` 바인딩을 쓰되 AI Gateway(`sjn-gateway`)는 거치지 않는다. FLUX는 입력 이미지를 multipart 스트림으로 받는데, 게이트웨이는 스트림 본문을 받지 않는다(`AI Gateway does not support ReadableStreams yet.`). 게이트웨이를 거치던 이전 코드는 운영에서 모든 변환이 "Cloudflare AI 요청을 완료하지 못했어요"로 실패했다. Gemma 설비 분석은 JSON 요청이라 지금처럼 게이트웨이를 쓴다. 2026-10-25부터 모든 FLUX·Gemma 호출은 공통 호출기(`src/lib/ai-pool/pool.ts`)를 거쳐 추가 계정(`AI_EXTRA_1_*`, REST)을 먼저 쓰고, 하루 할당을 다 쓰면 이 바인딩을 쓴다. 설정이 없으면 예전과 같다([결과](ai-account-pool-results-20261025.md)).
 - POST `/api/export/photoreal`: 서버는 `@cf/black-forest-labs/flux-2-klein-4b`만 호출한다. 요청 필드는 `image`·`seed`(필수)와 `scene`(선택)이다. 그 밖의 필드(모델 선택 `model`, 자유 `prompt`, 제품 이미지 `reference_1` 등)나 같은 필드 중복은 추론 전에 400으로 거부한다. 요청 본문 상한은 이미지 2MB + 장면 16KB다.
 - 기존 Gemma의 동일 출처 검사와 D1 로그인 / 명시적 로컬 저장 모드 접근 정책을 재사용한다.
 - 일반 Next 개발 서버에는 Workers AI 바인딩이 없으므로 연결 필요 오류를 표시한다. 실제 사용은 Workers 개발 서버 또는 Cloudflare 배포에서 한다.

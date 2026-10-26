@@ -64,6 +64,7 @@ npm run test:background-removal
 
 - 계정 저장과 인증은 `/api/d1/**`, `/api/auth/**`를 사용한다. 초기 설정·연결 실패는 계정 작업공간을 차단한다. 공개 메인·체험은 로그인 준비와 분리하며 `/api/catalog/{materials,images,placement}`는 현재 활성 공용 표시·배치 자료만 읽는다. 이 API도 D1/R2 연결은 필요하지만 OAuth secret에는 의존하지 않는다. 개인 원본·메시·과거 버전과 관리자/AI API는 공개하지 않는다.
 - 과거 `/api/cloud/**`는 410 응답이며 Supabase 실행 어댑터·SDK는 제거했다. 기존 SQL과 원본 데이터는 보존한다.
+- 선택 secret `AI_EXTRA_1_ACCOUNT_ID`·`AI_EXTRA_1_TOKEN`(·`AI_EXTRA_1_GATEWAY`)은 Workers AI 추가 계정이다. 없으면 `AI` 바인딩만 쓰므로 배포 순서와 상관없다([설정](cloudflare-ai-usage.md#추가-계정-2026-10-25)).
 - D1/R2와 인증 설정이 소스에 있다는 사실만으로 실제 Worker에 반영됐다고 판단하지 않는다. 배포된 버전의 바인딩·서버 secret·준비 상태를 각각 확인한다.
 - Vite의 Worker 전용 설정은 vinext의 `typeof window` 최적화를 수정한다. TensorFlow.js가 Web Worker에서 `window` 대신 실제 전역 객체를 선택하게 하며, 메인 화면의 환경 정의는 복사하여 보존한다.
 - 로컬 Workers 상태 파일은 `.wrangler/state`에 저장하여 Windows에서 `dist` 재빌드 시 파일 잠금을 피한다. 미리보기 서버는 빌드 전에 종료한다.

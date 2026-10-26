@@ -31,6 +31,22 @@
 
 2026-09-25 구현 시점에는 실제 토큰이 없어 모의 응답으로만 검증했다. `totalNeurons` 필드 이름과 7일 범위 허용 여부는 토큰 등록 뒤 첫 실제 조회에서 확인해야 한다(미확인). 7일 범위를 받지 못하면 오늘 값만 표시한다.
 
+## 추가 계정 (2026-10-25)
+
+다른 Cloudflare 계정의 무료 할당을 먼저 쓰고, 그 계정이 하루 할당을 다 쓰면 이 계정(`AI` 바인딩)을 쓴다. 설계와 시험은 [결과](ai-account-pool-results-20261025.md)에 있다.
+
+1. **토큰 만들기(추가 계정 주인이 한다):** Cloudflare 대시보드 → My Profile → API Tokens → Create Custom Token. 권한은 **Account · Workers AI · Read**, **Account · Workers AI · Edit**만 두고, 계정 범위는 그 계정 하나만 둔다. 대시보드 템플릿 "Create a Workers AI API Token"도 된다.
+2. **이름**
+   - `AI_EXTRA_1_ACCOUNT_ID`: 그 계정의 32자리 계정 ID
+   - `AI_EXTRA_1_TOKEN`: 위 토큰
+   - `AI_EXTRA_1_GATEWAY`(선택): 그 계정에 AI Gateway를 만들었을 때 그 이름. 없으면 Gemma도 게이트웨이 없이 바로 부른다.
+3. **넣기**
+   - 운영: `npx wrangler secret put AI_EXTRA_1_ACCOUNT_ID`, `npx wrangler secret put AI_EXTRA_1_TOKEN`(또는 대시보드 Workers → 설정 → Variables and Secrets). 값은 채팅·소스·문서에 넣지 않는다.
+   - 로컬: `.dev.vars`에 같은 이름으로 `AI_EXTRA_1_ACCOUNT_ID=<계정ID>`, `AI_EXTRA_1_TOKEN=<토큰>`. 추가 계정은 REST로 부르므로 원격 AI 바인딩 없는 로컬 개발 서버에서도 실제로 호출된다(그 계정의 할당을 쓴다).
+4. **동작:** 하루 할당 소진(3036)과 토큰 거절(401·403)에서만 다음 계정으로 넘어간다. 모든 계정이 소진됐을 때만 화면에 한도 안내가 나온다. 처리한 계정은 응답 진단·헤더 `X-SJN-AI-Account`에 `extra-1` / `own`으로만 보인다.
+5. **토큰을 회수하면:** 그 계정은 401·403을 주므로 건너뛰고 이 계정이 답한다. 화면에는 아무것도 보이지 않고 진단에 `extra-1:auth`가 남는다. 값을 지우면 예전과 똑같이 이 계정만 쓴다.
+6. **사용량:** `/admin/ai-usage`는 이 계정만 보인다. 추가 계정 사용량은 그 계정 대시보드(Workers AI)에서 본다.
+
 ## 이번에 측정한 규모
 
 2026-09-16 17:33 KST 기준 계정 Analytics 집계는 **442회, 8,047.727 Neurons(80.48%)**였다. 이는 당시의 기록이며 현재 남은 양을 보장하지 않는다. 초기 thinking/별도 관측 실험도 포함하므로 실제 사용자 사진 처리 횟수와 다르다.
