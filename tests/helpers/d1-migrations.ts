@@ -47,4 +47,5 @@ export const allD1Migrations = [
   '0007_username_auth.sql',
   '0008_query_indexes.sql',
   '0009_material_list.sql',
+  '0010_material_order.sql',
 ];

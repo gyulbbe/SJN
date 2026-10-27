@@ -293,11 +293,22 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     'd1_checks',
     'd1_maintenance',
   ];
-  const rows = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table'").all<{
+  // 0010: the list orders read these indexes by name (INDEXED BY) and these triggers keep them right.
+  const ordered = [
+    ...['lane', 'category', 'all', 'personal', 'facet'].flatMap((part) =>
+      ['prio', 'name', 'new'].map((family) => `d1_list_${part}_${family}`),
+    ),
+    'd1_material_list_priority',
+    'd1_material_list_created',
+  ];
+  const rows = await env.DB.prepare(
+    "SELECT name FROM sqlite_master WHERE type IN ('table','index','trigger')",
+  ).all<{
     name: string;
   }>();
   const present = new Set(rows.results.map((row) => row.name));
-  if (names.some((name) => !present.has(name))) throw new Error('D1 storage migrations are incomplete');
+  if ([...names, ...ordered].some((name) => !present.has(name)))
+    throw new Error('D1 storage migrations are incomplete');
   const adminVersion = await env.DB.prepare('SELECT version FROM d1_admin_meta WHERE id=1').first<{
     version: number;
   }>();
@@ -324,19 +335,19 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     env.DB.prepare(
       'SELECT id,owner_id,object_key,source_asset_id,metadata_json,content_hash,deleting FROM d1_assets LIMIT 0',
     ),
-    env.DB.prepare('SELECT id,owner_id,scope,current_version_id,active FROM d1_materials LIMIT 0'),
+    env.DB.prepare('SELECT id,owner_id,scope,current_version_id,active,priority FROM d1_materials LIMIT 0'),
     env.DB.prepare(
       'SELECT id,material_id,version,payload_json,category,view_count FROM d1_material_versions LIMIT 0',
     ),
     env.DB.prepare('SELECT project_id,asset_id FROM d1_project_assets LIMIT 0'),
     env.DB.prepare('SELECT project_id,version_id FROM d1_project_versions LIMIT 0'),
     env.DB.prepare('SELECT version_id,asset_id FROM d1_material_assets LIMIT 0'),
-    // 0009: the paged lists read these (no meta version: the migration only adds).
+    // 0009 and 0010: the paged lists read these (no meta version: the migrations only add).
     env.DB.prepare(
-      'SELECT version_id,material_id,owner_id,scope,purpose,active,updated_at,is_current,lane,category,code,class,search_catalog,search_picker,search_library FROM d1_material_list LIMIT 0',
+      'SELECT version_id,material_id,owner_id,scope,purpose,active,updated_at,is_current,lane,category,code,class,search_catalog,search_picker,search_library,prio,name_key,created_at FROM d1_material_list LIMIT 0',
     ),
     env.DB.prepare(
-      'SELECT version_id,facet,value,material_id,scope,active,is_current,updated_at,lane,category,class FROM d1_material_list_facets LIMIT 0',
+      'SELECT version_id,facet,value,material_id,scope,active,is_current,updated_at,lane,category,class,prio,name_key,created_at FROM d1_material_list_facets LIMIT 0',
     ),
     env.DB.prepare('SELECT active,lane,category,class,facet,value,n FROM d1_material_list_counts LIMIT 0'),
     env.DB.prepare(

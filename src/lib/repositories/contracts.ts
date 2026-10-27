@@ -48,6 +48,8 @@ export interface MaterialRepository {
   create(input: MaterialInput): Promise<MaterialVersion>;
   update(id: string, input: MaterialInput, expectedVersionId: string): Promise<MaterialVersion>;
   setActive(id: string, active: boolean): Promise<void>;
+  /** Administrator: a shared material's priority in the lists (1 first), or null to clear it. */
+  setPriority?(id: string, priority: number | null): Promise<{ priority: number | null }>;
 }
 export interface AssetRepository {
   put(asset: AssetRecord): Promise<void>;

@@ -1,6 +1,6 @@
 import { resolveCatalogInput, catalogStatements } from '../catalog/server';
 import { materialCard } from '../catalog/cards';
-import { materialPageQuerySchema } from '../catalog/paging';
+import { materialPageQuerySchema, prioritySchema } from '../catalog/paging';
 import { matchesReconstruction } from '../repositories/batches';
 import { z } from 'zod';
 import { stripLegacyMaterialImages } from '../material-images';
@@ -23,7 +23,14 @@ import {
   type Context,
 } from './database';
 import { boundedDocument, conflict, D1StorageError, invalid, notFound } from './http';
-import { CLASSES, libraryCounts, listPage, type ListedRow, type ListGroup } from './material-list';
+import {
+  CLASSES,
+  libraryCounts,
+  listPage,
+  NO_PRIORITY,
+  type ListedRow,
+  type ListGroup,
+} from './material-list';
 import { listedSources, listImagePage } from './list-images';
 
 interface MaterialRow {
@@ -367,7 +374,13 @@ export async function materials(
       });
       return {
         ...page,
-        items: page.items.map((row) => materialCard(listedMaterial(row), readVersion(row.payload_json))),
+        items: page.items.map((row) =>
+          materialCard(
+            listedMaterial(row),
+            readVersion(row.payload_json),
+            row.prio < NO_PRIORITY ? row.prio : null,
+          ),
+        ),
         ...(request.view === 'library' && !query.cursor
           ? { counts: await libraryCounts(ctx.env.DB, ctx.actor.id, request.active) }
           : {}),
@@ -535,6 +548,27 @@ export async function materials(
         ...mutationStatement(ctx, { value: null }),
       ]);
       return null;
+    }
+    // An administrator's priority on a shared material (docs/material-order-results-20261027.md): no
+    // new version and no updated_at, so the list orders other than priority do not move.
+    case 'setPriority': {
+      const row = await materialFor(ctx, identifierSchema.parse(body.id));
+      canChange(ctx, row);
+      if (row.scope !== 'shared') throw invalid('우선순위는 공용 자재에만 정할 수 있어요.');
+      const priority = prioritySchema.parse(body.priority);
+      await batch(ctx, [
+        sql(
+          ctx,
+          `UPDATE d1_materials SET priority=? WHERE id=? AND scope='shared' AND purpose='catalog' AND ?=1
+        AND priority IS NOT ?`,
+          priority,
+          row.id,
+          Number(ctx.actor.isAdmin),
+          priority,
+        ),
+        ...mutationStatement(ctx, { value: { priority } }),
+      ]);
+      return { priority };
     }
     default:
       throw invalid('지원하지 않는 자재 작업이에요.');

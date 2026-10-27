@@ -5,6 +5,32 @@ import { emptyFacets, facetKeys, type FacetSelection } from './facets';
 /** One page of a material list; also the server's largest page (docs/material-paging-results-20261022.md). */
 export const PAGE_SIZE = 48;
 export const MAX_SEARCH = 100;
+/** A cursor carries the last item's name in a name or priority order (up to 200 characters). */
+export const MAX_CURSOR = 4096;
+
+/**
+ * List orders (docs/material-order-results-20261027.md). `priority` (the default) shows the shared
+ * materials an administrator numbered first, smallest number first, then the rest by name.
+ */
+export const materialSorts = ['priority', 'newest', 'name', 'nameDesc'] as const;
+export type MaterialSort = (typeof materialSorts)[number];
+export const DEFAULT_SORT: MaterialSort = 'priority';
+export const sortLabels: Record<MaterialSort, string> = {
+  priority: '우선순위',
+  newest: '최신 등록순',
+  name: '이름 오름차순',
+  nameDesc: '이름 내림차순',
+};
+/** The editor's narrow panel. */
+export const shortSortLabels: Record<MaterialSort, string> = {
+  priority: '우선순위',
+  newest: '최신순',
+  name: '이름순',
+  nameDesc: '이름 역순',
+};
+/** An administrator's priority on a shared material: 1 comes first; none is null. */
+export const MAX_PRIORITY = 9999;
+export const prioritySchema = z.number().int().min(1).max(MAX_PRIORITY).nullable();
 
 const facetValuesSchema = z.array(z.string().min(1).max(120)).max(50);
 export const facetSelectionSchema = z
@@ -22,9 +48,11 @@ export const materialPageQuerySchema = z
     usage: z.enum(['wall', 'floor']).optional(),
     q: z.string().max(MAX_SEARCH).optional(),
     facets: facetSelectionSchema.optional(),
+    /** The list order; `priority` when left out. */
+    sort: z.enum(materialSorts).optional(),
     /** Ask for the facet options of this range (first page only). */
     options: z.boolean().optional(),
-    cursor: z.string().max(2048).optional(),
+    cursor: z.string().max(MAX_CURSOR).optional(),
     limit: z.number().int().min(1).max(PAGE_SIZE).optional(),
   })
   .strict()
@@ -60,13 +88,14 @@ export function pageSearchParams(query: MaterialPageQuery): URLSearchParams {
   if (query.q) params.set('q', query.q);
   if (query.facets && facetKeys.some((key) => query.facets![key].length))
     params.set('facets', JSON.stringify(query.facets));
+  if (query.sort && query.sort !== DEFAULT_SORT) params.set('sort', query.sort);
   if (query.options) params.set('options', '1');
   if (query.cursor) params.set('cursor', query.cursor);
   if (query.limit) params.set('limit', String(query.limit));
   return params;
 }
 export function parsePageSearchParams(params: URLSearchParams): MaterialPageQuery {
-  const known = ['category', 'usage', 'q', 'facets', 'options', 'cursor', 'limit'];
+  const known = ['category', 'usage', 'q', 'facets', 'sort', 'options', 'cursor', 'limit'];
   if ([...params.keys()].some((key) => !known.includes(key) || params.getAll(key).length > 1))
     throw new z.ZodError([{ code: 'custom', path: [], message: 'unknown parameter' }]);
   const facets = params.get('facets');
@@ -78,6 +107,7 @@ export function parsePageSearchParams(params: URLSearchParams): MaterialPageQuer
     usage: params.get('usage') || undefined,
     q: params.get('q') ?? undefined,
     facets: facets ? JSON.parse(facets) : undefined,
+    sort: params.get('sort') || undefined,
     options: params.get('options') === '1' || undefined,
     cursor: params.get('cursor') || undefined,
     limit: limit === null ? undefined : Number(limit),

@@ -1,10 +1,11 @@
 /**
  * Paged material lists over the summary of migration 0009 (docs/material-paging-results-20261022.md).
  *
- * Every list reads one index range per part, newest first (`updated_at DESC, material_id DESC`), and
- * stops at the page: a part is a subquery with its own LIMIT and the parts are merged by a UNION, so
- * the rows read follow the page, not the catalogue. Who sees what is the same as the full lists this
- * replaces; each list's visibility is a set of `class` values (see the migration).
+ * Every list reads one index range per part in the list's order (migration 0010: priority, newest
+ * registered, name either way; docs/material-order-results-20261027.md), and stops at the page: a part
+ * is a subquery with its own LIMIT and the parts are merged by a UNION, so the rows read follow the
+ * page, not the catalogue. Who sees what is the same as the full lists this replaces; each list's
+ * visibility is a set of `class` values (see the migration).
  */
 import { z } from 'zod';
 import {
@@ -14,7 +15,14 @@ import {
   type FacetKey,
   type FacetSelection,
 } from '../catalog/facets';
-import { PAGE_SIZE, type MaterialPage, type MaterialPageQuery } from '../catalog/paging';
+import {
+  DEFAULT_SORT,
+  MAX_CURSOR,
+  PAGE_SIZE,
+  type MaterialPage,
+  type MaterialPageQuery,
+  type MaterialSort,
+} from '../catalog/paging';
 import { invalid } from './http';
 import type { D1DatabaseLike } from './types';
 
@@ -71,6 +79,23 @@ const classIn = (alias: string, classes: readonly number[]): Fragment => ({
 const limitOf = (limit?: number): Fragment =>
   limit === undefined ? { sql: '', values: [] } : { sql: ' LIMIT ?', values: [limit] };
 
+/** The summary's priority of a material without one, and of every personal one (migration 0010). */
+export const NO_PRIORITY = 10000;
+type SortColumn = 'prio' | 'name_key' | 'created_at' | 'material_id';
+/**
+ * A list order: its key columns (the last one, material_id, settles ties), its direction, and the
+ * family of 0010 indexes that read it (`name` backwards for the reverse order).
+ */
+type Order = { columns: SortColumn[]; desc: boolean; family: 'prio' | 'name' | 'new' };
+const ORDERS: Record<MaterialSort, Order> = {
+  priority: { columns: ['prio', 'name_key', 'material_id'], desc: false, family: 'prio' },
+  newest: { columns: ['created_at', 'material_id'], desc: true, family: 'new' },
+  name: { columns: ['name_key', 'material_id'], desc: false, family: 'name' },
+  nameDesc: { columns: ['name_key', 'material_id'], desc: true, family: 'name' },
+};
+const orderBy = (order: Order, alias?: string) =>
+  order.columns.map((column) => (alias ? alias + '.' : '') + column + (order.desc ? ' DESC' : '')).join(',');
+
 /** A list's filters after normalisation. */
 export type ListFilter = {
   range: Range;
@@ -78,8 +103,11 @@ export type ListFilter = {
   view: SearchView;
   facets: FacetSelection;
   active: 0 | 1;
+  order: Order;
 };
-type Key = { updated_at: string; material_id: string; version_id: string };
+type SortValue = string | number;
+/** A listed version and its order's key values. */
+type Key = { material_id: string; version_id: string } & Partial<Record<SortColumn, SortValue>>;
 
 /**
  * Who a list shows, as parts read through their own index: shared current materials of some classes,
@@ -93,13 +121,16 @@ export type ListPart =
 export type ListGroup = ListPart[];
 
 // ── Cursors ──────────────────────────────────────────────────────────────────────────────────────
-type Cursor = { k: string; u: string; m: string; g: number; d?: FacetKey; e: FacetSelection };
+/** `s`: the last item's key values in the list's order. */
+type Cursor = { k: string; s: SortValue[]; g: number; d?: FacetKey; e: FacetSelection };
 const facetArray = z.array(z.string().max(120)).max(50);
 const cursorSchema = z
   .object({
     k: z.string().max(4096),
-    u: z.string().min(1).max(100),
-    m: z.string().min(1).max(100),
+    s: z
+      .array(z.union([z.string().max(1000), z.number().int()]))
+      .min(2)
+      .max(3),
     g: z.number().int().min(0).max(1),
     d: z.enum(['size', 'color', 'finish']).optional(),
     e: z.object({ size: facetArray, color: facetArray, finish: facetArray }).strict(),
@@ -113,22 +144,34 @@ export function encodeCursor(cursor: Cursor): string {
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
-/** A cursor only continues the query it came from: `key` is that query's filters (not the page size). */
-export function decodeCursor(text: string, key: string): Cursor {
-  if (text.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(text)) throw invalid('목록 위치를 확인해 주세요.');
-  let cursor: Cursor;
+/**
+ * A cursor only continues the query it came from: `key` is that query's filters and order (not the page
+ * size), and its key values are the order's.
+ */
+export function decodeCursor(text: string, key: string, order: Order): Cursor {
+  if (text.length > MAX_CURSOR || !/^[A-Za-z0-9_-]+$/.test(text)) throw invalid('목록 위치를 확인해 주세요.');
+  let value: unknown;
   try {
-    cursor = cursorSchema.parse(
-      JSON.parse(
-        new TextDecoder('utf-8', { fatal: true }).decode(
-          Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)),
-        ),
+    value = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(
+        Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)),
       ),
     );
   } catch {
     throw invalid('목록 위치를 확인해 주세요.');
   }
+  // A tab opened before the list orders (2026-10-27) continues a newest-updated-first list.
+  if (value && typeof value === 'object' && 'u' in value)
+    throw invalid('목록 순서가 바뀌었어요. 목록을 처음부터 다시 불러와 주세요.');
+  const parsed = cursorSchema.safeParse(value);
+  if (!parsed.success) throw invalid('목록 위치를 확인해 주세요.');
+  const cursor: Cursor = parsed.data;
   if (cursor.k !== key) throw invalid('조건이 바뀌었어요. 목록을 처음부터 다시 불러와 주세요.');
+  if (
+    cursor.s.length !== order.columns.length ||
+    order.columns.some((column, i) => typeof cursor.s[i] !== (column === 'prio' ? 'number' : 'string'))
+  )
+    throw invalid('목록 위치를 확인해 주세요.');
   return cursor;
 }
 async function cursorKey(query: MaterialPageQuery, extra: unknown[]) {
@@ -137,6 +180,7 @@ async function cursorKey(query: MaterialPageQuery, extra: unknown[]) {
     query.usage ?? '',
     query.q ?? '',
     facetKeys.map((key) => [...(query.facets?.[key] ?? [])].sort()),
+    query.sort ?? DEFAULT_SORT,
     ...extra,
   ]);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -153,8 +197,14 @@ function rangeResidual(alias: string, range: Range): Fragment {
   if (range.kind === 'category') return { sql: `${alias}.category=?`, values: [range.category] };
   return TRUE;
 }
-const keyset = (alias: string, after?: { u: string; m: string }): Fragment =>
-  after ? { sql: `(${alias}.updated_at,${alias}.material_id)<(?,?)`, values: [after.u, after.m] } : TRUE;
+/** Rows after the cursor's item in the list's order (a row value, read through the order's index). */
+const keyset = (alias: string, order: Order, after?: Cursor): Fragment =>
+  after
+    ? {
+        sql: `(${order.columns.map((column) => `${alias}.${column}`).join(',')})${order.desc ? '<' : '>'}(${order.columns.map(() => '?').join(',')})`,
+        values: after.s,
+      }
+    : TRUE;
 const facetsMatch = (alias: string, facets: FacetSelection, skip?: FacetKey): Fragment =>
   join([
     TRUE,
@@ -171,10 +221,14 @@ const filtered = (filter: ListFilter) =>
   !!filter.search || facetKeys.some((key) => filter.facets[key].length);
 
 // ── Keys ─────────────────────────────────────────────────────────────────────────────────────────
-const select = (alias: string, from: string, where: Fragment, limit?: number): Fragment => {
+/** The columns a part selects: the order's key and the version (all in the order's index). */
+const keyColumns = (order: Order) => [...new Set<string>([...order.columns, 'material_id', 'version_id'])];
+const select = (alias: string, from: string, where: Fragment, order: Order, limit?: number): Fragment => {
   const tail = limitOf(limit);
   return {
-    sql: `SELECT * FROM (SELECT ${alias}.updated_at,${alias}.material_id,${alias}.version_id FROM ${from} WHERE ${where.sql} ORDER BY ${alias}.updated_at DESC,${alias}.material_id DESC${tail.sql})`,
+    sql: `SELECT * FROM (SELECT ${keyColumns(order)
+      .map((column) => `${alias}.${column}`)
+      .join(',')} FROM ${from} WHERE ${where.sql} ORDER BY ${orderBy(order, alias)}${tail.sql})`,
     values: [...where.values, ...tail.values],
   };
 };
@@ -185,12 +239,12 @@ function sharedKeys(
   after?: Cursor,
   limit?: number,
 ): Fragment {
-  const { range } = filter;
+  const { range, order } = filter;
   if (range.kind === 'lanes' && filter.active !== 1) throw invalid('지원하지 않는 목록 조건이에요.');
   const rest = join([
     { sql: `l.is_current=1 AND l.scope='shared'`, values: [] },
     classIn('l', classes),
-    keyset('l', after),
+    keyset('l', order, after),
     searchMatch('l', filter),
     facetsMatch('l', filter.facets),
   ]);
@@ -199,8 +253,9 @@ function sharedKeys(
       range.lanes.map((lane) =>
         select(
           'l',
-          'd1_material_list l INDEXED BY d1_list_lane',
+          `d1_material_list l INDEXED BY d1_list_lane_${order.family}`,
           join([{ sql: 'l.lane=? AND l.active=1', values: [lane] }, rest]),
+          order,
           limit,
         ),
       ),
@@ -209,14 +264,16 @@ function sharedKeys(
   if (range.kind === 'category')
     return select(
       'l',
-      'd1_material_list l INDEXED BY d1_list_category',
+      `d1_material_list l INDEXED BY d1_list_category_${order.family}`,
       join([{ sql: 'l.active=? AND l.category=?', values: [filter.active, range.category] }, rest]),
+      order,
       limit,
     );
   return select(
     'l',
-    'd1_material_list l INDEXED BY d1_list_recent',
+    `d1_material_list l INDEXED BY d1_list_all_${order.family}`,
     join([{ sql: 'l.active=?', values: [filter.active] }, rest]),
+    order,
     limit,
   );
 }
@@ -235,7 +292,7 @@ function facetKeysOf(
     { sql: `f.is_current=1 AND f.scope='shared'`, values: [] },
     classIn('f', classes),
     rangeResidual('f', filter.range),
-    keyset('f', after),
+    keyset('f', filter.order, after),
     facetsMatch('f', filter.facets, drive),
     filter.search
       ? {
@@ -248,11 +305,12 @@ function facetKeysOf(
     filter.facets[drive].map((value) =>
       select(
         'f',
-        'd1_material_list_facets f INDEXED BY d1_list_facet_order',
+        `d1_material_list_facets f INDEXED BY d1_list_facet_${filter.order.family}`,
         join([
           { sql: 'f.active=? AND f.facet=? AND f.value=?', values: [filter.active, drive, value] },
           rest,
         ]),
+        filter.order,
         limit,
       ),
     ),
@@ -265,7 +323,7 @@ const rowFilter = (filter: ListFilter, classes: readonly number[], after?: Curso
     { sql: 'l.active=?', values: [filter.active] },
     classIn('l', classes),
     rangeResidual('l', filter.range),
-    keyset('l', after),
+    keyset('l', filter.order, after),
     searchMatch('l', filter),
     facetsMatch('l', filter.facets),
   ]);
@@ -283,21 +341,23 @@ function partKeys(
   if (part.kind === 'personal')
     return select(
       'l',
-      'd1_material_list l INDEXED BY d1_list_personal',
+      `d1_material_list l INDEXED BY d1_list_personal_${filter.order.family}`,
       join([
         { sql: `l.owner_id=? AND l.is_current=1 AND l.scope='personal'`, values: [part.owner] },
         rowFilter(filter, part.classes, after),
       ]),
+      filter.order,
       limit,
     );
   return select(
     'l',
     'json_each(?) j CROSS JOIN d1_material_list l',
     join([{ sql: 'l.version_id=j.value', values: [] }, rowFilter(filter, part.classes, after)]),
+    filter.order,
     limit,
   );
 }
-/** Keys of a group's matches, newest first: at most `limit`, or all of them. */
+/** Keys of a group's matches in the list's order: at most `limit`, or all of them. */
 async function groupKeys(
   db: D1DatabaseLike,
   filter: ListFilter,
@@ -318,7 +378,7 @@ async function groupKeys(
   const all = join(pieces, ' UNION ALL ');
   const tail = limitOf(limit);
   const rows = await db
-    .prepare(`${all.sql} ORDER BY updated_at DESC,material_id DESC${tail.sql}`)
+    .prepare(`${all.sql} ORDER BY ${orderBy(filter.order)}${tail.sql}`)
     .bind(...all.values, ...tail.values)
     .all<Key>();
   return rows.results;
@@ -341,7 +401,7 @@ async function partOptions(db: D1DatabaseLike, filter: ListFilter, part: ListPar
   if (part.kind === 'ids' && !part.ids.length) return [];
   const from =
     part.kind === 'personal'
-      ? `d1_material_list l INDEXED BY d1_list_personal`
+      ? `d1_material_list l INDEXED BY d1_list_personal_name`
       : `json_each(?) j CROSS JOIN d1_material_list l`;
   const head: Fragment =
     part.kind === 'personal'
@@ -383,19 +443,24 @@ async function partTotal(db: D1DatabaseLike, filter: ListFilter, part: ListPart)
   return row?.n ?? 0;
 }
 
-export type ListedRow = Key & {
+export type ListedRow = {
+  material_id: string;
+  version_id: string;
+  updated_at: string;
   payload_json: string;
   owner_id: string;
   scope: string;
   active: number;
   version: number;
+  /** The material's priority, or NO_PRIORITY. */
+  prio: number;
 };
 /** The summary and payload of the given versions, in the given order. */
 export async function rowsFor(db: D1DatabaseLike, ids: string[]): Promise<ListedRow[]> {
   if (!ids.length) return [];
   const rows = await db
     .prepare(
-      `SELECT l.updated_at,l.material_id,l.version_id,l.owner_id,l.scope,l.active,l.version,v.payload_json
+      `SELECT l.updated_at,l.material_id,l.version_id,l.owner_id,l.scope,l.active,l.version,l.prio,v.payload_json
        FROM json_each(?) j CROSS JOIN d1_material_list l CROSS JOIN d1_material_versions v
        WHERE l.version_id=j.value AND v.id=j.value`,
     )
@@ -419,8 +484,9 @@ export async function listPage(
   options: { active?: boolean; key?: unknown[] } = {},
 ): Promise<MaterialPage<ListedRow>> {
   const limit = query.limit ?? PAGE_SIZE;
+  const order = ORDERS[query.sort ?? DEFAULT_SORT];
   const key = await cursorKey(query, [view, options.active ?? true, ...(options.key ?? [])]);
-  const cursor = query.cursor ? decodeCursor(query.cursor, key) : undefined;
+  const cursor = query.cursor ? decodeCursor(query.cursor, key, order) : undefined;
   const requested = query.facets ?? emptyFacets();
   const filter: ListFilter = {
     range: rangeOf(query),
@@ -428,6 +494,7 @@ export async function listPage(
     view,
     facets: cursor?.e ?? requested,
     active: options.active === false ? 0 : 1,
+    order,
   };
   let facets: FacetSelection | undefined;
   let drive = cursor?.d;
@@ -492,8 +559,7 @@ export async function listPage(
       more && last
         ? encodeCursor({
             k: key,
-            u: last.updated_at,
-            m: last.material_id,
+            s: order.columns.map((column) => last[column]!),
             g: last.g,
             e: filter.facets,
             ...(drive ? { d: drive } : {}),
@@ -512,6 +578,7 @@ export async function libraryCounts(db: D1DatabaseLike, owner: string, active: b
     view: 'library',
     facets: emptyFacets(),
     active: on ? 1 : 0,
+    order: ORDERS[DEFAULT_SORT],
   });
   const count = (on: boolean) =>
     Promise.all([

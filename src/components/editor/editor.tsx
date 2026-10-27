@@ -73,6 +73,7 @@ import { AssetImage } from '@/components/materials/asset-image';
 import { useSharedCatalogAdmin } from '@/components/materials/shared-access';
 import { MaterialForm } from '@/components/materials/material-form';
 import { MaterialFacets } from '@/components/materials/material-facets';
+import { SortSelect } from '@/components/materials/sort-select';
 import { useAccess } from '../app-provider';
 import CanvasWorkspace from './canvas-workspace';
 import Inspector from './inspector';
@@ -86,7 +87,12 @@ import type { RoomViewState } from '@/lib/room-viewer/view-state';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { accountLabel } from '@/lib/auth/credential-account';
 import { effectiveFacets, emptyFacets, hasFacets } from '@/lib/catalog/facets';
-import { editorTabQuery, type MaterialPageQuery } from '@/lib/catalog/paging';
+import {
+  DEFAULT_SORT,
+  editorTabQuery,
+  type MaterialPageQuery,
+  type MaterialSort,
+} from '@/lib/catalog/paging';
 import type { MaterialCard } from '@/lib/catalog/cards';
 import type { MaterialEntry, VersionBatch } from '@/lib/repositories/contracts';
 import { LoadMore } from '@/components/materials/load-more';
@@ -110,6 +116,7 @@ import type { RoomSegmentation } from '@/lib/segmentation';
 import { analyzeWallGeometry, applyWallGeometry } from '@/lib/render/wall-geometry';
 import './editor-studio.css';
 const pendingProjectSaves = new Map<string, Promise<boolean>>();
+const drawerCardId = (card: MaterialCard) => card.materialId;
 export type AdminEditorContext = { actorUserId: string; owner: { id: string; name: string; email: string } };
 type EditorProps = { id: string; adminContext?: AdminEditorContext; guestContext?: GuestEditorContext };
 export default function Editor(props: EditorProps) {
@@ -183,6 +190,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     [fixtureKind, setFixtureKind] = useState<'all' | MaterialCategory>('all'),
     [search, setSearch] = useState(''),
     [facets, setFacets] = useState(emptyFacets),
+    // The drawer's order; kept across tabs while the editor is open.
+    [sort, setSort] = useState<MaterialSort>(DEFAULT_SORT),
     [form, setForm] = useState(false),
     [help, setHelp] = useState(false),
     [ai, setAi] = useState(false),
@@ -330,6 +339,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     ...editorTabQuery(tab, fixtureKind === 'all' ? undefined : fixtureKind),
     ...(settledSearch ? { q: settledSearch } : {}),
     ...(hasFacets(facets) ? { facets } : {}),
+    ...(sort === DEFAULT_SORT ? {} : { sort }),
     options: true,
   };
   const fetchDrawerPage = useCallback(
@@ -341,6 +351,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     drawerQuery,
     JSON.stringify([drawerQuery, scopeKey, drawerReload]),
     loaded,
+    drawerCardId,
   );
   const drawerGrid = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -2197,15 +2208,19 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                     </select>
                   </label>
                 )}
-                <label className="search-box catalog-search">
-                  <Search size={14} />
-                  <input
-                    aria-label="편집기 자재 검색"
-                    placeholder="자재명, 브랜드 검색"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </label>
+                {/* The order shares the search row: no row of its own, two rows of cards stay in view. */}
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <label className="search-box catalog-search min-w-0 flex-1">
+                    <Search size={14} />
+                    <input
+                      aria-label="편집기 자재 검색"
+                      placeholder="자재명, 브랜드 검색"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </label>
+                  <SortSelect compact value={sort} onChange={setSort} />
+                </div>
               </div>
               <MaterialFacets
                 compact

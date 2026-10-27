@@ -23,13 +23,15 @@ export type MaterialPages<T> = {
 /**
  * A server-paged list (docs/material-paging-results-20261022.md). A new `key` (the query and anything
  * else that changes the list) cancels the page on its way and starts from the first page. At most one
- * page is requested at a time, and a failed one waits for `retry`.
+ * page is requested at a time, and a failed one waits for `retry`. An item changed between pages (a new
+ * priority or name) can come again on a later page; `identify` keeps the one already shown.
  */
 export function useMaterialPages<T>(
   fetchPage: (query: MaterialPageQuery, signal: AbortSignal) => Promise<MaterialPage<T>>,
   query: MaterialPageQuery,
   key: string,
   enabled = true,
+  identify?: (item: T) => string,
 ): MaterialPages<T> {
   const [state, setState] = useState<{
     key: string;
@@ -44,11 +46,11 @@ export function useMaterialPages<T>(
     stale?: boolean;
   }>({ key: '', items: [], cursor: null, status: 'loading', error: '' });
   const inflight = useRef<{ key: string; controller: AbortController } | null>(null);
-  const latest = useRef({ fetchPage, query, key });
-  latest.current = { fetchPage, query, key };
+  const latest = useRef({ fetchPage, query, key, identify });
+  latest.current = { fetchPage, query, key, identify };
 
   const request = useCallback((cursor: string | null) => {
-    const { fetchPage, query, key } = latest.current;
+    const { fetchPage, query, key, identify } = latest.current;
     if (inflight.current?.key === key) return;
     inflight.current?.controller.abort();
     const controller = new AbortController();
@@ -63,17 +65,23 @@ export function useMaterialPages<T>(
     fetchPage(cursor ? { ...query, cursor } : query, controller.signal)
       .then((page) => {
         if (controller.signal.aborted) return;
-        setState((previous) => ({
-          key,
-          items: cursor && previous.key === key ? [...previous.items, ...page.items] : page.items,
-          cursor: page.nextCursor,
-          status: page.nextCursor ? 'idle' : 'done',
-          error: '',
-          total: cursor ? previous.total : page.total,
-          facets: cursor ? previous.facets : (page.facets ?? previous.facets),
-          counts: cursor ? previous.counts : page.counts,
-          stale: false,
-        }));
+        setState((previous) => {
+          const shown = new Set(identify ? previous.items.map(identify) : []);
+          return {
+            key,
+            items:
+              cursor && previous.key === key
+                ? [...previous.items, ...page.items.filter((item) => !identify || !shown.has(identify(item)))]
+                : page.items,
+            cursor: page.nextCursor,
+            status: page.nextCursor ? 'idle' : 'done',
+            error: '',
+            total: cursor ? previous.total : page.total,
+            facets: cursor ? previous.facets : (page.facets ?? previous.facets),
+            counts: cursor ? previous.counts : page.counts,
+            stale: false,
+          };
+        });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;

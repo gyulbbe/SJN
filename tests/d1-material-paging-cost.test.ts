@@ -1,7 +1,9 @@
 /**
  * D1 cost of the paged material lists (d1-query-budget): rows read and queries per request at a base
- * size N and at 5N, with the same page size; the query plans (no SCAN of a growing table); the rows a
- * save writes; and the two ways to search (a range scan, and FTS5 for comparison).
+ * size N and at 5N, with the same page size, in every list order (migration 0010, the default priority
+ * order and the others; docs/material-order-results-20261027.md); the query plans (no SCAN of a growing
+ * table, no sort step inside an index order); the rows a save and a priority write; and the two ways to
+ * search (a range scan, and FTS5 for comparison).
  *
  * The regular run uses a small N; the remote shape of 2026-10-17 (930 tiles, 30 products) runs with
  *
@@ -9,14 +11,19 @@
  *
  * Results: test-results/material-paging-cost.json, docs/material-paging-results-20261022.md.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
-import { applyD1Migrations, allD1Migrations } from './helpers/d1-migrations';
+import { applyD1Migrations, allD1Migrations, migrationStatements } from './helpers/d1-migrations';
 import { meterD1, type D1QueryRecord } from './helpers/d1-meter';
 import { materials } from '../src/lib/d1/materials';
 import { publicImage, publicMaterials, publicPlacement } from '../src/lib/catalog/public';
-import { pageSearchParams, type MaterialPage, type MaterialPageQuery } from '../src/lib/catalog/paging';
+import {
+  pageSearchParams,
+  type MaterialPage,
+  type MaterialPageQuery,
+  type MaterialSort,
+} from '../src/lib/catalog/paging';
 import type { Context } from '../src/lib/d1/database';
 import type { D1Bindings, D1DatabaseLike, D1Statement } from '../src/lib/d1/types';
 
@@ -54,8 +61,9 @@ function catalogue(
   return [
     `${rows} INSERT INTO d1_assets(id,owner_id,object_key,metadata_json,content_hash,created_at)
       SELECT aid,'${ADMIN}','assets/'||aid,json_object('kind','${kind === 'tile' ? 'texture' : 'product'}','mime','image/png','width',100,'height',100,'size',1000),'hash','2026-10-16' FROM r`,
+    // Registered in another order than updated (the newest order differs from the old recency).
     `${rows} INSERT INTO d1_materials(id,owner_id,scope,current_version_id,created_at,updated_at,purpose,active)
-      SELECT mid,'${ADMIN}','shared',vid,'2026-10-16',printf('2026-10-16T%08d',i),'catalog',CASE WHEN i%17=0 THEN 0 ELSE 1 END FROM r`,
+      SELECT mid,'${ADMIN}','shared',vid,printf('2026-09-%08d',(i*7919)%100003),printf('2026-10-16T%08d',i),'catalog',CASE WHEN i%17=0 THEN 0 ELSE 1 END FROM r`,
     `${rows} INSERT INTO d1_material_versions(id,material_id,version,payload_json,category,view_count,created_at)
       SELECT vid,mid,1,${payload},'${kind}',${kind === 'tile' ? 0 : 1},'2026-10-16' FROM r`,
     `${rows} INSERT INTO d1_material_assets(version_id,asset_id) SELECT vid,aid FROM r`,
@@ -69,7 +77,13 @@ async function database(name: string, scale: number, migrations = allD1Migration
       modules: true,
       script: 'export default { fetch() { return new Response(null, { status: 404 }); } };',
       compatibilityDate: '2026-09-07',
-      d1Databases: { SCALE1: 'paging-cost-1', SCALE5: 'paging-cost-5', BEFORE: 'paging-cost-before' },
+      d1Databases: {
+        SCALE1: 'paging-cost-1',
+        SCALE5: 'paging-cost-5',
+        BEFORE: 'paging-cost-before',
+        BEFORE_ORDER: 'paging-cost-before-0010',
+        MIGRATE: 'paging-cost-migrate-0010',
+      },
     }),
   );
   const db = (await mf.getD1Database(name)) as unknown as D1DatabaseLike;
@@ -82,12 +96,12 @@ async function database(name: string, scale: number, migrations = allD1Migration
     ...catalogue({ material: '4', version: '5', asset: '6' }, products, 'basin', 0),
     // Other owners' personal materials (the member reads only their own) and the member's own few.
     `${series(20 * scale)} INSERT INTO d1_materials(id,owner_id,scope,current_version_id,created_at,updated_at,purpose)
-      SELECT printf('70000000-0000-4000-8000-%012d',i),'member-'||(2+i%3),'personal',printf('80000000-0000-4000-8000-%012d',i),'2026-10-16',printf('2026-10-17T%08d',i),'project' FROM n`,
+      SELECT printf('70000000-0000-4000-8000-%012d',i),'member-'||(2+i%3),'personal',printf('80000000-0000-4000-8000-%012d',i),printf('2026-09-%08d',(i*7919)%100003),printf('2026-10-17T%08d',i),'project' FROM n`,
     `${series(20 * scale)} INSERT INTO d1_material_versions(id,material_id,version,payload_json,category,view_count,created_at)
       SELECT printf('80000000-0000-4000-8000-%012d',i),printf('70000000-0000-4000-8000-%012d',i),1,
         json_object('name','개인 '||i,'brand','','code','P-'||i,'category','basin','scope','personal','color','','finish','','widthMm',500,'heightMm',400,'depthMm',300,'textureAssetIds',json_array(),'views',json_array()),'basin',0,'2026-10-16' FROM n`,
     `${series(5)} INSERT INTO d1_materials(id,owner_id,scope,current_version_id,created_at,updated_at,purpose)
-      SELECT printf('90000000-0000-4000-8000-%012d',i),'${MEMBER}','personal',printf('a0000000-0000-4000-8000-%012d',i),'2026-10-16',printf('2026-10-18T%08d',i),'project' FROM n`,
+      SELECT printf('90000000-0000-4000-8000-%012d',i),'${MEMBER}','personal',printf('a0000000-0000-4000-8000-%012d',i),printf('2026-09-%08d',i),printf('2026-10-18T%08d',i),'project' FROM n`,
     `${series(5)} INSERT INTO d1_material_versions(id,material_id,version,payload_json,category,view_count,created_at)
       SELECT printf('a0000000-0000-4000-8000-%012d',i),printf('90000000-0000-4000-8000-%012d',i),1,
         json_object('name','내 모형 '||i,'brand','','code','R-'||i,'category','tile','usage','wall','scope','personal','color','화이트','finish','무광','widthMm',300,'heightMm',600,'depthMm',10,'textureAssetIds',json_array(),'views',json_array()),'tile',0,'2026-10-16' FROM n`,
@@ -96,6 +110,9 @@ async function database(name: string, scale: number, migrations = allD1Migration
     `${series(10)} INSERT INTO d1_project_versions(project_id,version_id) SELECT '${PROJECT}',printf('20000000-0000-4000-8000-%012d',i*7) FROM n`,
     `${series(3)} INSERT INTO d1_project_versions(project_id,version_id) SELECT '${PROJECT}',printf('a0000000-0000-4000-8000-%012d',i) FROM n`,
   ];
+  // An administrator numbered a few shared materials (ties on purpose).
+  if (migrations.includes('0010_material_order.sql'))
+    statements.push(`UPDATE d1_materials SET priority=1+rowid%5 WHERE scope='shared' AND rowid%37=0`);
   for (const statement of statements) await db.prepare(statement).run();
   return db;
 }
@@ -109,6 +126,18 @@ type Cost = {
 };
 /** A plan line reading a whole growing table (by alias or name); json_each, CTE and subquery scans are fine. */
 const GROWING = /\bSCAN (l|f|x|s|m|v|a|r|c|cv|cm|d1_\w+)\b/;
+/**
+ * A sort step for part of an index order: the order's index does not serve it (mixed directions). A
+ * facet UNION merges on every selected column, so it sorts the version id after the order's key, which
+ * is unique (groups of one row); that one is allowed.
+ */
+const PARTIAL_SORT = /TEMP B-TREE FOR (LAST|RIGHT PART)/;
+const partialSort = (plan: string[]) =>
+  plan.filter(
+    (line) =>
+      PARTIAL_SORT.test(line) &&
+      !(plan.includes('MERGE (UNION)') && line === 'USE TEMP B-TREE FOR LAST TERM OF ORDER BY'),
+  );
 /** Runs `call` on a metered D1 and checks every statement's plan with the same bound values. */
 async function measure(
   db: D1DatabaseLike,
@@ -213,8 +242,9 @@ const twoPages = (
   make: (query: MaterialPageQuery) => (env: D1Bindings) => Promise<number>,
   base: MaterialPageQuery,
   first: Path['kind'] = 'page',
+  limit = 8,
 ): Path[] => {
-  const query = { ...base, limit: 8 };
+  const query = { ...base, limit };
   return [
     { name: name + ' · 첫 쪽', kind: first, run: (db, plans) => measure(db, make(query), plans) },
     {
@@ -398,10 +428,64 @@ const PATHS: Path[] = [
 ];
 
 /**
- * Rows one save writes: a new material (material, then version), its next version, (de)activation.
- * The same statements as materials.ts, run as one batch each.
+ * The other list orders (the paths above run the default priority order) on the ranges each order's
+ * indexes serve: all, a category, an editor tab (lanes), the 위생도기 tab, personal materials, the
+ * administrator library and project (two groups), and a facet filter (the facet index).
  */
-async function saveWrites(db: D1DatabaseLike, label: string) {
+for (const sort of ['newest', 'name', 'nameDesc'] as MaterialSort[])
+  PATHS.push(
+    ...twoPages(`공개 전체 ${sort}`, publicPage, { sort }),
+    ...twoPages(`공개 타일 ${sort}`, publicPage, { category: 'tile', sort }),
+    ...twoPages(`회원 벽 탭 ${sort}`, (q) => memberPage(member, { query: q }), {
+      category: 'tile',
+      usage: 'wall',
+      sort,
+    }),
+    ...twoPages(`게스트 위생도기 탭 ${sort}`, guestPage, { category: 'fixtures', sort }),
+    // The member has five of their own: pages of two.
+    ...twoPages(
+      `회원 내 자재 ${sort}`,
+      (q) => memberPage(member, { query: q, view: 'library', scope: 'personal' }),
+      { sort },
+      'page',
+      2,
+    ),
+    ...twoPages(`관리자 자재 전체 ${sort}`, (q) => memberPage(admin, { query: q, view: 'library' }), {
+      sort,
+    }),
+    ...twoPages(`관리자 프로젝트 벽 탭 ${sort}`, (q) => memberPage(editor, { query: q }, project), {
+      category: 'tile',
+      usage: 'wall',
+      sort,
+    }),
+    ...twoPages(
+      `공개 분류 1개 ${sort}`,
+      publicPage,
+      { facets: { size: ['600X600'], color: [], finish: [] }, sort },
+      'filtered',
+    ),
+  );
+// The administrator's priority on one shared material (set, then cleared): one request each.
+for (const priority of [3, null])
+  PATHS.push({
+    name: `우선순위 ${priority ?? '해제'}`,
+    kind: 'single',
+    run: (db, p) =>
+      measure(
+        db,
+        async (env) => {
+          await materials({ env, actor: admin }, { operation: 'setPriority', id: id('1', 5), priority });
+          return 1;
+        },
+        p,
+      ),
+  });
+
+/**
+ * Rows one save writes: a new material (material, then version), its next version, (de)activation,
+ * and with 0010 a priority set and cleared. The same statements as materials.ts, run as one batch each.
+ */
+async function saveWrites(db: D1DatabaseLike, label: string, ordered = true) {
   const results: Record<string, Omit<Cost, 'records'>> = {};
   const meter = meterD1(db);
   const writes = async (name: string, statements: D1Statement[]) => {
@@ -458,6 +542,14 @@ async function saveWrites(db: D1DatabaseLike, label: string) {
   await writes('비활성화', [
     meter.db.prepare("UPDATE d1_materials SET active=0,updated_at='2026-10-22' WHERE id='new-m'"),
   ]);
+  if (ordered) {
+    await writes('우선순위 정하기', [
+      meter.db.prepare("UPDATE d1_materials SET priority=3 WHERE id='new-m' AND priority IS NOT 3"),
+    ]);
+    await writes('우선순위 해제', [
+      meter.db.prepare("UPDATE d1_materials SET priority=NULL WHERE id='new-m' AND priority IS NOT NULL"),
+    ]);
+  }
   return results;
 }
 async function report(scale: number, name: string) {
@@ -501,9 +593,29 @@ async function report(scale: number, name: string) {
 
 describe('paged material list cost (d1-query-budget)', () => {
   it(`reads rows that follow the page, not the catalogue (N=${BASE.tiles + BASE.products} and 5N)`, async () => {
-    // The same saves before 0009 (no summary triggers), for the write comparison.
-    const before = (await database('BEFORE', 0, allD1Migrations.slice(0, -1))) as D1DatabaseLike;
-    const beforeWrites = await saveWrites(before, '0009 전 저장');
+    // The same saves before 0009 (no summary triggers) and before 0010 (no order indexes), for the
+    // write comparison.
+    const until = (name: string) => allD1Migrations.slice(0, allD1Migrations.indexOf(name));
+    const before = (await database('BEFORE', 0, until('0009_material_list.sql'))) as D1DatabaseLike;
+    const beforeOrder = (await database(
+      'BEFORE_ORDER',
+      0,
+      until('0010_material_order.sql'),
+    )) as D1DatabaseLike;
+    const beforeWrites = {
+      ...(await saveWrites(before, '0009 전 저장', false)),
+      ...(await saveWrites(beforeOrder, '0010 전 저장', false)),
+    };
+    // What applying 0010 to a catalogue of the base size reads and writes (backfill and indexes).
+    const migrated = meterD1(
+      (await database('MIGRATE', 1, until('0010_material_order.sql'))) as D1DatabaseLike,
+    );
+    for (const statement of migrationStatements(
+      await readFile('migrations/d1/0010_material_order.sql', 'utf8'),
+    ))
+      await migrated.db.prepare(statement).run();
+    const migration = migrated.summary();
+    console.log(`0010 적용 (N) read ${migration.rowsRead}  written ${migration.rowsWritten}`);
     const x1 = await report(1, 'SCALE1');
     const x5 = await report(5, 'SCALE5');
     await mkdir('test-results', { recursive: true });
@@ -516,7 +628,7 @@ describe('paged material list cost (d1-query-budget)', () => {
     });
     await writeFile(
       'test-results/material-paging-cost.json',
-      JSON.stringify({ base: BASE, beforeWrites, x1: strip(x1), x5: strip(x5) }, null, 2),
+      JSON.stringify({ base: BASE, beforeWrites, migration, x1: strip(x1), x5: strip(x5) }, null, 2),
     );
     for (const [name, cost] of Object.entries(beforeWrites))
       console.log(`${name.padEnd(28)} read ${cost.rowsRead}  written ${cost.rowsWritten}`);
@@ -553,8 +665,10 @@ describe('paged material list cost (d1-query-budget)', () => {
         );
       else expect(b.rowsRead, path.name + detail(b)).toBeLessThanOrEqual(b.items * 8 + 300);
     }
-    // No growing table is scanned.
-    for (const [sql, plan] of Object.entries(x5.plans))
+    // No growing table is scanned, and every order is read from its index as it is.
+    for (const [sql, plan] of Object.entries(x5.plans)) {
       for (const line of plan) expect(line, sql).not.toMatch(GROWING);
+      expect(partialSort(plan), sql).toEqual([]);
+    }
   }, 1_800_000);
 });
