@@ -13,7 +13,7 @@
   - e2e(이 환경에 Chrome이 없어 `channel: 'chrome'`을 뺀 Chromium 임시 사본): `material-paging`(새 브랜드 시험 포함), `material-panel-layout`, `fixture-category-chips`, `catalog-access`, `catalog-selection-completion`, `list-thumbnails` 24개 통과. 처음에 `catalog-access`·`catalog-selection-completion` 2개가 실패했다. 자재 등록 양식의 선택 목록이 예전 표시 순서(대림바스·그린·포세린이 앞)를 기대했는데, 지금은 모두 빈칸이라 이름순이다(GROHE·화이트(마지막)·도기). 기대값을 고친 뒤 통과했다.
   - vitest 3,698개 통과. 실패 5개는 이 작업 환경에 없는 로컬 결과 파일을 읽는 기존 시험이다(`reconstruction-source-plane-mapping`).
   - typecheck, eslint, Prettier 통과
-  - 원격 D1 읽기·쓰기, 0011 원격 적용, 배포, AI 호출은 없다.
+  - 작업 중 원격 D1 읽기·쓰기, 배포, AI 호출은 없다. 원격 0011은 같은 날 사용자가 적용했다(사용자 보고).
 
 ## 2026-10-27 — 자재 목록 순서(우선순위·최신 등록순·이름 오름·내림차순)와 관리자 우선순위
 

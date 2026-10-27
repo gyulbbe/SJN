@@ -4,7 +4,7 @@
 
 - **원격 D1:** 작업 중 쓰지도 읽지도 않았다.
 - **0010:** 원격 `sjn`에 2026-10-27 사용자가 적용했고(사용자 보고), 같은 날 main에 병합했다(`cf60e50`).
-- **0011:** 시험 DB(Miniflare)에만 적용했다. **원격 `sjn`에는 적용하지 않았다.** 새 코드를 배포(main 병합)하기 전에 사용자가 적용해야 한다(3절).
+- **0011:** 시험 DB(Miniflare)에 적용했다. **원격 `sjn`에는 2026-10-27 사용자가 적용했다**(사용자 보고: `migrations apply` 후 `migrations list`가 `No migrations to apply`). 작업 환경에서는 원격을 확인하지 않았다. 그 뒤 main에 병합했다.
 
 ## 1. 사용자 결정
 
@@ -55,7 +55,7 @@
 - `d1_materials.priority`(자재별 우선순위)도 더했지만 **0011부터 쓰지 않는다.** 열은 남기고 비웠다.
 - 0009 인덱스 5개는 지금 목록이 쓰지 않지만 남겼다. 옛 코드의 `INDEXED BY`와 목록 이미지 일괄 생성(`d1_list_recent`)이 쓴다.
 
-### 0011 (`migrations/d1/0011_brand_order.sql`, 원격 미적용)
+### 0011 (`migrations/d1/0011_brand_order.sql`, 원격 적용됨)
 
 - `d1_catalog_options.display_order`, `d1_material_subcategories.display_order`: `NULL`(빈칸) 또는 0~9999 정수(`CHECK`에 `typeof='integer'`). 새 열이라 **지금 있는 모든 항목이 빈칸으로 시작한다.** 0003의 `sort_order`는 더 읽지 않는다(지우지 않음).
 - 자재별 우선순위를 비우고 요약의 `prio`를 모두 10000으로 되돌린다.
@@ -171,7 +171,6 @@ npx wrangler d1 migrations list sjn --remote    # No migrations to apply 확인
 
 ## 9. 하지 않은 것
 
-- 원격 0011 적용과 배포: 사용자가 한다(3절).
 - 숫자 자연 정렬(`타일 2` < `타일 10`): 이름을 글자로 비교한다.
 - 브랜드가 연결되지 않은 옛 자재(이름만 있는 브랜드)는 순서 없는 자재로 본다. 자재 등록 양식으로 저장한 자재는 브랜드가 연결된다.
 - 순서를 브라우저에 기억하기: 하지 않았다. 화면을 열 때마다 브랜드 우선순위다.
