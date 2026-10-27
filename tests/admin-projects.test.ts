@@ -430,7 +430,7 @@ describe('admin project edit scope on isolated D1/R2', () => {
     const version = (await (
       await regular(admin, 'materials', { operation: 'create', input })
     ).json()) as MaterialVersion;
-    const categoryInput = { kind: 'color', name: '동시 권한 테스트', sortOrder: 90000, active: true };
+    const categoryInput = { kind: 'color', name: '동시 권한 테스트', sortOrder: 9000, active: true };
     const catalog = (await (
       await regular(admin, 'catalog', { operation: 'create', input: categoryInput })
     ).json()) as { id: string };

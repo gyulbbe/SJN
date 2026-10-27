@@ -30,15 +30,9 @@ export type MaterialCard = {
   textureCount: number;
   /** Direction photos shown (a retired 위·아래 photo is left out). */
   viewCount: number;
-  /** An administrator's priority on a shared material (1 first), or null. */
-  priority: number | null;
 };
 
-export function materialCard(
-  material: Material,
-  version: MaterialVersion,
-  priority: number | null = null,
-): MaterialCard {
+export function materialCard(material: Material, version: MaterialVersion): MaterialCard {
   const imageAssetId = getMaterialImageAssetId(version);
   return {
     materialId: material.id,
@@ -62,7 +56,6 @@ export function materialCard(
     ...(imageAssetId ? { imageAssetId } : {}),
     textureCount: version.textureAssetIds.length,
     viewCount: version.views.filter((view) => !isRetiredDirection(view.direction)).length,
-    priority,
   };
 }
 

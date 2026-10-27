@@ -11,21 +11,23 @@ import {
   type OptionKind,
 } from './contract';
 
+/** 표시 순서 first (0 first), then the ones without one; by name within (migration 0011). */
+const displayOrder = ' ORDER BY display_order IS NULL,display_order,normalized_name';
 export async function readCatalog(db: D1DatabaseLike, includeInactive = false): Promise<CatalogData> {
   const where = includeInactive ? '' : ' WHERE active=1';
   const [options, subcategories] = await Promise.all([
     db
       .prepare(
-        'SELECT id,kind,name,color_hex AS colorHex,sort_order AS sortOrder,active FROM d1_catalog_options' +
+        'SELECT id,kind,name,color_hex AS colorHex,display_order AS sortOrder,active FROM d1_catalog_options' +
           where +
-          ' ORDER BY sort_order,normalized_name',
+          displayOrder,
       )
       .all(),
     db
       .prepare(
-        'SELECT id,category_code AS category,name,sort_order AS sortOrder,active FROM d1_material_subcategories' +
+        'SELECT id,category_code AS category,name,display_order AS sortOrder,active FROM d1_material_subcategories' +
           where +
-          ' ORDER BY sort_order,normalized_name',
+          displayOrder,
       )
       .all(),
   ]);
@@ -39,7 +41,8 @@ const rowSchema = z.object({
   kind: z.enum([...optionKinds, 'subcategory']),
   name: z.string().trim().min(1).max(100),
   category: z.string().optional(),
-  sortOrder: z.number().int().min(0).max(100000),
+  /** 표시 순서: a whole number 0–9999, or null for none. */
+  sortOrder: z.number().int().min(0).max(9999).nullable(),
   active: z.boolean(),
   colorHex: z
     .string()
@@ -87,7 +90,7 @@ export async function manageCatalog(ctx: Context, body: Record<string, unknown>)
     body.operation === 'create'
       ? sql(
           ctx,
-          `INSERT INTO ${table}(id,${grouping},name,normalized_name,sort_order,active${columns}) VALUES(?,?,?,?,?,?${extra.length ? ',?' : ''})`,
+          `INSERT INTO ${table}(id,${grouping},name,normalized_name,display_order,active${columns}) VALUES(?,?,?,?,?,?${extra.length ? ',?' : ''})`,
           id,
           group,
           row.name,
@@ -98,7 +101,8 @@ export async function manageCatalog(ctx: Context, body: Record<string, unknown>)
         )
       : sql(
           ctx,
-          `UPDATE ${table} SET name=?,normalized_name=?,sort_order=?,active=?,updated_at=CURRENT_TIMESTAMP${extra.length ? ',color_hex=?' : ''} WHERE id=?`,
+          // A brand's new order reaches its materials' list rows (0011 trigger d1_material_list_brand_order).
+          `UPDATE ${table} SET name=?,normalized_name=?,display_order=?,active=?,updated_at=CURRENT_TIMESTAMP${extra.length ? ',color_hex=?' : ''} WHERE id=?`,
           row.name,
           normalized,
           row.sortOrder,

@@ -1,8 +1,8 @@
 /**
- * Migration 0009's summary (and 0010's order columns) stays equal to its payloads and material rows
- * whoever writes them: the backfill of existing rows equals what the triggers build row by row, the
- * counts equal a recount after saves, new versions, (de)activations, priorities and raw SQL, and the
- * facet split equals facetValues (src/lib/catalog/facets.ts).
+ * Migration 0009's summary (and the order columns of 0010–0011) stays equal to its payloads, material
+ * rows and brands whoever writes them: the backfill of existing rows equals what the triggers build row
+ * by row, the counts equal a recount after saves, new versions, (de)activations, brand links and orders
+ * and raw SQL, and the facet split equals facetValues (src/lib/catalog/facets.ts).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
@@ -10,6 +10,7 @@ import { allD1Migrations, applyD1Migrations } from './helpers/d1-migrations';
 import { facetKeys, facetValues, type Facetable } from '../src/lib/catalog/facets';
 import { isBuiltInExampleMaterial } from '../src/lib/catalog-visibility';
 import { materials } from '../src/lib/d1/materials';
+import { manageCatalog } from '../src/lib/catalog/server';
 import { normalizeSearch } from '../src/lib/d1/material-list';
 import type { Context } from '../src/lib/d1/database';
 import type { D1Bindings, D1DatabaseLike } from '../src/lib/d1/types';
@@ -23,7 +24,7 @@ beforeAll(() => {
       modules: true,
       script: 'export default { fetch() { return new Response(null, { status: 404 }); } };',
       compatibilityDate: '2026-09-07',
-      d1Databases: { A: 'sync-a', B: 'sync-b', C: 'sync-c', D: 'sync-d' },
+      d1Databases: { A: 'sync-a', B: 'sync-b', C: 'sync-c', D: 'sync-d', E: 'sync-e' },
     }),
   );
 });
@@ -121,6 +122,16 @@ async function seed(db: D1DatabaseLike) {
           )
           .bind(vid(i, n), material, n, payload(vid(i, n), material, i + n - 1, n)),
       );
+    // Brands of 0004 (a save links the version's brand after inserting it); some have none.
+    if (i % 3 !== 2)
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO d1_material_version_options(version_id,option_id,option_kind)
+             SELECT ?,id,'brand' FROM d1_catalog_options WHERE kind='brand' AND normalized_name=?`,
+          )
+          .bind(vid(i, versions), i % 3 ? 'kohler' : 'toto'),
+      );
   }
   await db.batch(statements);
 }
@@ -154,27 +165,33 @@ const recount = async (db: D1DatabaseLike) =>
 /** Migrations before `name` (that one and the later ones come after the seed). */
 const until = (name: string) => allD1Migrations.slice(0, allD1Migrations.indexOf(name));
 const from = (name: string) => allD1Migrations.slice(allD1Migrations.indexOf(name));
-/** A shared material's priority, as the 0010 order reads it (1 first). */
-const prioritise = (db: D1DatabaseLike) =>
+/** Two brands get a 표시 순서 in 분류 관리 (0011: their materials' priority). */
+const orderBrands = (db: D1DatabaseLike) =>
   db.batch([
-    db.prepare('UPDATE d1_materials SET priority=3 WHERE id=?').bind(mid(2)),
-    db.prepare('UPDATE d1_materials SET priority=1 WHERE id=?').bind(mid(3)),
-    // A personal material's number does not count (the API refuses it; raw SQL can still write it).
-    db.prepare('UPDATE d1_materials SET priority=2 WHERE id=?').bind(mid(1)),
+    db.prepare(
+      "UPDATE d1_catalog_options SET display_order=0 WHERE kind='brand' AND normalized_name='kohler'",
+    ),
+    db.prepare("UPDATE d1_catalog_options SET display_order=1 WHERE kind='brand' AND normalized_name='toto'"),
   ]);
 
-describe('material list summary (0009, 0010)', () => {
+describe('material list summary (0009–0011)', () => {
   it('fills existing rows exactly as the triggers build new ones', async () => {
     const before = await database('A'),
       between = await database('D'),
+      beforeBrands = await database('E'),
       after = await database('B');
-    // Existing data, then the migrations (backfill): before 0009, and between 0009 and 0010 ...
+    // Existing data, then the migrations (backfill): before 0009, between 0009 and 0010, and before
+    // 0011 with a per-material priority of 0010 (0011 clears it) ...
     await applyD1Migrations(before, until('0009_material_list.sql'));
     await seed(before);
     await applyD1Migrations(before, from('0009_material_list.sql'));
     await applyD1Migrations(between, until('0010_material_order.sql'));
     await seed(between);
     await applyD1Migrations(between, from('0010_material_order.sql'));
+    await applyD1Migrations(beforeBrands, until('0011_brand_order.sql'));
+    await seed(beforeBrands);
+    await beforeBrands.prepare('UPDATE d1_materials SET priority=3 WHERE id=?').bind(mid(2)).run();
+    await applyD1Migrations(beforeBrands, from('0011_brand_order.sql'));
     // ... and the migrations first, then the same data through the triggers.
     await applyD1Migrations(after, allD1Migrations);
     await seed(after);
@@ -182,11 +199,13 @@ describe('material list summary (0009, 0010)', () => {
     expect(triggered.list.length).toBe(34);
     expect(await snapshot(before)).toEqual(triggered);
     expect(await snapshot(between)).toEqual(triggered);
+    expect(await snapshot(beforeBrands)).toEqual(triggered);
     expect(triggered.counts).toEqual(await recount(after));
-    // Priorities set afterwards reach every copy the same way.
-    for (const db of [before, between, after]) await prioritise(db);
-    expect(await snapshot(before)).toEqual(await snapshot(after));
-    expect(await snapshot(between)).toEqual(await snapshot(after));
+    // Brand orders set afterwards reach every copy the same way.
+    for (const db of [before, between, beforeBrands, after]) await orderBrands(db);
+    const ordered = await snapshot(after);
+    expect(ordered.list.some((row) => row.prio === 0)).toBe(true);
+    for (const db of [before, between, beforeBrands]) expect(await snapshot(db)).toEqual(ordered);
   }, 120_000);
 
   it('keeps the summary and counts right through saves, new versions, activation and raw SQL', async () => {
@@ -202,17 +221,42 @@ describe('material list summary (0009, 0010)', () => {
       [8, false],
     ] as const)
       await materials(ctx, { operation: 'setActive', id: mid(i), active });
-    // Priorities through the API, cleared again, with a state change in the same statement, a shared
-    // material turned personal (its number no longer counts) and a registration time repaired.
-    await materials(ctx, { operation: 'setPriority', id: mid(2), priority: 4 });
-    await materials(ctx, { operation: 'setPriority', id: mid(7), priority: 1 });
-    await materials(ctx, { operation: 'setPriority', id: mid(7), priority: null });
-    await prioritise(db);
+    // Brand orders through 분류 관리, one changed and one cleared again; a per-material priority (0010,
+    // no longer read) in a state change; a scope change; a brand link removed and another added; a
+    // registration time repaired.
+    const catalog = (
+      await db
+        .prepare(
+          "SELECT id,name FROM d1_catalog_options WHERE kind='brand' AND normalized_name IN ('kohler','toto','grohe')",
+        )
+        .all<{ id: string; name: string }>()
+    ).results;
+    for (const [name, sortOrder] of [
+      ['KOHLER', 0],
+      ['TOTO', 2],
+      ['GROHE', 1],
+      ['TOTO', null],
+      ['TOTO', 3],
+      ['GROHE', null],
+    ] as const) {
+      const row = catalog.find((option) => option.name === name)!;
+      await manageCatalog(ctx, {
+        operation: 'update',
+        input: { id: row.id, kind: 'brand', name, active: true, sortOrder },
+      });
+    }
     await db
       .prepare('UPDATE d1_materials SET active=0,priority=2,updated_at=? WHERE id=?')
       .bind('2026-10-08', mid(8))
       .run();
     await db.prepare("UPDATE d1_materials SET scope='personal' WHERE id=?").bind(mid(3)).run();
+    await db.prepare('DELETE FROM d1_material_version_options WHERE version_id=?').bind(vid(3, 1)).run();
+    await db
+      .prepare(
+        "INSERT INTO d1_material_version_options(version_id,option_id,option_kind) VALUES(?,?,'brand')",
+      )
+      .bind(vid(5, 1), catalog.find((option) => option.name === 'GROHE')!.id)
+      .run();
     await db.prepare("UPDATE d1_materials SET created_at='2026-09-30' WHERE id=?").bind(mid(4)).run();
     // A new current version (as materials.ts writes it), then a payload repaired in place.
     await db.batch([
@@ -237,7 +281,9 @@ describe('material list summary (0009, 0010)', () => {
       await db
         .prepare(
           `SELECT l.*,v.payload_json,m.owner_id AS m_owner,m.scope AS m_scope,m.active AS m_active,m.updated_at AS m_updated,
-            m.current_version_id AS m_current,m.purpose AS m_purpose,m.priority AS m_priority,m.created_at AS m_created
+            m.current_version_id AS m_current,m.purpose AS m_purpose,m.created_at AS m_created,
+            (SELECT o.display_order FROM d1_material_version_options b JOIN d1_catalog_options o ON o.id=b.option_id
+             WHERE b.version_id=l.version_id AND b.option_kind='brand') AS m_brand
            FROM d1_material_list l JOIN d1_material_versions v ON v.id=l.version_id JOIN d1_materials m ON m.id=l.material_id`,
         )
         .all<Record<string, string | number>>()
@@ -255,10 +301,9 @@ describe('material list summary (0009, 0010)', () => {
       expect([0, 1, 2, 3, 4, 5].includes(Number(row.class)), row.version_id + ' listed').toBe(listed);
       expect(Number(row.class) & 1).toBe(Number(row.m_purpose === 'catalog'));
       expect(row.search_picker).toBe(`${version.name} ${version.brand} ${version.code}`.toLowerCase());
-      // 0010: the order columns (SQL trim() is spaces, lower() is ASCII; the first 100 characters).
-      expect(row.prio, row.version_id + ' prio').toBe(
-        row.m_scope === 'shared' ? (row.m_priority ?? 10000) : 10000,
-      );
+      // 0010–0011: the order columns (prio is the version's brand order; SQL trim() is spaces,
+      // lower() is ASCII; the first 100 characters).
+      expect(row.prio, row.version_id + ' prio').toBe(row.m_brand ?? 10000);
       expect(row.name_key).toBe(
         [...version.name.replace(/^ +| +$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase())]
           .slice(0, 100)

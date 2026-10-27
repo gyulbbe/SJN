@@ -12,7 +12,8 @@ export type CatalogOption = {
   kind: OptionKind;
   name: string;
   active: boolean;
-  sortOrder: number;
+  /** 표시 순서 (0 first), null when none is given: then by name. A brand's also orders the material lists. */
+  sortOrder: number | null;
   colorHex: string | null;
 };
 export type Subcategory = {
@@ -20,7 +21,7 @@ export type Subcategory = {
   category: MaterialCategory;
   name: string;
   active: boolean;
-  sortOrder: number;
+  sortOrder: number | null;
 };
 export type CatalogData = { options: CatalogOption[]; subcategories: Subcategory[] };
 export type CatalogSelection = {

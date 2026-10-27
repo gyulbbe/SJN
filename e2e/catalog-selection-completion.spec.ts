@@ -69,9 +69,10 @@ test('키보드 위쪽 탐색으로 마지막 항목을 선택하고 Tab 이동 
   await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   const activeId = await color.getAttribute('aria-activedescendant');
   expect(activeId).toBeTruthy();
-  expect(await page.evaluate((id) => document.getElementById(id!)?.textContent, activeId)).toBe('그린');
+  // The last colour: none has a 표시 순서 yet (0011), so the list is by name.
+  expect(await page.evaluate((id) => document.getElementById(id!)?.textContent, activeId)).toBe('화이트');
   await color.press('Enter');
-  await expect(form.getByRole('button', { name: '색상 그린 제거', exact: true })).toBeVisible();
+  await expect(form.getByRole('button', { name: '색상 화이트 제거', exact: true })).toBeVisible();
   await color.press('Tab');
   const composition = form.getByRole('combobox', { name: '재질', exact: true });
   await expect(composition).toBeFocused();
@@ -82,7 +83,8 @@ test('키보드 위쪽 탐색으로 마지막 항목을 선택하고 Tab 이동 
   await expect(form.getByRole('listbox')).toHaveCount(0);
   await composition.press('ArrowDown');
   await composition.press('Enter');
-  await expect(form.getByRole('button', { name: '재질 포세린 제거', exact: true })).toBeVisible();
+  // The first by name (no 표시 순서 yet).
+  await expect(form.getByRole('button', { name: '재질 도기 제거', exact: true })).toBeVisible();
 });
 
 test('선택 ID를 저장·재진입하고 비활성 항목을 새 버전에서 교체해도 이전 버전은 보존한다', async ({
