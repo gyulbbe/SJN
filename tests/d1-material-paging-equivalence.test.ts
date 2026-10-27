@@ -1,7 +1,9 @@
 /**
  * The paged material lists (migration 0009, src/lib/d1/material-list.ts) show exactly what the full
  * lists and the browser filters they replaced showed: frozen copies of both
- * (tests/helpers/legacy-material-lists.ts) run on the same isolated D1 over random catalogues.
+ * (tests/helpers/legacy-material-lists.ts) run on the same isolated D1 over random catalogues. The
+ * items come in the list's order (migration 0010: priority, newest registered, name either way), which
+ * `bySort` states here in JS the way SQLite compares (byte order, ASCII lower(), spaces trim()).
  *
  * Each seed builds owners' shared, personal, project, inactive and sample materials with older
  * versions, '·'-joined colours and surfaces, ties in updated_at, reconstruction values (absent,
@@ -15,7 +17,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { applyD1Migrations, allD1Migrations } from './helpers/d1-migrations';
 import {
-  byRecency,
   legacyAdminProjectList,
   legacyEditorFilter,
   legacyManagerFilter,
@@ -31,9 +32,11 @@ import { placementToMaterialVersion, type PublicPlacement } from '../src/lib/cat
 import { materialCard, type MaterialCard } from '../src/lib/catalog/cards';
 import {
   editorTabQuery,
+  materialSorts,
   pageSearchParams,
   type MaterialPage,
   type MaterialPageQuery,
+  type MaterialSort,
 } from '../src/lib/catalog/paging';
 import { emptyFacets, facetKeys, type FacetSelection } from '../src/lib/catalog/facets';
 import { materialReferences } from '../src/lib/repositories/references';
@@ -62,7 +65,18 @@ const uuid = () => '00000000-0000-4000-8000-' + (++counter).toString(16).padStar
 const OWNERS = ['member-1', 'member-2', 'admin-1'];
 const ADMINS = ['admin-1', 'admin-2'];
 const TIMES = Array.from({ length: 9 }, (_, i) => `2026-10-0${i + 1}T00:00:00.000Z`);
-const NAMES = ['라이트 스톤', 'Stone Grey', 'WHITE Tile', '욕실 타일', '세면대 A', 'Toto 변기', '모자이크'];
+const NAMES = [
+  '라이트 스톤',
+  'Stone Grey',
+  'WHITE Tile',
+  '욕실 타일',
+  '세면대 A',
+  'Toto 변기',
+  '모자이크',
+  '  가 타일 ',
+  '10 Tile',
+  '9 Tile',
+];
 const BRANDS = ['TOTO', '대림바스', '', 'KOHLER'];
 const CODES = ['A-1', 'b-22', 'EXAMPLE-STONE-01', 'X9', ''];
 const COLORS = ['화이트', '그레이', '베이지', '블루', '차콜'];
@@ -196,9 +210,11 @@ async function build(seed: number): Promise<Graph> {
       scope,
       chance(0.85) ? own.at(-1)! : pick(own),
       chance(0.85) ? 1 : 0,
-      TIMES[0],
+      pick(TIMES),
       pick(TIMES),
       scope === 'personal' && chance(0.6) ? 'project' : chance(0.05) ? 'project' : 'catalog',
+      // Ties on purpose; a personal material's number (raw SQL only) does not count.
+      chance(scope === 'shared' ? 0.35 : 0.1) ? pick([1, 2, 2, 5]) : null,
     ]);
     versions.push(...own);
   }
@@ -232,7 +248,17 @@ async function build(seed: number): Promise<Graph> {
     ),
     insert(
       'd1_materials',
-      ['id', 'owner_id', 'scope', 'current_version_id', 'active', 'created_at', 'updated_at', 'purpose'],
+      [
+        'id',
+        'owner_id',
+        'scope',
+        'current_version_id',
+        'active',
+        'created_at',
+        'updated_at',
+        'purpose',
+        'priority',
+      ],
       materialRows,
     ),
     insert(
@@ -327,19 +353,61 @@ function selections(options: FacetSelection, pick: <T>(items: readonly T[]) => T
   return result;
 }
 const SEARCHES = ['', ' ', 'stone', 'TILE', '타일', 'b-2', '없는말'];
-const cardsOf = (entries: Entry[]) => entries.map((entry) => materialCard(entry.material, entry.version));
-const recency = byRecency<Entry>((entry) => ({ updatedAt: entry.material.updatedAt, id: entry.material.id }));
+
+/** Each material's registration time and its priority as the lists read it (shared only). */
+let orders = new Map<string, { createdAt: string; prio: number }>();
+async function readOrders() {
+  const rows = await db
+    .prepare('SELECT id,created_at,scope,priority FROM d1_materials')
+    .all<{ id: string; created_at: string; scope: string; priority: number | null }>();
+  orders = new Map(
+    rows.results.map((row) => [
+      row.id,
+      { createdAt: row.created_at, prio: row.scope === 'shared' ? (row.priority ?? 10000) : 10000 },
+    ]),
+  );
+}
+const bytes = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+/** SQLite's substr(lower(trim(name)),1,100): ASCII letters only, spaces only. */
+const nameKey = (name: string) =>
+  [...name.replace(/^ +| +$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase())].slice(0, 100).join('');
+/** The list order (src/lib/d1/material-list.ts ORDERS), the material id settling ties. */
+const bySort =
+  <T>(sort: MaterialSort, key: (item: T) => { id: string; name: string }) =>
+  (x: T, y: T) => {
+    const a = key(x),
+      b = key(y);
+    const id = bytes(a.id, b.id);
+    const name = bytes(nameKey(a.name), nameKey(b.name));
+    if (sort === 'name') return name || id;
+    if (sort === 'nameDesc') return -(name || id);
+    const [p, q] = [orders.get(a.id)!, orders.get(b.id)!];
+    if (sort === 'newest') return -(bytes(p.createdAt, q.createdAt) || id);
+    return p.prio - q.prio || name || id;
+  };
+const entryOrder = (sort: MaterialSort) =>
+  bySort<Entry>(sort, (entry) => ({ id: entry.material.id, name: entry.version.name }));
+const priorityOf = (id: string) => {
+  const prio = orders.get(id)?.prio ?? 10000;
+  return prio < 10000 ? prio : null;
+};
+const cardsOf = (entries: Entry[]) =>
+  entries.map((entry) => materialCard(entry.material, entry.version, priorityOf(entry.material.id)));
 
 describe('paged material lists show what the full lists and browser filters showed', () => {
   it.each(SEEDS)(
     'seed %i',
     async (seed) => {
       const graph = await build(seed);
+      await readOrders();
       const random = prng(seed + 1);
       const pick = <T>(items: readonly T[]) => items[Math.floor(random() * items.length)];
       /** Every combination for the recorded proof; two of them (the first and one more) otherwise. */
       const some = <T>(items: readonly T[]): T[] =>
         FULL || items.length <= 2 ? [...items] : [items[0], pick(items.slice(1))];
+      /** The order of one comparison: every order for the proof, the default or another one otherwise. */
+      const sorts = () => some(materialSorts);
+      const sortQuery = (sort: MaterialSort) => (sort === 'priority' ? {} : { sort });
 
       // Member and administrator editor drawers: tab, search, facets.
       for (const actor of OWNERS) {
@@ -348,36 +416,43 @@ describe('paged material lists show what the full lists and browser filters show
         for (const tab of ['wall', 'floor', 'fixtures'] as const) {
           const { facets: offered } = legacyEditorFilter(list, { tab, search: '', facets: emptyFacets() });
           for (const [index, facets] of some(selections(offered, pick)).entries())
-            for (const search of index === 0 && FULL ? SEARCHES : ['', pick(SEARCHES)]) {
-              const old = legacyEditorFilter(list, { tab, search, facets });
-              const got = await memberPages(ctx, {
-                ...editorTabQuery(tab),
-                ...(search ? { q: search } : {}),
-                facets,
-                options: true,
-              });
-              const label = JSON.stringify({ actor, tab, search, facets });
-              expect(got.items, label).toEqual(cardsOf(old.items.sort(recency)));
-              expect(got.total, label).toBe(old.items.length);
-              expect(got.facets, label).toEqual(old.facets);
-            }
+            for (const search of index === 0 && FULL ? SEARCHES : ['', pick(SEARCHES)])
+              for (const sort of sorts()) {
+                const old = legacyEditorFilter(list, { tab, search, facets });
+                const got = await memberPages(ctx, {
+                  ...editorTabQuery(tab),
+                  ...(search ? { q: search } : {}),
+                  facets,
+                  options: true,
+                  ...sortQuery(sort),
+                });
+                const label = JSON.stringify({ actor, tab, search, facets, sort });
+                expect(got.items, label).toEqual(cardsOf(old.items.sort(entryOrder(sort))));
+                expect(got.total, label).toBe(old.items.length);
+                expect(got.facets, label).toEqual(old.facets);
+              }
         }
         // The administrator library: scope tabs, deactivated ones, category, search, tab counts.
         for (const scope of some(['all', 'personal', 'shared'] as const))
           for (const inactive of [false, true])
             for (const category of some(['all', 'tile', 'basin'] as const))
-              for (const search of FULL ? ['', pick(SEARCHES)] : [pick(SEARCHES)]) {
-                const old = legacyManagerFilter(list, { inactive, scope, category, search });
-                const got = await memberPages(
-                  ctx,
-                  { ...(category === 'all' ? {} : { category }), ...(search ? { q: search } : {}) },
-                  { view: 'library', scope, active: !inactive },
-                );
-                const label = JSON.stringify({ actor, scope, inactive, category, search });
-                expect(got.items, label).toEqual(cardsOf(old.matching.sort(recency)));
-                expect(got.total, label).toBe(old.matching.length);
-                expect(got.counts, label).toEqual(old.counts);
-              }
+              for (const search of FULL ? ['', pick(SEARCHES)] : [pick(SEARCHES)])
+                for (const sort of FULL ? materialSorts : [pick(materialSorts)]) {
+                  const old = legacyManagerFilter(list, { inactive, scope, category, search });
+                  const got = await memberPages(
+                    ctx,
+                    {
+                      ...(category === 'all' ? {} : { category }),
+                      ...(search ? { q: search } : {}),
+                      ...sortQuery(sort),
+                    },
+                    { view: 'library', scope, active: !inactive },
+                  );
+                  const label = JSON.stringify({ actor, scope, inactive, category, search, sort });
+                  expect(got.items, label).toEqual(cardsOf(old.matching.sort(entryOrder(sort))));
+                  expect(got.total, label).toBe(old.matching.length);
+                  expect(got.counts, label).toEqual(old.counts);
+                }
         // find: the first list entry with that code and reconstruction.
         for (const code of some(graph.codes))
           for (const reconstruction of [{ version: 2 as const }, { kind: 'tile' as const }]) {
@@ -411,24 +486,27 @@ describe('paged material lists show what the full lists and browser filters show
           const scope = { id: project.id, ownerId: project.ownerId, requestId: 'eq' };
           const ctx: Context = { env, actor: { id: admin, isAdmin: true }, adminProject: scope };
           const list = await legacyAdminProjectList(db, scope, admin);
-          const order = (a: (typeof list)[number], b: (typeof list)[number]) =>
-            Number(b.current) - Number(a.current) || recency(a, b);
+          // Current versions first, then the older versions the project uses; each in the list's order.
+          const order = (sort: MaterialSort) => (a: (typeof list)[number], b: (typeof list)[number]) =>
+            Number(b.current) - Number(a.current) || entryOrder(sort)(a, b);
           for (const tab of ['wall', 'floor', 'fixtures'] as const) {
             const { facets: offered } = legacyEditorFilter(list, { tab, search: '', facets: emptyFacets() });
             for (const facets of some(selections(offered, pick)))
-              for (const search of ['', pick(SEARCHES)]) {
-                const old = legacyEditorFilter(list, { tab, search, facets });
-                const got = await memberPages(ctx, {
-                  ...editorTabQuery(tab),
-                  ...(search ? { q: search } : {}),
-                  facets,
-                  options: true,
-                });
-                const label = JSON.stringify({ project: project.id, admin, tab, search, facets });
-                expect(got.items, label).toEqual(cardsOf(old.items.sort(order)));
-                expect(got.total, label).toBe(old.items.length);
-                expect(got.facets, label).toEqual(old.facets);
-              }
+              for (const search of ['', pick(SEARCHES)])
+                for (const sort of sorts()) {
+                  const old = legacyEditorFilter(list, { tab, search, facets });
+                  const got = await memberPages(ctx, {
+                    ...editorTabQuery(tab),
+                    ...(search ? { q: search } : {}),
+                    facets,
+                    options: true,
+                    ...sortQuery(sort),
+                  });
+                  const label = JSON.stringify({ project: project.id, admin, tab, search, facets, sort });
+                  expect(got.items, label).toEqual(cardsOf(old.items.sort(order(sort))));
+                  expect(got.total, label).toBe(old.items.length);
+                  expect(got.facets, label).toEqual(old.facets);
+                }
           }
           for (const code of some(graph.codes)) {
             const match = { code, reconstruction: { version: 2 as const } };
@@ -446,29 +524,31 @@ describe('paged material lists show what the full lists and browser filters show
           facets: emptyFacets(),
         });
         for (const facets of some(selections(offered, pick)))
-          for (const query of ['', pick(SEARCHES), 'ＳＴＯＮＥ']) {
-            const old = legacyPublicFilter(publicRows, { category, query, facets });
-            const got = await getPages<PublicMaterial>(
-              (request) => publicMaterials(env, request),
-              '/api/catalog/materials',
-              {
-                ...(category ? { category: category as MaterialCategory } : {}),
-                ...(query ? { q: query } : {}),
-                facets,
-                options: true,
-              },
-              'items',
-            );
-            const label = JSON.stringify({ category, query, facets });
-            expect(got.items, label).toEqual(
-              old.matching
-                .sort(byRecency((row) => ({ updatedAt: row.updatedAt, id: row.id })))
-                .map((row) => ({ ...row, updatedAt: undefined }))
-                .map((row) => JSON.parse(JSON.stringify(row))),
-            );
-            expect(got.total, label).toBe(old.matching.length);
-            expect(got.facets, label).toEqual(old.facets);
-          }
+          for (const query of ['', pick(SEARCHES), 'ＳＴＯＮＥ'])
+            for (const sort of sorts()) {
+              const old = legacyPublicFilter(publicRows, { category, query, facets });
+              const got = await getPages<PublicMaterial>(
+                (request) => publicMaterials(env, request),
+                '/api/catalog/materials',
+                {
+                  ...(category ? { category: category as MaterialCategory } : {}),
+                  ...(query ? { q: query } : {}),
+                  facets,
+                  options: true,
+                  ...sortQuery(sort),
+                },
+                'items',
+              );
+              const label = JSON.stringify({ category, query, facets, sort });
+              expect(got.items, label).toEqual(
+                old.matching
+                  .sort(bySort(sort, (row) => ({ id: row.id, name: row.name })))
+                  .map((row) => ({ ...row, updatedAt: undefined }))
+                  .map((row) => JSON.parse(JSON.stringify(row))),
+              );
+              expect(got.total, label).toBe(old.matching.length);
+              expect(got.facets, label).toEqual(old.facets);
+            }
       }
 
       // The guest drawer: public placements whose images are all public, without the samples.
@@ -487,24 +567,31 @@ describe('paged material lists show what the full lists and browser filters show
       for (const tab of ['wall', 'floor', 'fixtures'] as const) {
         const { facets: offered } = legacyEditorFilter(guestList, { tab, search: '', facets: emptyFacets() });
         for (const facets of some(selections(offered, pick)))
-          for (const search of ['', pick(SEARCHES)]) {
-            const old = legacyEditorFilter(guestList, { tab, search, facets });
-            const got = await getPages<PublicPlacement>(
-              (request) => publicPlacement(env, request),
-              '/api/catalog/placement',
-              { ...editorTabQuery(tab), ...(search ? { q: search } : {}), facets, options: true },
-              'placements',
-            );
-            const label = JSON.stringify({ guest: tab, search, facets });
-            expect(
-              got.items.map((p) => p.versionId),
-              label,
-            ).toEqual(old.items.sort(recency).map((entry) => entry.version.id));
-            // The options come from the public summary, which does not look at images: a value only a
-            // material with a missing image has can show (docs: guest facet options).
-            for (const key of facetKeys)
-              expect(got.facets![key], label).toEqual(expect.arrayContaining(old.facets[key]));
-          }
+          for (const search of ['', pick(SEARCHES)])
+            for (const sort of sorts()) {
+              const old = legacyEditorFilter(guestList, { tab, search, facets });
+              const got = await getPages<PublicPlacement>(
+                (request) => publicPlacement(env, request),
+                '/api/catalog/placement',
+                {
+                  ...editorTabQuery(tab),
+                  ...(search ? { q: search } : {}),
+                  facets,
+                  options: true,
+                  ...sortQuery(sort),
+                },
+                'placements',
+              );
+              const label = JSON.stringify({ guest: tab, search, facets, sort });
+              expect(
+                got.items.map((p) => p.versionId),
+                label,
+              ).toEqual(old.items.sort(entryOrder(sort)).map((entry) => entry.version.id));
+              // The options come from the public summary, which does not look at images: a value only a
+              // material with a missing image has can show (docs: guest facet options).
+              for (const key of facetKeys)
+                expect(got.facets![key], label).toEqual(expect.arrayContaining(old.facets[key]));
+            }
       }
     },
     600_000,

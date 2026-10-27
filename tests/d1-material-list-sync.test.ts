@@ -1,8 +1,8 @@
 /**
- * Migration 0009's summary stays equal to its payloads and material rows whoever writes them: the
- * backfill of existing rows equals what the triggers build row by row, the counts equal a recount after
- * saves, new versions, (de)activations and raw SQL, and the facet split equals facetValues
- * (src/lib/catalog/facets.ts).
+ * Migration 0009's summary (and 0010's order columns) stays equal to its payloads and material rows
+ * whoever writes them: the backfill of existing rows equals what the triggers build row by row, the
+ * counts equal a recount after saves, new versions, (de)activations, priorities and raw SQL, and the
+ * facet split equals facetValues (src/lib/catalog/facets.ts).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
@@ -23,7 +23,7 @@ beforeAll(() => {
       modules: true,
       script: 'export default { fetch() { return new Response(null, { status: 404 }); } };',
       compatibilityDate: '2026-09-07',
-      d1Databases: { A: 'sync-a', B: 'sync-b', C: 'sync-c' },
+      d1Databases: { A: 'sync-a', B: 'sync-b', C: 'sync-c', D: 'sync-d' },
     }),
   );
 });
@@ -70,7 +70,8 @@ const payload = (id: string, materialId: string, i: number, version = 1) =>
     id,
     materialId,
     version,
-    name: 'Name ' + i,
+    // Spaces around some names, and a long one: the name order trims them and keeps 100 characters.
+    name: i % 5 === 2 ? `  Name ${i} ` : i === 9 ? 'Name 9 ' + '긴이름'.repeat(60) : 'Name ' + i,
     brand: 'BRAND',
     code: 'C-' + i,
     scope: 'shared',
@@ -107,7 +108,7 @@ async function seed(db: D1DatabaseLike) {
           i % 5 === 1 ? 'personal' : 'shared',
           vid(i, versions),
           i % 7 === 3 ? 0 : 1,
-          '2026-10-01',
+          `2026-10-0${1 + (i % 4)}`,
           `2026-10-0${1 + (i % 5)}`,
           i % 6 === 5 ? 'project' : 'catalog',
         ),
@@ -150,22 +151,42 @@ const recount = async (db: D1DatabaseLike) =>
       .all()
   ).results;
 
-describe('material list summary (0009)', () => {
+/** Migrations before `name` (that one and the later ones come after the seed). */
+const until = (name: string) => allD1Migrations.slice(0, allD1Migrations.indexOf(name));
+const from = (name: string) => allD1Migrations.slice(allD1Migrations.indexOf(name));
+/** A shared material's priority, as the 0010 order reads it (1 first). */
+const prioritise = (db: D1DatabaseLike) =>
+  db.batch([
+    db.prepare('UPDATE d1_materials SET priority=3 WHERE id=?').bind(mid(2)),
+    db.prepare('UPDATE d1_materials SET priority=1 WHERE id=?').bind(mid(3)),
+    // A personal material's number does not count (the API refuses it; raw SQL can still write it).
+    db.prepare('UPDATE d1_materials SET priority=2 WHERE id=?').bind(mid(1)),
+  ]);
+
+describe('material list summary (0009, 0010)', () => {
   it('fills existing rows exactly as the triggers build new ones', async () => {
     const before = await database('A'),
+      between = await database('D'),
       after = await database('B');
-    // Existing data, then the migration (backfill) ...
-    await applyD1Migrations(before, allD1Migrations.slice(0, -1));
+    // Existing data, then the migrations (backfill): before 0009, and between 0009 and 0010 ...
+    await applyD1Migrations(before, until('0009_material_list.sql'));
     await seed(before);
-    await applyD1Migrations(before, allD1Migrations.slice(-1));
-    // ... and the migration first, then the same data through the triggers.
+    await applyD1Migrations(before, from('0009_material_list.sql'));
+    await applyD1Migrations(between, until('0010_material_order.sql'));
+    await seed(between);
+    await applyD1Migrations(between, from('0010_material_order.sql'));
+    // ... and the migrations first, then the same data through the triggers.
     await applyD1Migrations(after, allD1Migrations);
     await seed(after);
-    const backfilled = await snapshot(before),
-      triggered = await snapshot(after);
-    expect(backfilled.list.length).toBe(34);
-    expect(backfilled).toEqual(triggered);
-    expect(backfilled.counts).toEqual(await recount(before));
+    const triggered = await snapshot(after);
+    expect(triggered.list.length).toBe(34);
+    expect(await snapshot(before)).toEqual(triggered);
+    expect(await snapshot(between)).toEqual(triggered);
+    expect(triggered.counts).toEqual(await recount(after));
+    // Priorities set afterwards reach every copy the same way.
+    for (const db of [before, between, after]) await prioritise(db);
+    expect(await snapshot(before)).toEqual(await snapshot(after));
+    expect(await snapshot(between)).toEqual(await snapshot(after));
   }, 120_000);
 
   it('keeps the summary and counts right through saves, new versions, activation and raw SQL', async () => {
@@ -181,6 +202,18 @@ describe('material list summary (0009)', () => {
       [8, false],
     ] as const)
       await materials(ctx, { operation: 'setActive', id: mid(i), active });
+    // Priorities through the API, cleared again, with a state change in the same statement, a shared
+    // material turned personal (its number no longer counts) and a registration time repaired.
+    await materials(ctx, { operation: 'setPriority', id: mid(2), priority: 4 });
+    await materials(ctx, { operation: 'setPriority', id: mid(7), priority: 1 });
+    await materials(ctx, { operation: 'setPriority', id: mid(7), priority: null });
+    await prioritise(db);
+    await db
+      .prepare('UPDATE d1_materials SET active=0,priority=2,updated_at=? WHERE id=?')
+      .bind('2026-10-08', mid(8))
+      .run();
+    await db.prepare("UPDATE d1_materials SET scope='personal' WHERE id=?").bind(mid(3)).run();
+    await db.prepare("UPDATE d1_materials SET created_at='2026-09-30' WHERE id=?").bind(mid(4)).run();
     // A new current version (as materials.ts writes it), then a payload repaired in place.
     await db.batch([
       db
@@ -204,7 +237,7 @@ describe('material list summary (0009)', () => {
       await db
         .prepare(
           `SELECT l.*,v.payload_json,m.owner_id AS m_owner,m.scope AS m_scope,m.active AS m_active,m.updated_at AS m_updated,
-            m.current_version_id AS m_current,m.purpose AS m_purpose
+            m.current_version_id AS m_current,m.purpose AS m_purpose,m.priority AS m_priority,m.created_at AS m_created
            FROM d1_material_list l JOIN d1_material_versions v ON v.id=l.version_id JOIN d1_materials m ON m.id=l.material_id`,
         )
         .all<Record<string, string | number>>()
@@ -222,6 +255,28 @@ describe('material list summary (0009)', () => {
       expect([0, 1, 2, 3, 4, 5].includes(Number(row.class)), row.version_id + ' listed').toBe(listed);
       expect(Number(row.class) & 1).toBe(Number(row.m_purpose === 'catalog'));
       expect(row.search_picker).toBe(`${version.name} ${version.brand} ${version.code}`.toLowerCase());
+      // 0010: the order columns (SQL trim() is spaces, lower() is ASCII; the first 100 characters).
+      expect(row.prio, row.version_id + ' prio').toBe(
+        row.m_scope === 'shared' ? (row.m_priority ?? 10000) : 10000,
+      );
+      expect(row.name_key).toBe(
+        [...version.name.replace(/^ +| +$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase())]
+          .slice(0, 100)
+          .join(''),
+      );
+      expect(row.created_at).toBe(row.m_created);
+      const copies = (
+        await db
+          .prepare('SELECT DISTINCT prio,name_key,created_at FROM d1_material_list_facets WHERE version_id=?')
+          .bind(row.version_id)
+          .all<Record<string, string | number>>()
+      ).results;
+      for (const copy of copies)
+        expect(copy, row.version_id + ' facet copies').toEqual({
+          prio: row.prio,
+          name_key: row.name_key,
+          created_at: row.created_at,
+        });
       const facets = (
         await db
           .prepare('SELECT facet,value FROM d1_material_list_facets WHERE version_id=?')

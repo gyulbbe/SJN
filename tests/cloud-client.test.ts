@@ -30,6 +30,22 @@ describe('cloud request identity and retries', () => {
     await repository.materials.setActive('material-a', true);
     expect(new Set(fetcher.mock.calls.map((call) => call[1].headers['X-Idempotency-Key'])).size).toBe(3);
   });
+  it('sends each priority change as its own write, also back to an earlier value (1 → none → 1)', async () => {
+    const fetcher = vi.fn().mockImplementation(async () => Response.json({ priority: 1 }));
+    vi.stubGlobal('fetch', fetcher);
+    const repository = createCloudRepositories('d1', 'user-a');
+    await repository.materials.setPriority!('material-a', 1);
+    await repository.materials.setPriority!('material-a', null);
+    await repository.materials.setPriority!('material-a', 1);
+    // An activation of the same material keeps its own intent.
+    await repository.materials.setActive('material-a', true);
+    expect(new Set(fetcher.mock.calls.map((call) => call[1].headers['X-Idempotency-Key'])).size).toBe(4);
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toMatchObject({
+      operation: 'setPriority',
+      id: 'material-a',
+      priority: null,
+    });
+  });
   it('reuses one uncertain operation until confirmation then allocates a new intent', async () => {
     const fetcher = vi
       .fn()
