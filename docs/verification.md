@@ -13,7 +13,7 @@
   - e2e `material-paging`(새 시험 포함 5개), `material-panel-layout`, `fixture-category-chips`, `list-thumbnails` 12개 통과. 이 환경에 Chrome이 없어 `channel: 'chrome'`을 뺀 임시 사본으로 Chromium에서 돌렸다.
   - vitest 3,698개 통과. 실패 5개는 이 작업 환경에 없는 로컬 결과 파일을 읽는 기존 시험이다(`reconstruction-source-plane-mapping`).
   - typecheck, eslint, Prettier 통과
-  - 원격 D1 읽기·쓰기, 0010 원격 적용, 배포, AI 호출은 없다.
+  - 작업 중 원격 D1 읽기·쓰기, 배포, AI 호출은 없다. 원격 0010은 같은 날 사용자가 적용했다(사용자 보고).
 
 ## 2026-10-25 — Cloudflare AI 추가 계정을 먼저, 다 쓰면 내 계정으로
 
