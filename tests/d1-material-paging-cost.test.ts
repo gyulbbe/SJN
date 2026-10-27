@@ -1,9 +1,9 @@
 /**
  * D1 cost of the paged material lists (d1-query-budget): rows read and queries per request at a base
- * size N and at 5N, with the same page size, in every list order (migration 0010, the default priority
- * order and the others; docs/material-order-results-20261027.md); the query plans (no SCAN of a growing
- * table, no sort step inside an index order); the rows a save and a priority write; and the two ways to
- * search (a range scan, and FTS5 for comparison).
+ * size N and at 5N, with the same page size, in every list order (migrations 0010–0011, the default
+ * brand order and the others; docs/material-order-results-20261027.md); the query plans (no SCAN of a
+ * growing table, no sort step inside an index order); the rows a save, a brand link and a brand's new
+ * order write; and the two ways to search (a range scan, and FTS5 for comparison).
  *
  * The regular run uses a small N; the remote shape of 2026-10-17 (930 tiles, 30 products) runs with
  *
@@ -17,6 +17,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { applyD1Migrations, allD1Migrations, migrationStatements } from './helpers/d1-migrations';
 import { meterD1, type D1QueryRecord } from './helpers/d1-meter';
 import { materials } from '../src/lib/d1/materials';
+import { manageCatalog } from '../src/lib/catalog/server';
 import { publicImage, publicMaterials, publicPlacement } from '../src/lib/catalog/public';
 import {
   pageSearchParams,
@@ -82,7 +83,7 @@ async function database(name: string, scale: number, migrations = allD1Migration
         SCALE5: 'paging-cost-5',
         BEFORE: 'paging-cost-before',
         BEFORE_ORDER: 'paging-cost-before-0010',
-        MIGRATE: 'paging-cost-migrate-0010',
+        MIGRATE: 'paging-cost-migrate-0011',
       },
     }),
   );
@@ -110,9 +111,13 @@ async function database(name: string, scale: number, migrations = allD1Migration
     `${series(10)} INSERT INTO d1_project_versions(project_id,version_id) SELECT '${PROJECT}',printf('20000000-0000-4000-8000-%012d',i*7) FROM n`,
     `${series(3)} INSERT INTO d1_project_versions(project_id,version_id) SELECT '${PROJECT}',printf('a0000000-0000-4000-8000-%012d',i) FROM n`,
   ];
-  // An administrator numbered a few shared materials (ties on purpose).
-  if (migrations.includes('0010_material_order.sql'))
-    statements.push(`UPDATE d1_materials SET priority=1+rowid%5 WHERE scope='shared' AND rowid%37=0`);
+  // The versions' brands (the payload names 0004's TOTO and 대림바스, as a save links them), and with
+  // 0011 대림바스 ordered first in 분류 관리.
+  statements.push(`INSERT INTO d1_material_version_options(version_id,option_id,option_kind)
+    SELECT v.id,o.id,'brand' FROM d1_material_versions v JOIN d1_catalog_options o
+    ON o.kind='brand' AND o.name=json_extract(v.payload_json,'$.brand')`);
+  if (migrations.includes('0011_brand_order.sql'))
+    statements.push(`UPDATE d1_catalog_options SET display_order=0 WHERE kind='brand' AND name='대림바스'`);
   for (const statement of statements) await db.prepare(statement).run();
   return db;
 }
@@ -465,25 +470,45 @@ for (const sort of ['newest', 'name', 'nameDesc'] as MaterialSort[])
       'filtered',
     ),
   );
-// The administrator's priority on one shared material (set, then cleared): one request each.
-for (const priority of [3, null])
-  PATHS.push({
-    name: `우선순위 ${priority ?? '해제'}`,
-    kind: 'single',
-    run: (db, p) =>
-      measure(
-        db,
-        async (env) => {
-          await materials({ env, actor: admin }, { operation: 'setPriority', id: id('1', 5), priority });
-          return 1;
-        },
-        p,
-      ),
-  });
+/**
+ * A brand's 표시 순서 set and cleared in 분류 관리: one request, which rewrites the order of every
+ * version of that brand (rows follow the brand's size, not the catalogue; asserted per version).
+ */
+async function brandOrderWrites(db: D1DatabaseLike) {
+  const toto = (await db
+    .prepare(
+      "SELECT id,(SELECT COUNT(*) FROM d1_material_version_options WHERE option_kind='brand' AND option_id=o.id) AS versions FROM d1_catalog_options o WHERE kind='brand' AND name='TOTO'",
+    )
+    .first<{ id: string; versions: number }>())!;
+  const results: Record<string, Omit<Cost, 'records'> & { versions: number }> = {};
+  for (const sortOrder of [1, null]) {
+    const cost = await measure(
+      db,
+      async (env) => {
+        await manageCatalog(
+          { env, actor: admin },
+          {
+            operation: 'update',
+            input: { id: toto.id, kind: 'brand', name: 'TOTO', active: true, sortOrder },
+          },
+        );
+        return 1;
+      },
+      new Map(),
+    );
+    results[`브랜드 순서 ${sortOrder ?? '해제'}`] = {
+      ...cost,
+      records: undefined,
+      versions: toto.versions,
+    } as never;
+  }
+  return results;
+}
 
 /**
  * Rows one save writes: a new material (material, then version), its next version, (de)activation,
- * and with 0010 a priority set and cleared. The same statements as materials.ts, run as one batch each.
+ * and with 0011 its brand link (catalogStatements, after the version). The same statements as
+ * materials.ts, run as one batch each.
  */
 async function saveWrites(db: D1DatabaseLike, label: string, ordered = true) {
   const results: Record<string, Omit<Cost, 'records'>> = {};
@@ -542,14 +567,13 @@ async function saveWrites(db: D1DatabaseLike, label: string, ordered = true) {
   await writes('비활성화', [
     meter.db.prepare("UPDATE d1_materials SET active=0,updated_at='2026-10-22' WHERE id='new-m'"),
   ]);
-  if (ordered) {
-    await writes('우선순위 정하기', [
-      meter.db.prepare("UPDATE d1_materials SET priority=3 WHERE id='new-m' AND priority IS NOT 3"),
+  if (ordered)
+    await writes('브랜드 연결(순서 있는 브랜드)', [
+      meter.db.prepare(
+        `INSERT INTO d1_material_version_options(version_id,option_id,option_kind)
+         SELECT 'new-v2',id,'brand' FROM d1_catalog_options WHERE kind='brand' AND name='대림바스'`,
+      ),
     ]);
-    await writes('우선순위 해제', [
-      meter.db.prepare("UPDATE d1_materials SET priority=NULL WHERE id='new-m' AND priority IS NOT NULL"),
-    ]);
-  }
   return results;
 }
 async function report(scale: number, name: string) {
@@ -561,6 +585,8 @@ async function report(scale: number, name: string) {
     results[path.name] = { ...cost, records: cost.records };
   }
   Object.assign(results, await saveWrites(db, '저장'));
+  const brand = await brandOrderWrites(db);
+  Object.assign(results, brand);
   // Search by FTS5 trigram, for comparison only (not in the migrations).
   let fts: Record<string, number | string> = {};
   try {
@@ -588,7 +614,7 @@ async function report(scale: number, name: string) {
       'SELECT (SELECT COUNT(*) FROM d1_materials) AS materials,(SELECT COUNT(*) FROM d1_material_list) AS list,(SELECT COUNT(*) FROM d1_material_list_facets) AS facets,(SELECT COUNT(*) FROM d1_material_list_counts) AS counts',
     )
     .first();
-  return { counts, results, plans: Object.fromEntries(plans), fts };
+  return { counts, results, brand, plans: Object.fromEntries(plans), fts };
 }
 
 describe('paged material list cost (d1-query-budget)', () => {
@@ -607,15 +633,11 @@ describe('paged material list cost (d1-query-budget)', () => {
       ...(await saveWrites(beforeOrder, '0010 전 저장', false)),
     };
     // What applying 0010 to a catalogue of the base size reads and writes (backfill and indexes).
-    const migrated = meterD1(
-      (await database('MIGRATE', 1, until('0010_material_order.sql'))) as D1DatabaseLike,
-    );
-    for (const statement of migrationStatements(
-      await readFile('migrations/d1/0010_material_order.sql', 'utf8'),
-    ))
+    const migrated = meterD1((await database('MIGRATE', 1, until('0011_brand_order.sql'))) as D1DatabaseLike);
+    for (const statement of migrationStatements(await readFile('migrations/d1/0011_brand_order.sql', 'utf8')))
       await migrated.db.prepare(statement).run();
     const migration = migrated.summary();
-    console.log(`0010 적용 (N) read ${migration.rowsRead}  written ${migration.rowsWritten}`);
+    console.log(`0011 적용 (N) read ${migration.rowsRead}  written ${migration.rowsWritten}`);
     const x1 = await report(1, 'SCALE1');
     const x5 = await report(5, 'SCALE5');
     await mkdir('test-results', { recursive: true });
@@ -664,6 +686,16 @@ describe('paged material list cost (d1-query-budget)', () => {
           Math.max(a.rowsRead * 1.5, a.rowsRead + 20),
         );
       else expect(b.rowsRead, path.name + detail(b)).toBeLessThanOrEqual(b.items * 8 + 300);
+    }
+    // A brand's new order: the same queries at any size, rows in proportion to that brand's versions.
+    for (const name of Object.keys(x1.brand)) {
+      const a = x1.brand[name],
+        b = x5.brand[name];
+      expect(b.queries, name).toBe(a.queries);
+      for (const cost of [a, b]) {
+        expect(cost.rowsWritten, name).toBeLessThanOrEqual(cost.versions * 12 + 50);
+        expect(cost.rowsRead, name).toBeLessThanOrEqual(cost.versions * 16 + 100);
+      }
     }
     // No growing table is scanned, and every order is read from its index as it is.
     for (const [sql, plan] of Object.entries(x5.plans)) {

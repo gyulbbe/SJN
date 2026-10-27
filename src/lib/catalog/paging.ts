@@ -9,28 +9,26 @@ export const MAX_SEARCH = 100;
 export const MAX_CURSOR = 4096;
 
 /**
- * List orders (docs/material-order-results-20261027.md). `priority` (the default) shows the shared
- * materials an administrator numbered first, smallest number first, then the rest by name.
+ * List orders (docs/material-order-results-20261027.md). `priority` (the default) shows the materials of
+ * the brands an administrator gave a 표시 순서 (분류 관리) first, smallest first, each brand's by name,
+ * then the rest by name.
  */
 export const materialSorts = ['priority', 'newest', 'name', 'nameDesc'] as const;
 export type MaterialSort = (typeof materialSorts)[number];
 export const DEFAULT_SORT: MaterialSort = 'priority';
 export const sortLabels: Record<MaterialSort, string> = {
-  priority: '우선순위',
+  priority: '브랜드 우선순위',
   newest: '최신 등록순',
   name: '이름 오름차순',
   nameDesc: '이름 내림차순',
 };
 /** The editor's narrow panel. */
 export const shortSortLabels: Record<MaterialSort, string> = {
-  priority: '우선순위',
+  priority: '브랜드순',
   newest: '최신순',
   name: '이름순',
   nameDesc: '이름 역순',
 };
-/** An administrator's priority on a shared material: 1 comes first; none is null. */
-export const MAX_PRIORITY = 9999;
-export const prioritySchema = z.number().int().min(1).max(MAX_PRIORITY).nullable();
 
 const facetValuesSchema = z.array(z.string().min(1).max(120)).max(50);
 export const facetSelectionSchema = z

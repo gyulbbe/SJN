@@ -5,7 +5,6 @@ import { cardMaterial, materialCard, type MaterialCard } from '@/lib/catalog/car
 import { DEFAULT_SORT, type MaterialPageQuery, type MaterialSort } from '@/lib/catalog/paging';
 import { LoadMore } from './load-more';
 import { ListImageBackfill } from './list-image-backfill';
-import { PriorityInput } from './priority-input';
 import { SortSelect } from './sort-select';
 import { useMaterialPages, useSettled } from './use-material-pages';
 
@@ -71,8 +70,6 @@ export default function MaterialManager() {
     [scope, inactive],
   );
   const pages = useMaterialPages(fetchPage, listQuery, key, ready, cardId);
-  // A priority changed here keeps the cards where they are; "새 순서 보기" asks for the list again.
-  const [reordered, setReordered] = useState('');
   // A change made here moves the counts without asking for the list again.
   const [moved, setMoved] = useState({ key: '', ...noCounts });
   const shift = moved.key === key ? moved : { key, ...noCounts };
@@ -153,28 +150,6 @@ export default function MaterialManager() {
       setError(reason instanceof Error ? reason.message : '자재 상태를 변경하지 못했어요.');
     } finally {
       setBusy('');
-    }
-  };
-  const savePriority = async (card: MaterialCard, priority: number | null) => {
-    if (!writable || !isAdmin) return false;
-    setError('');
-    try {
-      const { setPriority } = getRepositories().materials;
-      if (!setPriority) throw new Error('우선순위를 정할 수 없는 저장소예요.');
-      await setPriority(card.materialId, priority);
-      pages.update((items) =>
-        items.map((item) => (item.materialId === card.materialId ? { ...item, priority } : item)),
-      );
-      setNotice(
-        priority === null
-          ? `${card.name}의 우선순위를 해제했어요.`
-          : `${card.name}의 우선순위를 ${priority}(으)로 정했어요.`,
-      );
-      if (sort === 'priority') setReordered(key);
-      return true;
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '우선순위를 저장하지 못했어요.');
-      return false;
     }
   };
   const detailPricing = detail
@@ -314,11 +289,6 @@ export default function MaterialManager() {
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            {reordered === key && (
-              <button className={styles.textButton} onClick={() => setReload((value) => value + 1)}>
-                새 순서 보기
-              </button>
-            )}
             <SortSelect value={sort} onChange={setSort} />
             <label className={styles.archiveToggle}>
               <input
@@ -415,14 +385,6 @@ export default function MaterialManager() {
                     </span>
                     {!row.active && <span className="badge amber">비활성</span>}
                   </div>
-                  {row.scope === 'shared' && isAdmin && (
-                    <PriorityInput
-                      name={row.name}
-                      value={row.priority}
-                      disabled={!writable}
-                      onSave={(priority) => savePriority(row, priority)}
-                    />
-                  )}
                 </div>
                 <div className={styles.cardFooter}>
                   <button
@@ -493,8 +455,8 @@ export default function MaterialManager() {
                 setNotice(
                   `${version.name} · v${version.version} 저장 완료. 편집기에서 바로 선택할 수 있어요.`,
                 );
-                // An edit replaces its card where it is (its priority stays; a new name moves it in a
-                // name order only when the list is asked again); a new material shows the list again.
+                // An edit replaces its card where it is (a new name or brand moves it only when the list is
+                // asked again); a new material shows the list again.
                 if (edited)
                   pages.update((items) =>
                     items.map((item) =>
@@ -506,7 +468,6 @@ export default function MaterialManager() {
                               updatedAt: version.createdAt,
                             },
                             version,
-                            edited.priority,
                           )
                         : item,
                     ),

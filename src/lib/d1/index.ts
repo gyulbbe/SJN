@@ -59,7 +59,7 @@ export async function handleD1Request(
       throw invalid('프로젝트 모형은 새로 생성만 할 수 있어요.');
     const mutating =
       typeof operation === 'string' &&
-      ['create', 'save', 'duplicate', 'remove', 'update', 'setActive', 'setPriority'].includes(operation);
+      ['create', 'save', 'duplicate', 'remove', 'update', 'setActive'].includes(operation);
     if (mutating) {
       const requestHash = await hash(boundedDocument(body));
       const supplied = request.headers.get('X-Idempotency-Key');

@@ -1,7 +1,7 @@
 /**
  * Paged material lists over the summary of migration 0009 (docs/material-paging-results-20261022.md).
  *
- * Every list reads one index range per part in the list's order (migration 0010: priority, newest
+ * Every list reads one index range per part in the list's order (migration 0010: brand priority, newest
  * registered, name either way; docs/material-order-results-20261027.md), and stops at the page: a part
  * is a subquery with its own LIMIT and the parts are merged by a UNION, so the rows read follow the
  * page, not the catalogue. Who sees what is the same as the full lists this replaces; each list's
@@ -79,12 +79,11 @@ const classIn = (alias: string, classes: readonly number[]): Fragment => ({
 const limitOf = (limit?: number): Fragment =>
   limit === undefined ? { sql: '', values: [] } : { sql: ' LIMIT ?', values: [limit] };
 
-/** The summary's priority of a material without one, and of every personal one (migration 0010). */
-export const NO_PRIORITY = 10000;
 type SortColumn = 'prio' | 'name_key' | 'created_at' | 'material_id';
 /**
  * A list order: its key columns (the last one, material_id, settles ties), its direction, and the
- * family of 0010 indexes that read it (`name` backwards for the reverse order).
+ * family of 0010 indexes that read it (`name` backwards for the reverse order). `prio` is the version's
+ * brand 표시 순서, 10000 without one (migration 0011).
  */
 type Order = { columns: SortColumn[]; desc: boolean; family: 'prio' | 'name' | 'new' };
 const ORDERS: Record<MaterialSort, Order> = {
@@ -452,15 +451,13 @@ export type ListedRow = {
   scope: string;
   active: number;
   version: number;
-  /** The material's priority, or NO_PRIORITY. */
-  prio: number;
 };
 /** The summary and payload of the given versions, in the given order. */
 export async function rowsFor(db: D1DatabaseLike, ids: string[]): Promise<ListedRow[]> {
   if (!ids.length) return [];
   const rows = await db
     .prepare(
-      `SELECT l.updated_at,l.material_id,l.version_id,l.owner_id,l.scope,l.active,l.version,l.prio,v.payload_json
+      `SELECT l.updated_at,l.material_id,l.version_id,l.owner_id,l.scope,l.active,l.version,v.payload_json
        FROM json_each(?) j CROSS JOIN d1_material_list l CROSS JOIN d1_material_versions v
        WHERE l.version_id=j.value AND v.id=j.value`,
     )

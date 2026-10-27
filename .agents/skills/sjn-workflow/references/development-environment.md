@@ -11,7 +11,7 @@ Node 기준은 [`.node-version`](../../../../.node-version)의 22.23.2다. [pack
 | 목적 | 명령 | 동작 |
 | --- | --- | --- |
 | 기본 Workers 개발 | `npm run dev` 또는 `npm run dev:vinext` | vinext, `http://127.0.0.1:3000`, 로컬 D1/R2; 계정 기능은 아이디 가입·로그인(Google은 설정 시) |
-| 개발 migration | `npm run db:dev:migrate` | 0001~0010 중 미적용 번호, 로컬 DB만, `.wrangler/development` |
+| 개발 migration | `npm run db:dev:migrate` | 0001~0011 중 미적용 번호, 로컬 DB만, `.wrangler/development` |
 | 별도 Next 개발 | `npm run dev:next` | Node/Next, Cloudflare D1/R2/AI 바인딩 없음; 기본 앱 작업 공간 대체 아님 |
 | Next 빌드 | `npm run build` → `npm run start` | Node 빌드/실행 검사; Workers 바인딩은 생기지 않음 |
 | Workers 빌드·미리보기 | `npm run build:vinext` → `npm run start:vinext` | 빌드 설정과 `dist/server/wrangler.json`, 포트 8787, `.wrangler/state` |

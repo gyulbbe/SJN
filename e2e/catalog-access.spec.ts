@@ -160,7 +160,8 @@ test('자재 속성은 부분 검색·복수 선택·IME·키보드를 지원하
   await brand.press('ArrowDown');
   await brand.press('ArrowUp');
   await brand.press('Enter');
-  await expect(form.getByRole('button', { name: '브랜드 대림바스 제거', exact: true })).toBeVisible();
+  // The first brand: none has a 표시 순서 yet (0011), so the list is by name.
+  await expect(form.getByRole('button', { name: '브랜드 GROHE 제거', exact: true })).toBeVisible();
   await expect(form.getByRole('button', { name: '브랜드 TOTO 제거', exact: true })).toHaveCount(0);
 
   const finish = form.getByRole('combobox', { name: '마감', exact: true });

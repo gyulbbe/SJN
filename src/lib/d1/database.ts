@@ -293,13 +293,17 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     'd1_checks',
     'd1_maintenance',
   ];
-  // 0010: the list orders read these indexes by name (INDEXED BY) and these triggers keep them right.
+  // 0010–0011: the list orders read these indexes by name (INDEXED BY) and these triggers keep them
+  // right (a brand's 표시 순서 is its materials' priority).
   const ordered = [
     ...['lane', 'category', 'all', 'personal', 'facet'].flatMap((part) =>
       ['prio', 'name', 'new'].map((family) => `d1_list_${part}_${family}`),
     ),
     'd1_material_list_priority',
     'd1_material_list_created',
+    'd1_material_list_brand_link',
+    'd1_material_list_brand_unlink',
+    'd1_material_list_brand_order',
   ];
   const rows = await env.DB.prepare(
     "SELECT name FROM sqlite_master WHERE type IN ('table','index','trigger')",
@@ -335,7 +339,10 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     env.DB.prepare(
       'SELECT id,owner_id,object_key,source_asset_id,metadata_json,content_hash,deleting FROM d1_assets LIMIT 0',
     ),
-    env.DB.prepare('SELECT id,owner_id,scope,current_version_id,active,priority FROM d1_materials LIMIT 0'),
+    env.DB.prepare('SELECT id,owner_id,scope,current_version_id,active FROM d1_materials LIMIT 0'),
+    // 0011: 표시 순서 (empty for none).
+    env.DB.prepare('SELECT id,kind,display_order FROM d1_catalog_options LIMIT 0'),
+    env.DB.prepare('SELECT id,category_code,display_order FROM d1_material_subcategories LIMIT 0'),
     env.DB.prepare(
       'SELECT id,material_id,version,payload_json,category,view_count FROM d1_material_versions LIMIT 0',
     ),

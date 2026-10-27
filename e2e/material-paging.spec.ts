@@ -259,11 +259,17 @@ test('관리자 자재: 첫 쪽·탭 개수·활성 전환은 그 카드만 바�
   await page.screenshot({ path: `${shots}/library-375.png` });
 });
 
-test('정렬·우선순위: 정렬을 바꾸면 첫 쪽만 다시 받고, 관리자 우선순위는 그 카드만 바꾼 뒤 모든 목록에 반영된다', async ({
+test('정렬·브랜드 우선순위: 정렬을 바꾸면 첫 쪽만 다시 받고, 분류 관리의 브랜드 표시 순서가 모든 목록의 기본 순서다', async ({
   page,
 }) => {
   app = await authenticatedApp(page);
   await seed(app);
+  // The seeded payloads name TOTO on odd rows: link them to 0004's TOTO as a save links its brand.
+  await app.env.DB.prepare(
+    `INSERT INTO d1_material_version_options(version_id,option_id,option_kind)
+     SELECT v.id,o.id,'brand' FROM d1_material_versions v JOIN d1_catalog_options o
+     ON o.kind='brand' AND o.name=json_extract(v.payload_json,'$.brand')`,
+  ).run();
   await page.setViewportSize({ width: 1440, height: 900 });
   const calls = record(page);
   await page.goto('/admin/materials');
@@ -271,8 +277,12 @@ test('정렬·우선순위: 정렬을 바꾸면 첫 쪽만 다시 받고, 관리
   const first = cards.first().locator('button[class*="cardTitle"]');
   const order = page.locator('main').getByLabel('정렬', { exact: true });
   await expect(cards).toHaveCount(48);
-  // No priority yet: the default order is by name (세면대 before 타일).
+  // No brand has an order yet: the default order is by name (세면대 before 타일).
   await expect(first).toHaveText('페이징 세면대 110');
+  await expect(order).toHaveValue('priority');
+  await expect(order.locator('option:checked')).toHaveText('브랜드 우선순위');
+  // No per-material number on the cards.
+  await expect(page.getByLabel(/우선순위$/)).toHaveCount(0);
   await settle(page, calls);
   let pages = count(calls, '/api/d1/materials', 'page');
   // Each order is one first page.
@@ -287,42 +297,40 @@ test('정렬·우선순위: 정렬을 바꾸면 첫 쪽만 다시 받고, 관리
     await page.waitForTimeout(300);
     expect(count(calls, '/api/d1/materials', 'page'), sort).toBe(++pages);
   }
-  // A priority: Enter saves once (leaving the field after it saves nothing more), the card stays.
-  const priority = (name: string) => cards.filter({ hasText: name }).getByLabel(`${name} 우선순위`);
-  await priority('페이징 타일 020').fill('1');
-  await priority('페이징 타일 020').press('Enter');
-  await expect(page.getByText('페이징 타일 020의 우선순위를 1(으)로 정했어요.')).toBeVisible();
-  await priority('페이징 타일 020').blur();
-  await priority('페이징 타일 000').fill('2');
-  await priority('페이징 타일 000').blur();
-  await expect(page.getByText('페이징 타일 000의 우선순위를 2(으)로 정했어요.')).toBeVisible();
-  // Not a number from 1 to 9999: nothing is sent.
-  await priority('페이징 타일 001').fill('0');
-  await priority('페이징 타일 001').press('Enter');
-  await expect(priority('페이징 타일 001')).toHaveAttribute('aria-invalid', 'true');
-  await priority('페이징 타일 001').press('Escape');
-  expect(count(calls, '/api/d1/materials', 'setPriority')).toBe(2);
-  expect(count(calls, '/api/d1/materials', 'page')).toBe(pages);
-  await expect(first).toHaveText('페이징 세면대 110');
-  // "새 순서 보기": the first page once, the numbered ones first.
-  await page.getByRole('button', { name: '새 순서 보기', exact: true }).click();
-  await expect(first).toHaveText('페이징 타일 020');
-  await expect(cards.nth(1).locator('button[class*="cardTitle"]')).toHaveText('페이징 타일 000');
-  await expect(priority('페이징 타일 020')).toHaveValue('1');
-  expect(count(calls, '/api/d1/materials', 'page')).toBe(++pages);
-  await expect(page.getByRole('button', { name: '새 순서 보기', exact: true })).toHaveCount(0);
-  await cards.first().screenshot({ path: `${shots}/library-priority-card.png` });
   await page.setViewportSize({ width: 375, height: 812 });
   await noSideScroll(page);
   await page.screenshot({ path: `${shots}/library-order-375.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  // The public list shows the same order by default; another order is one request.
+  // 분류 관리: every 표시 순서 starts empty; brands say what theirs does; only digits go in.
+  await page.goto('/admin/catalog');
+  await page.getByRole('combobox', { name: '종류', exact: true }).selectOption('brand');
+  await expect(
+    page.getByText('브랜드 표시 순서는 자재 목록의 기본 순서예요.', { exact: false }),
+  ).toBeVisible();
+  const toto = page.getByRole('row').filter({ hasText: /^TOTO/ });
+  await expect(toto.getByRole('cell').nth(2)).toHaveText('—');
+  await toto.getByRole('button', { name: '수정 · TOTO', exact: true }).click();
+  const field = page.getByRole('textbox', { name: '표시 순서', exact: true });
+  await expect(field).toHaveValue('');
+  await field.pressSequentially('a0-');
+  await expect(field).toHaveValue('0');
+  await page.getByRole('button', { name: '변경 저장', exact: true }).click();
+  await expect(toto.getByRole('cell').nth(2)).toHaveText('0');
+  await page.screenshot({ path: `${shots}/catalog-order.png` });
+  // The brand note shows for brands only.
+  await page.getByRole('combobox', { name: '종류', exact: true }).selectOption('color');
+  await expect(page.getByText('브랜드 표시 순서는 자재 목록의 기본 순서예요.', { exact: false })).toHaveCount(
+    0,
+  );
+
+  // The public list: TOTO's materials first, by name; another order is one request.
   await page.goto('/materials');
   const publicCards = page.locator('main [data-page-item]');
   await expect(publicCards).toHaveCount(48);
-  await expect(publicCards.nth(0).locator('h2')).toHaveText('페이징 타일 020');
-  await expect(publicCards.nth(1).locator('h2')).toHaveText('페이징 타일 000');
+  await expect(publicCards.nth(0).locator('h2')).toHaveText('페이징 세면대 111');
+  await expect(publicCards.nth(1).locator('h2')).toHaveText('페이징 세면대 113');
+  await expect(publicCards.nth(10).locator('h2')).toHaveText('페이징 타일 001');
   await settle(page, calls);
   const publicPages = count(calls, '/api/catalog/materials');
   await page.getByLabel('정렬', { exact: true }).selectOption('newest');
@@ -340,8 +348,8 @@ test('정렬·우선순위: 정렬을 바꾸면 첫 쪽만 다시 받고, 관리
   await page.screenshot({ path: `${shots}/public-order-375.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  // The editor drawer: the floor tab by priority, another order is one first page, and it stays
-  // when the tab changes.
+  // The editor drawer: the floor tab with TOTO's floor tiles first, another order is one first page,
+  // and it stays when the tab changes.
   await page.goto('/');
   await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
   await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
@@ -349,9 +357,9 @@ test('정렬·우선순위: 정렬을 바꾸면 첫 쪽만 다시 받고, 관리
   const panel = page.locator('aside.catalog-panel');
   const tiles = panel.locator('button.material-tile');
   await expect(tiles).toHaveCount(48);
-  await expect(tiles.nth(0)).toHaveAttribute('title', '페이징 타일 020 적용');
-  await expect(tiles.nth(1)).toHaveAttribute('title', '페이징 타일 000 적용');
-  await expect(tiles.nth(2)).toHaveAttribute('title', '페이징 타일 002 적용');
+  await expect(tiles.nth(0)).toHaveAttribute('title', '페이징 타일 003 적용');
+  await expect(tiles.nth(1)).toHaveAttribute('title', '페이징 타일 005 적용');
+  await expect(tiles.nth(2)).toHaveAttribute('title', '페이징 타일 009 적용');
   await settle(page, calls);
   const drawerPages = count(calls, '/api/d1/materials', 'page');
   await panel.getByLabel('정렬', { exact: true }).selectOption('nameDesc');

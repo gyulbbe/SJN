@@ -68,20 +68,18 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
     const signature = JSON.stringify([resource, operation, values]);
     if (
       resource === 'materials' &&
-      (operation === 'setActive' || operation === 'setPriority') &&
+      operation === 'setActive' &&
       'id' in values &&
       typeof values.id === 'string'
     ) {
-      // A later intent for the material (active or priority) abandons an uncertain earlier one.
-      const intent = operation + '\u0000' + values.id;
-      const previous = lastActiveIntent.get(intent);
+      const previous = lastActiveIntent.get(values.id);
       if (previous && previous !== signature) pendingOperations.delete(previous);
-      lastActiveIntent.set(intent, signature);
+      lastActiveIntent.set(values.id, signature);
     }
     const distinct =
       operation === 'duplicate' ||
       operation === 'remove' ||
-      (resource === 'materials' && ['create', 'setActive', 'setPriority'].includes(operation));
+      (resource === 'materials' && ['create', 'setActive'].includes(operation));
     const operationId = distinct ? (pendingOperations.get(signature) ?? crypto.randomUUID()) : undefined;
     if (operationId) pendingOperations.set(signature, operationId);
     const body = JSON.stringify({
@@ -165,8 +163,6 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
           expectedVersionId,
         }),
       setActive: (id, active) => invoke<void>('materials', 'setActive', { id, active }),
-      setPriority: (id, priority) =>
-        invoke<{ priority: number | null }>('materials', 'setPriority', { id, priority }),
     },
     assets: {
       async put(asset) {

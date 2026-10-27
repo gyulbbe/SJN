@@ -1,14 +1,15 @@
 /**
- * Material list orders and the administrator's priority (docs/material-order-results-20261027.md):
- * priority first (numbered shared materials, smallest first, then the rest by name), newest registered,
- * name either way; who may set a priority, and what it changes. A local D1 through the storage route,
- * as tests/d1-catalog.test.ts.
+ * Material list orders and brand priority (docs/material-order-results-20261027.md): the default order
+ * shows the materials of the brands an administrator gave a 표시 순서 in 분류 관리 first (0 first, each
+ * brand's by name), then the rest by name; newest registered and name either way. 표시 순서 is a whole
+ * number or empty, and migration 0011 leaves every existing one empty. A local D1 through the storage
+ * route, as tests/d1-catalog.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { handleD1Request, checkD1Storage } from '../src/lib/d1';
-import { materials } from '../src/lib/d1/materials';
 import { publicMaterials, type PublicMaterial } from '../src/lib/catalog/public';
+import { readCatalog } from '../src/lib/catalog/server';
 import {
   pageSearchParams,
   parsePageSearchParams,
@@ -17,7 +18,7 @@ import {
   type MaterialSort,
 } from '../src/lib/catalog/paging';
 import type { MaterialCard } from '../src/lib/catalog/cards';
-import type { D1Bindings, D1Resource } from '../src/lib/d1/types';
+import type { D1Bindings, D1DatabaseLike, D1Resource } from '../src/lib/d1/types';
 import { allD1Migrations, applyD1Migrations } from './helpers/d1-migrations';
 
 let mf: Miniflare;
@@ -37,52 +38,79 @@ function call(resource: D1Resource, body: unknown, actor = admin) {
     actor,
   );
 }
-type Seeded = { id: string; name: string; created: string };
-let tiles: Seeded[] = [];
-/** A shared tile straight into D1 (the 0009/0010 triggers summarise it). */
-async function tile(name: string, created: string, options: { owner?: string; scope?: string } = {}) {
+const until = (name: string) => allD1Migrations.slice(0, allD1Migrations.indexOf(name));
+const brands: Record<string, string> = {};
+/** A brand through 분류 관리 (no 표시 순서). */
+async function brand(name: string) {
+  const response = await call('catalog', {
+    operation: 'create',
+    input: { kind: 'brand', name, active: true, sortOrder: null },
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+  brands[name] = ((await response.json()) as { id: string }).id;
+}
+/** A brand's 표시 순서 through 분류 관리. */
+const order = (name: string, sortOrder: unknown) =>
+  call('catalog', {
+    operation: 'update',
+    input: { id: brands[name], kind: 'brand', name, active: true, sortOrder },
+  });
+/** A shared tile straight into D1, linked to its brand as a save links it (after the version). */
+async function tile(db: D1DatabaseLike, name: string, created: string, brandName?: string) {
   const id = crypto.randomUUID(),
     version = crypto.randomUUID();
-  const scope = options.scope ?? 'shared';
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO d1_materials(id,owner_id,scope,current_version_id,created_at,updated_at,purpose) VALUES(?,?,?,?,?,?,'catalog')`,
-    ).bind(id, options.owner ?? admin.id, scope, version, created, created),
-    env.DB.prepare(
-      `INSERT INTO d1_material_versions(id,material_id,version,payload_json,category,view_count,created_at) VALUES(?,?,1,?,'tile',0,?)`,
-    ).bind(
-      version,
-      id,
-      JSON.stringify({
-        id: version,
-        materialId: id,
-        version: 1,
-        name,
-        brand: '',
-        code: '',
-        category: 'tile',
-        scope,
-        description: '',
-        color: '',
-        finish: '',
-        widthMm: 300,
-        heightMm: 300,
-        depthMm: 10,
-        usage: 'both',
-        installation: 'wall',
-        textureAssetIds: [],
-        views: [],
-        defaultGroutWidth: 2,
-        defaultGroutColor: '#ffffff',
-        defaultPattern: 'grid',
-        createdAt: created,
-      }),
-      created,
-    ),
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO d1_materials(id,owner_id,scope,current_version_id,created_at,updated_at,purpose) VALUES(?,?,'shared',?,?,?,'catalog')`,
+      )
+      .bind(id, admin.id, version, created, created),
+    db
+      .prepare(
+        `INSERT INTO d1_material_versions(id,material_id,version,payload_json,category,view_count,created_at) VALUES(?,?,1,?,'tile',0,?)`,
+      )
+      .bind(
+        version,
+        id,
+        JSON.stringify({
+          id: version,
+          materialId: id,
+          version: 1,
+          name,
+          brand: brandName ?? '',
+          code: '',
+          category: 'tile',
+          scope: 'shared',
+          description: '',
+          color: '',
+          finish: '',
+          widthMm: 300,
+          heightMm: 300,
+          depthMm: 10,
+          usage: 'both',
+          installation: 'wall',
+          textureAssetIds: [],
+          views: [],
+          defaultGroutWidth: 2,
+          defaultGroutColor: '#ffffff',
+          defaultPattern: 'grid',
+          createdAt: created,
+        }),
+        created,
+      ),
+    ...(brandName
+      ? [
+          db
+            .prepare(
+              `INSERT INTO d1_material_version_options(version_id,option_id,option_kind) VALUES(?,?,'brand')`,
+            )
+            .bind(version, brands[brandName]),
+        ]
+      : []),
   ]);
-  return { id, name, created };
+  return { id, version };
 }
-/** Every page of the administrator library (or the member drawer) in an order, `limit` at a time. */
+/** Every page of the administrator library (or a member list) in an order. */
 async function names(
   query: MaterialPageQuery,
   body: Record<string, unknown> = { view: 'library' },
@@ -101,10 +129,8 @@ async function names(
     items.push(...page.items);
     cursor = page.nextCursor ?? undefined;
   } while (cursor);
-  return items;
+  return items.map((card) => card.name);
 }
-const setPriority = (id: string, priority: unknown, actor = admin) =>
-  call('materials', { operation: 'setPriority', id, priority }, actor);
 
 beforeAll(async () => {
   mf = new Miniflare(
@@ -112,7 +138,7 @@ beforeAll(async () => {
       modules: true,
       script: 'export default {fetch(){return new Response("local test")}};',
       compatibilityDate: '2026-09-07',
-      d1Databases: { DB: 'order-test', OLD: 'order-before-0010' },
+      d1Databases: { DB: 'order-test', OLD: 'order-before-0011', UPGRADE: 'order-upgrade-0011' },
       r2Buckets: ['ASSET_BUCKET'],
     }),
   );
@@ -128,104 +154,147 @@ beforeAll(async () => {
       .bind(actor.id, '정렬 시험 회원', actor.id + '@example.test', 1, stamp, stamp)
       .run();
   await env.DB.prepare('INSERT INTO admin_roles(user_id) VALUES(?)').bind(admin.id).run();
-  // Registered d, b, a, c (in that order); names out of order on purpose.
-  tiles = [
-    await tile('d타일', '2026-10-01T00:00:00.000Z'),
-    await tile('b타일', '2026-10-02T00:00:00.000Z'),
-    await tile('a타일', '2026-10-03T00:00:00.000Z'),
-    await tile('c타일', '2026-10-04T00:00:00.000Z'),
-  ];
+  for (const name of ['순서 브랜드 가', '순서 브랜드 나', '순서 브랜드 다']) await brand(name);
+  // Registered in this order; names and brands out of order on purpose.
+  await tile(env.DB, '라 타일', '2026-10-01T00:00:00.000Z', '순서 브랜드 가');
+  await tile(env.DB, '나 타일', '2026-10-02T00:00:00.000Z', '순서 브랜드 나');
+  await tile(env.DB, '가 타일', '2026-10-03T00:00:00.000Z', '순서 브랜드 다');
+  await tile(env.DB, '다 타일', '2026-10-04T00:00:00.000Z');
+  await tile(env.DB, '마 타일', '2026-10-05T00:00:00.000Z', '순서 브랜드 나');
+  await tile(env.DB, '바 타일', '2026-10-06T00:00:00.000Z', '순서 브랜드 가');
 }, 30000);
 afterAll(async () => {
   await mf?.dispose();
 });
-const byName = (name: string) => tiles.find((row) => row.name === name)!;
 
-describe('material list orders', () => {
-  it('lists by name with no priority, newest registered first, and by name either way', async () => {
-    const order = async (sort?: MaterialSort) =>
-      (await names({ ...(sort ? { sort } : {}), limit: 1 })).map((card) => card.name);
+describe('material list orders by brand', () => {
+  it('lists by name while no brand has an order, newest registered first, and by name either way', async () => {
+    const list = (sort?: MaterialSort) => names({ ...(sort ? { sort } : {}), limit: 1 });
     // Pages of one: every next page goes through the cursor.
-    expect(await order()).toEqual(['a타일', 'b타일', 'c타일', 'd타일']);
-    expect(await order('priority')).toEqual(['a타일', 'b타일', 'c타일', 'd타일']);
-    expect(await order('newest')).toEqual(['c타일', 'a타일', 'b타일', 'd타일']);
-    expect(await order('name')).toEqual(['a타일', 'b타일', 'c타일', 'd타일']);
-    expect(await order('nameDesc')).toEqual(['d타일', 'c타일', 'b타일', 'a타일']);
+    const byName = ['가 타일', '나 타일', '다 타일', '라 타일', '마 타일', '바 타일'];
+    expect(await list()).toEqual(byName);
+    expect(await list('priority')).toEqual(byName);
+    expect(await list('newest')).toEqual(['바 타일', '마 타일', '다 타일', '가 타일', '나 타일', '라 타일']);
+    expect(await list('name')).toEqual(byName);
+    expect(await list('nameDesc')).toEqual([...byName].reverse());
   });
 
-  it('puts the numbered ones first (1, then 2) and the rest by name, in every list that shows them', async () => {
-    // The request's example: of a, b, c and d, d is 1 and c is 2; a and b follow by name.
-    expect((await setPriority(byName('d타일').id, 1)).status).toBe(200);
-    expect((await setPriority(byName('c타일').id, 2)).status).toBe(200);
-    const expected = ['d타일', 'c타일', 'a타일', 'b타일'];
-    const library = await names({ limit: 1 });
-    expect(library.map((card) => card.name)).toEqual(expected);
-    expect(library.map((card) => card.priority)).toEqual([1, 2, null, null]);
+  it('puts the ordered brands first (0, then 1), each by name, then the rest by name, in every list', async () => {
+    // Only two of the three brands get an order; the third and the material without a brand follow.
+    expect((await order('순서 브랜드 나', 0)).status).toBe(200);
+    expect((await order('순서 브랜드 가', 1)).status).toBe(200);
+    const expected = ['나 타일', '마 타일', '라 타일', '바 타일', '가 타일', '다 타일'];
+    expect(await names({ limit: 2 })).toEqual(expected);
     // The member drawer (wall tab) and the public list.
-    expect(
-      (await names({ category: 'tile', usage: 'wall', limit: 2 }, {}, member)).map((card) => card.name),
-    ).toEqual(expected);
+    expect(await names({ category: 'tile', usage: 'wall', limit: 4 }, {}, member)).toEqual(expected);
     const publicPage = (await (
       await publicMaterials(env, new Request('https://sjn.test/api/catalog/materials?category=tile'))
     ).json()) as MaterialPage<PublicMaterial>;
     expect(publicPage.items.map((item) => item.name)).toEqual(expected);
-    // Other orders ignore the priority.
-    expect((await names({ sort: 'name' })).map((card) => card.name)).toEqual([
-      'a타일',
-      'b타일',
-      'c타일',
-      'd타일',
+    // Other orders ignore the brands.
+    expect(await names({ sort: 'name' })).toEqual([
+      '가 타일',
+      '나 타일',
+      '다 타일',
+      '라 타일',
+      '마 타일',
+      '바 타일',
     ]);
-    // The same number twice: by name.
-    expect((await setPriority(byName('b타일').id, 1)).status).toBe(200);
-    expect((await names({})).map((card) => card.name)).toEqual(['b타일', 'd타일', 'c타일', 'a타일']);
-    // Cleared: back among the unnumbered ones.
-    expect((await setPriority(byName('b타일').id, null)).status).toBe(200);
-    expect((await names({})).map((card) => card.name)).toEqual(expected);
+    // Two brands with the same number: their materials by name together.
+    expect((await order('순서 브랜드 가', 0)).status).toBe(200);
+    expect(await names({})).toEqual(['나 타일', '라 타일', '마 타일', '바 타일', '가 타일', '다 타일']);
+    // A new material of an ordered brand takes its place at once (the link sets it).
+    await tile(env.DB, '사 타일', '2026-10-07T00:00:00.000Z', '순서 브랜드 나');
+    expect((await names({})).slice(0, 5)).toEqual(['나 타일', '라 타일', '마 타일', '바 타일', '사 타일']);
+    // Cleared: back among the rest.
+    expect((await order('순서 브랜드 가', null)).status).toBe(200);
+    expect(await names({})).toEqual([
+      '나 타일',
+      '마 타일',
+      '사 타일',
+      '가 타일',
+      '다 타일',
+      '라 타일',
+      '바 타일',
+    ]);
   });
 
-  it('saves a priority without a new version or a new updated_at, and only an administrator, only on shared', async () => {
-    const target = byName('a타일');
-    const before = await env.DB.prepare(
-      'SELECT current_version_id,updated_at,(SELECT COUNT(*) FROM d1_material_versions WHERE material_id=?) AS versions FROM d1_materials WHERE id=?',
-    )
-      .bind(target.id, target.id)
-      .first();
-    const saved = await setPriority(target.id, 7);
-    expect(await saved.json()).toEqual({ priority: 7 });
-    expect(
-      await env.DB.prepare(
-        'SELECT current_version_id,updated_at,(SELECT COUNT(*) FROM d1_material_versions WHERE material_id=?) AS versions FROM d1_materials WHERE id=?',
-      )
-        .bind(target.id, target.id)
-        .first(),
-    ).toEqual(before);
-    // A member, a personal material, values out of range or not whole, a missing value.
-    expect((await setPriority(target.id, 3, member)).status).toBe(403);
-    const personal = await tile('개인 타일', stamp, { scope: 'personal' });
-    expect((await setPriority(personal.id, 3)).status).toBe(400);
-    for (const value of [0, 10000, 1.5, '1', undefined])
-      expect((await setPriority(target.id, value)).status, String(value)).toBe(400);
-    expect(
-      (await env.DB.prepare('SELECT priority FROM d1_materials WHERE id=?').bind(target.id).first())
-        ?.priority,
-    ).toBe(7);
+  it('takes 표시 순서 as a whole number from 0 to 9999 or empty, and lists by it, then by name', async () => {
+    for (const value of [-1, 10000, 1.5, '1', undefined])
+      expect((await order('순서 브랜드 다', value)).status, String(value)).toBe(400);
+    expect((await order('순서 브랜드 다', 9999)).status).toBe(200);
+    const subcategory = await call('catalog', {
+      operation: 'create',
+      input: {
+        kind: 'subcategory',
+        category: 'basin',
+        name: '순서 없는 분류',
+        active: true,
+        sortOrder: null,
+      },
+    });
+    expect(subcategory.status).toBe(200);
+    const catalog = await readCatalog(env.DB, true);
+    const listed = catalog.options.filter((option) => option.kind === 'brand');
+    // Numbered first (smallest first), then the ones without a number by name.
+    expect(listed.slice(0, 2).map((option) => [option.name, option.sortOrder])).toEqual([
+      ['순서 브랜드 나', 0],
+      ['순서 브랜드 다', 9999],
+    ]);
+    const rest = listed.slice(2);
+    expect(rest.every((option) => option.sortOrder === null)).toBe(true);
+    const key = (name: string) => name.normalize('NFKC').trim().toLocaleLowerCase('ko-KR');
+    expect(rest.map((option) => key(option.name))).toEqual(
+      rest.map((option) => key(option.name)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
+    expect(catalog.subcategories.find((row) => row.name === '순서 없는 분류')?.sortOrder).toBeNull();
     // The database refuses what the API does not send.
     await expect(
-      env.DB.prepare('UPDATE d1_materials SET priority=1.5 WHERE id=?').bind(target.id).run(),
+      env.DB.prepare('UPDATE d1_catalog_options SET display_order=1.5 WHERE id=?')
+        .bind(brands['순서 브랜드 다'])
+        .run(),
     ).rejects.toThrow();
-    // An administrator project's scope cannot set one.
-    await expect(
-      materials(
-        {
-          env,
-          actor: admin,
-          adminProject: { id: crypto.randomUUID(), ownerId: member.id, requestId: 'order' },
-        },
-        { operation: 'setPriority', id: target.id, priority: 1 },
-      ),
-    ).rejects.toMatchObject({ status: 403 });
-    expect((await setPriority(target.id, null)).status).toBe(200);
+    expect((await order('순서 브랜드 다', null)).status).toBe(200);
+  });
+
+  it('leaves every existing 표시 순서 and material priority empty after 0011, and orders by name', async () => {
+    const db = (await mf.getD1Database('UPGRADE')) as unknown as D1DatabaseLike;
+    await applyD1Migrations(db, until('0011_brand_order.sql'));
+    // Before 0011: numbered options (as 분류 관리 saved them) and a material priority (0010).
+    const toto = await db
+      .prepare("SELECT id FROM d1_catalog_options WHERE kind='brand' AND normalized_name='toto'")
+      .first<{ id: string }>();
+    brands.TOTO = toto!.id;
+    await db.prepare('UPDATE d1_catalog_options SET sort_order=3').run();
+    await db.prepare('UPDATE d1_material_subcategories SET sort_order=2').run();
+    const first = await tile(db, '나중 타일', stamp, 'TOTO');
+    await tile(db, '먼저 타일', stamp);
+    await db.prepare('UPDATE d1_materials SET priority=1 WHERE id=?').bind(first.id).run();
+    const prio = async () =>
+      (
+        await db
+          .prepare('SELECT prio FROM d1_material_list WHERE version_id=?')
+          .bind(first.version)
+          .first<{ prio: number }>()
+      )?.prio;
+    expect(await prio()).toBe(1);
+    await applyD1Migrations(db, ['0011_brand_order.sql']);
+    expect(
+      await db
+        .prepare(
+          `SELECT (SELECT COUNT(*) FROM d1_catalog_options WHERE display_order IS NOT NULL) AS options,
+            (SELECT COUNT(*) FROM d1_material_subcategories WHERE display_order IS NOT NULL) AS subcategories,
+            (SELECT COUNT(*) FROM d1_materials WHERE priority IS NOT NULL) AS priorities,
+            (SELECT COUNT(*) FROM d1_material_list WHERE prio<>10000) AS list,
+            (SELECT COUNT(*) FROM d1_material_list_facets WHERE prio<>10000) AS facets`,
+        )
+        .first(),
+    ).toEqual({ options: 0, subcategories: 0, priorities: 0, list: 0, facets: 0 });
+    // A per-material priority (the 0010 code) no longer moves anything; the brand's order does.
+    await db.prepare('UPDATE d1_materials SET priority=2 WHERE id=?').bind(first.id).run();
+    expect(await prio()).toBe(10000);
+    await db.prepare('UPDATE d1_catalog_options SET display_order=4 WHERE id=?').bind(brands.TOTO).run();
+    expect(await prio()).toBe(4);
   });
 
   it('refuses a cursor of another order, and an old tab’s cursor with a message to start again', async () => {
@@ -242,13 +311,7 @@ describe('material list orders', () => {
     expect((await next('name')).status).toBe(400);
     // A cursor made before the orders (updated_at and material id).
     const old = btoa(
-      JSON.stringify({
-        k: 'x',
-        u: '2026-10-01',
-        m: tiles[0].id,
-        g: 0,
-        e: { size: [], color: [], finish: [] },
-      }),
+      JSON.stringify({ k: 'x', u: '2026-10-01', m: 'm', g: 0, e: { size: [], color: [], finish: [] } }),
     )
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
@@ -267,17 +330,14 @@ describe('material list orders', () => {
     expect(() => parsePageSearchParams(new URLSearchParams('sort=updated'))).toThrow();
   });
 
-  it('is not ready on a database without 0010', async () => {
+  it('is not ready on a database without 0011', async () => {
     const old = {
       DB: await mf.getD1Database('OLD'),
       ASSET_BUCKET: env.ASSET_BUCKET,
     } as unknown as D1Bindings;
-    await applyD1Migrations(
-      old.DB,
-      allD1Migrations.slice(0, allD1Migrations.indexOf('0010_material_order.sql')),
-    );
+    await applyD1Migrations(old.DB, until('0011_brand_order.sql'));
     await expect(checkD1Storage(old)).rejects.toThrow();
-    await applyD1Migrations(old.DB, ['0010_material_order.sql']);
+    await applyD1Migrations(old.DB, ['0011_brand_order.sql']);
     await expect(checkD1Storage(old)).resolves.toBeUndefined();
   });
 });

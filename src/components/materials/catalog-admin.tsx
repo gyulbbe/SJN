@@ -12,7 +12,8 @@ const empty = () => ({
   kind: 'color' as OptionKind | 'subcategory',
   name: '',
   category: 'tile' as MaterialCategory,
-  sortOrder: 0,
+  /** 표시 순서 as typed: digits, or empty for none (then by name). */
+  order: '',
   active: true,
   colorHex: '',
 });
@@ -40,8 +41,13 @@ export default function CatalogAdmin() {
     setError('');
     setBusy(true);
     try {
+      const { order, ...row } = form;
       await saveCatalog(
-        { ...form, colorHex: form.kind === 'color' && form.colorHex ? form.colorHex : null },
+        {
+          ...row,
+          sortOrder: order === '' ? null : Number(order),
+          colorHex: form.kind === 'color' && form.colorHex ? form.colorHex : null,
+        },
         userId,
       );
       setData(await loadCatalog(userId));
@@ -131,14 +137,14 @@ export default function CatalogAdmin() {
         )}
         <label className="field">
           표시 순서
+          {/* Digits only (0–9999), or empty: none, listed after the numbered ones by name. */}
           <input
             className="input"
-            type="number"
-            required
-            min={0}
-            max={100000}
-            value={form.sortOrder}
-            onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) })}
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="비우면 이름순"
+            value={form.order}
+            onChange={(e) => setForm({ ...form, order: e.target.value.replace(/\D/g, '').slice(0, 4) })}
           />
         </label>
         <label>
@@ -158,6 +164,12 @@ export default function CatalogAdmin() {
           </button>
         )}
       </form>
+      {form.kind === 'brand' && (
+        <p className={styles.muted + ' mt-3'}>
+          브랜드 표시 순서는 자재 목록의 기본 순서예요. 숫자가 작은 브랜드(0부터)의 자재가 먼저 나오고, 순서가
+          없는 브랜드의 자재는 그 뒤에 이름순으로 나와요.
+        </p>
+      )}
       {error && (
         <p role="alert" className={styles.error}>
           {error}
@@ -179,7 +191,7 @@ export default function CatalogAdmin() {
               <tr key={row.id}>
                 <td>{row.name}</td>
                 <td>{'category' in row ? categoryLabels[row.category] : '—'}</td>
-                <td>{row.sortOrder}</td>
+                <td>{row.sortOrder ?? '—'}</td>
                 <td>{row.active ? '사용' : '비활성'}</td>
                 <td>
                   <button
@@ -190,7 +202,7 @@ export default function CatalogAdmin() {
                         kind: 'kind' in row ? row.kind : 'subcategory',
                         name: row.name,
                         category: 'category' in row ? row.category : 'tile',
-                        sortOrder: row.sortOrder,
+                        order: row.sortOrder === null ? '' : String(row.sortOrder),
                         active: row.active,
                         colorHex: 'colorHex' in row ? (row.colorHex ?? '') : '',
                       })

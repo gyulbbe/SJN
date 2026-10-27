@@ -2,8 +2,9 @@
  * The paged material lists (migration 0009, src/lib/d1/material-list.ts) show exactly what the full
  * lists and the browser filters they replaced showed: frozen copies of both
  * (tests/helpers/legacy-material-lists.ts) run on the same isolated D1 over random catalogues. The
- * items come in the list's order (migration 0010: priority, newest registered, name either way), which
- * `bySort` states here in JS the way SQLite compares (byte order, ASCII lower(), spaces trim()).
+ * items come in the list's order (migrations 0010–0011: brand priority, newest registered, name either
+ * way), which `bySort` states here in JS the way SQLite compares (byte order, ASCII lower(), spaces
+ * trim()).
  *
  * Each seed builds owners' shared, personal, project, inactive and sample materials with older
  * versions, '·'-joined colours and surfaces, ties in updated_at, reconstruction values (absent,
@@ -112,8 +113,25 @@ const insert = (table: string, columns: string[], rows: unknown[][]) =>
     .bind(JSON.stringify(rows));
 
 type Graph = { versions: string[]; projects: { id: string; ownerId: string }[]; codes: string[] };
+/** What the orders read: each version's brand order, each material's registration and current version. */
+const orders = {
+  prio: new Map<string, number>(),
+  created: new Map<string, string>(),
+  current: new Map<string, string>(),
+};
 async function build(seed: number): Promise<Graph> {
   const random = prng(seed);
+  // The brands of 0004: some get a 표시 순서 (ties on purpose), the rest none.
+  const brandIds = (
+    await db.prepare("SELECT id FROM d1_catalog_options WHERE kind='brand' ORDER BY id").all<{ id: string }>()
+  ).results.map((row) => row.id);
+  const brandOrder = new Map(
+    brandIds.map((id) => [id, random() < 0.5 ? [0, 1, 1, 3][Math.floor(random() * 4)] : null]),
+  );
+  const brandRows: unknown[][] = [];
+  orders.prio.clear();
+  orders.created.clear();
+  orders.current.clear();
   const chance = (p: number) => random() < p;
   const pick = <T>(items: readonly T[]) => items[Math.floor(random() * items.length)];
   const joined = (pool: string[]) =>
@@ -199,22 +217,28 @@ async function build(seed: number): Promise<Graph> {
         defaultPattern: 'grid',
       };
       versionRows.push([id, materialId, n, JSON.stringify(payload), category, views.length, TIMES[0]]);
+      // Most versions name a brand (a save links it); its 표시 순서 orders them.
+      const brand = chance(0.75) ? pick(brandIds) : undefined;
+      if (brand) brandRows.push([id, brand, 'brand']);
+      orders.prio.set(id, (brand ? brandOrder.get(brand) : undefined) ?? 10000);
       for (const assetId of materialReferences(
         payload as unknown as Parameters<typeof materialReferences>[0],
       ))
         referenceRows.push([id, assetId]);
     }
+    const current = chance(0.85) ? own.at(-1)! : pick(own),
+      created = pick(TIMES);
+    orders.created.set(materialId, created);
+    orders.current.set(materialId, current);
     materialRows.push([
       materialId,
       sample ? 'admin-1' : pick(OWNERS),
       scope,
-      chance(0.85) ? own.at(-1)! : pick(own),
+      current,
       chance(0.85) ? 1 : 0,
-      pick(TIMES),
+      created,
       pick(TIMES),
       scope === 'personal' && chance(0.6) ? 'project' : chance(0.05) ? 'project' : 'catalog',
-      // Ties on purpose; a personal material's number (raw SQL only) does not count.
-      chance(scope === 'shared' ? 0.35 : 0.1) ? pick([1, 2, 2, 5]) : null,
     ]);
     versions.push(...own);
   }
@@ -236,11 +260,17 @@ async function build(seed: number): Promise<Graph> {
       'd1_material_list_counts',
       'd1_material_list_facets',
       'd1_material_list',
+      'd1_material_version_options',
       'd1_material_versions',
       'd1_materials',
       'd1_projects',
       'd1_assets',
     ].map((table) => db.prepare(`DELETE FROM ${table}`)),
+    ...brandIds.map((id) =>
+      db
+        .prepare('UPDATE d1_catalog_options SET display_order=? WHERE id=?')
+        .bind(brandOrder.get(id) ?? null, id),
+    ),
     insert(
       'd1_assets',
       ['id', 'owner_id', 'object_key', 'metadata_json', 'content_hash', 'created_at', 'deleting'],
@@ -248,17 +278,7 @@ async function build(seed: number): Promise<Graph> {
     ),
     insert(
       'd1_materials',
-      [
-        'id',
-        'owner_id',
-        'scope',
-        'current_version_id',
-        'active',
-        'created_at',
-        'updated_at',
-        'purpose',
-        'priority',
-      ],
+      ['id', 'owner_id', 'scope', 'current_version_id', 'active', 'created_at', 'updated_at', 'purpose'],
       materialRows,
     ),
     insert(
@@ -266,6 +286,7 @@ async function build(seed: number): Promise<Graph> {
       ['id', 'material_id', 'version', 'payload_json', 'category', 'view_count', 'created_at'],
       versionRows,
     ),
+    insert('d1_material_version_options', ['version_id', 'option_id', 'option_kind'], brandRows),
     // Only references to images that exist (as every save records them).
     db
       .prepare(
@@ -354,26 +375,16 @@ function selections(options: FacetSelection, pick: <T>(items: readonly T[]) => T
 }
 const SEARCHES = ['', ' ', 'stone', 'TILE', '타일', 'b-2', '없는말'];
 
-/** Each material's registration time and its priority as the lists read it (shared only). */
-let orders = new Map<string, { createdAt: string; prio: number }>();
-async function readOrders() {
-  const rows = await db
-    .prepare('SELECT id,created_at,scope,priority FROM d1_materials')
-    .all<{ id: string; created_at: string; scope: string; priority: number | null }>();
-  orders = new Map(
-    rows.results.map((row) => [
-      row.id,
-      { createdAt: row.created_at, prio: row.scope === 'shared' ? (row.priority ?? 10000) : 10000 },
-    ]),
-  );
-}
 const bytes = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
 /** SQLite's substr(lower(trim(name)),1,100): ASCII letters only, spaces only. */
 const nameKey = (name: string) =>
   [...name.replace(/^ +| +$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase())].slice(0, 100).join('');
-/** The list order (src/lib/d1/material-list.ts ORDERS), the material id settling ties. */
+/**
+ * The list order (src/lib/d1/material-list.ts ORDERS), the material id settling ties: the version's
+ * brand order, its registration time, its name.
+ */
 const bySort =
-  <T>(sort: MaterialSort, key: (item: T) => { id: string; name: string }) =>
+  <T>(sort: MaterialSort, key: (item: T) => { id: string; version: string; name: string }) =>
   (x: T, y: T) => {
     const a = key(x),
       b = key(y);
@@ -381,25 +392,22 @@ const bySort =
     const name = bytes(nameKey(a.name), nameKey(b.name));
     if (sort === 'name') return name || id;
     if (sort === 'nameDesc') return -(name || id);
-    const [p, q] = [orders.get(a.id)!, orders.get(b.id)!];
-    if (sort === 'newest') return -(bytes(p.createdAt, q.createdAt) || id);
-    return p.prio - q.prio || name || id;
+    if (sort === 'newest') return -(bytes(orders.created.get(a.id)!, orders.created.get(b.id)!) || id);
+    return orders.prio.get(a.version)! - orders.prio.get(b.version)! || name || id;
   };
 const entryOrder = (sort: MaterialSort) =>
-  bySort<Entry>(sort, (entry) => ({ id: entry.material.id, name: entry.version.name }));
-const priorityOf = (id: string) => {
-  const prio = orders.get(id)?.prio ?? 10000;
-  return prio < 10000 ? prio : null;
-};
-const cardsOf = (entries: Entry[]) =>
-  entries.map((entry) => materialCard(entry.material, entry.version, priorityOf(entry.material.id)));
+  bySort<Entry>(sort, (entry) => ({
+    id: entry.material.id,
+    version: entry.version.id,
+    name: entry.version.name,
+  }));
+const cardsOf = (entries: Entry[]) => entries.map((entry) => materialCard(entry.material, entry.version));
 
 describe('paged material lists show what the full lists and browser filters showed', () => {
   it.each(SEEDS)(
     'seed %i',
     async (seed) => {
       const graph = await build(seed);
-      await readOrders();
       const random = prng(seed + 1);
       const pick = <T>(items: readonly T[]) => items[Math.floor(random() * items.length)];
       /** Every combination for the recorded proof; two of them (the first and one more) otherwise. */
@@ -542,7 +550,13 @@ describe('paged material lists show what the full lists and browser filters show
               const label = JSON.stringify({ category, query, facets, sort });
               expect(got.items, label).toEqual(
                 old.matching
-                  .sort(bySort(sort, (row) => ({ id: row.id, name: row.name })))
+                  .sort(
+                    bySort(sort, (row) => ({
+                      id: row.id,
+                      version: orders.current.get(row.id)!,
+                      name: row.name,
+                    })),
+                  )
                   .map((row) => ({ ...row, updatedAt: undefined }))
                   .map((row) => JSON.parse(JSON.stringify(row))),
               );
