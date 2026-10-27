@@ -2,7 +2,7 @@
 
 체험의 우측 견적·수량·단가·속성·공간 구조 조절과 시안 추가/비교는 비로그인으로 허용한다. 상단 공간 둘러보기·AI 보정·저장·공간 크기·내보내기는 로그인 안내로 연결한다. 공개 자재의 등록된 가격·포장 정보만 사용하며, 수정한 견적과 시안은 같은 탭의 초안에만 보관한다.
 
-이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0009_material_list.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼, `0008`로 재시도 기록 정리 인덱스, `0009`로 자재 목록 페이징용 요약 표·트리거를 추가한다. **0008은 2026-10-17 소스에 추가했고 원격 `sjn`에는 2026-10-18 적용했다. 0009는 2026-10-22 소스에 추가했고 원격 `sjn`에는 2026-10-23 사용자가 적용했다([결과](material-paging-results-20261022.md) 4절).** **2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다.**
+이 문서는 아이디·(선택) Google 로그인, 회원·관리자 권한, 자재 라이브러리와 프로젝트 저장 구조를 설명한다. 실행용 SQL은 `migrations/d1/0001_auth.sql`부터 `0010_material_order.sql`까지다. 기존 마이그레이션은 변경하지 않고 `0006`으로 계정별 진단 아카이브, `0007`로 아이디 로그인 컬럼, `0008`로 재시도 기록 정리 인덱스, `0009`로 자재 목록 페이징용 요약 표·트리거, `0010`으로 목록 정렬 열·인덱스와 관리자 우선순위를 추가한다. **0008은 2026-10-17 소스에 추가했고 원격 `sjn`에는 2026-10-18 적용했다. 0009는 2026-10-22 소스에 추가했고 원격 `sjn`에는 2026-10-23 사용자가 적용했다([결과](material-paging-results-20261022.md) 4절). 0010은 2026-10-27 소스에 추가했고 원격 `sjn`에는 아직 적용하지 않았다([결과](material-order-results-20261027.md) 3절).** **2026-09-23 사용자가 원격 `sjn`에 0007의 `username`·`displayUsername` 컬럼을 직접 추가했고(auth meta version 1 유지), 같은 날 사용자 승인으로 Time Travel 북마크 기록 후 남은 고유 인덱스 `user_username_idx`와 `d1_migrations`의 0007 기록을 추가했다. 원격 목록은 `No migrations to apply`이며 회원 수는 변하지 않았다.**
 
 **코드·SQL 파일을 작성하는 것과 운영 DB에 적용하는 것은 별도 단계다.** 2026-09-17 사용자 승인 후 원격 D1 `sjn`의 기존 `0001~0004`에 `0005`·`0006`을 추가 적용했고, `.wrangler/development`의 빈 로컬 개발 DB에는 `0001~0006`을 순서대로 적용했다. 양쪽 적용 이력·초기 데이터·무결성을 확인했다. 상세 확인값은 8절을 따른다. 앱의 운영 연결·실제 Google OAuth·운영 R2 검증과 관리자 지정·배포·R2 버킷 생성·AI 호출은 별도이며 이번 작업에서 수행하지 않았다. Google 비밀키, Better Auth secret, 로그인 토큰은 이 문서나 소스에 넣지 않는다.
 
@@ -162,7 +162,7 @@ OAuth 토큰 암호화·HttpOnly 세션 쿠키·출처 검사·CSRF 검사를 �
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `d1_projects`          | `id`, `owner_id`, `name`, `storage_revision`, `object_key`, `byte_size`, `summary_json`, `created_at`, `updated_at`        | 본인 프로젝트 목록, 1 이상 revision, 비공개 R2 문서 키·크기, 목록 요약 JSON, 시각. revision으로 동시 수정 충돌 확인                                                                         |
 | `d1_assets`            | `id`, `owner_id`, `object_key`, `source_asset_id`, `metadata_json`, `content_hash`, `created_at`, `deleting`               | 파일 메타데이터, R2 키, 파생 이미지의 원본 FK, 내용 해시, 정리 중 표시. metadata에는 MIME·종류·규격 등 저장. 자재 카드의 목록 이미지는 `kind` thumbnail·`derivation` list로 원본마다 하나([결과](list-thumbnails-results-20261023.md)) |
-| `d1_materials`         | `id`, `owner_id`, `scope`, `current_version_id`, `active`, `created_at`, `updated_at`, **`purpose`**                       | 자재 논리 ID와 현재 버전. scope는 personal/shared, purpose는 catalog/project. 신규 관리자 자재는 shared/catalog, 분석 모형은 personal/project                                               |
+| `d1_materials`         | `id`, `owner_id`, `scope`, `current_version_id`, `active`, `created_at`, `updated_at`, **`purpose`**, **`priority`**       | 자재 논리 ID와 현재 버전. scope는 personal/shared, purpose는 catalog/project. 신규 관리자 자재는 shared/catalog, 분석 모형은 personal/project. priority(0010)는 관리자가 공용 자재에 매긴 목록 순서(1~9999 정수, NULL은 없음), 버전과 무관 |
 | `d1_material_versions` | `id`, `material_id`, `version`, `object_key`, `payload_json`, `category`, `view_count`, `created_at`, **`subcategory_id`** | 불변 자재 버전. 자재별 버전 번호 고유. 현재 구현은 최대 512KiB payload JSON을 D1에 기록하며 nullable object_key는 기존 호환용. category는 렌더링 코드, subcategory_id는 선택적 하위 분류 FK |
 | `d1_project_assets`    | `project_id`, `asset_id`                                                                                                   | 프로젝트에서 직접 쓰는 자산의 복합 PK/FK 연결                                                                                                                                               |
 | `d1_project_versions`  | `project_id`, `version_id`                                                                                                 | 프로젝트가 참조하는 불변 자재 버전. 현재 자재 버전이 바뀌어도 기존 프로젝트 기준 유지                                                                                                       |
@@ -176,11 +176,11 @@ OAuth 토큰 암호화·HttpOnly 세션 쿠키·출처 검사·CSRF 검사를 �
 | `d1_material_list_facets` | `(version_id, facet, value)` PK와 상태 사본 | 사이즈·색상·표면 값(`facetValues`와 같은 규칙) |
 | `d1_material_list_counts` | `(active, lane, category, class, facet, value)` PK, `n` | 공유 현재 자재 수. 분류 목록과 결과 개수 |
 
+0010이 `d1_material_list`·`d1_material_list_facets`에 정렬 열을 더했다. `prio`(공용 자재면 `priority`, 없거나 개인 자재면 10000), `name_key`(버전 이름의 `lower(trim())` 앞 100자, ASCII만 소문자·공백만 제거), `created_at`(자재 등록 시각)이다. 버전 트리거가 새 행에 채우고, `priority`·`scope`·`created_at` 변경 트리거가 그 자재의 모든 버전 사본을 고친다.
+
 인덱스는 모두 `is_current=1`인 부분 인덱스다(`d1_list_material`·`d1_list_code` 제외).
-- `d1_list_lane`: 편집기 탭
-- `d1_list_category`·`d1_list_recent`: 공개·관리자 자재
-- `d1_list_personal`: 본인 개인 자재
-- `d1_list_facet_order`: 분류로 거를 때
+- 0009(`updated_at` 순서): `d1_list_lane`(편집기 탭), `d1_list_category`·`d1_list_recent`(공개·관리자 자재), `d1_list_personal`(본인 개인 자재), `d1_list_facet_order`(분류로 거를 때). 지금 목록은 쓰지 않고 `d1_list_recent`만 목록 이미지 일괄 생성이 쓴다. 옛 코드 배포 기간을 위해 남겼다.
+- 0010(목록 순서): 같은 다섯 모양(`d1_list_{lane,category,all,personal,facet}_…`)을 정렬 계열마다 둔다. `_prio`(`prio, name_key, material_id`), `_name`(`name_key, material_id`, 이름 내림차순은 거꾸로 읽음), `_new`(`created_at DESC, material_id DESC`). 부분 조건을 두 개(`is_current=1 AND scope=…`)로 맞춰 인덱스만으로 읽는다.
 
 프로젝트 문서(R2 JSON, 형식은 [저장 검증](../src/lib/storage/validation.ts))의 면 항목에는 2026-10-22부터 선택 필드 `region: { leftMm, topMm, widthMm, heightMm }`(부분 타일, 면 좌표 mm)이 있다. After 시안의 장면에만 둘 수 있고(공통 Before·기본 공간은 거절), 면 안·50mm 이상·같은 면 영역끼리 겹치지 않음·높이 띠와 함께 두지 않음을 저장 전에 검사한다. 없으면 이전과 같다. D1 테이블·인덱스·SQL은 바뀌지 않았다([결과](tile-regions-results-20261022.md)). 제품 항목의 `roomPlacement`에는 2026-10-24부터 선택 필드 `againstWall: true`(바닥 제품을 뒤 벽에 붙여 둠)가 있다. 없으면 이전과 같고, 다른 값은 거절한다. D1은 바뀌지 않았다([결과](size-order-and-contact-results-20261024.md)).
 
