@@ -14,12 +14,19 @@ import {
 import { useAccess } from '../app-provider';
 import type { PublicMaterial } from '@/lib/catalog/public';
 import { effectiveFacets, emptyFacets, hasFacets } from '@/lib/catalog/facets';
-import { pageSearchParams, type MaterialPage, type MaterialPageQuery } from '@/lib/catalog/paging';
+import {
+  DEFAULT_SORT,
+  pageSearchParams,
+  type MaterialPage,
+  type MaterialPageQuery,
+  type MaterialSort,
+} from '@/lib/catalog/paging';
 import { LoadMore } from './load-more';
 import { useMaterialPages, useSettled, useVisible } from './use-material-pages';
 import { categoryLabels, listedCategories } from '@/lib/types';
 import WorkspaceNav from '@/components/workspace-nav';
 import { MaterialFacets } from './material-facets';
+import { SortSelect } from './sort-select';
 import { noteServiceAnswer, serviceLimitMessage } from '@/lib/service-limit-notice';
 import styles from './public-catalog.module.css';
 
@@ -167,6 +174,7 @@ function MaterialDetail({
   );
 }
 
+const publicId = (item: PublicMaterial) => item.id;
 async function fetchPublicPage(query: MaterialPageQuery, signal: AbortSignal) {
   const response = await fetch('/api/catalog/materials?' + pageSearchParams(query), {
     signal,
@@ -186,6 +194,7 @@ export default function PublicCatalog() {
   const [query, setQuery] = useState(''),
     [category, setCategory] = useState(''),
     [facets, setFacets] = useState(emptyFacets),
+    [sort, setSort] = useState<MaterialSort>(DEFAULT_SORT),
     [detail, setDetail] = useState<PublicMaterial>();
   const grid = useRef<HTMLDivElement>(null);
   const search = useSettled(query);
@@ -193,9 +202,10 @@ export default function PublicCatalog() {
     ...(category ? { category: category as MaterialPageQuery['category'] } : {}),
     ...(search.trim() ? { q: search } : {}),
     ...(hasFacets(facets) ? { facets } : {}),
+    ...(sort === DEFAULT_SORT ? {} : { sort }),
     options: true,
   };
-  const pages = useMaterialPages(fetchPublicPage, listQuery, JSON.stringify(listQuery));
+  const pages = useMaterialPages(fetchPublicPage, listQuery, JSON.stringify(listQuery), true, publicId);
   const rows = pages.items;
   const options = pages.facets ?? emptyFacets();
   const activeFacets = effectiveFacets(facets, options);
@@ -269,11 +279,15 @@ export default function PublicCatalog() {
                 </>
               )}
             </p>
-            {filtered && (
-              <button className={styles.resetButton} onClick={clearFilters}>
-                <RotateCcw size={14} aria-hidden="true" /> 조건 초기화
-              </button>
-            )}
+            <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-2">
+              {/* The order is not a condition: 조건 초기화 keeps it. */}
+              <SortSelect value={sort} onChange={setSort} />
+              {filtered && (
+                <button className={styles.resetButton} onClick={clearFilters}>
+                  <RotateCcw size={14} aria-hidden="true" /> 조건 초기화
+                </button>
+              )}
+            </div>
           </div>
         </section>
         {loading ? (
