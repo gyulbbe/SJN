@@ -1,4 +1,5 @@
-import { resolveCatalogInput, catalogStatements } from '../catalog/server';
+import { resolveCatalogInput, catalogStatements, checkMaterialKind, readKinds } from '../catalog/server';
+import { isCustomKind } from '../material-kinds';
 import { materialCard } from '../catalog/cards';
 import { materialPageQuerySchema } from '../catalog/paging';
 import { matchesReconstruction } from '../repositories/batches';
@@ -40,6 +41,8 @@ interface VersionRow {
   id: string;
   payload_json: string;
   version: number;
+  /** The version's kind (its payload's `category`, also a column). */
+  category: string;
 }
 const forbidden = () => new D1StorageError(403, '공용 자재는 관리자만 변경할 수 있어요.', 'FORBIDDEN');
 async function materialFor(ctx: Context, id: string): Promise<MaterialRow> {
@@ -369,7 +372,10 @@ export async function materials(
         ...page,
         items: page.items.map((row) => materialCard(listedMaterial(row), readVersion(row.payload_json))),
         ...(request.view === 'library' && !query.cursor
-          ? { counts: await libraryCounts(ctx.env.DB, ctx.actor.id, request.active) }
+          ? {
+              counts: await libraryCounts(ctx.env.DB, ctx.actor.id, request.active),
+              kinds: page.kinds ?? (await readKinds(ctx.env.DB)),
+            }
           : {}),
       };
     }
@@ -433,6 +439,10 @@ export async function materials(
       const expected = existing ? identifierSchema.parse(body.expectedVersionId) : null;
       if (existing && existing.current_version_id !== expected) throw conflict();
       const previous = existing ? await versionFor(ctx, expected!) : null;
+      // A kind in use, or the one this material already had (migration 0012). A project's own model
+      // is of a built-in kind.
+      if (selection) checkMaterialKind(selection.kinds, input.category, previous?.category);
+      else if (isCustomKind(input.category)) throw invalid('프로젝트 모형 분류가 달라요.');
       input.scope = projectResource ? 'personal' : (existing?.scope ?? 'shared');
       const refs = await checkMaterialAssets(ctx, input);
       const id = existing?.id ?? crypto.randomUUID();

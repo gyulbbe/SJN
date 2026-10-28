@@ -1,5 +1,7 @@
 'use client';
 
+import { pickableKinds, setMaterialKinds, useMaterialKinds } from '@/lib/material-kinds-store';
+import { kindBehavior } from '@/lib/material-kinds';
 import { useState, useRef, useEffect, type ChangeEvent, type FormEvent } from 'react';
 import { getRepositories } from '@/lib/repositories';
 import { importImage, makeAsset } from '@/lib/images';
@@ -9,14 +11,7 @@ import type { BackgroundRemovalResult } from '@/lib/background-removal/types';
 import { defaultMaterialPricing, QUOTE_UNIT_LABELS } from '@/lib/quote';
 import { packagingCoverage } from '@/lib/material-usage';
 import type { MaterialPricing, QuoteUnit } from '@/lib/quote-types';
-import {
-  categoryLabels,
-  listedCategories,
-  type MaterialCategory,
-  type MaterialInput,
-  type MaterialVersion,
-  type Point,
-} from '@/lib/types';
+import { type MaterialKind, type MaterialInput, type MaterialVersion, type Point } from '@/lib/types';
 import { AssetImage, useAsset } from './asset-image';
 import { ImagePreparer } from './image-preparer';
 import { BackgroundRemovalTest } from './background-removal-test';
@@ -77,7 +72,7 @@ const defaults: MaterialInput = {
  * The size a new material starts at: a tile's, or the standard model's of its kind (a basin on the
  * floor is a pedestal one). A faucet has no standard model and keeps the size it has.
  */
-function startingSize(category: MaterialCategory, installation: MaterialInput['installation']) {
+function startingSize(category: MaterialKind, installation: MaterialInput['installation']) {
   if (category === 'tile')
     return { widthMm: defaults.widthMm, heightMm: defaults.heightMm, depthMm: defaults.depthMm };
   if (!(category in RECONSTRUCTION_DEFAULTS)) return undefined;
@@ -166,6 +161,7 @@ export function MaterialForm({
   onCancel: () => void;
 }) {
   const { writable, userId } = useAccess();
+  const kinds = useMaterialKinds();
   const serverAdmin = useSharedCatalogAdmin();
   const isAdmin = serverAdmin;
   const retiredCount = initial?.views.filter((view) => isRetiredDirection(view.direction)).length ?? 0;
@@ -213,6 +209,7 @@ export function MaterialForm({
       .then((data) => {
         if (dead) return;
         setCatalogData(data);
+        if (data.kinds) setMaterialKinds(data.kinds);
         setForm((current) => {
           const match = (kind: string, value?: string) =>
             data.options.find(
@@ -286,7 +283,7 @@ export function MaterialForm({
       ...current,
       pricing: { ...(current.pricing ?? defaultMaterialPricing(current.category)), [key]: value },
     }));
-  const setCategory = (category: MaterialCategory) =>
+  const setCategory = (category: MaterialKind) =>
     setForm((current) => {
       const currentPricing = current.pricing ?? defaultMaterialPricing(current.category);
       const supported =
@@ -662,18 +659,15 @@ export function MaterialForm({
                   className="input"
                   value={form.category}
                   onChange={(event) => {
-                    setCategory(event.target.value as MaterialCategory);
+                    setCategory(event.target.value as MaterialKind);
                     selectCatalog('subcategoryId', []);
                     setPendingQueries((q) => ({ ...q, subcategoryId: false }));
                   }}
                 >
-                  {/* A saved kind that is no longer offered (샤워 커튼) stays shown for that material. */}
-                  {(listedCategories.includes(form.category)
-                    ? listedCategories
-                    : [...listedCategories, form.category]
-                  ).map((key) => (
-                    <option key={key} value={key}>
-                      {categoryLabels[key]}
+                  {/* The kinds in use; a saved kind no longer offered (hidden, 문·창·샤워 커튼) stays for that material. */}
+                  {pickableKinds(kinds, initial?.category).map(({ code, name }) => (
+                    <option key={code} value={code}>
+                      {name}
                     </option>
                   ))}
                 </select>
@@ -902,7 +896,7 @@ export function MaterialForm({
                 </div>
                 <DirectionPhotoGenerator
                   key={form.category}
-                  category={form.category}
+                  category={kindBehavior(form.category)}
                   widthMm={form.widthMm}
                   heightMm={form.heightMm}
                   depthMm={form.depthMm}

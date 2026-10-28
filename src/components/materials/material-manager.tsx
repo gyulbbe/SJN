@@ -1,4 +1,5 @@
 'use client';
+import { pickableKinds, useKindLabel, useMaterialKinds } from '@/lib/material-kinds-store';
 import { getMaterialImageAssetId, stripLegacyMaterialImages } from '@/lib/material-images';
 import { isRetiredDirection } from '@/lib/product-direction';
 import { cardMaterial, materialCard, type MaterialCard } from '@/lib/catalog/cards';
@@ -24,14 +25,7 @@ import {
 } from 'lucide-react';
 import { getRepositories } from '@/lib/repositories';
 import { defaultMaterialPricing, QUOTE_UNIT_LABELS } from '@/lib/quote';
-import {
-  categoryLabels,
-  listedCategories,
-  type Material,
-  type MaterialCategory,
-  type MaterialInput,
-  type MaterialVersion,
-} from '@/lib/types';
+import { type Material, type MaterialKind, type MaterialInput, type MaterialVersion } from '@/lib/types';
 import { StorageBadge, useAccess } from '@/components/app-provider';
 import { AssetImage } from './asset-image';
 import { MaterialForm } from './material-form';
@@ -47,7 +41,9 @@ export default function MaterialManager() {
   const isAdmin = useSharedCatalogAdmin();
   const [search, setSearch] = useState('');
   const [scope, setScope] = useState<'all' | 'personal' | 'shared'>('all');
-  const [category, setCategory] = useState<'all' | MaterialCategory>('all');
+  const [category, setCategory] = useState<'all' | MaterialKind>('all');
+  const kinds = useMaterialKinds(),
+    label = useKindLabel();
   const [inactive, setInactive] = useState(false);
   const [sort, setSort] = useState<MaterialSort>(DEFAULT_SORT);
   const [form, setForm] = useState<'new' | MaterialVersion>();
@@ -278,13 +274,13 @@ export default function MaterialManager() {
             >
               전체
             </button>
-            {listedCategories.map((value) => (
+            {pickableKinds(kinds).map(({ code, name }) => (
               <button
-                key={value}
-                className={category === value ? styles.categoryActive : ''}
-                onClick={() => setCategory(value)}
+                key={code}
+                className={category === code ? styles.categoryActive : ''}
+                onClick={() => setCategory(code)}
               >
-                {categoryLabels[value]}
+                {name}
               </button>
             ))}
           </div>
@@ -358,7 +354,7 @@ export default function MaterialManager() {
                     alt={row.name}
                     style={{ objectFit: row.category === 'tile' ? 'cover' : 'contain' }}
                   />
-                  <span className={styles.cardCategory}>{categoryLabels[row.category]}</span>
+                  <span className={styles.cardCategory}>{label(row.category)}</span>
                   <span className={styles.cardExpand}>
                     <ArrowUpRight size={16} />
                   </span>
@@ -374,7 +370,7 @@ export default function MaterialManager() {
                   <p>
                     {row.widthMm} × {row.heightMm}
                     {row.category !== 'tile' ? ` × ${row.depthMm}` : ''} mm
-                    <span> · {row.finish || categoryLabels[row.category]}</span>
+                    <span> · {row.finish || label(row.category)}</span>
                   </p>
                   <div className={styles.cardTags}>
                     <span className={`badge ${row.scope === 'shared' ? '' : 'green'}`}>
@@ -495,7 +491,7 @@ export default function MaterialManager() {
               />
               <div>
                 <div className="badge">
-                  {categoryLabels[detail.version.category]} · v{detail.version.version}
+                  {label(detail.version.category)} · v{detail.version.version}
                 </div>
                 <h2 id="material-detail-title">{detail.version.name}</h2>
                 <p className="muted">

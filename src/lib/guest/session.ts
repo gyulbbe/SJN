@@ -1,3 +1,4 @@
+import { materialKindRowSchema } from '../material-kinds';
 import { z } from 'zod';
 import { normalizeProjectDocument, projectComparisons, projectScenes } from '../comparison';
 import {
@@ -33,6 +34,7 @@ const pageSchema = z.object({
   nextCursor: z.string().nullable(),
   total: z.number().int().nonnegative().optional(),
   facets: facetSelectionSchema.optional(),
+  kinds: z.array(materialKindRowSchema).max(200).optional(),
 });
 /** A public material as the editor's lists hold it. */
 const placementMaterial = (placement: PublicPlacement): Material => ({
@@ -410,6 +412,7 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
           nextCursor: data.nextCursor,
           ...(data.total === undefined ? {} : { total: data.total }),
           ...(data.facets ? { facets: data.facets } : {}),
+          ...(data.kinds ? { kinds: data.kinds } : {}),
         };
       },
       async getVersions(ids, options = {}) {

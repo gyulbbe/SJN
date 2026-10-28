@@ -1,4 +1,5 @@
 import type { MaterialCategory } from '@/lib/types';
+import type { MaterialKindRow } from '@/lib/material-kinds';
 export const optionKinds = ['color', 'brand', 'composition', 'finish'] as const;
 export type OptionKind = (typeof optionKinds)[number];
 export const optionLabels: Record<OptionKind, string> = {
@@ -23,7 +24,12 @@ export type Subcategory = {
   active: boolean;
   sortOrder: number | null;
 };
-export type CatalogData = { options: CatalogOption[]; subcategories: Subcategory[] };
+export type CatalogData = {
+  options: CatalogOption[];
+  subcategories: Subcategory[];
+  /** 위생도기 kinds (migration 0012), hidden ones too (`active`); absent from an older answer. */
+  kinds?: MaterialKindRow[];
+};
 export type CatalogSelection = {
   brandId?: string;
   subcategoryId?: string;

@@ -89,6 +89,10 @@ export type MaterialCategory =
   | 'lowPartition'
   | 'showerCurtain'
   | 'other';
+/** A 위생도기 kind an administrator added in 분류 관리 (migration 0012): 'k-' and ten letters or digits. */
+export type CustomKindCode = `k-${string}`;
+/** What a material's `category` holds: a built-in kind, or an added one (it behaves as 기타). */
+export type MaterialKind = MaterialCategory | CustomKindCode;
 /**
  * Read-only compatibility: what a material saved with the removed 360° editor still carries (the
  * stored shape is checked by product3dReferenceSchema). Nothing writes it any more and nothing
@@ -130,7 +134,7 @@ export type MaterialVersion = {
   name: string;
   brand: string;
   code: string;
-  category: MaterialCategory;
+  category: MaterialKind;
   scope: 'personal' | 'shared';
   description: string;
   color: string;
@@ -366,7 +370,3 @@ const unlisted: readonly MaterialCategory[] = ['showerCurtain', 'door', 'window'
 export const listedCategories: MaterialCategory[] = (
   Object.keys(categoryLabels) as MaterialCategory[]
 ).filter((category) => !unlisted.includes(category));
-/** The editor's 위생도기 kinds: the listed ones without tiles. */
-export const fixtureCategories: MaterialCategory[] = listedCategories.filter(
-  (category) => category !== 'tile',
-);

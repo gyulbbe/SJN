@@ -1,6 +1,7 @@
+import { materialKindSchema } from '@/lib/material-kinds';
 import { z } from 'zod';
 import { materialPricingSchema } from '../quote-validation';
-import { categoryLabels, type MaterialCategory, type MaterialVersion } from '../types';
+import type { MaterialVersion } from '../types';
 
 const id = z.string().uuid();
 const point = z
@@ -35,7 +36,7 @@ export const publicPlacementSchema = z
     name: z.string().trim().min(1).max(200),
     brand: z.string().max(200),
     code: z.string().max(200),
-    category: z.enum(Object.keys(categoryLabels) as [MaterialCategory, ...MaterialCategory[]]),
+    category: materialKindSchema,
     description: z.string().max(10000),
     color: z.string().max(2100),
     finish: z.string().max(2100),

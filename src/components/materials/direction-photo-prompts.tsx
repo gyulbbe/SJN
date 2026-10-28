@@ -1,5 +1,6 @@
 'use client';
 
+import { kindBehavior } from '@/lib/material-kinds';
 import { useEffect, useRef, useState } from 'react';
 import { copyText } from '@/lib/clipboard';
 import { PRODUCT_DIRECTIONS, type ProductDirection } from '@/lib/product-direction';
@@ -23,7 +24,7 @@ export type PromptSource = Pick<
 
 /** The prompt input for one direction: the other directions refer to the 정면 result made first. */
 const promptInput = (source: PromptSource, direction: ProductDirection): DirectionPhotoPromptInput => ({
-  category: source.category,
+  category: kindBehavior(source.category),
   direction,
   widthMm: source.widthMm,
   heightMm: source.heightMm,
@@ -184,7 +185,9 @@ export function DirectionPhotoPrompts({
           )}
         </div>
       </div>
-      <p className={styles.note}>이 제품에 권장하는 사진: {recommendedDirections(source.category)}</p>
+      <p className={styles.note}>
+        이 제품에 권장하는 사진: {recommendedDirections(kindBehavior(source.category))}
+      </p>
       <p className={styles.note}>만든 사진 확인 목록</p>
       <ul className={styles.promptSteps}>
         <li>같은 제품인가요(모양·세부·색)?</li>

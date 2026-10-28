@@ -7,6 +7,7 @@
  * page, not the catalogue. Who sees what is the same as the full lists this replaces; each list's
  * visibility is a set of `class` values (see the migration).
  */
+import { readKinds } from '../catalog/server';
 import { z } from 'zod';
 import {
   emptyFacets,
@@ -564,6 +565,8 @@ export async function listPage(
         : null,
     ...(total === undefined ? {} : { total }),
     ...(facets && query.options ? { facets } : {}),
+    // The kind chips and names ride on the first page a screen asks for anyway (no request of their own).
+    ...(!cursor && query.options ? { kinds: await readKinds(db) } : {}),
   };
 }
 

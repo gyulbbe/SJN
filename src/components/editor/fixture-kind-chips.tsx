@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { categoryLabels, fixtureCategories, type MaterialCategory } from '@/lib/types';
+import type { MaterialKind } from '@/lib/types';
+import { useMaterialKinds } from '@/lib/material-kinds-store';
 
 const chip =
   'min-h-8 shrink-0 whitespace-nowrap rounded-full border border-transparent px-2.5 text-xs text-[color:var(--muted)] hover:border-[color:var(--line)] aria-pressed:border-[color:var(--accent)] aria-pressed:bg-[color:var(--accent-light)] aria-pressed:font-semibold aria-pressed:text-[color:var(--accent)] max-[620px]:min-h-11 [@media(pointer:coarse)]:min-h-11';
@@ -17,7 +18,7 @@ const fades = {
 };
 
 /**
- * The 위생도기 tab's kinds, as the material library's chips (no tiles, no 샤워 커튼): one row that
+ * The 위생도기 tab's kinds, as the material library's chips (the administrator's, migration 0012): one row that
  * scrolls sideways in a narrow panel. It has no scrollbar (the panel keeps its height for the cards);
  * a faded side, a mouse resting near an end, the wheel, touch and focus move it. Picking one asks for
  * that kind's first page.
@@ -26,9 +27,12 @@ export function FixtureKindChips({
   value,
   onChange,
 }: {
-  value: 'all' | MaterialCategory;
-  onChange: (kind: 'all' | MaterialCategory) => void;
+  value: 'all' | MaterialKind;
+  onChange: (kind: 'all' | MaterialKind) => void;
 }) {
+  const all = useMaterialKinds();
+  // The administrator's kinds in use, in their order (기타 last); a picked kind hidden since stays.
+  const kinds = all.filter((row) => row.active || row.code === value);
   const row = useRef<HTMLDivElement>(null);
   const [fade, setFade] = useState<keyof typeof fades>('none');
   // The picked chip stays in view, also when the row comes back with the tab (scrolled to its start).
@@ -40,7 +44,7 @@ export function FixtureKindChips({
       right = left + picked.offsetWidth;
     if (left < list.scrollLeft || right > list.scrollLeft + list.clientWidth)
       list.scrollLeft = left - (list.clientWidth - picked.offsetWidth) / 2;
-  }, [value]);
+  }, [value, kinds.length]);
   useEffect(() => {
     const list = row.current;
     if (!list) return;
@@ -107,7 +111,7 @@ export function FixtureKindChips({
       list.removeEventListener('pointerleave', stop);
     };
   }, []);
-  const pick = (kind: 'all' | MaterialCategory) => {
+  const pick = (kind: 'all' | MaterialKind) => {
     if (kind !== value) onChange(kind);
   };
   return (
@@ -121,15 +125,15 @@ export function FixtureKindChips({
       <button type="button" className={chip} aria-pressed={value === 'all'} onClick={() => pick('all')}>
         전체
       </button>
-      {fixtureCategories.map((kind) => (
+      {kinds.map(({ code, name }) => (
         <button
-          key={kind}
+          key={code}
           type="button"
           className={chip}
-          aria-pressed={value === kind}
-          onClick={() => pick(kind)}
+          aria-pressed={value === code}
+          onClick={() => pick(code)}
         >
-          {categoryLabels[kind]}
+          {name}
         </button>
       ))}
     </div>

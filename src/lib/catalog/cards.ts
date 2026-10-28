@@ -1,6 +1,6 @@
 import { getMaterialImageAssetId } from '@/lib/material-images';
 import { isRetiredDirection } from '@/lib/product-direction';
-import type { Material, MaterialCategory, MaterialVersion } from '@/lib/types';
+import type { Material, MaterialKind, MaterialVersion } from '@/lib/types';
 
 /**
  * What a member list card shows (editor drawer, administrator library). The whole version is read
@@ -19,7 +19,7 @@ export type MaterialCard = {
   name: string;
   brand: string;
   code: string;
-  category: MaterialCategory;
+  category: MaterialKind;
   usage: MaterialVersion['usage'];
   widthMm: number;
   heightMm: number;

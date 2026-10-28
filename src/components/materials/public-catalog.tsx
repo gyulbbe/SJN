@@ -23,7 +23,7 @@ import {
 } from '@/lib/catalog/paging';
 import { LoadMore } from './load-more';
 import { useMaterialPages, useSettled, useVisible } from './use-material-pages';
-import { categoryLabels, listedCategories } from '@/lib/types';
+import { pickableKinds, useKindLabel, useMaterialKinds } from '@/lib/material-kinds-store';
 import WorkspaceNav from '@/components/workspace-nav';
 import { MaterialFacets } from './material-facets';
 import { SortSelect } from './sort-select';
@@ -77,6 +77,7 @@ function MaterialDetail({
   member: boolean;
   onClose: () => void;
 }) {
+  const label = useKindLabel();
   const dialog = useRef<HTMLDialogElement>(null);
   const [selectedImage, setSelectedImage] = useState(0);
   useEffect(() => {
@@ -139,17 +140,14 @@ function MaterialDetail({
             <p className={styles.imageNote}>화면의 색상과 질감은 실제 자재와 다를 수 있어요.</p>
           </div>
           <div className={styles.detailInfo}>
-            <span className={styles.kind}>{categoryLabels[material.category]}</span>
+            <span className={styles.kind}>{label(material.category)}</span>
             <p className={styles.brand}>{material.brand || '브랜드 미지정'}</p>
             <h2>{material.name}</h2>
             {material.description && <p className={styles.description}>{material.description}</p>}
             <dl className={styles.specifications}>
               {[
                 ['브랜드', material.brand],
-                [
-                  '분류',
-                  [categoryLabels[material.category], material.subcategoryName].filter(Boolean).join(' · '),
-                ],
+                ['분류', [label(material.category), material.subcategoryName].filter(Boolean).join(' · ')],
                 ['색상', material.color],
                 ['재질', material.composition],
                 ['마감', material.finish],
@@ -191,6 +189,8 @@ async function fetchPublicPage(query: MaterialPageQuery, signal: AbortSignal) {
 export default function PublicCatalog() {
   const access = useAccess();
   const member = !!access.userId && !access.expired;
+  const kinds = useMaterialKinds(),
+    label = useKindLabel();
   const [query, setQuery] = useState(''),
     [category, setCategory] = useState(''),
     [facets, setFacets] = useState(emptyFacets),
@@ -257,9 +257,9 @@ export default function PublicCatalog() {
                 onChange={(event) => setCategory(event.target.value)}
               >
                 <option value="">전체</option>
-                {listedCategories.map((key) => (
-                  <option key={key} value={key}>
-                    {categoryLabels[key]}
+                {pickableKinds(kinds).map(({ code, name }) => (
+                  <option key={code} value={code}>
+                    {name}
                   </option>
                 ))}
               </select>
@@ -345,7 +345,7 @@ export default function PublicCatalog() {
                     alt={row.name}
                     tile={row.category === 'tile'}
                   />
-                  <span className={styles.imageKind}>{categoryLabels[row.category]}</span>
+                  <span className={styles.imageKind}>{label(row.category)}</span>
                   <span className={styles.cardArrow}>
                     <ArrowUpRight size={18} aria-hidden="true" />
                   </span>
