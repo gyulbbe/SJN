@@ -167,7 +167,8 @@ afterAll(async () => {
   await mf?.dispose();
 });
 
-describe('material list orders by brand', () => {
+// Miniflare: a list read page by page takes several seconds here (more than vitest's 5 s default).
+describe('material list orders by brand', { timeout: 60000 }, () => {
   it('lists by name while no brand has an order, newest registered first, and by name either way', async () => {
     const list = (sort?: MaterialSort) => names({ ...(sort ? { sort } : {}), limit: 1 });
     // Pages of one: every next page goes through the cursor.
@@ -337,7 +338,8 @@ describe('material list orders by brand', () => {
     } as unknown as D1Bindings;
     await applyD1Migrations(old.DB, until('0011_brand_order.sql'));
     await expect(checkD1Storage(old)).rejects.toThrow();
-    await applyD1Migrations(old.DB, ['0011_brand_order.sql']);
+    // 0011 and the ones after it (the readiness check also needs 0012's kinds).
+    await applyD1Migrations(old.DB, allD1Migrations.slice(allD1Migrations.indexOf('0011_brand_order.sql')));
     await expect(checkD1Storage(old)).resolves.toBeUndefined();
   });
 });
