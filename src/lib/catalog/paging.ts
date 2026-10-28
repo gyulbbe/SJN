@@ -1,5 +1,7 @@
+import type { MaterialKindRow } from '@/lib/material-kinds';
+import { materialKindSchema } from '@/lib/material-kinds';
 import { z } from 'zod';
-import { categoryLabels, type MaterialCategory } from '@/lib/types';
+import type { MaterialKind } from '@/lib/types';
 import { emptyFacets, facetKeys, type FacetSelection } from './facets';
 
 /** One page of a material list; also the server's largest page (docs/material-paging-results-20261022.md). */
@@ -40,9 +42,7 @@ export const facetSelectionSchema = z
  */
 export const materialPageQuerySchema = z
   .object({
-    category: z
-      .enum([...(Object.keys(categoryLabels) as [MaterialCategory, ...MaterialCategory[]]), 'fixtures'])
-      .optional(),
+    category: z.union([z.literal('fixtures'), materialKindSchema]).optional(),
     usage: z.enum(['wall', 'floor']).optional(),
     q: z.string().max(MAX_SEARCH).optional(),
     facets: facetSelectionSchema.optional(),
@@ -68,13 +68,15 @@ export type MaterialPage<T> = {
   /** First page only, when asked: the facet options of the query's range (search and facets aside). */
   facets?: FacetSelection;
   counts?: LibraryCounts;
+  /** First page only, with the facet options or the library's counts: the 위생도기 kinds (migration 0012). */
+  kinds?: MaterialKindRow[];
 };
 
 export type EditorTab = 'wall' | 'floor' | 'fixtures';
 /** A tab's list; the 위생도기 tab narrows to one kind when its chip is picked. */
 export const editorTabQuery = (
   tab: EditorTab,
-  kind?: MaterialCategory,
+  kind?: MaterialKind,
 ): Pick<MaterialPageQuery, 'category' | 'usage'> =>
   tab === 'fixtures' ? { category: kind ?? 'fixtures' } : { category: 'tile', usage: tab };
 

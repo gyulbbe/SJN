@@ -1,7 +1,7 @@
 import { roomSurfaceAreas, roomSurfaceAreasMm2 } from './room-surface-areas';
 import type { MaterialPricing, QuoteDocument, QuoteLine, QuoteUnit } from './quote-types';
 import { getActiveScene } from './designs';
-import type { MaterialCategory, MaterialVersion, ProjectInput, Scene } from './types';
+import type { MaterialKind, MaterialVersion, ProjectInput, Scene } from './types';
 
 export const QUOTE_UNIT_LABELS: Record<QuoteUnit, string> = {
   m2: '㎡',
@@ -14,7 +14,7 @@ const MAX_QUANTITY = 100_000;
 const MAX_UNIT_PRICE = 100_000_000;
 const MAX_LINES = 300;
 
-export function defaultMaterialPricing(category: MaterialCategory): MaterialPricing {
+export function defaultMaterialPricing(category: MaterialKind): MaterialPricing {
   return {
     unit: category === 'tile' ? 'm2' : 'piece',
     unitPrice: null,

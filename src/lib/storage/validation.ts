@@ -1,3 +1,4 @@
+import { materialKindSchema } from '@/lib/material-kinds';
 import { fixtureVariantErrors } from '../reconstruction/fixture-variants';
 import { validateWallFeatures, WALL_FEATURE_MAX_COUNT, WALL_FEATURE_MAX_DEPTH_MM } from '../wall-features';
 import { raisedGlassSupportErrors } from '../reconstruction/raised-glass-support';
@@ -867,25 +868,8 @@ export const materialInputSchema = z
     name: z.string().trim().min(1).max(200),
     brand: z.string().max(200),
     code: z.string().max(200),
-    category: z.enum([
-      'tile',
-      'toilet',
-      'basin',
-      'vanity',
-      'bath',
-      'shower',
-      'faucet',
-      'mirror',
-      'door',
-      'window',
-      'glassPartition',
-      'mirrorCabinet',
-      'wallShelf',
-      'wallCabinet',
-      'lowPartition',
-      'showerCurtain',
-      'other',
-    ]),
+    // A built-in kind, or one an administrator added (migration 0012; it must exist: materials.ts).
+    category: materialKindSchema,
     scope: z.enum(['personal', 'shared']),
     description: z.string().max(10000),
     color: z.string().max(2100),

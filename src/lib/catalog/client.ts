@@ -20,8 +20,21 @@ export async function saveCatalog(input: Record<string, unknown>, userId?: strin
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', ...(userId ? { 'X-SJN-User-Id': userId } : {}) },
-    body: JSON.stringify({ operation: input.id ? 'update' : 'create', input }),
+    // A 위생도기 kind is named by its code, the other items by their id.
+    body: JSON.stringify({ operation: input.id || input.code ? 'update' : 'create', input }),
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? '분류를 저장하지 못했어요.');
+}
+/** Deletes a 위생도기 kind an administrator added, while no material has it. */
+export async function deleteMaterialKind(code: string, userId?: string) {
+  const response = await fetch('/api/d1/catalog', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', ...(userId ? { 'X-SJN-User-Id': userId } : {}) },
+    body: JSON.stringify({ operation: 'delete', input: { code } }),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? '종류를 지우지 못했어요.');
 }

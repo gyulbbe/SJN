@@ -1,4 +1,4 @@
-import { categoryLabels } from '../types';
+import { kindLabel } from '../material-kinds';
 import { projectComparisons, projectScenes } from '../comparison';
 import type { MaterialVersion, ProjectInput, Scene } from '../types';
 
@@ -137,7 +137,7 @@ export function isDisposableReconstructionVersion(version: MaterialVersion): boo
       'lowPartition',
       'showerCurtain',
     ].includes(version.category) &&
-    (version.name === categoryLabels[version.category] + ' · 재구성 모형' ||
+    (version.name === kindLabel(version.category) + ' · 재구성 모형' ||
       (version.category === 'vanity' && version.name === '세면대 하부장 · 재구성 모형'))
   );
 }

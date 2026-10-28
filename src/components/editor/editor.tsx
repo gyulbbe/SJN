@@ -64,7 +64,7 @@ import reconstructionStyles from '@/components/reconstruction/reconstruction.mod
 import {
   DEFAULT_COLOR,
   EMPTY_MASK,
-  type MaterialCategory,
+  type MaterialKind,
   type MaterialVersion,
   type Scene,
   type ProjectDocument,
@@ -187,7 +187,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     [error, setError] = useState(''),
     [tab, setTab] = useState<'wall' | 'floor' | 'fixtures'>('floor'),
     // The 위생도기 tab's kind chip; kept while the editor is open.
-    [fixtureKind, setFixtureKind] = useState<'all' | MaterialCategory>('all'),
+    [fixtureKind, setFixtureKind] = useState<'all' | MaterialKind>('all'),
     [search, setSearch] = useState(''),
     [facets, setFacets] = useState(emptyFacets),
     // The drawer's order; kept across tabs while the editor is open.

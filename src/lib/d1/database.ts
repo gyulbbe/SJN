@@ -276,6 +276,8 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     'd1_catalog_meta',
     'd1_catalog_options',
     'd1_material_subcategories',
+    // 0012: the 위생도기 kinds an administrator manages.
+    'd1_material_kinds',
     'd1_material_version_options',
     'd1_storage_meta',
     'd1_projects',
@@ -304,6 +306,8 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     'd1_material_list_brand_link',
     'd1_material_list_brand_unlink',
     'd1_material_list_brand_order',
+    // 0012: an added 위생도기 kind's versions (checked before the kind is deleted).
+    'd1_versions_added_kind',
   ];
   const rows = await env.DB.prepare(
     "SELECT name FROM sqlite_master WHERE type IN ('table','index','trigger')",

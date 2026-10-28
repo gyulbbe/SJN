@@ -3,13 +3,17 @@ import Link from 'next/link';
 import AdminLinks from '@/components/admin/admin-links';
 import { useEffect, useState } from 'react';
 import { useAccess } from '../app-provider';
-import { loadCatalog, saveCatalog } from '@/lib/catalog/client';
+import { deleteMaterialKind, loadCatalog, saveCatalog } from '@/lib/catalog/client';
 import { optionKinds, optionLabels, type CatalogData, type OptionKind } from '@/lib/catalog/contract';
 import { categoryLabels, listedCategories, type MaterialCategory } from '@/lib/types';
 import styles from './catalog.module.css';
 const empty = () => ({
   id: undefined as string | undefined,
-  kind: 'color' as OptionKind | 'subcategory',
+  /** A 위생도기 kind's code when one is being changed. */
+  code: undefined as string | undefined,
+  /** A built-in 위생도기 kind: its name is fixed. */
+  builtin: false,
+  kind: 'color' as OptionKind | 'subcategory' | 'materialKind',
   name: '',
   category: 'tile' as MaterialCategory,
   /** 표시 순서 as typed: digits, or empty for none (then by name). */
@@ -58,8 +62,29 @@ export default function CatalogAdmin() {
       setBusy(false);
     }
   }
+  async function remove(code: string, name: string) {
+    if (!window.confirm(`'${name}' 종류를 지울까요? 이 종류의 자재가 없을 때만 지워져요.`)) return;
+    setError('');
+    setBusy(true);
+    try {
+      await deleteMaterialKind(code, userId);
+      setData(await loadCatalog(userId));
+      setForm({ ...empty(), kind: 'materialKind' });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '지우지 못했어요.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  const kinds = data.kinds ?? [];
   const rows =
-    form.kind === 'subcategory' ? data.subcategories : data.options.filter((o) => o.kind === form.kind);
+    form.kind === 'subcategory'
+      ? data.subcategories
+      : form.kind === 'materialKind'
+        ? []
+        : data.options.filter((o) => o.kind === form.kind);
+  // 기타 keeps no order: it is always last.
+  const orderless = form.kind === 'materialKind' && form.code === 'other';
   return (
     <main className={styles.shell}>
       <nav className={styles.nav}>
@@ -79,7 +104,7 @@ export default function CatalogAdmin() {
           종류
           <select
             className="input"
-            disabled={!!form.id}
+            disabled={!!form.id || !!form.code}
             value={form.kind}
             onChange={(e) => setForm({ ...empty(), kind: e.target.value as typeof form.kind })}
           >
@@ -89,6 +114,7 @@ export default function CatalogAdmin() {
               </option>
             ))}
             <option value="subcategory">하위 카테고리</option>
+            <option value="materialKind">위생도기 종류</option>
           </select>
         </label>
         {form.kind === 'subcategory' && (
@@ -119,6 +145,8 @@ export default function CatalogAdmin() {
             className="input"
             required
             maxLength={100}
+            disabled={form.builtin}
+            title={form.builtin ? '기본 종류의 이름은 바꿀 수 없어요.' : undefined}
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
           />
@@ -142,8 +170,9 @@ export default function CatalogAdmin() {
             className="input"
             inputMode="numeric"
             maxLength={4}
-            placeholder="비우면 이름순"
-            value={form.order}
+            disabled={orderless}
+            placeholder={orderless ? '늘 마지막' : '비우면 이름순'}
+            value={orderless ? '' : form.order}
             onChange={(e) => setForm({ ...form, order: e.target.value.replace(/\D/g, '').slice(0, 4) })}
           />
         </label>
@@ -156,14 +185,22 @@ export default function CatalogAdmin() {
           사용
         </label>
         <button className="btn primary" disabled={busy}>
-          {busy ? '저장 중…' : form.id ? '변경 저장' : '항목 등록'}
+          {busy ? '저장 중…' : form.id || form.code ? '변경 저장' : '항목 등록'}
         </button>
-        {form.id && (
+        {(form.id || form.code) && (
           <button type="button" className="btn" onClick={() => setForm({ ...empty(), kind: form.kind })}>
             수정 취소
           </button>
         )}
       </form>
+      {form.kind === 'materialKind' && (
+        <p className={styles.muted + ' mt-3'}>
+          위생도기 종류는 자재 등록 양식, 편집 화면의 종류 칩, 공개 자재와 자재 관리의 종류에 이 순서로
+          나와요. 기본 종류는 순서와 사용만 바꿀 수 있고, 기타는 늘 마지막이에요. 새 종류는 기타처럼
+          사진으로만 배치해요. 사용을 끄면 목록에서만 숨겨지고, 이미 등록한 자재와 프로젝트에는 그대로 남아요.
+          자재가 없는 새 종류만 지울 수 있어요.
+        </p>
+      )}
       {form.kind === 'brand' && (
         <p className={styles.muted + ' mt-3'}>
           브랜드 표시 순서는 자재 목록의 기본 순서예요. 숫자가 작은 브랜드(0부터)의 자재가 먼저 나오고, 순서가
@@ -175,7 +212,55 @@ export default function CatalogAdmin() {
           {error}
         </p>
       )}
-      <div className={styles.tableWrap}>
+      {form.kind === 'materialKind' && (
+        <div className={styles.tableWrap}>
+          <table className={styles.list} aria-label="위생도기 종류">
+            <thead>
+              <tr>
+                <th>이름</th>
+                <th>구분</th>
+                <th>순서</th>
+                <th>상태</th>
+                <th>관리</th>
+              </tr>
+            </thead>
+            <tbody>
+              {kinds.map((row) => (
+                <tr key={row.code}>
+                  <td>{row.name}</td>
+                  <td>{row.builtin ? '기본' : '추가'}</td>
+                  <td>{row.code === 'other' ? '마지막' : (row.displayOrder ?? '—')}</td>
+                  <td>{row.active ? '사용' : '숨김'}</td>
+                  <td className="flex flex-wrap gap-1.5">
+                    <button
+                      className="btn"
+                      onClick={() =>
+                        setForm({
+                          ...empty(),
+                          kind: 'materialKind',
+                          code: row.code,
+                          builtin: row.builtin,
+                          name: row.name,
+                          order: row.displayOrder === null ? '' : String(row.displayOrder),
+                          active: row.active,
+                        })
+                      }
+                    >
+                      수정 · {row.name}
+                    </button>
+                    {!row.builtin && (
+                      <button className="btn" disabled={busy} onClick={() => remove(row.code, row.name)}>
+                        삭제 · {row.name}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className={styles.tableWrap} hidden={form.kind === 'materialKind'}>
         <table className={styles.list}>
           <thead>
             <tr>
@@ -198,6 +283,7 @@ export default function CatalogAdmin() {
                     className="btn"
                     onClick={() =>
                       setForm({
+                        ...empty(),
                         id: row.id,
                         kind: 'kind' in row ? row.kind : 'subcategory',
                         name: row.name,

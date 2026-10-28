@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { categoryLabels, type MaterialInput } from '@/lib/types';
+import { categoryLabels, type MaterialInput, type MaterialKind } from '@/lib/types';
+import {
+  defaultKindRows,
+  isCustomKind,
+  isManagedKind,
+  newKindCode,
+  orderKinds,
+  type MaterialKindRow,
+} from '@/lib/material-kinds';
 import { sql, batch, mutationStatement, assertion, type Context } from '@/lib/d1/database';
 import { D1StorageError, invalid } from '@/lib/d1/http';
 import type { D1DatabaseLike } from '@/lib/d1/types';
@@ -11,11 +19,27 @@ import {
   type OptionKind,
 } from './contract';
 
+/**
+ * The 위생도기 kinds (migration 0012), hidden ones too, in their order (기타 last). A small table read
+ * whole. Before 0012 is applied the built-in kinds stand in, as they were.
+ */
+export async function readKinds(db: D1DatabaseLike): Promise<MaterialKindRow[]> {
+  try {
+    const rows = await db
+      .prepare('SELECT code,name,display_order AS displayOrder,active,builtin FROM d1_material_kinds')
+      .all<Omit<MaterialKindRow, 'active' | 'builtin'> & { active: number; builtin: number }>();
+    return orderKinds(rows.results.map((row) => ({ ...row, active: !!row.active, builtin: !!row.builtin })));
+  } catch (error) {
+    if (/no such table/i.test(error instanceof Error ? error.message : String(error)))
+      return defaultKindRows();
+    throw error;
+  }
+}
 /** 표시 순서 first (0 first), then the ones without one; by name within (migration 0011). */
 const displayOrder = ' ORDER BY display_order IS NULL,display_order,normalized_name';
 export async function readCatalog(db: D1DatabaseLike, includeInactive = false): Promise<CatalogData> {
   const where = includeInactive ? '' : ' WHERE active=1';
-  const [options, subcategories] = await Promise.all([
+  const [options, subcategories, kinds] = await Promise.all([
     db
       .prepare(
         'SELECT id,kind,name,color_hex AS colorHex,display_order AS sortOrder,active FROM d1_catalog_options' +
@@ -30,15 +54,19 @@ export async function readCatalog(db: D1DatabaseLike, includeInactive = false): 
           displayOrder,
       )
       .all(),
+    readKinds(db),
   ]);
   return {
     options: options.results.map((row) => ({ ...row, active: !!row.active })),
     subcategories: subcategories.results.map((row) => ({ ...row, active: !!row.active })),
+    kinds,
   } as CatalogData;
 }
 const rowSchema = z.object({
   id: z.string().uuid().optional(),
-  kind: z.enum([...optionKinds, 'subcategory']),
+  kind: z.enum([...optionKinds, 'subcategory', 'materialKind']),
+  /** A 위생도기 kind's code (its id). */
+  code: z.string().max(40).optional(),
   name: z.string().trim().min(1).max(100),
   category: z.string().optional(),
   /** 표시 순서: a whole number 0–9999, or null for none. */
@@ -53,10 +81,12 @@ const rowSchema = z.object({
 export async function manageCatalog(ctx: Context, body: Record<string, unknown>) {
   if (!ctx.actor.isAdmin) throw new D1StorageError(403, '분류 관리는 관리자만 할 수 있어요.', 'FORBIDDEN');
   if (body.operation === 'list') return readCatalog(ctx.env.DB, true);
+  if (body.operation === 'delete') return deleteKind(ctx, body.input);
   if (!['create', 'update'].includes(String(body.operation))) throw invalid('지원하지 않는 분류 작업이에요.');
   const row = rowSchema.parse(body.input);
   const normalized = normalizeCatalogName(row.name);
   if (!normalized) throw invalid('이름을 입력해 주세요.');
+  if (row.kind === 'materialKind') return saveKind(ctx, body.operation === 'create', row, normalized);
   if (row.kind === 'subcategory' && !Object.hasOwn(categoryLabels, row.category ?? ''))
     throw invalid('상위 카테고리를 선택해 주세요.');
   // The subcategory table's kinds are fixed by migration 0003 (its CHECK has no 기타).
@@ -113,6 +143,82 @@ export async function manageCatalog(ctx: Context, body: Record<string, unknown>)
   await batch(ctx, [statement, ...mutationStatement(ctx, { value: { id } })]);
   return { id };
 }
+/**
+ * 위생도기 kinds (migration 0012): a new kind (name, order, use), or a kind's order and use. A built-in
+ * kind's name is fixed; 기타 has no order (always last). A name may not be another kind's.
+ */
+async function saveKind(ctx: Context, create: boolean, row: z.infer<typeof rowSchema>, normalized: string) {
+  const code = create ? newKindCode() : z.string().min(1).parse(row.code);
+  if (!create) {
+    const current = await sql(ctx, 'SELECT name,builtin FROM d1_material_kinds WHERE code=?', code).first<{
+      name: string;
+      builtin: number;
+    }>();
+    if (!current) throw new D1StorageError(404, '종류를 찾지 못했어요.');
+    if (current.builtin && row.name.trim() !== current.name)
+      throw invalid('기본 종류의 이름은 바꿀 수 없어요. 표시 순서와 사용만 바꿀 수 있어요.');
+  }
+  // Another kind's name, or a stored kind no one picks (타일·문·창·샤워 커튼), is taken.
+  const reserved = Object.values(categoryLabels).some((name) => normalizeCatalogName(name) === normalized);
+  if (
+    (create && reserved) ||
+    (await sql(
+      ctx,
+      'SELECT code FROM d1_material_kinds WHERE normalized_name=? AND code<>?',
+      normalized,
+      code,
+    ).first())
+  )
+    throw new D1StorageError(409, '같은 이름의 종류가 이미 있어요.');
+  const order = code === 'other' ? null : row.sortOrder;
+  const statement = create
+    ? sql(
+        ctx,
+        'INSERT INTO d1_material_kinds(code,name,normalized_name,display_order,active,builtin) VALUES(?,?,?,?,?,0)',
+        code,
+        row.name.trim(),
+        normalized,
+        order,
+        Number(row.active),
+      )
+    : sql(
+        ctx,
+        'UPDATE d1_material_kinds SET name=CASE WHEN builtin=1 THEN name ELSE ? END,normalized_name=CASE WHEN builtin=1 THEN normalized_name ELSE ? END,display_order=?,active=?,updated_at=CURRENT_TIMESTAMP WHERE code=?',
+        row.name.trim(),
+        normalized,
+        order,
+        Number(row.active),
+        code,
+      );
+  await batch(ctx, [statement, ...mutationStatement(ctx, { value: { id: code } })]);
+  return { id: code };
+}
+/** Deletes an added kind no material (any version, active or not) has; a built-in one is only hidden. */
+async function deleteKind(ctx: Context, input: unknown) {
+  const code = z.object({ code: z.string().max(40) }).parse(input).code;
+  if (!isCustomKind(code)) throw invalid('기본 종류는 지울 수 없어요. 사용을 끄면 목록에서 숨겨져요.');
+  // Any version of any material (0012's partial index holds only added kinds' versions).
+  const used = "SELECT 1 FROM d1_material_versions WHERE substr(category,1,2)='k-' AND category=? LIMIT 1";
+  if (await sql(ctx, used, code).first())
+    throw new D1StorageError(409, '이 종류의 자재가 있어 지울 수 없어요. 사용을 끄면 목록에서 숨겨져요.');
+  await batch(ctx, [
+    // A material saved with it in the meantime keeps the kind.
+    assertion(ctx, 'conflict', `NOT EXISTS(${used})`, code),
+    sql(ctx, 'DELETE FROM d1_material_kinds WHERE code=? AND builtin=0', code),
+    ...mutationStatement(ctx, { value: { id: code } }),
+  ]);
+  return { id: code };
+}
+/**
+ * A material's kind (migration 0012): a managed kind must be in use, unless the material already had
+ * it (a hidden kind's material can still be edited). Tiles and the kinds no one picks (문·창·샤워 커튼,
+ * the photo-analysis standard model's) pass as before.
+ */
+export function checkMaterialKind(kinds: MaterialKindRow[], kind: MaterialKind, previous?: string) {
+  if (!isManagedKind(kind) || kind === previous) return;
+  if (!kinds.some((row) => row.code === kind && row.active))
+    throw invalid('사용하지 않는 종류예요. 분류 관리에서 사용 중인 종류를 골라 주세요.');
+}
 export async function resolveCatalogInput(ctx: Context, input: MaterialInput) {
   const catalog = input.catalog ?? emptySelection();
   if (
@@ -146,7 +252,7 @@ export async function resolveCatalogInput(ctx: Context, input: MaterialInput) {
     input.subcategoryName = sub.name;
   }
   input.catalog = catalog;
-  return { selected, catalog };
+  return { selected, catalog, kinds: data.kinds ?? defaultKindRows() };
 }
 export function catalogStatements(
   ctx: Context,

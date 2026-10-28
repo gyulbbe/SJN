@@ -1,11 +1,11 @@
-import type { MaterialCategory } from '@/lib/types';
+import type { MaterialKind } from '@/lib/types';
 
 export const facetKeys = ['size', 'color', 'finish'] as const;
 export type FacetKey = (typeof facetKeys)[number];
 export const facetLabels: Record<FacetKey, string> = { size: '사이즈', color: '색상', finish: '표면' };
 export type FacetSelection = Record<FacetKey, string[]>;
 export type Facetable = {
-  category: MaterialCategory;
+  category: MaterialKind;
   widthMm: number;
   heightMm: number;
   depthMm: number;

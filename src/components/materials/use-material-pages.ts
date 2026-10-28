@@ -1,4 +1,5 @@
 'use client';
+import { setMaterialKinds } from '@/lib/material-kinds-store';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FacetSelection } from '@/lib/catalog/facets';
 import type { LibraryCounts, MaterialPage, MaterialPageQuery } from '@/lib/catalog/paging';
@@ -65,6 +66,8 @@ export function useMaterialPages<T>(
     fetchPage(cursor ? { ...query, cursor } : query, controller.signal)
       .then((page) => {
         if (controller.signal.aborted) return;
+        // The 위생도기 kinds ride on a first page (no request of their own).
+        if (page.kinds) setMaterialKinds(page.kinds);
         setState((previous) => {
           const shown = new Set(identify ? previous.items.map(identify) : []);
           return {
