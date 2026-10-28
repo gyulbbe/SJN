@@ -4,6 +4,10 @@ import { categoryLabels, fixtureCategories, type MaterialCategory } from '@/lib/
 
 const chip =
   'min-h-8 shrink-0 whitespace-nowrap rounded-full border border-transparent px-2.5 text-xs text-[color:var(--muted)] hover:border-[color:var(--line)] aria-pressed:border-[color:var(--accent)] aria-pressed:bg-[color:var(--accent-light)] aria-pressed:font-semibold aria-pressed:text-[color:var(--accent)] max-[620px]:min-h-11 [@media(pointer:coarse)]:min-h-11';
+/** A mouse resting this close to an end that has more chips moves the row that way. */
+const EDGE = 48;
+/** Pixels a frame: 1 at the zone's inner side up to 10 at the very end. */
+const pace = (distance: number) => 1 + (9 * (EDGE - Math.max(0, distance))) / EDGE;
 /** The row fades out on a side that has more chips past it. */
 const fades = {
   none: '',
@@ -15,7 +19,8 @@ const fades = {
 /**
  * The 위생도기 tab's kinds, as the material library's chips (no tiles, no 샤워 커튼): one row that
  * scrolls sideways in a narrow panel. It has no scrollbar (the panel keeps its height for the cards);
- * a faded side, the wheel, touch and focus move it. Picking one asks for that kind's first page.
+ * a faded side, a mouse resting near an end, the wheel, touch and focus move it. Picking one asks for
+ * that kind's first page.
  */
 export function FixtureKindChips({
   value,
@@ -53,15 +58,53 @@ export function FixtureKindChips({
       event.preventDefault();
       list.scrollLeft = next;
     };
+    // A mouse (a device that hovers) near an end keeps moving the row that way, faster nearer the end,
+    // until it leaves the zone, the end is reached or a button goes down (so a chip under it can be
+    // picked). Touch and pen push the row as before.
+    const hovers = matchMedia('(hover: hover) and (pointer: fine)');
+    let frame = 0,
+      speed = 0;
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      speed = 0;
+    };
+    const glide = () => {
+      const next = Math.min(list.scrollWidth - list.clientWidth, Math.max(0, list.scrollLeft + speed));
+      if (next === list.scrollLeft) return stop();
+      list.scrollLeft = next;
+      frame = requestAnimationFrame(glide);
+    };
+    const onMove = (event: PointerEvent) => {
+      if (event.pointerType !== 'mouse' || !hovers.matches || event.buttons) return stop();
+      const box = list.getBoundingClientRect();
+      const fromLeft = event.clientX - box.left,
+        fromRight = box.right - event.clientX;
+      speed =
+        fromRight < EDGE && list.scrollLeft + list.clientWidth < list.scrollWidth - 1
+          ? pace(fromRight)
+          : fromLeft < EDGE && list.scrollLeft > 1
+            ? -pace(fromLeft)
+            : 0;
+      if (!speed) stop();
+      else if (!frame) frame = requestAnimationFrame(glide);
+    };
     const resized = new ResizeObserver(sides);
     resized.observe(list);
     list.addEventListener('scroll', sides, { passive: true });
     list.addEventListener('wheel', onWheel, { passive: false });
+    list.addEventListener('pointermove', onMove);
+    list.addEventListener('pointerdown', stop);
+    list.addEventListener('pointerleave', stop);
     sides();
     return () => {
+      stop();
       resized.disconnect();
       list.removeEventListener('scroll', sides);
       list.removeEventListener('wheel', onWheel);
+      list.removeEventListener('pointermove', onMove);
+      list.removeEventListener('pointerdown', stop);
+      list.removeEventListener('pointerleave', stop);
     };
   }, []);
   const pick = (kind: 'all' | MaterialCategory) => {

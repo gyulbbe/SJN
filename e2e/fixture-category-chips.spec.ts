@@ -256,3 +256,129 @@ test('게스트: 위생도기 칩이 공개 배치 목록의 그 종류를 받�
   await page.getByLabel('제품 종류').selectOption('other');
   await expect(page.locator('main [data-page-item]')).toHaveCount(1);
 });
+
+/** The member editor's 위생도기 tab, opened on a new basic room. */
+async function openFixtures(page: Page) {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  const panel = page.locator('aside.catalog-panel');
+  const open = page.getByRole('button', { name: '자재 목록', exact: true });
+  if (await open.isVisible()) await open.click();
+  await panel.getByRole('button', { name: '위생도기', exact: true }).click();
+  const chips = panel.getByRole('group', { name: '위생도기 종류' });
+  await expect(chips).toBeVisible();
+  return { panel, chips };
+}
+const edgeState = (chips: Locator) =>
+  chips.evaluate((row) => ({
+    left: row.scrollLeft,
+    max: row.scrollWidth - row.clientWidth,
+    mask: getComputedStyle(row).maskImage,
+  }));
+
+test('칩 줄: 마우스를 끝 가까이 대면 그쪽으로 넘어가고, 벗어나거나 누르면 멈춘다 · 요청 0회', async ({
+  page,
+}) => {
+  app = await authenticatedApp(page);
+  await seed(app);
+  await seedProducts(app, EXTRA);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const { panel, chips } = await openFixtures(page);
+  await expect(panel.locator('button.material-tile')).toHaveCount(PRODUCTS + EXTRA.length);
+  const kinds = lists(page);
+  const api: string[] = [];
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/') && path !== '/api/d1/role' && !path.startsWith('/api/auth/')) api.push(path);
+  });
+  // What opening asked for (card images) is done before the mouse moves.
+  for (let seen = -1; seen !== api.length;) {
+    seen = api.length;
+    await page.waitForTimeout(2000);
+  }
+  api.length = 0;
+  const box = (await chips.boundingBox())!;
+  const y = box.y + box.height / 2;
+  const left = async () => (await edgeState(chips)).left;
+  expect(await left()).toBe(0);
+  // The middle of the row: nothing moves.
+  await page.mouse.move(box.x + box.width / 2, y);
+  await page.waitForTimeout(600);
+  expect(await left()).toBe(0);
+  // Near the right end: it moves right, all the way, and the right side stops fading.
+  await page.mouse.move(box.x + box.width - 6, y);
+  await expect.poll(left).toBeGreaterThan(0);
+  await expect
+    .poll(async () => (await edgeState(chips)).left >= (await edgeState(chips)).max - 1, {
+      timeout: 15000,
+    })
+    .toBe(true);
+  const end = await edgeState(chips);
+  expect(end.mask).toContain('to left');
+  await page.screenshot({ path: `${shots}/hover-right-end.png` });
+  // Near the left end: back the other way; leaving the zone stops it where it is.
+  await page.mouse.move(box.x + 8, y);
+  await expect.poll(left).toBeLessThan(end.max - 40);
+  await page.mouse.move(box.x + box.width / 2, y);
+  const stopped = await left();
+  await page.waitForTimeout(600);
+  expect(await left()).toBe(stopped);
+  await page.mouse.move(box.x + 8, y);
+  await expect.poll(left).toBeLessThan(stopped);
+  await page.mouse.move(box.x + box.width / 2, box.y - 60);
+  const out = await left();
+  await page.waitForTimeout(600);
+  expect(await left()).toBe(out);
+  // Moving the mouse asked the server nothing.
+  expect(api).toEqual([]);
+  // A chip under the faded right edge can be picked: a pressed button stops the row first.
+  await chips.evaluate((row) => (row.scrollLeft = 0));
+  await page.waitForTimeout(200);
+  const x = box.x + box.width - 14;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  const under = await page.evaluate(
+    ([px, py]) => (document.elementFromPoint(px, py)?.closest('button') as HTMLElement | null)?.innerText,
+    [x, y],
+  );
+  const held = await left();
+  await page.waitForTimeout(400);
+  expect(await left()).toBe(held);
+  await page.mouse.up();
+  expect(under).toBeTruthy();
+  await expect(chips.getByRole('button', { name: under!, exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect.poll(() => kinds.length).toBe(1);
+  expect(api.filter((path) => path === '/api/d1/materials')).toHaveLength(1);
+});
+
+test('칩 줄: 터치 화면(375px)에서는 끝에 손을 대도 저절로 넘어가지 않는다', async ({ browser }) => {
+  const context = await browser.newContext({
+    viewport: { width: 375, height: 812 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  app = await authenticatedApp(page);
+  await seed(app);
+  await seedProducts(app, EXTRA);
+  const { chips } = await openFixtures(page);
+  expect(await page.evaluate(() => matchMedia('(hover: hover) and (pointer: fine)').matches)).toBe(false);
+  const box = (await chips.boundingBox())!;
+  await page.mouse.move(box.x + box.width - 6, box.y + box.height / 2);
+  await page.waitForTimeout(800);
+  expect((await edgeState(chips)).left).toBe(0);
+  await noSideScroll(page);
+  await page.screenshot({ path: `${shots}/touch-375.png` });
+  await app.dispose();
+  app = undefined;
+  await context.close();
+});
