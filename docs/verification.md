@@ -2,6 +2,31 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-28 — 위생도기 종류 칩: 마우스로 넘기기 · 문·창 빼기 · 관리자가 종류 관리
+
+- 무엇([결과](fixture-kinds-results-20261028.md))
+  - 칩 줄 끝 48px에 마우스를 대면 그쪽으로 넘어간다.
+  - 문·창은 고르는 목록에서 뺐다.
+  - 위생도기 종류를 분류 관리에서 관리한다(migration 0012, 새 종류는 기타처럼 동작).
+- 원인 확인(실제 크롬): 휠로는 넘어갔고, 끌기와 가장자리 hover로는 움직이지 않았다.
+- 사용자 결정: Q1 기타와 똑같이, Q2 기본 종류는 순서·사용만, Q3 숨기기·빈 새 종류만 삭제, Q4 문·창 자재는 그대로
+- 원격 D1
+  - 승인받은 SELECT 1회: 문·창 자재는 창 2개(사진 분석 표준 모형), 읽기 4,611행, 쓰기 0
+  - **0012는 원격에 아직 적용하지 않았다(사용자가 병합 전에 한다).**
+- 결과
+  - 새 시험: `tests/d1-material-kinds.test.ts` 9개, `tests/fixture-categories.test.ts` 4개, `e2e/fixture-kinds.spec.ts` 2개, `e2e/fixture-category-chips.spec.ts` hover 2개 추가
+  - D1 비용: 목록 첫 쪽과 `readCatalog`에 쿼리 1개(13행)가 늘었다(N·5N 같음). 0012의 쓰기는 44행이다.
+  - vitest 3,699개 통과
+    - 알려진 워크트리 전용 실패 6개: reconstruction-corpus 1, source-plane-mapping 5
+    - `d1-material-paging-equivalence`(시작 10초 초과)와 `d1-material-order`(시험당 5초 초과)는 전체 실행에서 시간이 넘어 실패했고, 따로 돌려 통과했다.
+    - `d1-material-order`는 시간 제한을 60초로 올리고, 준비 검사 시험이 0012도 적용하게 고쳤다.
+  - typecheck, eslint, Prettier 통과
+  - e2e 회귀 9개 파일 47개: 46개 통과
+    - 대상: material-panel-layout, material-paging, fixture-category-chips, fixture-kinds, guest-workspace, editor, material-usage, catalog-selection-completion, four-directions-cover
+    - 실패 1개 `four-directions-cover`(목록 그림 색 210 대신 211)는 바꾸기 전 main(f49080a)에서도 똑같이 실패한다(기존 실패).
+  - AI 호출 없음
+- 사진: `test-results/fixture-kinds/`, `test-results/fixture-chips/`(로컬 전용)
+
 ## 2026-10-27 — 자재별 우선순위 대신 브랜드 우선순위(분류 관리 표시 순서), 표시 순서는 빈칸 또는 숫자
 
 - 무엇([결과](material-order-results-20261027.md)): 목록의 기본 순서를 분류 관리의 브랜드 "표시 순서"로 정한다. 중요한 브랜드 몇 개에만 숫자(0부터)를 넣으면 그 브랜드 자재가 먼저(브랜드 안은 이름순), 나머지는 이름순이다. 표시 순서는 빈칸 또는 숫자만 받고, migration 0011이 모든 분류의 표시 순서를 빈칸으로 시작한다. 자재 관리 카드의 자재별 우선순위 칸과 `setPriority`는 없앴다. 종류가 브랜드일 때 설명 한 줄을 보인다.
