@@ -4,16 +4,20 @@ import { editorTabQuery, parsePageSearchParams } from '../src/lib/catalog/paging
 import { materialInputSchema } from '../src/lib/storage/validation';
 import { productNoun } from '../src/lib/product-photo-prompt';
 
-/** The kinds people pick from (library, form, editor chips): 기타 added, 샤워 커튼 left out. */
+/** The kinds people pick from (library, form, editor chips): 기타 added, 샤워 커튼·문·창 left out. */
 describe('listed material kinds', () => {
-  it('offers every kind but 샤워 커튼, with 기타 last; the editor chips have no tiles', () => {
-    expect(listedCategories).not.toContain('showerCurtain');
+  it('offers every kind but 샤워 커튼, 문 and 창, with 기타 last; the editor chips have no tiles', () => {
+    for (const kind of ['showerCurtain', 'door', 'window'] as const)
+      expect(listedCategories).not.toContain(kind);
     expect(listedCategories.at(-1)).toBe('other');
     expect(categoryLabels.other).toBe('기타');
-    expect(listedCategories).toEqual(Object.keys(categoryLabels).filter((key) => key !== 'showerCurtain'));
+    expect(listedCategories).toEqual(
+      Object.keys(categoryLabels).filter((key) => !['showerCurtain', 'door', 'window'].includes(key)),
+    );
     expect(fixtureCategories).toEqual(listedCategories.filter((key) => key !== 'tile'));
-    // 샤워 커튼 is still a stored kind (the photo-analysis standard model).
+    // Still stored kinds (the photo-analysis standard model) with their names.
     expect(categoryLabels.showerCurtain).toBe('샤워 커튼');
+    expect([categoryLabels.door, categoryLabels.window]).toEqual(['문', '창']);
   });
 
   it('narrows the 위생도기 tab to one kind; the tile tabs ignore a kind', () => {

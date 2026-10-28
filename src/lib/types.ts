@@ -357,13 +357,15 @@ export const categoryLabels: Record<MaterialCategory, string> = {
   other: '기타',
 };
 /**
- * The kinds people pick from: the library, the public catalogue and the material form. 샤워 커튼 stays
- * a stored kind for the photo-analysis standard model (the form cannot save one: it needs the
- * suspended installation the form does not offer), so it is not offered.
+ * Stored kinds no one picks: 샤워 커튼 (the form cannot save one: it needs the suspended installation
+ * the form does not offer), 문 and 창 (2026-10-28). All three stay kinds of the photo-analysis standard
+ * model, and a material already saved as one keeps it (the form shows its own kind).
  */
+const unlisted: readonly MaterialCategory[] = ['showerCurtain', 'door', 'window'];
+/** The kinds people pick from: the library, the public catalogue and the material form. */
 export const listedCategories: MaterialCategory[] = (
   Object.keys(categoryLabels) as MaterialCategory[]
-).filter((category) => category !== 'showerCurtain');
+).filter((category) => !unlisted.includes(category));
 /** The editor's 위생도기 kinds: the listed ones without tiles. */
 export const fixtureCategories: MaterialCategory[] = listedCategories.filter(
   (category) => category !== 'tile',

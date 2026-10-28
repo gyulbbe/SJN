@@ -20,6 +20,7 @@ test.afterEach(async () => {
 test.use({ channel: 'chrome', actionTimeout: 20000 });
 test.setTimeout(240000);
 
+// 문·창 left the lists on 2026-10-28 (stored kinds of the photo-analysis standard model).
 const KINDS = [
   '전체',
   '변기',
@@ -29,8 +30,6 @@ const KINDS = [
   '샤워 설비',
   '수전',
   '거울',
-  '문',
-  '창',
   '유리 파티션',
   '거울 수납장',
   '벽 선반',
@@ -196,6 +195,7 @@ test('라이브러리·등록 양식·분류 관리: 기타가 있고 샤워 커
   const names = await page.locator('main button').allInnerTexts();
   expect(names).toContain('기타');
   expect(names).not.toContain('샤워 커튼');
+  for (const name of ['문', '창']) expect(names).not.toContain(name);
   await page.getByRole('button', { name: '기타', exact: true }).click();
   await expect(cards).toHaveCount(1);
   await expect(cards.first()).toContainText(other.name);
@@ -206,6 +206,7 @@ test('라이브러리·등록 양식·분류 관리: 기타가 있고 샤워 커
   const options = await category.locator('option').allInnerTexts();
   expect(options.at(-1)).toBe('기타');
   expect(options).not.toContain('샤워 커튼');
+  for (const name of ['문', '창']) expect(options).not.toContain(name);
   await page.keyboard.press('Escape');
   // A subcategory's parent: neither 기타 (it has none) nor 샤워 커튼.
   await page.goto('/admin/catalog');
@@ -214,6 +215,7 @@ test('라이브러리·등록 양식·분류 관리: 기타가 있고 샤워 커
   expect(parents).toContain('세면대');
   expect(parents).not.toContain('기타');
   expect(parents).not.toContain('샤워 커튼');
+  for (const name of ['문', '창']) expect(parents).not.toContain(name);
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto('/admin/materials');
   await expect(cards.first()).toBeVisible();
@@ -253,6 +255,7 @@ test('게스트: 위생도기 칩이 공개 배치 목록의 그 종류를 받�
   const options = await page.getByLabel('제품 종류').locator('option').allInnerTexts();
   expect(options).toContain('기타');
   expect(options).not.toContain('샤워 커튼');
+  for (const name of ['문', '창']) expect(options).not.toContain(name);
   await page.getByLabel('제품 종류').selectOption('other');
   await expect(page.locator('main [data-page-item]')).toHaveCount(1);
 });
