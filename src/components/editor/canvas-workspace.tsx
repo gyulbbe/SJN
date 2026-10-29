@@ -33,6 +33,16 @@ import {
 } from '@/lib/region-editing';
 import type { RoomFace } from '@/lib/room-types';
 import type { MaterialVersion, Point, Quad, Scene, Surface, SurfaceRegion } from '@/lib/types';
+import type { WallFeatureFace } from '@/lib/wall-features';
+import {
+  stageBox,
+  useNoTouchGesture,
+  useWallFeatureTool,
+  WallFeatureCard,
+  WallFeaturePolygons,
+  WallFeatureToolButton,
+  WallFeatureToolOptions,
+} from '../rooms/wall-feature-tool';
 import { useEditingCapabilities } from './editing-capabilities';
 type Props = {
   materials: Record<string, MaterialVersion>;
@@ -43,10 +53,17 @@ type Props = {
   /** A region was just drawn: the editor opens the material drawer on it. */
   onRegionCreated?: (surface: Surface) => void;
 };
-/** Face UV of a photo point on a room face's quad (outside the face too). */
-const faceUv = (quad: Quad, p: Point): FacePoint => {
-  const uv = transformPoint(homography(quad), p);
-  return { u: uv.x, v: uv.y };
+/**
+ * Face UV of a photo point on a room face's quad (outside the face too); null on the face plane's
+ * vanishing line (a side wall's runs through the middle of the photo), where it has none.
+ */
+const faceUv = (quad: Quad, p: Point): FacePoint | null => {
+  try {
+    const uv = transformPoint(homography(quad), p);
+    return { u: uv.x, v: uv.y };
+  } catch {
+    return null;
+  }
 };
 /** A face rectangle's corners in photo coordinates. */
 const photoCorners = (quad: Quad, box: RegionBounds): Point[] => {
@@ -82,7 +99,7 @@ export default function CanvasWorkspace({
   const [size, setSize] = useState({ width: 700, height: 550 });
   const [loading, setLoading] = useState(true);
   const gesture = useRef<{
-    kind: 'fixture' | 'pan' | 'region-draw' | 'region-move';
+    kind: 'fixture' | 'pan' | 'region-draw' | 'region-move' | 'wall-draw';
     id?: string;
     start: Point;
     base: Scene;
@@ -222,6 +239,9 @@ export default function CanvasWorkspace({
     setRegionNote('');
   }, [st.tool, st.editing, st.project?.id, st.project?.activeDesignId, st.mode]);
   const regionIssue = regionToolIssue({ scene, editing: st.editing, writable });
+  // No feature is on this canvas (any feature turns the editor to 3D): the tool draws the first one.
+  const wallTool = useWallFeatureTool({ scene, materials, writable });
+  useNoTouchGesture(frame, st.tool === 'wall-feature' || st.tool === 'region');
   useEffect(() => {
     if (st.tool === 'region' && regionIssue) useEditor.getState().setTool('select');
   }, [st.tool, regionIssue]);
@@ -254,7 +274,7 @@ export default function CanvasWorkspace({
     for (const surface of scene.surfaces) {
       if (!surface.roomFace || surface.geometryMode !== 'room' || surface.region) continue;
       const uv = faceUv(surface.quad, p);
-      if (uv.u >= 0 && uv.u <= 1 && uv.v >= 0 && uv.v <= 1)
+      if (uv && uv.u >= 0 && uv.u <= 1 && uv.v >= 0 && uv.v <= 1)
         return { face: surface.roomFace, quad: surface.quad, uv };
     }
     return null;
@@ -284,6 +304,22 @@ export default function CanvasWorkspace({
       return;
     }
     if (st.mode !== 'after' || e.button !== 0) return;
+    if (st.tool === 'wall-feature') {
+      const p = point(e),
+        hit = faceAt(p);
+      if (!wallTool.start(hit?.face, hit?.uv)) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      gesture.current = {
+        kind: 'wall-draw',
+        start: p,
+        client: { x: e.clientX, y: e.clientY },
+        base: scene,
+        face: hit!.face,
+        quad: hit!.quad,
+        from: hit!.uv,
+      };
+      return;
+    }
     if (st.tool === 'region') {
       if (regionIssue) return setRegionNote(regionIssue);
       const p = point(e),
@@ -308,7 +344,8 @@ export default function CanvasWorkspace({
     st.select(entity || null);
     if (!writable || !entity) return;
     const region = scene.surfaces.find((item) => item.id === entity && item.region && item.roomFace);
-    if (region && st.editing === 'after') {
+    const from = region && faceUv(region.quad, point(e));
+    if (region && from && st.editing === 'after') {
       const p = point(e);
       gesture.current = {
         kind: 'region-move',
@@ -317,7 +354,7 @@ export default function CanvasWorkspace({
         base: structuredClone(scene),
         face: region.roomFace,
         quad: region.quad,
-        from: faceUv(region.quad, p),
+        from,
         region: region.region,
       };
       return;
@@ -334,7 +371,13 @@ export default function CanvasWorkspace({
       return;
     }
     if (g.kind === 'region-draw') {
-      setRegionDraft({ face: g.face!, quad: g.quad!, from: g.from!, to: faceUv(g.quad!, point(e)) });
+      const to = faceUv(g.quad!, point(e));
+      if (to) setRegionDraft({ face: g.face!, quad: g.quad!, from: g.from!, to });
+      return;
+    }
+    if (g.kind === 'wall-draw') {
+      const to = faceUv(g.quad!, point(e));
+      if (to) wallTool.drag(to);
       return;
     }
     if (!writable) {
@@ -345,6 +388,7 @@ export default function CanvasWorkspace({
     const p = point(e);
     if (g.kind === 'region-move') {
       const uv = faceUv(g.quad!, p);
+      if (!uv) return;
       const next = movedRegion(
         g.region!,
         roomFaceSizeMm(g.base.room!, g.face!),
@@ -369,15 +413,23 @@ export default function CanvasWorkspace({
   function end(e?: React.PointerEvent) {
     const g = gesture.current;
     if (!g) return;
+    if (g.kind === 'wall-draw') {
+      gesture.current = null;
+      if (!e) return wallTool.cancelDraw();
+      // A click places the default size; a drag the drawn rectangle.
+      const click = Math.hypot(e.clientX - g.client!.x, e.clientY - g.client!.y) < REGION_DRAG_PX;
+      const to = click ? null : faceUv(g.quad!, point(e));
+      if (!click && !to) return wallTool.cancelDraw();
+      wallTool.place(g.face as WallFeatureFace, g.from!, to);
+      return;
+    }
     if (g.kind === 'region-draw') {
       gesture.current = null;
       setRegionDraft(null);
       // A click is not a drag: nothing is made.
       if (!e || Math.hypot(e.clientX - g.client!.x, e.clientY - g.client!.y) < REGION_DRAG_PX) return;
-      createRegion(
-        g.face!,
-        regionFromDrag(roomFaceSizeMm(g.base.room!, g.face!), g.from!, faceUv(g.quad!, point(e))),
-      );
+      const to = faceUv(g.quad!, point(e));
+      if (to) createRegion(g.face!, regionFromDrag(roomFaceSizeMm(g.base.room!, g.face!), g.from!, to));
       return;
     }
     if (g.kind === 'fixture' || g.kind === 'region-move') {
@@ -387,6 +439,31 @@ export default function CanvasWorkspace({
     gesture.current = null;
   }
   const handleSize = (5 / (fitW * zoom)) * 1000;
+  // Wall-feature outlines on their face's photo quad, and the card's place beside the edited one.
+  const wallOutlines = wallTool.shapes.flatMap((shape) => {
+    const face = scene.surfaces.find(
+      (s) => s.roomFace === shape.face && s.geometryMode === 'room' && !s.region,
+    );
+    if (!face) return [];
+    // Cut to the face, whose own vanishing line lies outside it.
+    const clamp = (value: number) => Math.max(0, Math.min(1, value));
+    const { left, top, right, bottom } = shape.box;
+    const box = { left: clamp(left), top: clamp(top), right: clamp(right), bottom: clamp(bottom) };
+    try {
+      return [{ ...shape, points: photoCorners(face.quad, box) }];
+    } catch {
+      return [];
+    }
+  });
+  const edited = wallOutlines.find((shape) => shape.source === 'edit');
+  const cardAnchor =
+    edited &&
+    stageBox(
+      edited.points.map((p) => ({
+        x: size.width / 2 + pan.x + (p.x - 0.5) * fitW * zoom,
+        y: size.height / 2 + pan.y + (p.y - 0.5) * fitH * zoom,
+      })),
+    );
   const toolButton = (tool: typeof st.tool, label: string, Icon: typeof MousePointer2) => (
     <button
       title={label}
@@ -404,7 +481,7 @@ export default function CanvasWorkspace({
         <button className="icon-btn side-toggle" title="자재 목록" onClick={showCatalog}>
           <Layers size={18} />
         </button>
-        <span className="tool-label">도구</span>
+        <span className="tool-label shrink-0">도구</span>
         {toolButton('select', '선택 / 이동', MousePointer2)}
         {toolButton('pan', '화면 이동', Hand)}
         <button
@@ -418,6 +495,8 @@ export default function CanvasWorkspace({
         >
           <SquareDashed size={17} />
         </button>
+        <WallFeatureToolButton tool={wallTool} compact />
+        <WallFeatureToolOptions tool={wallTool} compact />
         {st.tool === 'region' && (
           <button
             title="경계를 바탕 타일 줄눈에 맞춤"
@@ -474,6 +553,7 @@ export default function CanvasWorkspace({
             onPointerCancel={() => {
               gesture.current = null;
               setRegionDraft(null);
+              wallTool.cancelDraw();
               st.cancel();
             }}
           >
@@ -529,6 +609,7 @@ export default function CanvasWorkspace({
                     pointerEvents="none"
                   />
                 )}
+                <WallFeaturePolygons items={wallOutlines} scale={1000} />
                 {scene.fixtures.map((f) =>
                   f.projectedQuad ? (
                     <polygon
@@ -572,6 +653,7 @@ export default function CanvasWorkspace({
             )}
           </svg>
         </div>
+        {scene.room && <WallFeatureCard tool={wallTool} room={scene.room} anchor={cardAnchor} stage={size} />}
         {loading && <div className="canvas-loading">사진과 텍스처를 준비하고 있어요…</div>}
         {st.mode === 'split' && (
           <label className="split-range">
