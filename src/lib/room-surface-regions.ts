@@ -160,13 +160,20 @@ export type RegionSnapBase = {
 /**
  * Q3 edge snapping: the left/top edge goes to the end of a base grout line and the right/bottom
  * edge to the start of one, so each boundary shows the base's one joint (never two, never half).
- * Without a usable base grid, edges go to REGION_GRID_MM. Face edges are always candidates.
+ * Without a usable base grid, edges go to REGION_GRID_MM. Face edges are candidates unless `inset`
+ * is given: then every edge stays that far inside the face (a wall feature never meets a corner).
  */
 export function snapRegion(
   region: SurfaceRegion,
   size: { width: number; height: number },
   base?: RegionSnapBase,
+  options: { inset?: number } = {},
 ): SurfaceRegion {
+  const { inset } = options;
+  const inside = (extent: number, value: number) =>
+    inset === undefined
+      ? Math.max(0, Math.min(extent, value))
+      : Math.max(inset, Math.min(extent - inset, value));
   // The end edge takes the nearest line at least REGION_MIN_MM past the snapped start edge, so a
   // region shorter than a tile grows to the next joint instead of collapsing.
   const along = (axis: 'u' | 'v', value: number, edge: 'start' | 'end', start?: number) => {
@@ -177,13 +184,13 @@ export function snapRegion(
       period = joints ? joints.period : REGION_GRID_MM;
     let step = Math.round((value - phase) / period);
     if (start !== undefined) while (phase + step * period < start + REGION_MIN_MM) step++;
-    const lines = [phase + step * period, 0, extent].filter(
+    const lines = [phase + step * period, ...(inset === undefined ? [0, extent] : [])].filter(
       (line) => start === undefined || line >= start + REGION_MIN_MM,
     );
     const best = lines.length
       ? lines.reduce((a, b) => (Math.abs(b - value) < Math.abs(a - value) ? b : a))
       : extent;
-    return Math.max(0, Math.min(extent, best));
+    return inside(extent, best);
   };
   const make = (snap: typeof along): SurfaceRegion => {
     const left = snap('u', region.leftMm, 'start'),
@@ -199,7 +206,7 @@ export function snapRegion(
     const extent = axis === 'u' ? size.width : size.height;
     let line = Math.round(value / REGION_GRID_MM) * REGION_GRID_MM;
     if (start !== undefined) line = Math.max(line, start + REGION_MIN_MM);
-    return Math.max(0, Math.min(extent, line));
+    return inside(extent, line);
   });
   return regionShapeIssue(grid, size) ? region : grid;
 }
