@@ -12,6 +12,7 @@ import type { MaterialUsageState } from './material-usage-types';
 import type { QuoteDocument } from './quote-types';
 import type { RoomDefinition } from './room-types';
 import type { Point, ProjectDocument, ProjectInput, Scene, MaterialVersion } from './types';
+import type { WallFeatureV1 } from './wall-features';
 import {
   captureBeforeFrame,
   captureDesignFrame,
@@ -33,8 +34,18 @@ import {
 } from './comparison';
 import { createBlankDesign, copyDesignDocument, validDesignName } from './designs';
 
-/** `region` draws a rectangle of a room face for its own tile (an After design only). */
-export type Tool = 'select' | 'pan' | 'region';
+/**
+ * `region` draws a rectangle of a room face for its own tile (an After design only); `wall-feature`
+ * draws a niche or alcove on a wall and picks, moves or deletes one (Before or After).
+ */
+export type Tool = 'select' | 'pan' | 'region' | 'wall-feature';
+/** What the wall-feature tool draws next; kept here so it survives the 2D → 3D canvas switch. */
+export type WallFeatureDrawing = {
+  kind: WallFeatureV1['kind'];
+  snap: boolean;
+  /** The depth last applied in this editing session (the card's first value). */
+  depthMm: number;
+};
 export type RoomResizeAssets = Pick<
   Scene,
   'originalAssetId' | 'previewAssetId' | 'imageWidth' | 'imageHeight'
@@ -44,6 +55,7 @@ type EditorState = {
   editing: EditingSide;
   selection: string | null;
   tool: Tool;
+  wallFeatureDrawing: WallFeatureDrawing;
   mode: 'before' | 'after' | 'split';
   split: number;
   draft: Scene | null;
@@ -55,6 +67,7 @@ type EditorState = {
   setEditing: (side: EditingSide) => void;
   select: (id: string | null) => void;
   setTool: (t: Tool) => void;
+  setWallFeatureDrawing: (next: Partial<WallFeatureDrawing>) => void;
   setMode: (m: 'before' | 'after' | 'split') => void;
   setSplit: (n: number) => void;
   change: (fn: (s: Scene) => void) => void;
@@ -99,10 +112,12 @@ function selectionFor(project: ProjectDocument, side: EditingSide, selected: str
   if (!selected) return null;
   const scene = getEditingScene(project, side);
   return scene.surfaces.some((surface) => surface.id === selected) ||
-    scene.fixtures.some((fixture) => fixture.id === selected)
+    scene.fixtures.some((fixture) => fixture.id === selected) ||
+    !!scene.wallFeatures?.some((feature) => feature.id === selected)
     ? selected
     : null;
 }
+const WALL_FEATURE_DRAWING: WallFeatureDrawing = { kind: 'closed-niche', snap: true, depthMm: 200 };
 function setScene(project: ProjectDocument, side: EditingSide, scene: Scene) {
   if (side === 'before' && project.shared.comparison) project.shared.comparison.before = scene;
   else {
@@ -302,6 +317,7 @@ export const useEditor = create<EditorState>((set, get) => {
     editing: 'after',
     selection: null,
     tool: 'select',
+    wallFeatureDrawing: WALL_FEATURE_DRAWING,
     mode: 'after',
     split: 0.5,
     draft: null,
@@ -316,6 +332,7 @@ export const useEditor = create<EditorState>((set, get) => {
         editing: 'after',
         selection: null,
         tool: 'select',
+        wallFeatureDrawing: WALL_FEATURE_DRAWING,
         mode: 'after',
         draft: null,
         saveStatus: 'saved',
@@ -372,6 +389,7 @@ export const useEditor = create<EditorState>((set, get) => {
     },
     select: (selection) => set({ selection }),
     setTool: (tool) => set({ tool }),
+    setWallFeatureDrawing: (next) => set({ wallFeatureDrawing: { ...get().wallFeatureDrawing, ...next } }),
     setMode: (mode) => set({ mode }),
     setSplit: (split) => set({ split }),
     change: (fn) => {

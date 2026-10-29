@@ -190,10 +190,10 @@ test('실제 벽 구조 UI: 유효성·취소·공통 공간보기·이력·저�
   const baseline = JSON.stringify(initial.shared.baseline);
   await editStructure(page);
   await form(page).getByRole('button', { name: '벽 홈 추가', exact: true }).click();
-  await form(page).getByLabel('벽 안쪽 깊이 (mm)', { exact: true }).fill('0');
+  await form(page).getByLabel('깊이 (mm)', { exact: true }).fill('0');
   await expect(form(page).getByRole('alert')).toBeVisible();
   await expect(form(page).getByRole('button', { name: '적용하고 공간 보기', exact: true })).toBeDisabled();
-  await form(page).getByLabel('벽 안쪽 깊이 (mm)', { exact: true }).fill('200');
+  await form(page).getByLabel('깊이 (mm)', { exact: true }).fill('200');
   await form(page).getByRole('button', { name: '벽 홈 추가', exact: true }).click();
   await expect(form(page).getByRole('alert')).toContainText('겹치거나');
   await expect(form(page).getByRole('button', { name: '적용하고 공간 보기', exact: true })).toBeDisabled();

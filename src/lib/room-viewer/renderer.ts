@@ -37,6 +37,7 @@ import {
 } from '../types';
 import { roomFacePoint, validateRoomDimensions } from '../room-geometry';
 import type { RoomFace } from '../room-types';
+import type { WallFeatureFace } from '../wall-features';
 import { fitOutput } from '../render/math';
 import {
   createInteriorEnvironment,
@@ -1598,6 +1599,24 @@ export class RoomViewerRenderer {
       const piece = (hit.object as Mesh).geometry?.userData.wallFeature as
         { ownerFace: RoomFace; role: string } | undefined;
       if (piece) return piece.role === 'floor-extension' ? 'floor' : piece.ownerFace;
+    }
+    return null;
+  }
+  /**
+   * The wall feature whose piece (its rear, a reveal or an alcove's floor) is nearest under a point,
+   * products ignored; null when the nearest surface is a plain face or the wall around a feature.
+   */
+  pickWallFeature(x: number, y: number): { featureId: string; face: WallFeatureFace } | null {
+    const ray = this.pointerRay(x, y);
+    if (!ray || !this.prepared) return null;
+    for (const hit of ray.intersectObject(this.prepared.after.surfaces.group, true)) {
+      let object: Object3D | null = hit.object,
+        hidden = false;
+      for (; object; object = object.parent) if (!object.visible) hidden = true;
+      if (hidden) continue;
+      const piece = (hit.object as Mesh).geometry?.userData.wallFeature as
+        { ownerFace: WallFeatureFace; featureId?: string } | undefined;
+      return piece?.featureId ? { featureId: piece.featureId, face: piece.ownerFace } : null;
     }
     return null;
   }

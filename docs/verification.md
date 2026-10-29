@@ -2,6 +2,37 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-29 — 벽 구조를 편집 화면에서 끌어 만들고, 놓은 뒤 깊이 입력하기
+
+- 무엇([결과](wall-feature-drawing-results-20261029.md))
+  - 가운데 편집 화면(2D·3D)의 **벽 구조** 도구로 벽을 끌거나 눌러 벽 홈·바닥까지 열린 공간을 놓는다.
+  - 옆 카드(휴대폰은 아래 시트)에서 깊이 등을 넣고 Enter로 적용한다.
+  - 3D에서 눌러 고르고, 끌어 옮기고, Delete로 지운다.
+- 사용자 결정: Q1 방 그림 위에서 바로, Q2 그린 자리 옆 카드, Q3 선택·이동·숫자·Delete, Q4 지금 두 형태만
+- 코드 확인
+  - 벽 구조 선택이 고칠 때마다 풀려서(`selectionFor`) 고쳤다.
+  - 미리보기는 store 밖(SVG 윤곽)에 둔다(`normalizeRoomScene`이 잘못된 구조에 예외).
+  - 2D 면 찾기가 옆벽 소실선 위 점에서 예외를 던지던 것을 고쳤다.
+  - 빠른 터치 끌기 뒤 첫 탭이 먹히던 것을 그리기 도구가 켜진 동안 `touchmove` 기본 동작을 막아 고쳤다.
+- 결과
+  - 새 시험
+    - `tests/wall-feature-editing.test.ts` 10개
+    - `e2e/wall-feature-drawing.spec.ts` 3개(2D→3D 전체 흐름, Before 편집, 게스트 375px 터치)
+    - `tests/room-wall-features-browser.ts`에 `pickWallFeature` 확인 3개 추가(177개 통과)
+  - 요청 수
+    - 끄는 동안·입력 중·옮기는 동안 프로젝트 요청 0
+    - 적용·숫자 변경·이동·삭제마다 저장 1
+    - Esc 0
+    - D1 쿼리 측정은 해당 없음(저장 API·SQL 그대로)
+  - vitest 3,714개 통과
+    - 알려진 워크트리 전용 실패 6개: reconstruction-corpus 1, source-plane-mapping 5
+    - `d1-material-paging-equivalence`는 전체 실행에서 시작 10초를 넘겨 실패했고, 따로 돌려 통과했다.
+  - typecheck, eslint, Prettier 통과
+  - e2e 회귀 8개 파일 28개 모두 통과
+    - 대상: wall-feature-drawing, wall-features-ui, tile-regions, tile-regions-guest, editor-four-view, editor-four-view-drag, editor-history-shortcuts, guest-workspace
+  - AI 호출 없음, 원격 D1 읽기·쓰기 없음
+- 사진: `test-results/wall-feature-drawing/screens/`(로컬 전용)
+
 ## 2026-10-28 — 위생도기 종류 칩: 마우스로 넘기기 · 문·창 빼기 · 관리자가 종류 관리
 
 - 무엇([결과](fixture-kinds-results-20261028.md))

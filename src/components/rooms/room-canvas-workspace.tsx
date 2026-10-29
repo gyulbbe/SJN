@@ -29,7 +29,18 @@ import {
   rotateRoomView,
   snapRoomView,
 } from '@/lib/room-viewer/view-state';
+import type { WallFeatureFace, WallFeatureV1 } from '@/lib/wall-features';
 import { useEditingCapabilities } from '../editor/editing-capabilities';
+import {
+  boxCorners,
+  stageBox,
+  useNoTouchGesture,
+  useWallFeatureTool,
+  WallFeatureCard,
+  WallFeaturePolygons,
+  WallFeatureToolButton,
+  WallFeatureToolOptions,
+} from './wall-feature-tool';
 
 /** The same world renderer used for comparison/export, with installation-plane editing. */
 export default function RoomCanvasWorkspace({
@@ -93,7 +104,7 @@ export default function RoomCanvasWorkspace({
   const schedule = useRef(() => {}),
     paint = useRef(() => {});
   const gesture = useRef<{
-    kind: 'fixture' | 'pan' | 'region-draw' | 'region-move';
+    kind: 'fixture' | 'pan' | 'region-draw' | 'region-move' | 'wall-draw' | 'feature-move';
     id?: string;
     start: { x: number; y: number };
     base: Scene;
@@ -103,6 +114,8 @@ export default function RoomCanvasWorkspace({
     /** A region drag: the face it is on and the region before the move. */
     face?: RoomFace;
     region?: SurfaceRegion;
+    /** A wall feature being moved, as it was. */
+    feature?: WallFeatureV1;
   } | null>(null);
   // The rectangle being drawn with the region tool (not part of the scene until it is let go).
   const [regionDraft, setRegionDraft] = useState<{ face: RoomFace; from: FacePoint; to: FacePoint } | null>(
@@ -113,6 +126,9 @@ export default function RoomCanvasWorkspace({
   // Advances after every drawn frame, so outlines are projected with the camera just used.
   const [, setDrawn] = useState(0);
   const regionIssue = regionToolIssue({ scene, editing: st.editing, writable });
+  const wallTool = useWallFeatureTool({ scene, materials, writable });
+  const frame = useRef<HTMLDivElement>(null);
+  useNoTouchGesture(frame, st.tool === 'wall-feature' || st.tool === 'region');
 
   const frameKey = JSON.stringify([view, st.mode, st.split, size]);
   useEffect(() => {
@@ -311,6 +327,33 @@ export default function RoomCanvasWorkspace({
       return;
     }
     if (st.mode !== 'after') return;
+    if (st.tool === 'wall-feature') {
+      if (event.button !== 0) return;
+      // On a feature: pick it (a click opens its card) or move it; anywhere else draws a new one.
+      const hit = renderer.current.pickWallFeature(start.x, start.y);
+      const uv = hit && renderer.current.facePosition(start.x, start.y, hit.face);
+      const feature = hit && uv && !wallTool.issue ? wallTool.startMove(hit.featureId) : undefined;
+      if (hit && uv && feature) {
+        gesture.current = {
+          kind: 'feature-move',
+          start,
+          base: scene,
+          uv,
+          view,
+          moved: false,
+          face: hit.face,
+          feature,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
+      }
+      const face = renderer.current.pickFace(start.x, start.y);
+      const at = face && renderer.current.facePosition(start.x, start.y, face);
+      if (!wallTool.start(face, at)) return;
+      gesture.current = { kind: 'wall-draw', start, base: scene, uv: at!, view, moved: false, face: face! };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
     if (st.tool === 'region') {
       if (event.button !== 0) return;
       if (regionIssue) return setRegionNote(regionIssue);
@@ -385,6 +428,13 @@ export default function RoomCanvasWorkspace({
       if (uv) setRegionDraft({ face: g.face!, from: g.uv!, to: uv });
       return;
     }
+    if (g.kind === 'wall-draw' || g.kind === 'feature-move') {
+      const uv = renderer.current.facePosition(p.x, p.y, g.face!);
+      if (!uv) return;
+      if (g.kind === 'wall-draw') wallTool.drag(uv);
+      else wallTool.moveTo(g.feature!, uv.u - g.uv!.u, uv.v - g.uv!.v);
+      return;
+    }
     if (!writable) {
       gesture.current = null;
       st.cancel();
@@ -429,6 +479,21 @@ export default function RoomCanvasWorkspace({
   function end(cancel = false, event?: React.PointerEvent<HTMLDivElement>) {
     const g = gesture.current;
     gesture.current = null;
+    if (g?.kind === 'wall-draw') {
+      const uv =
+        !cancel && g.moved && event && renderer.current
+          ? renderer.current.facePosition(point(event).x, point(event).y, g.face!)
+          : null;
+      // A click places the default size; a drag the drawn rectangle.
+      if (cancel || (g.moved && !uv)) wallTool.cancelDraw();
+      else wallTool.place(g.face as WallFeatureFace, g.uv!, g.moved ? uv : null);
+      return;
+    }
+    if (g?.kind === 'feature-move') {
+      wallTool.endMove(!cancel && g.moved && writable);
+      if (!cancel && !g.moved) wallTool.open(g.feature!.id);
+      return;
+    }
     if (g?.kind === 'region-draw') {
       setRegionDraft(null);
       // A click is not a drag: nothing is made.
@@ -476,6 +541,26 @@ export default function RoomCanvasWorkspace({
   })();
   const aspect = scene.imageWidth / scene.imageHeight;
   const width = Math.max(1, Math.min(size.width, size.height * aspect));
+  // Wall-feature outlines with the same camera, and the card's place beside the edited one.
+  const wallOutlines = (() => {
+    const engine = renderer.current;
+    if (!engine || loading || failure) return [];
+    return wallTool.shapes.flatMap((shape) => {
+      const points = boxCorners(shape.box).map(({ u, v }) => engine.faceToFrame(shape.face, u, v));
+      return points.every((point) => point)
+        ? [{ ...shape, points: points as { x: number; y: number }[] }]
+        : [];
+    });
+  })();
+  const edited = wallOutlines.find((shape) => shape.source === 'edit');
+  const cardAnchor =
+    edited &&
+    stageBox(
+      edited.points.map((point) => ({
+        x: size.width / 2 + (point.x - 0.5) * width,
+        y: size.height / 2 + (point.y - 0.5) * (width / aspect),
+      })),
+    );
   const name =
     scene.fixtures.find((item) => item.id === st.selection)?.name ??
     scene.surfaces.find((item) => item.id === st.selection)?.name;
@@ -509,6 +594,8 @@ export default function RoomCanvasWorkspace({
         >
           부분 타일
         </button>
+        <WallFeatureToolButton tool={wallTool} compact={false} />
+        <WallFeatureToolOptions tool={wallTool} compact={false} />
         {st.tool === 'region' && (
           <button
             className={'btn small ' + (regionSnap ? 'active' : '')}
@@ -531,6 +618,7 @@ export default function RoomCanvasWorkspace({
       </div>
       <div className="canvas-stage" ref={stage}>
         <div
+          ref={frame}
           className="canvas-frame"
           style={{ width, height: width / aspect, transform: 'translate(-50%, -50%)', touchAction: 'none' }}
           data-testid="room-editor-canvas"
@@ -559,7 +647,17 @@ export default function RoomCanvasWorkspace({
               />
             </svg>
           )}
+          {!!wallOutlines.length && (
+            <svg
+              viewBox="0 0 1 1"
+              preserveAspectRatio="none"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+            >
+              <WallFeaturePolygons items={wallOutlines} scale={1} />
+            </svg>
+          )}
         </div>
+        {scene.room && <WallFeatureCard tool={wallTool} room={scene.room} anchor={cardAnchor} stage={size} />}
         {loading && <div className="canvas-loading">입체 공간을 준비하고 있어요…</div>}
         {failure && (
           <div className="canvas-loading" role="alert">

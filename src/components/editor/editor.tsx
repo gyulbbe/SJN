@@ -103,6 +103,7 @@ import { importImage } from '@/lib/images';
 import RoomDialog from '@/components/rooms/room-dialog';
 import RoomViewer from '@/components/rooms/room-viewer';
 import WallFeaturesDialog from '@/components/rooms/wall-features-dialog';
+import { removeWallFeature } from '@/lib/wall-feature-editing';
 import RoomCanvasWorkspace from '@/components/rooms/room-canvas-workspace';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
@@ -785,15 +786,19 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         if (requireLogin('정식 저장')) return;
         void save();
       }
-      // Delete (Backspace on Mac keyboards) removes the selected product or region, or clears the
-      // selected surface's tile, exactly like the inspector buttons; Ctrl+Z restores either.
+      // Delete (Backspace on Mac keyboards) removes the selected product, region or wall feature, or
+      // clears the selected surface's tile, exactly like the inspector buttons; Ctrl+Z restores either.
       if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const current = useEditor.getState();
         if (!writable || current.draft || detectionStatus || current.mode !== 'after') return;
         const selected = current.project ? getEditingScene(current.project, current.editing) : undefined;
         const fixture = selected?.fixtures.find((item) => item.id === current.selection);
         const surface = selected?.surfaces.find((item) => item.id === current.selection);
-        if (fixture && !fixture.locked) {
+        const feature = selected?.wallFeatures?.find((item) => item.id === current.selection);
+        if (feature) {
+          e.preventDefault();
+          current.change((scene) => removeWallFeature(scene, feature.id));
+        } else if (fixture && !fixture.locked) {
           e.preventDefault();
           current.removeFixture(fixture.id);
         } else if (surface?.region) {
