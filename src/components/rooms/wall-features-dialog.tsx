@@ -1,17 +1,20 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { ROOM_FACE_NAMES } from '@/lib/room-geometry';
 import type { RoomDefinition } from '@/lib/room-types';
+import { WALL_FEATURE_KIND_NAMES as kindNames, withKind } from '@/lib/wall-feature-editing';
 import {
   validateWallFeatures,
   WALL_FEATURE_MAX_COUNT,
   WALL_FEATURE_MAX_DEPTH_MM,
   type WallFeatureV1,
 } from '@/lib/wall-features';
+import { WallFeatureFieldInputs } from './wall-feature-tool';
 import styles from './wall-features-dialog.module.css';
 
-const faceNames = { back: '뒤쪽 벽', left: '왼쪽 벽', right: '오른쪽 벽' };
-const kindNames = { 'closed-niche': '벽 홈', 'floor-alcove': '바닥까지 열린 후퇴 공간' };
+// The same names as the canvas card: the back wall is the 정면 벽 everywhere else in the app.
+const faceNames = { back: ROOM_FACE_NAMES.back, left: ROOM_FACE_NAMES.left, right: ROOM_FACE_NAMES.right };
 type Props = {
   room: RoomDefinition;
   initial: readonly WallFeatureV1[];
@@ -73,29 +76,6 @@ export default function WallFeaturesDialog({ room, initial, targetName, onApply,
       setFailure(error instanceof Error ? error.message : String(error));
     }
   }
-  const numberField = (label: string, key: 'leftMm' | 'topMm' | 'widthMm' | 'heightMm' | 'depthMm') => {
-    if (!selected) return null;
-    const value = key === 'heightMm' ? selected.heightMm : selected[key];
-    return (
-      <label className="field" key={key}>
-        {label} (mm)
-        <input
-          className="input"
-          type="number"
-          inputMode="decimal"
-          step="any"
-          aria-label={label + ' (mm)'}
-          value={value !== undefined && Number.isFinite(value) ? value : ''}
-          onChange={(event) =>
-            replace({
-              ...selected,
-              [key]: event.target.value === '' ? NaN : Number(event.target.value),
-            } as WallFeatureV1)
-          }
-        />
-      </label>
-    );
-  };
   return (
     <dialog
       ref={dialog}
@@ -185,18 +165,9 @@ export default function WallFeaturesDialog({ room, initial, targetName, onApply,
                       <select
                         className="input"
                         value={selected.kind}
-                        onChange={(event) => {
-                          const { heightMm: oldHeight, ...base } = selected;
-                          replace(
-                            event.target.value === 'closed-niche'
-                              ? {
-                                  ...base,
-                                  kind: 'closed-niche',
-                                  heightMm: oldHeight ?? Math.min(500, room.heightMm / 3),
-                                }
-                              : { ...base, kind: 'floor-alcove' },
-                          );
-                        }}
+                        onChange={(event) =>
+                          replace(withKind(selected, event.target.value as WallFeatureV1['kind'], room))
+                        }
                       >
                         {Object.entries(kindNames).map(([kind, name]) => (
                           <option key={kind} value={kind}>
@@ -205,16 +176,18 @@ export default function WallFeaturesDialog({ room, initial, targetName, onApply,
                         ))}
                       </select>
                     </label>
-                    {numberField('벽 시작점에서 거리', 'leftMm')}
-                    {numberField('천장에서 거리', 'topMm')}
-                    {numberField('폭', 'widthMm')}
-                    {selected.kind === 'closed-niche' && numberField('높이', 'heightMm')}
-                    {numberField('벽 안쪽 깊이', 'depthMm')}
+                    <WallFeatureFieldInputs
+                      key={selected.id + selected.kind}
+                      feature={selected}
+                      room={room}
+                      onChange={replace}
+                    />
                   </div>
                   <p className={styles.hint}>
-                    뒤쪽 벽의 시작점은 왼쪽 모서리, 왼쪽 벽은 입구 쪽 모서리, 오른쪽 벽은 뒤쪽 모서리예요.
-                    단위는 mm이며 깊이는 최대 {WALL_FEATURE_MAX_DEPTH_MM}mm까지 지원해요.{' '}
-                    {selected.kind === 'floor-alcove' && '높이는 지정한 윗면에서 바닥까지 이어져요.'}
+                    왼쪽은 방 안에서 이 벽을 마주 봤을 때의 왼쪽이에요(정면 벽은 왼쪽 모서리, 왼쪽 벽은 입구
+                    쪽 모서리, 오른쪽 벽은 정면 벽 쪽 모서리부터). 단위는 mm이며 깊이는 최대{' '}
+                    {WALL_FEATURE_MAX_DEPTH_MM}mm까지 지원해요.{' '}
+                    {selected.kind === 'floor-alcove' && '윗면에서 바닥까지 열려요.'}
                   </p>
                   <button
                     type="button"
