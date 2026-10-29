@@ -343,10 +343,24 @@ try {
         'pick-' + label + '-resolves-actual-parent-surface',
       );
     }
+    // The wall-feature tool's pick: the niche's rear names the feature; the wall beside it nothing.
+    const rearScreen = projectPoint(rearPoint),
+      besideScreen = projectPoint(lib.roomFacePoint(room, 'back', opening.left - 0.04, upperV));
+    check(
+      JSON.stringify(pointerEngine.pickWallFeature(rearScreen.x, rearScreen.y)) ===
+        JSON.stringify({ featureId: backNiche.id, face: 'back' }),
+      'pick-wall-feature-rear-names-feature',
+    );
+    check(
+      pointerEngine.pickWallFeature(besideScreen.x, besideScreen.y) === null,
+      'pick-wall-feature-plain-wall-is-null',
+    );
     for (const mode of ['before', 'split', 'compare'] as const) {
       pointerEngine.render(900, 600, pointerBase, mode);
       check(
-        pointerEngine.pick(0.5, 0.5) === null && pointerEngine.facePosition(0.5, 0.5, 'back') === null,
+        pointerEngine.pick(0.5, 0.5) === null &&
+          pointerEngine.facePosition(0.5, 0.5, 'back') === null &&
+          pointerEngine.pickWallFeature(0.5, 0.5) === null,
         mode + '-is-not-editable',
       );
     }
