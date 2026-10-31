@@ -7,7 +7,10 @@ import type { Point, Quad, Scene } from './types';
  * The SMC ceiling option (docs/smc-ceiling-results-20261031.md): one click shows it. It is not a
  * surface, so no area, usage, quote or tile setting ever sees it; a scene without it is unchanged.
  */
-export const SMC_CEILING_COLOR = '#ece7da';
+export const SMC_CEILING_COLOR = '#ecebe7';
+/** The ceiling's picture, stretched over the whole ceiling; without it the colour above is drawn. */
+export const SMC_CEILING_IMAGE = '/ceiling/smc-ceiling.webp';
+const SMC_CEILING_IMAGE_EDGE = 1024;
 /** The 600 mm panel where the room light hangs (room-viewer/ceiling.ts, createRoomLightRig). */
 const LAMP_SIZE_MM = 600;
 const LAMP_DEPTH = 0.52;
@@ -16,6 +19,27 @@ const LAMP_DEPTH = 0.52;
  * over with it (measured, tests/smc-ceiling-browser.ts). The 2D room has no light to switch off.
  */
 export const CEILING_LIGHT_OFF_LEVEL = 0.53;
+
+let image: Promise<HTMLCanvasElement | null> | undefined;
+/** The picture, read once per page. A failure gives null (the colour) and the next ceiling tries again. */
+export function smcCeilingImage(): Promise<HTMLCanvasElement | null> {
+  image ??= (async () => {
+    try {
+      const response = await fetch(SMC_CEILING_IMAGE);
+      if (!response.ok) throw new Error(String(response.status));
+      const bitmap = await createImageBitmap(await response.blob());
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = SMC_CEILING_IMAGE_EDGE;
+      canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      return canvas;
+    } catch {
+      image = undefined;
+      return null;
+    }
+  })();
+  return image;
+}
 
 /** Why the ceiling option cannot be used now, or null. */
 export function ceilingToolIssue(input: {

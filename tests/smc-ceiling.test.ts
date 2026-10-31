@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActiveDesign } from '../src/lib/designs';
 import { useEditor } from '../src/lib/editor-store';
 import { buildFluxPrompt, ceilingSentence } from '../src/lib/ai-export/prompt';
@@ -13,6 +13,8 @@ import {
   ceilingQuad,
   ceilingToolIssue,
   roomOpeningQuad,
+  SMC_CEILING_IMAGE,
+  smcCeilingImage,
   toggleCeiling,
   toggleCeilingLight,
 } from '../src/lib/smc-ceiling';
@@ -183,6 +185,18 @@ describe('what the ceiling leaves alone', () => {
       expect(top).toBeGreaterThan(0);
       expect(bottom).toBeLessThan(1);
     }
+  });
+});
+
+describe('the ceiling picture', () => {
+  it('leaves the colour when it cannot be read, and the next ceiling tries again', async () => {
+    const failed = vi.fn(async () => new Response('', { status: 404 }));
+    vi.stubGlobal('fetch', failed);
+    await expect(smcCeilingImage()).resolves.toBeNull();
+    await expect(smcCeilingImage()).resolves.toBeNull();
+    expect(failed).toHaveBeenCalledTimes(2);
+    expect(failed).toHaveBeenCalledWith(SMC_CEILING_IMAGE);
+    vi.unstubAllGlobals();
   });
 });
 

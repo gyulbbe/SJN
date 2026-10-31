@@ -1,4 +1,5 @@
 import {
+  CanvasTexture,
   Color,
   DoubleSide,
   Group,
@@ -6,6 +7,7 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   PlaneGeometry,
+  SRGBColorSpace,
   Vector3,
 } from 'three';
 import { CORNER_OCCLUSION_GLSL, TONE_MAPPING_GLSL } from '../render/realistic-lighting';
@@ -22,7 +24,7 @@ const LAMP_RADIANCE = 3;
 /** Fill for the light bounced up from walls and floor (keeps the ceiling near the upper walls). */
 const CEILING_BOUNCE = 0.5;
 /** The SMC ceiling's fill, set by eye against the upper walls: lit, and with its light off. */
-const SMC_BOUNCE = 0.8;
+const SMC_BOUNCE = 0.6;
 const SMC_BOUNCE_DARK = 0.42;
 
 /**
@@ -33,14 +35,23 @@ const SMC_BOUNCE_DARK = 0.42;
  * rendering exactly as before. A scene's SMC ceiling is shown in every view (the four-direction
  * cameras look up at it from below) in its own colour, with the panel only while its light is on.
  */
-export function buildViewerCeiling(room: RoomDimensions, smc?: Scene['ceiling']) {
-  const paint = smc ? SMC_CEILING_COLOR : VIEWER_CEILING_COLOR;
+export function buildViewerCeiling(
+  room: RoomDimensions,
+  smc?: Scene['ceiling'],
+  image?: HTMLCanvasElement | null,
+) {
+  const picture = smc && image ? new CanvasTexture(image) : undefined;
+  if (picture) picture.colorSpace = SRGBColorSpace;
+  // The picture carries the colour itself.
+  const paint = picture ? '#ffffff' : smc ? SMC_CEILING_COLOR : VIEWER_CEILING_COLOR;
   const group = new Group();
   group.name = 'viewer-ceiling';
   group.visible = false;
   const ceilingGeometry = new PlaneGeometry(room.widthMm, room.depthMm);
   const ceilingMaterial = new MeshStandardMaterial({
     color: paint,
+    map: picture ?? null,
+    emissiveMap: picture ?? null,
     roughness: 0.9,
     metalness: 0,
     side: DoubleSide,
@@ -105,6 +116,7 @@ export function buildViewerCeiling(room: RoomDimensions, smc?: Scene['ceiling'])
       disposed = true;
       ceilingGeometry.dispose();
       ceilingMaterial.dispose();
+      picture?.dispose();
       lampGeometry.dispose();
       lampMaterial.dispose();
       group.clear();

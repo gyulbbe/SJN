@@ -46,6 +46,7 @@ import {
 } from '../render/realistic-lighting';
 import { buildViewerFixtures, ProductAssetCache } from './fixtures';
 import { buildViewerCeiling, type ViewerCeiling } from './ceiling';
+import { smcCeilingImage } from '../smc-ceiling';
 import {
   BandPlanner,
   BAND_TARGET_MS,
@@ -394,6 +395,7 @@ export class RoomViewerRenderer {
       throw new Error('그래픽 연결이 끊겼습니다. 창을 닫고 공간 둘러보기를 다시 열어 주세요.');
   }
   private async prepare(scene: Scene, materials: Record<string, MaterialVersion>): Promise<Prepared> {
+    const ceilingImage = scene.ceiling ? await smcCeilingImage() : null;
     const [surfacesResult, fixturesResult] = await Promise.allSettled([
       buildViewerSurfaces(scene, materials, this.tiles),
       buildViewerFixtures(scene, materials, this.reader, this.products),
@@ -414,7 +416,7 @@ export class RoomViewerRenderer {
     world.environmentIntensity = this.environment?.intensity ?? 1;
     const lights = createRoomLightRig(room, { environment: !!this.environment });
     // Closes the room for in-room eye views only (a scene's SMC ceiling: every view).
-    const ceiling = buildViewerCeiling(room, scene.ceiling);
+    const ceiling = buildViewerCeiling(room, scene.ceiling, ceilingImage);
     // An SMC ceiling with its light off: the downlight goes with the panel; the bounce stays.
     if (scene.ceiling && !scene.ceiling.light)
       for (const light of lights)

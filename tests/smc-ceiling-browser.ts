@@ -9,7 +9,7 @@
  */
 import { chromium } from '@playwright/test';
 import { build } from 'esbuild';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 const output = 'test-results/smc-ceiling/browser';
 await mkdir(output, { recursive: true });
@@ -44,6 +44,12 @@ try {
   await page.route('http://127.0.0.1:43213/**', (route) =>
     route.fulfill({ contentType: 'text/html', body: '<html><body style="margin:0"></body></html>' }),
   );
+  let pictureReads = 0;
+  const picture = await readFile('public/ceiling/smc-ceiling.webp');
+  await page.route('**/ceiling/smc-ceiling.webp', (route) => {
+    pictureReads++;
+    return route.fulfill({ contentType: 'image/webp', body: picture });
+  });
   await page.goto('http://127.0.0.1:43213/');
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
   const result = await page.evaluate(async () => {
@@ -174,6 +180,7 @@ try {
         withLight = 0,
         withoutLight = 0,
         darkWhites = 0,
+        ceilingKept = 0,
         ceilingR = 0,
         ceilingB = 0;
       for (let y = 0; y < mask.height; y++)
@@ -186,9 +193,12 @@ try {
             c = dark[turn].image.data;
           if (mask.data[m] === 0 && !mask.outside?.[m]) {
             ceilingPixels++;
-            ceilingR += a[o];
-            ceilingB += a[o + 2];
             if (a[o] > 250 && a[o + 1] > 250 && a[o + 2] > 250) whites++;
+            else {
+              ceilingKept++;
+              ceilingR += a[o];
+              ceilingB += a[o + 2];
+            }
             if (c[o] > 250 && c[o + 1] > 250 && c[o + 2] > 250) darkWhites++;
           } else if (mask.data[m] > 0 && mask.data[m] < 255) {
             faceCount++;
@@ -202,7 +212,12 @@ try {
       check(lib.visibleCeiling(mask), `3D 방향 ${turn}: AI 문장 조건도 천장을 본다`);
       check(whites > 100, `3D 방향 ${turn}: 조명 켬이면 패널이 보임 (${whites})`);
       check(darkWhites === 0, `3D 방향 ${turn}: 조명 끔이면 패널이 없음`);
-      check(ceilingR / ceilingPixels > ceilingB / ceilingPixels, `3D 방향 ${turn}: 천장은 아이보리`);
+      check(ceilingR / ceilingKept > ceilingB / ceilingKept, `3D 방향 ${turn}: 천장은 그림의 회백색`);
+      // The picture's fill keeps the near edge visible against the viewer's #e8e8e4 backdrop.
+      check(
+        ceilingR / ceilingKept < 222,
+        `3D 방향 ${turn}: 천장이 배경보다 어두워 경계가 보임 (${ceilingR / ceilingKept})`,
+      );
       check(
         differ < faceCount * 0.005,
         `3D 방향 ${turn}: 천장 밖 벽·바닥 픽셀은 천장 없을 때와 같음 (${differ})`,
@@ -290,6 +305,8 @@ try {
     return { checks, images, report };
   });
   if (errors.length) throw new Error(errors.join('\n'));
+  // Read once per page, by the 3D room and the 2D composite together.
+  if (pictureReads !== 1) throw new Error('천장 그림 요청 ' + pictureReads + '번');
   for (const [name, url] of Object.entries(result.images))
     await writeFile(`${output}/${name}.png`, Buffer.from(url.split(',')[1], 'base64'));
   await writeFile(`${output}/report.json`, JSON.stringify({ ...result, images: undefined }, null, 2));

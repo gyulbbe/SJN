@@ -5,6 +5,7 @@ import {
   CEILING_LIGHT_OFF_LEVEL,
   roomOpeningQuad,
   SMC_CEILING_COLOR,
+  smcCeilingImage,
 } from '../smc-ceiling';
 import { resolvedBathRimScene, resolveBathRimFixture } from '../reconstruction/bath-rim';
 import {
@@ -304,6 +305,8 @@ void main(){
 const ceilingShader = `
 varying vec2 vUv;uniform sampler2D previousImage;uniform mat3 inversePlane;
 uniform vec3 ceilingColor;uniform float shadeBase;uniform vec4 lamp;
+uniform sampler2D ceilingImage;uniform float hasCeilingImage;
+${colorFunctions}
 void main(){
   vec4 background=texture2D(previousImage,vUv);
   vec3 projected=inversePlane*vec3(vUv.x,1.-vUv.y,1.);
@@ -313,7 +316,7 @@ void main(){
   float amount=inside.x*inside.y;
   if(amount<=0.||projected.z==0.){gl_FragColor=background;return;}
   float shade=clamp(dot(background.rgb,vec3(.2126,.7152,.0722))/shadeBase,.6,1.);
-  vec3 color=ceilingColor*shade;
+  vec3 color=(hasCeilingImage>.5?decodeSRGB(texture2D(ceilingImage,uv).rgb):ceilingColor)*shade;
   if(lamp.z>lamp.x){
     vec2 from=smoothstep(lamp.xy,lamp.xy+edge,uv),to=1.-smoothstep(lamp.zw-edge,lamp.zw,uv);
     color=mix(color,vec3(1.),from.x*from.y*to.x*to.y);
@@ -409,6 +412,7 @@ export class PhotoCompositor {
   private readonly fixtureMaterial = shader(fixtureShader);
   private readonly standardCompositeMaterial = shader(standardCompositeShader);
   private readonly ceilingMaterial = shader(ceilingShader);
+  private ceilingImage?: Texture;
   private readonly standardModels: StandardModelRenderer;
   private readonly outputMaterial = shader(outputShader);
   private readonly copyMaterial = shader(copyShader);
@@ -782,6 +786,10 @@ export class PhotoCompositor {
   ): Promise<PreparedScene | undefined> {
     scene = resolvedBathRimScene(scene);
     const current = () => generation === this.generation && !this.disposed;
+    if (scene.ceiling && !this.ceilingImage) {
+      const image = await smcCeilingImage();
+      if (image && !this.disposed) this.ceilingImage ??= canvasTexture(image);
+    }
     const sourceId = quality.quality === 'export' ? scene.originalAssetId : scene.previewAssetId;
     const backgroundId = scene.backgroundAssetId || sourceId;
     const sourceEdge =
@@ -1012,6 +1020,8 @@ export class PhotoCompositor {
           ...homography(ceilingQuad(scene.room, scene.imageWidth / scene.imageHeight)),
         ),
         ceilingColor: paint,
+        ceilingImage: this.ceilingImage ?? this.targets[index].texture,
+        hasCeilingImage: this.ceilingImage ? 1 : 0,
         shadeBase: 0.2126 * base.r + 0.7152 * base.g + 0.0722 * base.b,
         lamp: scene.ceiling.light ? new Vector4(...ceilingLampBounds(scene.room)) : new Vector4(0, 0, 0, 0),
       };
@@ -1330,6 +1340,7 @@ export class PhotoCompositor {
       this.outputMaterial,
       this.copyMaterial,
     ].forEach((m) => m.dispose());
+    this.ceilingImage?.dispose();
     this.targets.forEach((t) => t.dispose());
     this.beforeTarget.dispose();
     this.standardModels.dispose();

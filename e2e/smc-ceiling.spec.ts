@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import sharp from 'sharp';
 import { addWallNiche, editorAction, savedProject, storedProject } from '../tests/helpers/editor-actions';
 import { getActiveDesign } from '../src/lib/designs';
+import { SMC_CEILING_IMAGE } from '../src/lib/smc-ceiling';
 import type { ProjectDocument } from '../src/lib/types';
 
 /**
@@ -84,7 +85,9 @@ test('2D: 눌러서 넣고 조명을 끄고 다시 눌러 없앤다. 누를 때�
   const none = await stagePixels(page, 'canvas-frame');
   await shot(page, '2d-none');
 
+  const picture = page.waitForResponse((response) => response.url().endsWith(SMC_CEILING_IMAGE));
   await toggle(page).click();
+  expect((await picture).status(), '천장 그림을 읽음').toBe(200);
   project = await savedProject(page, project.editRevision);
   expect(ceiling(project)).toEqual({ kind: 'smc', light: true });
   expect(requests.saves(), '넣기 → 저장 1').toBe(1);
