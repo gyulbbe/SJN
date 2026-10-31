@@ -71,6 +71,7 @@ import {
 } from '@/lib/types';
 import { AssetImage } from '@/components/materials/asset-image';
 import { useSharedCatalogAdmin } from '@/components/materials/shared-access';
+import { fixturesOpenForTests } from '@/lib/fixture-access';
 import { MaterialForm } from '@/components/materials/material-form';
 import { MaterialFacets } from '@/components/materials/material-facets';
 import { SortSelect } from '@/components/materials/sort-select';
@@ -181,6 +182,8 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   );
   const catalogAdmin = useSharedCatalogAdmin();
   const canManageCatalog = catalogAdmin && !adminContext && !isGuest;
+  // For now only administrators get the 위생도기 tab (src/lib/fixture-access.ts says how to open it).
+  const canPlaceFixtures = catalogAdmin || fixturesOpenForTests();
   // Each used material's current version (the usage panel's latest prices); the drawer pages its own list.
   const [latest, setLatest] = useState<MaterialEntry[]>([]),
     [materials, setMaterials] = useState<Record<string, MaterialVersion>>({}),
@@ -361,6 +364,9 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       getEditingScene(current.project, current.editing).surfaces.find((s) => s.id === st.selection);
     if (selected) setTab(selected.kind);
   }, [st.selection, id, st.editing]);
+  useEffect(() => {
+    if (!canPlaceFixtures && tab === 'fixtures') setTab('floor');
+  }, [canPlaceFixtures, tab]);
   useEffect(() => {
     if (!ready || (!scope && !adminContext && !isGuest)) return;
     const operation = { key: scopeKey, repo: repositories, dead: false };
@@ -2137,17 +2143,19 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 >
                   바닥 타일
                 </button>
-                <button
-                  className={tab === 'fixtures' ? 'active' : ''}
-                  aria-pressed={tab === 'fixtures'}
-                  onClick={() => {
-                    setTab('fixtures');
-                    applyRequest.current++;
-                    setDetectionStatus('');
-                  }}
-                >
-                  위생도기
-                </button>
+                {canPlaceFixtures && (
+                  <button
+                    className={tab === 'fixtures' ? 'active' : ''}
+                    aria-pressed={tab === 'fixtures'}
+                    onClick={() => {
+                      setTab('fixtures');
+                      applyRequest.current++;
+                      setDetectionStatus('');
+                    }}
+                  >
+                    위생도기
+                  </button>
+                )}
               </div>
               {/* The kinds take the place of the old placing tip: two rows of cards stay in view. */}
               {tab === 'fixtures' && (

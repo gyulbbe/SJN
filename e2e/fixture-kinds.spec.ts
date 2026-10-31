@@ -191,6 +191,8 @@ test('관리자가 종류를 더하면 칩·공개 자재·양식에 나오고, 
 
 test('게스트: 관리자가 더한 종류의 칩이 공개 배치 목록의 그 종류를 받는다 · 375px', async ({ page }) => {
   app = await authenticatedApp(page, { signedIn: false });
+  // 위생도기 is administrators' only for now (src/lib/fixture-access.ts); guests' products stay tested.
+  await page.addInitScript(() => sessionStorage.setItem('sjn:test:fixtures-open', '1'));
   await seed(app);
   const code = 'k-towelbar01';
   await app.env.DB.prepare(

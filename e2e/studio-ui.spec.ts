@@ -122,6 +122,8 @@ async function capture(page: Page, name: string) {
 }
 test('핵심 화면의 다섯 화면 폭 비교 캡처', async ({ page }) => {
   app = await authenticatedApp(page, { signedIn: false, admin: true });
+  // 위생도기 is administrators' only for now (src/lib/fixture-access.ts); guests' products stay tested.
+  await page.addInitScript(() => sessionStorage.setItem('sjn:test:fixtures-open', '1'));
   try {
     versions = await seed();
     await page.goto('/');
@@ -389,6 +391,8 @@ test('로그인 취소·실패 안내와 재시도는 외부 인증 없이 확�
 
 test('모바일 편집기 더보기의 로그인 제한과 견적·속성 이동의 입력 보존', async ({ page }) => {
   app = await authenticatedApp(page, { signedIn: false, admin: true });
+  // 위생도기 is administrators' only for now (src/lib/fixture-access.ts); guests' products stay tested.
+  await page.addInitScript(() => sessionStorage.setItem('sjn:test:fixtures-open', '1'));
   const writes: string[] = [];
   const modelRequests: string[] = [];
   page.on('request', (request) => {

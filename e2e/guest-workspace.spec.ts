@@ -80,6 +80,8 @@ async function seed() {
 test.beforeEach(async ({ page }) => {
   app = await authenticatedApp(page, { signedIn: false, admin: true });
   versions = await seed();
+  // 위생도기 is administrators' only for now (src/lib/fixture-access.ts); guests' products stay tested.
+  await page.addInitScript(() => sessionStorage.setItem('sjn:test:fixtures-open', '1'));
   modelRequests = [];
   calls = [];
   page.on('request', (r) => {

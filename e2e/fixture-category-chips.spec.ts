@@ -228,6 +228,8 @@ test('게스트: 위생도기 칩이 공개 배치 목록의 그 종류를 받�
   app = await authenticatedApp(page, { signedIn: false });
   await seed(app);
   const [, other] = await seedProducts(app, EXTRA);
+  // 위생도기 is administrators' only for now (src/lib/fixture-access.ts); guests' products stay tested.
+  await page.addInitScript(() => sessionStorage.setItem('sjn:test:fixtures-open', '1'));
   await page.setViewportSize({ width: 375, height: 812 });
   const kinds = lists(page);
   await page.goto('/');
