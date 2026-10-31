@@ -364,6 +364,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       getEditingScene(current.project, current.editing).surfaces.find((s) => s.id === st.selection);
     if (selected) setTab(selected.kind);
   }, [st.selection, id, st.editing]);
+  const pendingKind = st.pendingRegion?.kind;
+  useEffect(() => {
+    if (pendingKind) setTab(pendingKind);
+  }, [pendingKind]);
   useEffect(() => {
     if (!canPlaceFixtures && tab === 'fixtures') setTab('floor');
   }, [canPlaceFixtures, tab]);
@@ -788,6 +792,11 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const current = useEditor.getState();
         if (!writable || current.draft || detectionStatus || current.mode !== 'after') return;
+        if (current.pendingRegion) {
+          e.preventDefault();
+          current.setPendingRegion(null);
+          return;
+        }
         const selected = current.project ? getEditingScene(current.project, current.editing) : undefined;
         const fixture = selected?.fixtures.find((item) => item.id === current.selection);
         const surface = selected?.surfaces.find((item) => item.id === current.selection);
@@ -987,7 +996,9 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       const project = captured.project;
       if (!project || captured.draft) return;
       const source = getEditingScene(project, captured.editing);
-      const selected = source.surfaces.find((surface) => surface.id === captured.selection);
+      // A partial tile just drawn is the place to put it, and enters the scene with this tile.
+      const pending = captured.pendingRegion;
+      const selected = pending ?? source.surfaces.find((surface) => surface.id === captured.selection);
       const kind = tab === 'fixtures' ? selected?.kind || (m.usage === 'wall' ? 'wall' : 'floor') : tab;
       if (m.usage !== 'both' && m.usage !== kind) {
         setError('선택한 면에 사용할 수 없는 타일이에요. 벽·바닥 용도를 확인하세요.');
@@ -1008,6 +1019,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           current.project.editRevision === project.editRevision &&
           current.project.activeDesignId === project.activeDesignId &&
           current.selection === captured.selection &&
+          current.pendingRegion === pending &&
           current.editing === captured.editing &&
           !current.draft
         );
@@ -1042,6 +1054,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         const targetIds = new Set(targets.map((surface) => surface.id));
         st.change((s) => {
           s.surfaces.push(...additions);
+          if (pending) s.surfaces.push(structuredClone(pending));
           for (const sf of s.surfaces)
             if (targetIds.has(sf.id)) {
               sf.materialVersionId = m.id;
@@ -1050,6 +1063,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               sf.tile.pattern = m.defaultPattern;
             }
         });
+        if (pending) useEditor.getState().select(pending.id);
       } catch (e) {
         if (currentRequest())
           setError(`영역을 자동으로 찾지 못했어요. ${e instanceof Error ? e.message : String(e)}`);
@@ -2176,9 +2190,11 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                     <select
                       aria-label="타일 적용 위치"
                       value={
-                        scene.surfaces.some((s) => s.id === st.selection && s.kind === tab)
-                          ? st.selection!
-                          : 'all'
+                        st.pendingRegion?.kind === tab
+                          ? st.pendingRegion.id
+                          : scene.surfaces.some((s) => s.id === st.selection && s.kind === tab)
+                            ? st.selection!
+                            : 'all'
                       }
                       onChange={(e) => {
                         st.select(e.target.value === 'all' ? null : e.target.value);
@@ -2195,6 +2211,9 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                             {s.name}
                           </option>
                         ))}
+                      {st.pendingRegion?.kind === tab && (
+                        <option value={st.pendingRegion.id}>{st.pendingRegion.name}</option>
+                      )}
                     </select>
                   </label>
                 )}

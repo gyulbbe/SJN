@@ -151,20 +151,23 @@ test('2D 편집 화면: 끌어서 부분 타일을 만들고 타일·숫자·이
   const duringDrag = requests.projectSince(0);
   await page.mouse.up();
   expect(duringDrag, '끄는 동안 프로젝트 요청 없음').toEqual([]);
-  await expect(page.getByLabel('타일 적용 위치', { exact: true })).toHaveValue(/.+/);
+  await expect(page.getByTestId('region-pending')).toBeVisible();
+  const target = page.getByLabel('타일 적용 위치', { exact: true });
+  await expect(target.locator('option:checked')).toHaveText('정면 벽 · 부분 타일 1');
   let project = await savedProject(page, 0);
-  expect(requests.saves(), '그리기 1회 → 저장 1회').toBe(1);
-  const [made] = regions(project);
-  expect(made.roomFace).toBe('back');
-  expect(made.name).toBe('정면 벽 · 부분 타일 1');
-  expect(made.materialVersionId).toBeUndefined();
-  await expect(page.getByLabel('타일 적용 위치', { exact: true })).toHaveValue(made.id);
+  expect(requests.saves(), '그리기만으로는 저장 없음').toBe(0);
+  expect(regions(project)).toHaveLength(0);
 
-  // The drawer opened on the region: the accent tile goes there only.
+  // The drawer opened on the region: the accent tile goes there only, with the region in one save.
   await page.locator('button.material-tile').filter({ hasText: ACCENT }).click();
   project = await savedProject(page, project.editRevision);
+  expect(requests.saves(), '타일 1회 → 저장 1회').toBe(1);
   const tiled = regions(project)[0];
+  expect(tiled.roomFace).toBe('back');
+  expect(tiled.name).toBe('정면 벽 · 부분 타일 1');
   expect(tiled.materialVersionId).toBeTruthy();
+  await expect(target).toHaveValue(tiled.id);
+  await expect(page.getByTestId('region-pending')).toHaveCount(0);
   expect(
     active(project)
       .scene.surfaces.filter((s) => !s.region)
@@ -267,6 +270,73 @@ async function outlineCentre(page: Page) {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
+test('끌기만 하고 타일을 고르지 않으면 적용 위치에 쌓이지 않고 저장도 되돌리기 기록도 없다', async ({
+  page,
+}) => {
+  await startRoom(page);
+  await registerTile(page, ACCENT, '#1d3557');
+  const start = await storedProject(page);
+  const back = active(start).scene.surfaces.find((s) => s.roomFace === 'back')!;
+  const wall = (await page
+    .locator(`[data-testid="editor-canvas"] [data-entity="${back.id}"]`)
+    .boundingBox())!;
+  const requests = watchRequests(page);
+  const pending = page.getByTestId('region-pending');
+  const parts = page
+    .getByLabel('타일 적용 위치', { exact: true })
+    .locator('option')
+    .filter({ hasText: '부분 타일' });
+  const drag = async (from: number, to: number) => {
+    await page.mouse.move(wall.x + wall.width * from, wall.y + wall.height * 0.3);
+    await page.mouse.down();
+    await page.mouse.move(wall.x + wall.width * to, wall.y + wall.height * 0.7, { steps: 6 });
+    await page.mouse.up();
+    await expect(pending).toBeVisible();
+  };
+  await page.getByTestId('region-tool').click();
+
+  // Another drag takes the place of the last: one choice, always named 1.
+  await drag(0.1, 0.3);
+  await drag(0.5, 0.8);
+  await drag(0.2, 0.6);
+  await expect(parts).toHaveCount(1);
+  await expect(parts).toHaveText('정면 벽 · 부분 타일 1');
+
+  // Ctrl+Z takes back the drawing; it is not a step of the history.
+  await page.keyboard.press('Control+z');
+  await expect(pending).toHaveCount(0);
+  await expect(parts).toHaveCount(0);
+  await drag(0.2, 0.6);
+
+  // Delete lets it go too.
+  await page.keyboard.press('Delete');
+  await expect(pending).toHaveCount(0);
+  await drag(0.2, 0.6);
+
+  // So does Esc (which also ends the tool), and a click elsewhere with the select tool.
+  await page.keyboard.press('Escape');
+  await expect(pending).toHaveCount(0);
+  await page.getByTestId('region-tool').click();
+  await drag(0.2, 0.6);
+  await page.getByRole('button', { name: '선택 / 이동', exact: true }).click();
+  await expect(pending).toBeVisible();
+  await page.mouse.click(wall.x + wall.width * 0.9, wall.y + wall.height * 0.5);
+  await expect(pending).toHaveCount(0);
+  await expect(parts).toHaveCount(0);
+
+  // A reload forgets one left drawn; nothing was ever saved.
+  await page.getByTestId('region-tool').click();
+  await drag(0.2, 0.6);
+  expect(requests.saves()).toBe(0);
+  const after = await storedProject(page);
+  expect(regions(after)).toHaveLength(0);
+  expect(after.editRevision).toBe(start.editRevision);
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(pending).toHaveCount(0);
+  await expect(parts).toHaveCount(0);
+});
+
 test('3D 편집 화면(벽 구조 있음): 끌어서 만들고 윤곽·이동이 되며 공간 둘러보기·다운로드에도 보인다', async ({
   page,
 }, info) => {
@@ -291,13 +361,16 @@ test('3D 편집 화면(벽 구조 있음): 끌어서 만들고 윤곽·이동이
   const duringDrag = requests.projectSince(dragStart);
   await page.mouse.up();
   expect(duringDrag, '끄는 동안 프로젝트 요청 없음').toEqual([]);
+  await expect(page.getByTestId('region-pending')).toBeVisible();
+  expect(requests.saves(), '그리기만으로는 저장 없음').toBe(0);
+  expect(regions(await storedProject(page))).toHaveLength(0);
+  await stageReady(page);
+  await page.locator('button.material-tile').filter({ hasText: ACCENT }).click();
   project = await savedProject(page, project.editRevision);
   expect(requests.saves()).toBe(1);
   const [made] = regions(project);
   expect(made.roomFace).toBe('back');
   await expect(page.getByLabel('타일 적용 위치', { exact: true })).toHaveValue(made.id);
-  await page.locator('button.material-tile').filter({ hasText: ACCENT }).click();
-  project = await savedProject(page, project.editRevision);
   await stageReady(page);
   await page.getByRole('button', { name: '선택 / 이동', exact: true }).click();
   await expect(page.getByTestId('region-outline')).toBeVisible();

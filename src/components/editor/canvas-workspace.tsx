@@ -25,6 +25,7 @@ import {
   movedRegion,
   REGION_DRAG_PX,
   regionFromDrag,
+  REGION_PENDING_NOTE,
   regionPlacementIssue,
   regionToolIssue,
   setSurfaceRegion,
@@ -289,11 +290,10 @@ export default function CanvasWorkspace({
     const placed = regionSnap ? snappedRegion(latest, face, region, materials) : region;
     const issue = regionPlacementIssue(latest, face, placed);
     if (issue) return setRegionNote(issue);
+    // Not in the scene yet: a tile puts it there, and leaving it alone leaves nothing behind.
     const surface = createRegionSurface(latest, face, placed);
-    state.change((draft) => {
-      draft.surfaces.push(structuredClone(surface));
-    });
-    useEditor.getState().select(surface.id);
+    state.select(null);
+    state.setPendingRegion(surface);
     setRegionNote('');
     onRegionCreated?.(surface);
   }
@@ -328,6 +328,7 @@ export default function CanvasWorkspace({
       if (!hit) return setRegionNote('벽이나 바닥 위에서 끌어 주세요.');
       e.currentTarget.setPointerCapture(e.pointerId);
       setRegionNote('');
+      useEditor.getState().setPendingRegion(null);
       gesture.current = {
         kind: 'region-draw',
         start: p,
@@ -510,9 +511,11 @@ export default function CanvasWorkspace({
             <Magnet size={17} />
           </button>
         )}
-        {(st.tool === 'region' || regionNote) && (
+        {(st.tool === 'region' || regionNote || st.pendingRegion) && (
           <span className="tool-label" role="status" data-testid="region-note">
-            {regionNote || '벽이나 바닥을 끌어 네모 영역을 만드세요.'}
+            {st.pendingRegion
+              ? REGION_PENDING_NOTE
+              : regionNote || '벽이나 바닥을 끌어 네모 영역을 만드세요.'}
           </span>
         )}
         <div style={{ flex: 1 }} />
@@ -602,6 +605,20 @@ export default function CanvasWorkspace({
                       ),
                     )
                       .map((p) => p.x * 1000 + ',' + p.y * 1000)
+                      .join(' ')}
+                    fill="rgba(43, 151, 129, 0.16)"
+                    stroke="#2b9781"
+                    strokeWidth="1.5"
+                    strokeDasharray="5 3"
+                    vectorEffect="non-scaling-stroke"
+                    pointerEvents="none"
+                  />
+                )}
+                {st.pendingRegion && (
+                  <polygon
+                    data-testid="region-pending"
+                    points={st.pendingRegion.mask.polygon
+                      .map((p: Point) => p.x * 1000 + ',' + p.y * 1000)
                       .join(' ')}
                     fill="rgba(43, 151, 129, 0.16)"
                     stroke="#2b9781"

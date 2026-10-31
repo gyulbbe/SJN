@@ -16,6 +16,7 @@ import type { MaterialVersion, Scene, Surface, SurfaceRegion } from './types';
 /** A point of a room face in face UV (see roomFacePoint). */
 export type FacePoint = { u: number; v: number };
 /** A drag shorter than this many screen pixels is a click, never a region. */
+export const REGION_PENDING_NOTE = '타일을 고르면 이 영역에 적용돼요. 고르지 않으면 남지 않아요.';
 export const REGION_DRAG_PX = 5;
 /** Height of the band "띠로 추가" puts at the foot of a wall. */
 export const REGION_BAND_MM = 300;

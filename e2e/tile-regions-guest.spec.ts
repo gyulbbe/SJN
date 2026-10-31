@@ -119,13 +119,14 @@ test('게스트·375px: 바닥을 끌어 부분 타일을 만들고 타일을 �
   await page.mouse.down();
   await page.mouse.move(path.x + path.width * 0.7, path.y + path.height * 0.85, { steps: 10 });
   await page.mouse.up();
-  await expect.poll(async () => (await regions(page)).length).toBe(1);
+  await expect(page.getByTestId('region-pending')).toHaveCount(1);
+  expect(await regions(page)).toHaveLength(0);
+  await expect(page.locator('.catalog-panel.open')).toHaveCount(1);
+  await page.locator('button.material-tile').filter({ hasText: accent.name }).click();
+  await expect.poll(async () => (await regions(page))[0]?.materialVersionId).toBe(accent.id);
   const [made] = await regions(page);
   expect(made.roomFace).toBe('floor');
   expect(made.name).toBe('바닥 · 부분 타일 1');
-  await expect(page.locator('.catalog-panel.open')).toHaveCount(1);
-  await page.locator('button.material-tile').filter({ hasText: accent.name }).click();
-  await expect.poll(async () => (await regions(page))[0].materialVersionId).toBe(accent.id);
   await page.keyboard.press('Escape');
   await mkdir(SHOTS, { recursive: true });
   await page.screenshot({ path: `${SHOTS}/guest-375.png` });

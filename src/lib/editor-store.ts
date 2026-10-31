@@ -11,7 +11,7 @@ import { ensureMaterialUsage } from './material-usage';
 import type { MaterialUsageState } from './material-usage-types';
 import type { QuoteDocument } from './quote-types';
 import type { RoomDefinition } from './room-types';
-import type { Point, ProjectDocument, ProjectInput, Scene, MaterialVersion } from './types';
+import type { Point, ProjectDocument, ProjectInput, Scene, MaterialVersion, Surface } from './types';
 import {
   captureBeforeFrame,
   captureDesignFrame,
@@ -52,6 +52,11 @@ type EditorState = {
   project: ProjectDocument | null;
   editing: EditingSide;
   selection: string | null;
+  /**
+   * A partial tile just drawn and not yet in the scene: no history, no save. Choosing a tile puts it
+   * in; any other edit, selection, undo, Esc or a new drawing lets it go.
+   */
+  pendingRegion: Surface | null;
   tool: Tool;
   wallFeatureDrawing: WallFeatureDrawing;
   mode: 'before' | 'after' | 'split';
@@ -64,6 +69,7 @@ type EditorState = {
   changeMaterialUsage: (fn: (usage: MaterialUsageState) => void) => void;
   setEditing: (side: EditingSide) => void;
   select: (id: string | null) => void;
+  setPendingRegion: (surface: Surface | null) => void;
   setTool: (t: Tool) => void;
   setWallFeatureDrawing: (next: Partial<WallFeatureDrawing>) => void;
   setMode: (m: 'before' | 'after' | 'split') => void;
@@ -210,6 +216,7 @@ export const useEditor = create<EditorState>((set, get) => {
       project,
       editing: side,
       selection: selectionFor(project, side, get().selection),
+      pendingRegion: null,
       draft: null,
       saveStatus: 'dirty',
       error: '',
@@ -314,6 +321,7 @@ export const useEditor = create<EditorState>((set, get) => {
     project: null,
     editing: 'after',
     selection: null,
+    pendingRegion: null,
     tool: 'select',
     wallFeatureDrawing: WALL_FEATURE_DRAWING,
     mode: 'after',
@@ -329,6 +337,7 @@ export const useEditor = create<EditorState>((set, get) => {
         project,
         editing: 'after',
         selection: null,
+        pendingRegion: null,
         tool: 'select',
         wallFeatureDrawing: WALL_FEATURE_DRAWING,
         mode: 'after',
@@ -378,6 +387,7 @@ export const useEditor = create<EditorState>((set, get) => {
     setEditing: (side) => {
       get().commit();
       set({
+        pendingRegion: null,
         editing: side === 'before' && get().project?.shared.comparison ? 'before' : 'after',
         selection: null,
         draft: null,
@@ -385,10 +395,11 @@ export const useEditor = create<EditorState>((set, get) => {
         mode: 'after',
       });
     },
-    select: (selection) => set({ selection }),
+    select: (selection) => set({ selection, pendingRegion: null }),
+    setPendingRegion: (pendingRegion) => set({ pendingRegion }),
     setTool: (tool) => set({ tool }),
     setWallFeatureDrawing: (next) => set({ wallFeatureDrawing: { ...get().wallFeatureDrawing, ...next } }),
-    setMode: (mode) => set({ mode }),
+    setMode: (mode) => set({ mode, pendingRegion: null }),
     setSplit: (split) => set({ split }),
     change: (fn) => {
       get().commit();
@@ -490,6 +501,7 @@ export const useEditor = create<EditorState>((set, get) => {
       get().commit();
       const project = get().project!;
       set({
+        pendingRegion: null,
         project: { ...project, activeDesignId: id },
         editing: 'after',
         selection: null,
@@ -578,8 +590,12 @@ export const useEditor = create<EditorState>((set, get) => {
       setScene(next, editing, structuredClone(draft));
       publish(recordEdits(previous, syncUsage(next), materialVersions ?? {}));
     },
-    cancel: () => set({ draft: null }),
-    undo: () => history('past'),
+    cancel: () => set({ draft: null, pendingRegion: null }),
+    undo: () => {
+      // Nothing of it is in the history: undo takes back the drawing itself.
+      if (get().pendingRegion) set({ pendingRegion: null });
+      else history('past');
+    },
     redo: () => history('future'),
     viewport: (zoom, pan) => {
       const project = get().project;

@@ -11,6 +11,7 @@ import {
   movedRegion,
   REGION_DRAG_PX,
   regionFromDrag,
+  REGION_PENDING_NOTE,
   regionPlacementIssue,
   regionToolIssue,
   setSurfaceRegion,
@@ -303,11 +304,10 @@ export default function RoomCanvasWorkspace({
     const placed = regionSnap ? snappedRegion(latest, face, region, materials) : region;
     const issue = regionPlacementIssue(latest, face, placed);
     if (issue) return setRegionNote(issue);
+    // Not in the scene yet: a tile puts it there, and leaving it alone leaves nothing behind.
     const surface = createRegionSurface(latest, face, placed);
-    state.change((draft) => {
-      draft.surfaces.push(structuredClone(surface));
-    });
-    useEditor.getState().select(surface.id);
+    state.select(null);
+    state.setPendingRegion(surface);
     setRegionNote('');
     onRegionCreated?.(surface);
   }
@@ -362,6 +362,7 @@ export default function RoomCanvasWorkspace({
       const uv = face && renderer.current.facePosition(start.x, start.y, face);
       if (!face || !uv) return setRegionNote('벽이나 바닥 위에서 끌어 주세요.');
       setRegionNote('');
+      useEditor.getState().setPendingRegion(null);
       gesture.current = { kind: 'region-draw', start, base: scene, uv, view, moved: false, face };
       setRegionDraft({ face, from: uv, to: uv });
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -514,7 +515,9 @@ export default function RoomCanvasWorkspace({
   const outline = (() => {
     const engine = renderer.current;
     if (!engine || loading || failure || st.mode !== 'after' || !scene.room) return null;
-    const selected = scene.surfaces.find((item) => item.id === st.selection && item.region && item.roomFace);
+    const selected =
+      st.pendingRegion ??
+      scene.surfaces.find((item) => item.id === st.selection && item.region && item.roomFace);
     const box = regionDraft
       ? {
           face: regionDraft.face,
@@ -537,7 +540,7 @@ export default function RoomCanvasWorkspace({
     if (points.some((point) => !point)) return null;
     return {
       points: points as { x: number; y: number }[],
-      testId: regionDraft ? 'region-preview' : 'region-outline',
+      testId: regionDraft ? 'region-preview' : st.pendingRegion ? 'region-pending' : 'region-outline',
     };
   })();
   const aspect = scene.imageWidth / scene.imageHeight;
@@ -608,9 +611,11 @@ export default function RoomCanvasWorkspace({
             줄눈 맞춤
           </button>
         )}
-        {(st.tool === 'region' || regionNote) && (
+        {(st.tool === 'region' || regionNote || st.pendingRegion) && (
           <span className="tool-label" role="status" data-testid="region-note">
-            {regionNote || '벽이나 바닥을 끌어 네모 영역을 만드세요.'}
+            {st.pendingRegion
+              ? REGION_PENDING_NOTE
+              : regionNote || '벽이나 바닥을 끌어 네모 영역을 만드세요.'}
           </span>
         )}
         <button className="btn small" onClick={showInspector}>
@@ -641,7 +646,7 @@ export default function RoomCanvasWorkspace({
             >
               <polygon
                 points={outline.points.map((point) => point.x + ',' + point.y).join(' ')}
-                fill={outline.testId === 'region-preview' ? 'rgba(43, 151, 129, 0.16)' : 'none'}
+                fill={outline.testId === 'region-outline' ? 'none' : 'rgba(43, 151, 129, 0.16)'}
                 stroke="#2b9781"
                 strokeWidth="2"
                 strokeDasharray="5 3"
