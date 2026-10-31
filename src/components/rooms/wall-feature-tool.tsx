@@ -27,6 +27,7 @@ import {
   putWallFeature,
   removeWallFeature,
   WALL_FACE_NOTE,
+  WALL_FEATURE_3D_NOTICE,
   wallFeatureDrawIssue,
   wallFeatureTitle,
   wallFeatureToolIssue,
@@ -494,6 +495,23 @@ export function WallFeatureToolButton({ tool, compact }: { tool: WallFeatureTool
     >
       {compact ? <BrickWall size={17} /> : '벽 구조'}
     </button>
+  );
+}
+
+/**
+ * While the tool is on, over the top of the stage: why the editor is (or is about to be) 3D. It lies
+ * over the canvas so the 3D room keeps its size, and lets pointers through so the wall under it draws.
+ */
+export function WallFeature3dNotice({ tool }: { tool: WallFeatureTool }) {
+  if (!tool.active) return null;
+  return (
+    <p
+      role="note"
+      data-testid="wall-feature-3d-notice"
+      className="pointer-events-none absolute left-1/2 top-2 z-2 m-0 w-max max-w-[min(620px,calc(100%-16px))] -translate-x-1/2 rounded-[7px] border border-(--line) bg-white/95 px-3 py-2 text-center text-[12px] leading-snug break-keep text-(--muted) shadow-[0_4px_12px_#1937300a]"
+    >
+      {WALL_FEATURE_3D_NOTICE}
+    </p>
   );
 }
 

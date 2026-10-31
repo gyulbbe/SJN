@@ -19,6 +19,8 @@ export const WALL_FEATURE_EDGE_MM = 10;
 export const WALL_FEATURE_DEFAULT_DEPTH_MM = 200;
 export const WALL_FACE_NOTE = '왼쪽·정면·오른쪽 벽을 끌어 주세요.';
 export const WALL_FEATURE_SIZE_NOTE = `가로·세로 ${REGION_MIN_MM}mm보다 크게 끌어 주세요.`;
+export const WALL_FEATURE_3D_NOTICE =
+  '벽 구조가 하나라도 있으면 편집 화면은 항상 3D로 표시돼요. 2D 합성은 평평한 벽과 바닥에 타일을 입히는 방식이라, 벽이 파인 깊이를 그리지 못하기 때문이에요.';
 
 /** Why the wall-feature tool cannot be used now, or null. */
 export function wallFeatureToolIssue(input: {

@@ -36,6 +36,7 @@ import {
   stageBox,
   useNoTouchGesture,
   useWallFeatureTool,
+  WallFeature3dNotice,
   WallFeatureCard,
   WallFeaturePolygons,
   WallFeatureToolButton,
@@ -617,6 +618,7 @@ export default function RoomCanvasWorkspace({
         </button>
       </div>
       <div className="canvas-stage" ref={stage}>
+        <WallFeature3dNotice tool={wallTool} />
         <div
           ref={frame}
           className="canvas-frame"

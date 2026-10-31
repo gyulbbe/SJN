@@ -5,6 +5,7 @@ import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
 import { editorAction, savedProject, storedProject } from '../tests/helpers/editor-actions';
 import { getActiveDesign } from '../src/lib/designs';
 import type { ProjectDocument } from '../src/lib/types';
+import { WALL_FEATURE_3D_NOTICE } from '../src/lib/wall-feature-editing';
 import type { WallFeatureV1 } from '../src/lib/wall-features';
 
 /**
@@ -27,6 +28,7 @@ const features = (project: ProjectDocument) => active(project).scene.wallFeature
 const card = (page: Page) => page.getByTestId('wall-feature-card');
 const tool = (page: Page) => page.getByTestId('wall-feature-tool');
 const note = (page: Page) => page.getByTestId('wall-feature-note');
+const notice = (page: Page) => page.getByTestId('wall-feature-3d-notice');
 const stage = (page: Page) => page.getByTestId('room-editor-canvas');
 const depth = (page: Page) => card(page).getByLabel('깊이 (mm)', { exact: true });
 const bottomOf = (feature: WallFeatureV1, heightMm: number) =>
@@ -157,6 +159,13 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   await expect(tool(page)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('wall-feature-snap')).toHaveAttribute('aria-pressed', 'true');
   await expect(note(page)).toContainText('벽을 끌거나');
+  // Only while the tool is on, it says why the editor is or becomes 3D.
+  await expect(notice(page)).toHaveText(WALL_FEATURE_3D_NOTICE);
+  await shot(page, '2d-notice', info);
+  await page.getByRole('button', { name: '선택 / 이동', exact: true }).click();
+  await expect(notice(page)).toHaveCount(0);
+  await tool(page).click();
+  await expect(notice(page)).toBeVisible();
   // The floor explains instead of drawing.
   const floor = active(initial).scene.surfaces.find((s) => s.roomFace === 'floor')!;
   await page.locator(`[data-testid="editor-canvas"] [data-entity="${floor.id}"]`).click();
@@ -194,7 +203,11 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   await ready(page, true);
   await expect(tool(page)).toHaveAttribute('aria-pressed', 'true');
   await expect(card(page)).toHaveCount(0);
+  await expect(notice(page)).toHaveText(WALL_FEATURE_3D_NOTICE);
   await shot(page, '3d-result', info);
+  await page.getByRole('button', { name: '선택 / 이동', exact: true }).click();
+  await expect(notice(page)).toHaveCount(0);
+  await tool(page).click();
   let at = await backWallPixels(page, niche, H);
 
   // 2. A drag past the wall's foot makes one reaching the floor: still just a 벽 홈 on screen.
@@ -410,7 +423,20 @@ test.describe('게스트 휴대폰', () => {
     await expect(page).toHaveURL(/\/try$/);
     await ready(page, false);
     await tool(page).click();
+    // The phone's toolbar hides its notes; this one stays, inside the screen and alone at the top.
+    await expect(notice(page)).toBeVisible();
+    const told = (await notice(page).boundingBox())!;
+    expect(told.x).toBeGreaterThanOrEqual(0);
+    expect(told.x + told.width).toBeLessThanOrEqual(375);
+    await expect(page.locator('.floating-hint')).toHaveCount(0);
+    await shot(page, 'guest-375-notice', info);
     const wall = await backWall(page, await draft());
+    // Pointers pass through it to the canvas underneath.
+    const under = await page.evaluate(
+      ([x, y]) => (document.elementFromPoint(x, y) as HTMLElement | null)?.dataset.testid,
+      [told.x + told.width / 2, told.y + told.height / 2],
+    );
+    expect(under).not.toBe('wall-feature-3d-notice');
     // One finger draws while the tool is on (touch events through the browser's input pipeline).
     const cdp = await page.context().newCDPSession(page);
     const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', x: number, y: number) =>

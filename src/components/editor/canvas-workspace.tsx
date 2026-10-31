@@ -38,6 +38,7 @@ import {
   stageBox,
   useNoTouchGesture,
   useWallFeatureTool,
+  WallFeature3dNotice,
   WallFeatureCard,
   WallFeaturePolygons,
   WallFeatureToolButton,
@@ -525,7 +526,8 @@ export default function CanvasWorkspace({
         </button>
       </div>
       <div className="canvas-stage" ref={stage}>
-        {scene.surfaces.length === 0 && st.mode !== 'before' && (
+        <WallFeature3dNotice tool={wallTool} />
+        {scene.surfaces.length === 0 && st.mode !== 'before' && !wallTool.active && (
           <div className="floating-hint">
             <Square size={14} />
             왼쪽에서 벽 타일 또는 바닥 타일을 고르고 원하는 자재를 눌러 보세요.
