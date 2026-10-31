@@ -2858,7 +2858,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 <li>공간 크기에서 가로·깊이·높이를 바꾸면 타일과 제품 크기가 함께 맞춰져요.</li>
                 <li>
                   {isGuest
-                    ? 'Ctrl+Z 실행 취소, Ctrl+Y 다시 실행, Delete 선택 자재 삭제와 시안 비교·견적·속성 조절을 사용할 수 있어요. 상단 공간 둘러보기·공간 크기·AI·정식 저장·내보내기는 로그인 후 사용할 수 있어요.'
+                    ? 'Ctrl+Z 실행 취소, Ctrl+Y 다시 실행, Delete 선택 자재 삭제와 시안 비교·속성 조절을 사용할 수 있어요. 상단 공간 둘러보기·공간 크기·AI·정식 저장·내보내기는 로그인 후 사용할 수 있어요.'
                     : 'Before / After 비교 후 이미지를 내려받으세요. Ctrl+S 저장, Ctrl+Z 실행 취소, Ctrl+Y 다시 실행, Delete 선택 자재 삭제를 지원해요. 상단의 화살표 버튼으로도 되돌리거나 다시 실행할 수 있어요.'}
                 </li>
               </ol>

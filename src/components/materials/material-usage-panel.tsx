@@ -3,6 +3,7 @@ import { getMaterialImageAssetId } from '@/lib/material-images';
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ReceiptText, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
+import { useEditingCapabilities } from '@/components/editor/editing-capabilities';
 import type { AssetRecord, DesignDocument, Material, MaterialVersion } from '@/lib/types';
 import type {
   MaterialUsageRow,
@@ -213,6 +214,8 @@ export default function MaterialUsagePanel({
   beforeViewing,
   onEdit,
 }: MaterialUsagePanelProps) {
+  // Guests see no amounts: only the edit properties stay in this panel. A screen limit; the draft keeps its usage.
+  const { guest } = useEditingCapabilities();
   const scrollRef = useRef<HTMLDivElement>(null);
   const propertiesRef = useRef<HTMLDivElement>(null);
   const quoteId = useId();
@@ -510,19 +513,27 @@ export default function MaterialUsagePanel({
     );
   };
   return (
-    <aside className="material-usage-panel" aria-label={`${design.name} 자재 사용 내역`}>
+    <aside
+      className="material-usage-panel"
+      aria-label={guest ? `${design.name} 편집 속성` : `${design.name} 자재 사용 내역`}
+    >
       <header className="mu-header">
         <div>
-          <h3>자재 수량·금액</h3>
-          <p>{design.name}의 사용 자재</p>
+          <h3>{guest ? '편집 속성' : '자재 수량·금액'}</h3>
+          <p>{guest ? design.name : `${design.name}의 사용 자재`}</p>
         </div>
         {onClose && (
-          <button type="button" className="mu-close" onClick={onClose} aria-label="사용 내역 닫기">
+          <button
+            type="button"
+            className="mu-close"
+            onClick={onClose}
+            aria-label={guest ? '편집 속성 닫기' : '사용 내역 닫기'}
+          >
             <X size={18} />
           </button>
         )}
       </header>
-      {children && (
+      {children && !guest && (
         <nav className="mu-shortcuts" aria-label="견적과 속성 바로가기">
           <button
             type="button"
@@ -545,64 +556,68 @@ export default function MaterialUsagePanel({
         </nav>
       )}
       <div className="mu-scroll" ref={scrollRef}>
-        <div id={quoteId} className="mu-quote">
-          {beforeViewing && (
-            <p className="mu-notice">
-              Before를 보고 있어요. 아래 사용량과 금액은 이 시안의 After 기준이에요.
-            </p>
-          )}
-          {!canEdit && (
-            <p className="mu-notice">
-              시안에 저장된 사용량과 단가예요.
-              {onEdit && (
-                <button className="mu-link" onClick={onEdit}>
-                  이 시안 편집
-                </button>
-              )}
-            </p>
-          )}
-          {result.rows.length === 0 && (
-            <div className="mu-empty">
-              <strong>아직 적용한 자재가 없어요.</strong>
-              <p>타일이나 제품을 배치하면 사용량과 금액이 여기에 모여요.</p>
-            </div>
-          )}
-          {(['tile', 'fixture'] as const).map((category) => {
-            const rows = result.rows.filter((row) => row.category === category);
-            return rows.length ? (
-              <section key={category} className="mu-group">
-                <h4>
-                  {category === 'tile' ? '타일' : '위생도기·기타 제품'} <span>{rows.length}</span>
-                </h4>
-                {rows.map(rowView)}
-              </section>
-            ) : null;
-          })}
-        </div>
+        {!guest && (
+          <div id={quoteId} className="mu-quote">
+            {beforeViewing && (
+              <p className="mu-notice">
+                Before를 보고 있어요. 아래 사용량과 금액은 이 시안의 After 기준이에요.
+              </p>
+            )}
+            {!canEdit && (
+              <p className="mu-notice">
+                시안에 저장된 사용량과 단가예요.
+                {onEdit && (
+                  <button className="mu-link" onClick={onEdit}>
+                    이 시안 편집
+                  </button>
+                )}
+              </p>
+            )}
+            {result.rows.length === 0 && (
+              <div className="mu-empty">
+                <strong>아직 적용한 자재가 없어요.</strong>
+                <p>타일이나 제품을 배치하면 사용량과 금액이 여기에 모여요.</p>
+              </div>
+            )}
+            {(['tile', 'fixture'] as const).map((category) => {
+              const rows = result.rows.filter((row) => row.category === category);
+              return rows.length ? (
+                <section key={category} className="mu-group">
+                  <h4>
+                    {category === 'tile' ? '타일' : '위생도기·기타 제품'} <span>{rows.length}</span>
+                  </h4>
+                  {rows.map(rowView)}
+                </section>
+              ) : null;
+            })}
+          </div>
+        )}
         {children && (
           <div id={propertiesId} ref={propertiesRef} tabIndex={-1} className="mu-properties">
             {children}
           </div>
         )}
       </div>
-      <footer className="mu-footer">
-        <div>
-          <span>{result.complete ? '예상 자재비 합계' : '확인된 자재비'}</span>
-          <strong data-testid="usage-total">{money(result.total)}</strong>
-        </div>
-        {!result.complete && (
-          <p>
-            {result.unresolvedCount > 0 && <>미계산 자재 {result.unresolvedCount}종</>}
-            {result.attentionCount > 0 && (
-              <>
-                {result.unresolvedCount > 0 ? ' · ' : ''}면적·포장 확인 필요 {result.attentionCount}종
-              </>
-            )}
-          </p>
-        )}
-        <small>적용한 자재 기준이며 입력값에 따라 달라져요.</small>
-      </footer>
-      {latestRow && latestMaterial && latestDiff && (
+      {!guest && (
+        <footer className="mu-footer">
+          <div>
+            <span>{result.complete ? '예상 자재비 합계' : '확인된 자재비'}</span>
+            <strong data-testid="usage-total">{money(result.total)}</strong>
+          </div>
+          {!result.complete && (
+            <p>
+              {result.unresolvedCount > 0 && <>미계산 자재 {result.unresolvedCount}종</>}
+              {result.attentionCount > 0 && (
+                <>
+                  {result.unresolvedCount > 0 ? ' · ' : ''}면적·포장 확인 필요 {result.attentionCount}종
+                </>
+              )}
+            </p>
+          )}
+          <small>적용한 자재 기준이며 입력값에 따라 달라져요.</small>
+        </footer>
+      )}
+      {!guest && latestRow && latestMaterial && latestDiff && (
         <div className="mu-confirm-backdrop">
           <section className="mu-confirm" role="dialog" aria-modal="true" aria-label="최신 단가 확인">
             <h3>최신 단가를 가져올까요?</h3>

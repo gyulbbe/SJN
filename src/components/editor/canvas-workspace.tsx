@@ -88,7 +88,7 @@ export default function CanvasWorkspace({
 }: Props) {
   const repositories = useRepositories();
   const st = useEditor(),
-    { writable } = useEditingCapabilities();
+    { writable, guest } = useEditingCapabilities();
   const scene = st.draft || (st.project ? getEditingScene(st.project, st.editing) : undefined);
   const beforeScene = st.editing === 'after' ? st.project?.shared.comparison?.before : undefined;
   const lighting = st.project ? projectPhotoLight(st.project) : undefined;
@@ -523,8 +523,8 @@ export default function CanvasWorkspace({
         <div style={{ flex: 1 }} />
         <button
           className="icon-btn side-toggle"
-          title="자재 수량·금액 및 속성"
-          aria-label="자재 수량·금액 및 속성"
+          title={guest ? '편집 속성' : '자재 수량·금액 및 속성'}
+          aria-label={guest ? '편집 속성' : '자재 수량·금액 및 속성'}
           onClick={showInspector}
         >
           <SlidersHorizontal size={18} />

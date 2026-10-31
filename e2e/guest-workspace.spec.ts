@@ -167,14 +167,14 @@ test('게스트가 자재를 배치·실행 취소하고 새로고침해도 보�
 test('게스트도 제품을 표준 모형으로 볼 수 있고 새로고침해도 유지하며 금액은 그대로다', async ({ page }) => {
   await create(page);
   await place(page);
-  const total = await page.getByTestId('usage-total').innerText();
+  const usage = getActiveDesign(await draft(page))!.materialUsage;
   const toggle = page.getByRole('switch', { name: '표준 모형으로 보기' });
   await toggle.click();
   await expect
     .poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].reconstruction?.kind)
     .toBe('basin');
   // The model is a view of the same catalog product: the amount does not change.
-  await expect(page.getByTestId('usage-total')).toHaveText(total);
+  expect(getActiveDesign(await draft(page))!.materialUsage!.assignments).toEqual(usage!.assignments);
   const shown = getActiveDesign(await draft(page))!.scene.fixtures[0];
   expect(shown.reconstruction).toMatchObject({
     version: 2,
@@ -204,10 +204,6 @@ test('모의 Google 왕복 후 여러 시안·수정 견적·비교 선택을 �
   await expect
     .poll(async () => getActiveDesign(await draft(page))!.scene.fixtures[0].reconstruction?.kind)
     .toBe('basin');
-  const price = page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true });
-  await price.fill('175000');
-  await price.press('Enter');
-  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
   const original = getActiveDesign(await draft(page))!;
   await page.getByRole('button', { name: '시안 관리', exact: true }).click();
   const manager = page.getByRole('dialog', { name: /^시안 관리/ });
@@ -221,7 +217,7 @@ test('모의 Google 왕복 후 여러 시안·수정 견적·비교 선택을 �
   const before = await draft(page);
   for (const design of before.designs) {
     const fixture = design.scene.fixtures[0];
-    expect(design.materialUsage!.assignments[fixture.id].pricing.unitPrice).toBe(175000);
+    expect(design.materialUsage!.assignments[fixture.id].pricing.unitPrice).toBe(150000);
   }
   expect(guestWrites()).toEqual([]);
   const origin = new URL(page.url()).origin;
@@ -476,18 +472,13 @@ test('모바일 터치로 체험 생성하고 사진 기능은 로그인 안내�
   await page.getByRole('button', { name: '위생도기', exact: true }).tap();
   await page.locator('button.material-tile').filter({ hasText: '체험 벽걸이 세면대' }).tap();
   await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
-  await page.getByRole('button', { name: '자재 수량·금액 및 속성', exact: true }).tap();
+  await page.getByRole('button', { name: '편집 속성', exact: true }).tap();
   await expect(page.getByLabel('제품 배율', { exact: true })).toBeVisible();
-  await expect(page.getByTestId('usage-total')).toHaveText('150,000원');
-  const mobilePrice = page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true });
-  await mobilePrice.tap();
-  await mobilePrice.fill('160000');
-  await mobilePrice.press('Enter');
-  await expect(page.getByTestId('usage-total')).toHaveText('160,000원');
+  await expect(page.getByTestId('usage-total')).toHaveCount(0);
   await expect(page.getByLabel('노출', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '제품 삭제', exact: true }).tap();
   await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(0);
-  await page.getByRole('button', { name: '사용 내역 닫기', exact: true }).tap();
+  await page.getByRole('button', { name: '편집 속성 닫기', exact: true }).tap();
   expect(guestWrites()).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/guest-workspace-mobile.png', fullPage: true });
@@ -549,16 +540,17 @@ test('체험 제품과 오른쪽 공간 크기를 조절하고 상단 보호 기
 test('비로그인 견적·타일·색감·그림자·복제·잠금 조절이 저장되고 실행 취소된다', async ({ page }) => {
   await create(page);
   await place(page);
-  await expect(page.getByTestId('usage-total')).toHaveText('350,000원');
-  const price = page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true });
-  await expect(price).toBeEditable();
-  await price.fill('175000');
-  await price.press('Enter');
-  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
-  await page.getByRole('button', { name: '실행 취소', exact: true }).click();
-  await expect(page.getByTestId('usage-total')).toHaveText('350,000원');
-  await page.getByRole('button', { name: '다시 실행', exact: true }).click();
-  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
+  // No amount and no way to one: the panel holds the edit properties only.
+  const panel = page.locator('aside.material-usage-panel');
+  await expect(panel.getByRole('heading', { name: '편집 속성', exact: true })).toBeVisible();
+  for (const hidden of ['자재 수량·금액', '원', '단가', '견적으로 이동'])
+    await expect(panel.getByText(hidden, { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId('usage-total')).toHaveCount(0);
+  await expect(page.getByLabel('체험 벽걸이 세면대 단가 (원)', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '견적으로 이동', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '시안 비교', exact: true }).click();
+  await expect(page.getByTestId('comparison-usage-summary')).toHaveCount(0);
+  await page.keyboard.press('Escape');
   await page.getByLabel('그림자 진하기', { exact: true }).fill('0.6');
   await page.getByLabel('그림자 진하기', { exact: true }).press('Tab');
   await expect
@@ -572,10 +564,8 @@ test('비로그인 견적·타일·색감·그림자·복제·잠금 조절이 �
   await page.getByRole('button', { name: '잠금 해제', exact: true }).click();
   await page.locator('.inspector-embedded').getByRole('button', { name: '복제', exact: true }).click();
   await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(2);
-  await expect(page.getByTestId('usage-total')).toHaveText('550,000원');
   await page.getByRole('button', { name: '실행 취소', exact: true }).click();
   await expect.poll(async () => getActiveDesign(await draft(page))!.scene.fixtures.length).toBe(1);
-  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
   await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
   const floor = getActiveDesign(await draft(page))!.scene.surfaces.find(
     (surface) => surface.kind === 'floor',
@@ -596,7 +586,6 @@ test('비로그인 견적·타일·색감·그림자·복제·잠금 조절이 �
   const saved = getActiveDesign(await draft(page))!;
   await page.reload();
   await expect(page.getByTestId('editor-canvas')).toBeVisible();
-  await expect(page.getByTestId('usage-total')).toHaveText('375,000원');
   const restored = getActiveDesign(await draft(page))!;
   expect(restored.materialUsage).toEqual(saved.materialUsage);
   expect(restored.scene.color.exposure).toBe(0.2);

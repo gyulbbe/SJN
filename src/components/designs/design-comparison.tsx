@@ -246,20 +246,22 @@ function ComparisonCard({
           </div>
         )}
       </div>
-      <div className={styles.costSummary} data-testid="comparison-usage-summary">
-        <div>
-          <span>{usage.complete ? '예상 자재비 합계' : '확인된 자재비'}</span>
-          <strong>{usage.total.toLocaleString('ko-KR')}원</strong>
-          {!usage.complete && (
-            <small>
-              미계산 {usage.unresolvedCount}종 · 면적·포장 확인 {usage.attentionCount}종
-            </small>
-          )}
+      {!guest && (
+        <div className={styles.costSummary} data-testid="comparison-usage-summary">
+          <div>
+            <span>{usage.complete ? '예상 자재비 합계' : '확인된 자재비'}</span>
+            <strong>{usage.total.toLocaleString('ko-KR')}원</strong>
+            {!usage.complete && (
+              <small>
+                미계산 {usage.unresolvedCount}종 · 면적·포장 확인 {usage.attentionCount}종
+              </small>
+            )}
+          </div>
+          <button className={styles.textButton} aria-label={`${design.name} 자재 보기`} onClick={onShowUsage}>
+            자재 보기
+          </button>
         </div>
-        <button className={styles.textButton} aria-label={`${design.name} 자재 보기`} onClick={onShowUsage}>
-          자재 보기
-        </button>
-      </div>
+      )}
       <footer className={styles.comparisonCardFooter}>
         <div>
           <button

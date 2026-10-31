@@ -120,7 +120,7 @@ export default function GuestHome({ onNewProject }: { onNewProject: () => void }
               </Link>
             </div>
             <small className="start-hint">
-              견적과 속성 조절·시안 비교는 체험할 수 있어요. 사진 분석·저장·다운로드는 로그인이 필요해요.
+              속성 조절·시안 비교는 체험할 수 있어요. 사진 분석·저장·다운로드는 로그인이 필요해요.
             </small>
           </div>
           <div className="start-steps">
