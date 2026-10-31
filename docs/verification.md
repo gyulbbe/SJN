@@ -2,6 +2,19 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-10-31 — 벽 홈으로 통일, 벽 구조 편집 창 제거, FLUX klein 9B 고르기
+
+- 무엇
+  - 벽 홈과 후퇴 공간을 화면에서 벽 홈 하나로 합쳤다(바닥에서 0이면 바닥까지, 저장 형식 그대로, [결과](wall-feature-drawing-results-20261029.md) 첫머리).
+  - 오른쪽 패널의 벽 구조 편집 버튼과 창을 없앴다. 24개여도 도구로 고르고 지울 수 있게 했다.
+  - 내보내기 변환 창에서 klein 4B와 9B를 고른다([FLUX 현장 사진 변환](flux-export.md)).
+- 결과
+  - 창으로 3D에 들어가던 e2e 4개는 도구를 쓰는 `addWallNiche`로 바꿨고, `wall-features-ui`는 카드로 다시 썼다.
+  - vitest 3,716개 통과. 알려진 워크트리 전용 실패 6개(reconstruction-corpus 1, source-plane-mapping 5), `d1-material-paging-equivalence`는 전체 실행에서 시간 초과, 따로 돌려 통과
+  - typecheck, eslint 통과, `tests/room-wall-features-browser.ts` 177개 통과
+  - e2e 통과: wall-feature-drawing, wall-features-ui, tile-regions, tile-regions-guest, editor-four-view, editor-four-view-drag, editor-history-shortcuts, flux-export(9B 고르기 1개 추가), admin-ai-usage
+- 실제 AI 호출 없음(FLUX는 모의 응답). 9B 실제 품질·시간·사용량은 사용자가 시험한다.
+
 ## 2026-10-29 — 벽 구조를 편집 화면에서 끌어 만들고, 놓은 뒤 깊이 입력하기
 
 - 무엇([결과](wall-feature-drawing-results-20261029.md))
