@@ -107,7 +107,7 @@ describe('FLUX image export', () => {
     ['9b', '@cf/black-forest-labs/flux-2-klein-9b'],
     ['4b', FLUX_MODEL],
   ])('runs the chosen model %s, one call, without changing the request to it', async (variant, id) => {
-    const env = environment();
+    const env = { ...environment(), APP_ENV: 'production' };
     const result = await runFluxExport(
       request(await png(), undefined, (form) => form.set('model', variant)),
       env,
@@ -116,6 +116,15 @@ describe('FLUX image export', () => {
     expect(result.headers.get('x-sjn-image-model')).toBe(id);
     expect(env.AI.run).toHaveBeenCalledTimes(1);
     expect((env.AI.run.mock.calls[0] as unknown[])[0]).toBe(id);
+  });
+  it('refuses klein 9B before any model call anywhere but the production server', async () => {
+    const env = environment();
+    const result = await runFluxExport(
+      request(await png(), undefined, (form) => form.set('model', '9b')),
+      env,
+    ).catch((error) => error);
+    expect(result.status).toBe(400);
+    expect(env.AI.run).not.toHaveBeenCalled();
   });
   it('reports missing Workers binding without any model call', async () => {
     await expect(

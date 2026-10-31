@@ -92,6 +92,7 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
       reason: 'ready',
       authRequired: true,
       googleSignIn: false,
+      flux9b: true,
     });
   });
   it('blocks half-configured Google settings before probing D1', async () => {
@@ -104,10 +105,23 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
     });
     expect(prepare).not.toHaveBeenCalled();
   });
+  it('offers FLUX klein 9B only on the production server', async () => {
+    runtime.value = { ...ready, APP_ENV: 'development', BETTER_AUTH_URL: 'http://127.0.0.1:3000' };
+    const result = await storageStatus();
+    expect(result.ready).toBe(true);
+    expect(result).not.toHaveProperty('flux9b');
+  });
   it('confirms migrations and R2 access without writing a health object or creating a member', async () => {
     runtime.value = ready;
     const result = await storageStatus();
-    expect(result).toEqual({ mode: 'd1', ready: true, reason: 'ready', authRequired: true, googleSignIn: true });
+    expect(result).toEqual({
+      mode: 'd1',
+      ready: true,
+      reason: 'ready',
+      authRequired: true,
+      googleSignIn: true,
+      flux9b: true,
+    });
     const db = await mf.getD1Database('DB');
     expect(await db.prepare('SELECT COUNT(*) AS count FROM user').first()).toEqual({ count: 0 });
     const bucket = (await mf.getR2Bucket('ASSET_BUCKET')) as unknown as {
@@ -151,7 +165,11 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
   });
   it('rejects the inactive Supabase execution path in both runtimes', async () => {
     runtime.value = { ...ready, STORAGE_MODE: 'supabase' };
-    expect(await storageStatus()).toMatchObject({ mode: 'd1', ready: false, reason: 'invalid_configuration' });
+    expect(await storageStatus()).toMatchObject({
+      mode: 'd1',
+      ready: false,
+      reason: 'invalid_configuration',
+    });
     runtime.value = { platform: 'node', APP_ENV: 'production', STORAGE_MODE: 'supabase' };
     expect(await storageStatus()).toMatchObject({
       mode: 'd1',

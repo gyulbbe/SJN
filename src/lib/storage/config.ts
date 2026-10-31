@@ -17,6 +17,8 @@ export type StorageStatus = {
   authRequired: boolean;
   /** Only sent when ready; ID/password sign-in works without Google. */
   googleSignIn?: boolean;
+  /** Only on the production server: the export dialog offers FLUX klein 9B. */
+  flux9b?: boolean;
   /** A spent daily limit (daily_limit, storage_full): which, and when it comes back. */
   limit?: ServiceLimit;
 };

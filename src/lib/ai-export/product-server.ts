@@ -33,7 +33,7 @@ export async function runFluxProductRefine(
   const form = await readFluxForm(request, MAX_REQUEST_BYTES);
   checkFluxFields(form, ['image', 'seed', 'product'], ['reference', 'model']);
   const seed = readFluxSeed(form);
-  const variant = readFluxVariant(form);
+  const variant = readFluxVariant(form, environment);
   const { blob: image, header } = await readFluxPng(
     form.get('image'),
     '올바른 제품 PNG 이미지를 전달해 주세요.',

@@ -34,7 +34,13 @@ export async function storageStatus(): Promise<StorageStatus> {
     auth.checkD1AuthSchema(env as unknown as Parameters<typeof auth.checkD1AuthSchema>[0]),
   ]);
   const failures = checks.flatMap((check) => (check.status === 'rejected' ? [check.reason] : []));
-  if (!failures.length) return { ...selection, ready: true, googleSignIn };
+  if (!failures.length)
+    return {
+      ...selection,
+      ready: true,
+      googleSignIn,
+      ...(env.APP_ENV === 'production' ? { flux9b: true } : {}),
+    };
   // A spent daily limit is told as such, with when it comes back (the screens' first request).
   for (const failure of failures) {
     const limit = detectServiceLimit(failure);

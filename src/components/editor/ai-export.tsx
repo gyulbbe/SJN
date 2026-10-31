@@ -44,6 +44,7 @@ import {
   type RefineProduct,
 } from '@/lib/ai-export/refine-run';
 import type { BackgroundRemovalClient } from '@/lib/background-removal/client';
+import { useAccess } from '@/components/app-provider';
 import { AiLimitHint } from '@/components/service-limit-banner';
 import styles from './ai-export.module.css';
 
@@ -184,7 +185,10 @@ export default function AiExport({
   const [sent, setSent] = useState<RoomOrbit>();
   const [sourceUrl, setSourceUrl] = useState('');
   const [result, setResult] = useState<Result>({});
-  const [variant, setVariant] = useState<FluxVariant>('4b');
+  // 9B only where the production server offers it; everywhere else the dialog stays on 4B.
+  const flux9b = useAccess().status?.flux9b === true;
+  const [picked, setVariant] = useState<FluxVariant>('4b');
+  const variant: FluxVariant = flux9b ? picked : '4b';
   /** The model the shown result came from: the choice can change before the next conversion. */
   const [resultVariant, setResultVariant] = useState<FluxVariant>('4b');
   const [busy, setBusy] = useState(false);
@@ -629,32 +633,34 @@ export default function AiExport({
           )}
         </>
       )}
-      <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
-        <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">AI 모델</legend>
-        <div className="flex flex-wrap gap-1.5">
-          {FLUX_VARIANTS.map((choice) => (
-            <label key={choice.value} className={chipClass(choice.value === variant)}>
-              <input
-                type="radio"
-                name="flux-variant"
-                className="sr-only"
-                value={choice.value}
-                checked={choice.value === variant}
-                onChange={() => setVariant(choice.value)}
-              />
-              {choice.label}
-            </label>
-          ))}
-        </div>
-        <div
-          className="mt-1.5 text-xs leading-relaxed text-[color:var(--muted)]"
-          data-testid="flux-variant-note"
-        >
-          {variant === '9b'
-            ? `테스트용: 더 큰 모델이에요. AI 요청 1번에 약 ${FLUX_9B_NEURONS.toLocaleString('ko-KR')}뉴런으로, 4B(약 110뉴런)의 약 13배예요.`
-            : '기본 모델이에요. AI 요청 1번에 약 110뉴런을 써요.'}
-        </div>
-      </fieldset>
+      {flux9b && (
+        <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
+          <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">AI 모델</legend>
+          <div className="flex flex-wrap gap-1.5">
+            {FLUX_VARIANTS.map((choice) => (
+              <label key={choice.value} className={chipClass(choice.value === variant)}>
+                <input
+                  type="radio"
+                  name="flux-variant"
+                  className="sr-only"
+                  value={choice.value}
+                  checked={choice.value === variant}
+                  onChange={() => setVariant(choice.value)}
+                />
+                {choice.label}
+              </label>
+            ))}
+          </div>
+          <div
+            className="mt-1.5 text-xs leading-relaxed text-[color:var(--muted)]"
+            data-testid="flux-variant-note"
+          >
+            {variant === '9b'
+              ? `테스트용: 더 큰 모델이에요. AI 요청 1번에 약 ${FLUX_9B_NEURONS.toLocaleString('ko-KR')}뉴런으로, 4B(약 110뉴런)의 약 13배예요.`
+              : '기본 모델이에요. AI 요청 1번에 약 110뉴런을 써요.'}
+          </div>
+        </fieldset>
+      )}
       {room && (
         <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
           <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">변환 방식</legend>

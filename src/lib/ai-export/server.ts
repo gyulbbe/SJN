@@ -102,11 +102,13 @@ export function checkFluxFields(form: FormData, required: string[], optional: st
   )
     fail('이미지 요청 필드를 확인해 주세요.');
 }
-/** The optional model choice of the export routes: 4B when absent. */
-export function readFluxVariant(form: FormData): FluxVariant {
+/** The optional model choice of the export routes: 4B when absent, 9B on the production server only. */
+export function readFluxVariant(form: FormData, environment: FluxEnvironment): FluxVariant {
   const variant = form.get('model');
   if (variant === null) return '4b';
   if (variant !== '4b' && variant !== '9b') fail('지원하지 않는 이미지 모델이에요.');
+  if (variant === '9b' && environment.APP_ENV !== 'production')
+    fail('klein 9B는 운영 서버에서만 쓸 수 있어요.');
   return variant;
 }
 export function readFluxSeed(form: FormData): number {
@@ -258,7 +260,7 @@ export async function runFluxExport(
   const form = await readFluxForm(request, MAX_REQUEST_BYTES);
   checkFluxFields(form, ['image', 'seed'], ['scene', 'model']);
   const seed = readFluxSeed(form);
-  const variant = readFluxVariant(form);
+  const variant = readFluxVariant(form, environment);
   const { blob: image, header } = await readFluxPng(form.get('image'), '올바른 PNG 이미지를 전달해 주세요.');
   // Placed-product facts arrive as enums and numbers only; every sentence is written here.
   let scene: FluxScene | undefined;

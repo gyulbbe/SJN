@@ -118,6 +118,17 @@ test('export converts with klein 4B, downloads PNG, re-generates with a new seed
   expect(errors).toEqual([]);
 });
 
+test('away from the production server the dialog offers no model choice', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  await expect(dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('radio', { name: /klein/ })).toHaveCount(0);
+});
+
 test('klein 9B can be chosen in the dialog: only its request names the model, and the result keeps its model', async ({
   page,
 }) => {
@@ -125,6 +136,12 @@ test('klein 9B can be chosen in the dialog: only its request names the model, an
     .png()
     .toBuffer();
   const models: (string | null)[] = [];
+  // As the production server answers.
+  await page.route('**/api/storage/status', (route) =>
+    route.fulfill({
+      json: { mode: 'd1', ready: true, reason: 'ready', authRequired: true, flux9b: true },
+    }),
+  );
   await page.route('**/api/export/photoreal', async (route) => {
     const req = route.request();
     const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
