@@ -14,6 +14,8 @@ export type ServerWaitSpec = {
 
 /** 2026-09-25 real klein 4B calls with the current prompt took 8.8 s and 9.0 s (docs/flux-export.md). */
 export const FLUX_WAIT: ServerWaitSpec = { kind: 'flux', fallbackMs: 9_000, limitMs: 180_000 };
+/** No measured time for klein 9B with this prompt: elapsed time only, until this browser has its own. */
+export const FLUX_9B_WAIT: ServerWaitSpec = { kind: 'flux:9b', limitMs: 180_000 };
 /** Checking a FLUX result with Gemma: 12 real checks on 2026-09-27 took 1.0–3.4 s, median 1.4 s. */
 export const FLUX_CHECK_WAIT: ServerWaitSpec = {
   kind: 'gemma:fluxCheck',

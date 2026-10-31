@@ -118,6 +118,47 @@ test('export converts with klein 4B, downloads PNG, re-generates with a new seed
   expect(errors).toEqual([]);
 });
 
+test('klein 9B can be chosen in the dialog: only its request names the model, and the result keeps its model', async ({
+  page,
+}) => {
+  const png = await sharp({ create: { width: 992, height: 672, channels: 3, background: '#b8cbd0' } })
+    .png()
+    .toBuffer();
+  const models: (string | null)[] = [];
+  await page.route('**/api/export/photoreal', async (route) => {
+    const req = route.request();
+    const form = await new Response(new Uint8Array(req.postDataBuffer()!), {
+      headers: { 'content-type': req.headers()['content-type'] },
+    }).formData();
+    models.push(form.get('model') as string | null);
+    await route.fulfill({ status: 200, contentType: 'image/png', body: png });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  // 4B is the default; choosing asks nothing of the server, and the cost is said before the click.
+  await expect(dialog.getByRole('radio', { name: 'klein 4B' })).toBeChecked();
+  await dialog.locator('label', { hasText: 'klein 9B' }).click();
+  await expect(dialog.getByTestId('flux-variant-note')).toContainText('1,410뉴런');
+  expect(models).toEqual([]);
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-9b', exact: true }).click();
+  await expect(dialog.getByAltText('FLUX 9B 현장 사진 변환 결과')).toBeVisible({ timeout: 30000 });
+  expect(models).toEqual(['9b']);
+  const saved = page.waitForEvent('download');
+  await dialog.getByRole('link', { name: '9B PNG 저장' }).click();
+  expect((await saved).suggestedFilename()).toContain('flux-2-klein-9b.png');
+  // Back on 4B: the 9B result stays named 9B until the next conversion replaces it.
+  await dialog.locator('label', { hasText: 'klein 4B' }).click();
+  await expect(dialog.getByAltText('FLUX 9B 현장 사진 변환 결과')).toBeVisible();
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  await expect(dialog.getByAltText('FLUX 4B 현장 사진 변환 결과')).toBeVisible({ timeout: 30000 });
+  expect(models).toEqual(['9b', null]);
+});
+
 test('closing during conversion discards late results and allows a fresh conversion', async ({ page }) => {
   const pending: import('@playwright/test').Route[] = [];
   const png = await sharp({ create: { width: 992, height: 672, channels: 3, background: '#dbcdbc' } })

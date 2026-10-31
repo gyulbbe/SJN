@@ -66,7 +66,7 @@ describe('FLUX image export', () => {
     });
   });
   it.each([
-    ['a model choice', (f: FormData) => f.set('model', '4b')],
+    ['an unknown model', (f: FormData) => f.set('model', '8b')],
     ['caller prompt', (f: FormData) => f.set('prompt', 'replace prompt')],
     ['invalid seed', (f: FormData) => f.set('seed', '-1')],
     ['duplicate seed', (f: FormData) => f.append('seed', '1')],
@@ -102,6 +102,20 @@ describe('FLUX image export', () => {
       await expect(runFluxExport(req, env)).rejects.toMatchObject({ status: mode === 'origin' ? 403 : 400 });
       expect(env.AI.run).not.toHaveBeenCalled();
     }
+  });
+  it.each([
+    ['9b', '@cf/black-forest-labs/flux-2-klein-9b'],
+    ['4b', FLUX_MODEL],
+  ])('runs the chosen model %s, one call, without changing the request to it', async (variant, id) => {
+    const env = environment();
+    const result = await runFluxExport(
+      request(await png(), undefined, (form) => form.set('model', variant)),
+      env,
+    );
+    expect(result.status).toBe(200);
+    expect(result.headers.get('x-sjn-image-model')).toBe(id);
+    expect(env.AI.run).toHaveBeenCalledTimes(1);
+    expect((env.AI.run.mock.calls[0] as unknown[])[0]).toBe(id);
   });
   it('reports missing Workers binding without any model call', async () => {
     await expect(

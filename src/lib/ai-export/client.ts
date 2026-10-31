@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { noteServiceAnswer, serviceLimitMessage } from '../service-limit-notice';
 import type { Pixels } from './color';
-import { fluxInputLayout } from './contract';
+import { fluxInputLayout, type FluxVariant } from './contract';
 import type { FluxProduct } from './product-prompt';
 import { FLUX_FIXTURE_KINDS, type FluxScene } from './scene-contract';
 import {
@@ -128,11 +128,13 @@ export async function requestFluxImage(
   signal: AbortSignal,
   userId?: string | null,
   scene?: FluxScene,
+  variant: FluxVariant = '4b',
 ) {
   const form = new FormData();
   form.set('image', image, 'after.png');
   form.set('seed', String(seed));
   if (scene) form.set('scene', JSON.stringify(scene));
+  if (variant !== '4b') form.set('model', variant);
   return readFluxAnswer(
     await fetch('/api/export/photoreal', {
       method: 'POST',
@@ -154,12 +156,14 @@ export async function requestFluxProduct(
   product: FluxProduct,
   signal: AbortSignal,
   userId?: string | null,
+  variant: FluxVariant = '4b',
 ) {
   const form = new FormData();
   form.set('image', image, 'product.png');
   form.set('seed', String(seed));
   form.set('product', JSON.stringify(product));
   if (reference) form.set('reference', reference, 'photo.png');
+  if (variant !== '4b') form.set('model', variant);
   return readFluxAnswer(
     await fetch('/api/export/photoreal/product', {
       method: 'POST',

@@ -7,7 +7,7 @@ import {
   classifyCloudGemmaFailure,
   cloudProviderException,
 } from '@/lib/reconstruction/cloud-gemma-errors';
-import { FLUX_MODEL, FLUX_INPUT_EDGE, FLUX_MAX_IMAGE_BYTES } from './contract';
+import { FLUX_MODEL, FLUX_MODELS, FLUX_INPUT_EDGE, FLUX_MAX_IMAGE_BYTES, type FluxVariant } from './contract';
 import { buildFluxPrompt } from './prompt';
 import { FLUX_MAX_SCENE_BYTES, fluxSceneSchema, type FluxScene } from './scene-contract';
 
@@ -102,6 +102,13 @@ export function checkFluxFields(form: FormData, required: string[], optional: st
   )
     fail('이미지 요청 필드를 확인해 주세요.');
 }
+/** The optional model choice of the export routes: 4B when absent. */
+export function readFluxVariant(form: FormData): FluxVariant {
+  const variant = form.get('model');
+  if (variant === null) return '4b';
+  if (variant !== '4b' && variant !== '9b') fail('지원하지 않는 이미지 모델이에요.');
+  return variant;
+}
 export function readFluxSeed(form: FormData): number {
   const seedText = form.get('seed');
   if (typeof seedText !== 'string' || !/^\d{1,10}$/.test(seedText)) fail('이미지 seed가 올바르지 않아요.');
@@ -139,8 +146,10 @@ export async function callFlux(input: {
   model: FormData;
   /** Sizes only: never the prompt text, images or any user data. */
   diagnostics: Record<string, unknown>;
+  /** The Workers AI model; klein 4B unless the person chose another. */
+  modelId?: string;
 }): Promise<Response> {
-  const { request, ai, model } = input;
+  const { request, ai, model, modelId = FLUX_MODEL } = input;
   const serialized = new Response(model);
   const controller = new AbortController();
   const cancel = () => controller.abort();
@@ -148,14 +157,14 @@ export async function callFlux(input: {
   const timer = setTimeout(() => controller.abort(), 180_000);
   // Kept with the failure (as for Gemma) so a provider error is not reduced to a generic message.
   const diagnostics: Record<string, unknown> = {
-    model: FLUX_MODEL,
+    model: modelId,
     phase: 'provider-request',
     ...input.diagnostics,
   };
   try {
     request.signal.throwIfAborted();
     const response = await ai.run(
-      FLUX_MODEL,
+      modelId,
       {
         multipart: { body: serialized.body!, contentType: serialized.headers.get('content-type')! },
       },
@@ -210,7 +219,7 @@ export async function callFlux(input: {
         'Content-Type': outputHeader.mime,
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff',
-        'X-SJN-Image-Model': FLUX_MODEL,
+        'X-SJN-Image-Model': modelId,
         // Which account answered, by number only (docs/ai-account-pool-results-20261025.md).
         ...(ai.account ? { 'X-SJN-AI-Account': ai.account } : {}),
       },
@@ -247,8 +256,9 @@ export async function runFluxExport(
 ) {
   const ai = await openFluxRequest(request, environment);
   const form = await readFluxForm(request, MAX_REQUEST_BYTES);
-  checkFluxFields(form, ['image', 'seed'], ['scene']);
+  checkFluxFields(form, ['image', 'seed'], ['scene', 'model']);
   const seed = readFluxSeed(form);
+  const variant = readFluxVariant(form);
   const { blob: image, header } = await readFluxPng(form.get('image'), '올바른 PNG 이미지를 전달해 주세요.');
   // Placed-product facts arrive as enums and numbers only; every sentence is written here.
   let scene: FluxScene | undefined;
@@ -277,6 +287,7 @@ export async function runFluxExport(
     request,
     ai,
     model,
+    modelId: FLUX_MODELS[variant],
     diagnostics: { promptLength: prompt.length, fixtures: scene?.fixtures.length ?? 0 },
   });
 }

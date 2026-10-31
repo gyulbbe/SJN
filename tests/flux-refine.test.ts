@@ -467,6 +467,8 @@ describe('repainting the products one by one', () => {
   it('says what a click costs before it is made: one request per product and one for the room', () => {
     expect(refineEstimate(0)).toEqual({ calls: 1, neurons: 110 });
     expect(refineEstimate(3)).toEqual({ calls: 4, neurons: 455 });
+    expect(refineEstimate(0, '9b')).toEqual({ calls: 1, neurons: 1410 });
+    expect(refineEstimate(3, '9b')).toEqual({ calls: 4, neurons: 5775 });
   });
 });
 

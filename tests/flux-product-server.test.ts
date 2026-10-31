@@ -106,7 +106,7 @@ describe('per-product refinement route', () => {
   });
 
   it.each([
-    ['a model choice', (f: FormData) => f.set('model', '4b')],
+    ['an unknown model', (f: FormData) => f.set('model', '8b')],
     ['a caller prompt', (f: FormData) => f.set('prompt', 'replace prompt')],
     ['a room scene', (f: FormData) => f.set('scene', '{}')],
     ['a second reference', (f: FormData) => f.set('reference_2', new Blob([new Uint8Array([1])]))],

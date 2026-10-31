@@ -1,4 +1,5 @@
 import type { Pixels } from './color';
+import type { FluxVariant } from './contract';
 import { resultOnCapture } from './composite';
 import type { FluxProduct } from './product-prompt';
 import type { FluxFixture } from './scene-contract';
@@ -204,9 +205,20 @@ export function productFact(fixture: FluxFixture): FluxProduct {
 export const REFINE_NEURONS_PER_PRODUCT = 115;
 /** The empty room's call is the same size as a whole-room conversion: about 110. */
 export const REFINE_NEURONS_ROOM = 110;
-export function refineEstimate(products: number) {
+/**
+ * Workers AI bills klein 9B by the megapixel: 1363.64 neurons for the first output MP (a whole one
+ * even for a smaller answer, as far as the price list says) and 181.82 per input MP (2026-10-20 price
+ * list). An input is at most 496 px a side, about a quarter MP: about 1,410 neurons with one input,
+ * and at most 1,455 with a photo too.
+ */
+export const FLUX_9B_NEURONS = 1_410;
+const FLUX_9B_NEURONS_PER_PRODUCT = 1_455;
+export function refineEstimate(products: number, variant: FluxVariant = '4b') {
   return {
     calls: products + 1,
-    neurons: Math.round(products * REFINE_NEURONS_PER_PRODUCT + REFINE_NEURONS_ROOM),
+    neurons:
+      variant === '9b'
+        ? products * FLUX_9B_NEURONS_PER_PRODUCT + FLUX_9B_NEURONS
+        : Math.round(products * REFINE_NEURONS_PER_PRODUCT + REFINE_NEURONS_ROOM),
   };
 }

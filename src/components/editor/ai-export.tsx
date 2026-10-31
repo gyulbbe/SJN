@@ -16,14 +16,14 @@ import {
   type Pixels,
   type RegionMask,
 } from '@/lib/ai-export/color';
-import { fluxInputLayout, type FluxInputLayout } from '@/lib/ai-export/contract';
+import { fluxInputLayout, type FluxInputLayout, type FluxVariant } from '@/lib/ai-export/contract';
 import type { FluxCheckWall } from '@/lib/ai-export/check-contract';
 import { fluxResultNotices, readFluxCheck, type FluxNoticeInput } from '@/lib/ai-export/notices';
 import { FLUX_FRONT, fluxOrbitView, snapFluxOrbit } from '@/lib/ai-export/view';
 import { restoreBackdrop } from '@/lib/ai-export/backdrop';
 import type { RoomOrbit, RoomViewState } from '@/lib/room-viewer/view-state';
 import AiViewPicker, { type AiPreview } from './ai-view-picker';
-import { FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
+import { FLUX_9B_WAIT, FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
 import { ServerWaitProgress, useServerWait } from '@/components/server-wait-progress';
 import {
   buildFluxGrounding,
@@ -37,6 +37,7 @@ import type { FluxRoomMode } from '@/lib/ai-export/scene-contract';
 import { ownMask, REFINE_MAX_PRODUCTS, type OwnMask } from '@/lib/ai-export/refine';
 import {
   productFact,
+  FLUX_9B_NEURONS,
   refineEstimate,
   runRefine,
   type RefineOutcome,
@@ -130,11 +131,17 @@ const chipClass = (checked: boolean) =>
       ? 'border-[color:var(--ink)] bg-[color:var(--ink)] font-semibold text-[color:var(--paper)]'
       : 'border-[color:var(--line)] bg-[color:var(--paper)] text-[color:var(--ink)]'
   }`;
+/** The two models to try, 4B first: a call of it costs about a thirteenth of 9B's. */
+const FLUX_VARIANTS: { value: FluxVariant; label: string }[] = [
+  { value: '4b', label: 'klein 4B' },
+  { value: '9b', label: 'klein 9B' },
+];
+const fluxVariantName = (variant: FluxVariant) => variant.toUpperCase();
 /** What the per-product export is and what one click of it costs, said before the click. */
-function refineNote(products: number) {
+function refineNote(products: number, variant: FluxVariant) {
   if (!products)
     return '실험: 다듬을 제품이 없어요(표준 모형이 아닌 제품과 유리·거울은 3D 렌더 그대로예요). 빈 방만 AI로 변환하고 제품은 3D 렌더를 올려요(실험 A와 같아요).';
-  const estimate = refineEstimate(products);
+  const estimate = refineEstimate(products, variant);
   return `실험: 빈 방은 AI에 보내고, 제품은 하나씩 크게 잘라 따로 AI로 다듬은 뒤 같은 자리·크기에 올려요. 지금 배치에서 다듬을 제품은 ${products}개라 AI 요청이 ${estimate.calls}회(제품 ${products} + 빈 방 1) 나가고 최대 약 ${estimate.neurons}뉴런(추정)이 들어요. 지금 방식은 1회·약 110뉴런이에요. 처음 한 번은 제품 윤곽을 따는 모델(약 98MB)을 받아요. 모양이 달라진 제품은 3D 렌더로 두고 알려 드려요. 사진에 없는 옆·뒤 면은 AI의 추측이에요.`;
 }
 export default function AiExport({
@@ -177,6 +184,9 @@ export default function AiExport({
   const [sent, setSent] = useState<RoomOrbit>();
   const [sourceUrl, setSourceUrl] = useState('');
   const [result, setResult] = useState<Result>({});
+  const [variant, setVariant] = useState<FluxVariant>('4b');
+  /** The model the shown result came from: the choice can change before the next conversion. */
+  const [resultVariant, setResultVariant] = useState<FluxVariant>('4b');
   const [busy, setBusy] = useState(false);
   const [placed, setPlaced] = useState<FluxPlacedProduct[]>();
   const [check, setCheck] = useState<FluxNoticeInput['check']>();
@@ -275,6 +285,7 @@ export default function AiExport({
     setBusy(true);
     onBusyChange(true);
     setResult((previous) => ({ ...previous, error: undefined }));
+    const requested = variant;
     setCheck(undefined);
     setColors(undefined);
     setShowOriginal(false);
@@ -355,11 +366,21 @@ export default function AiExport({
       }
       // Same source image, fresh seed: re-generating gives a different variation.
       const seed = crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff;
-      startWait({ spec: FLUX_WAIT, message: '서버에서 현장 사진처럼 변환하는 중이에요.' });
+      startWait({
+        spec: requested === '9b' ? FLUX_9B_WAIT : FLUX_WAIT,
+        message: '서버에서 현장 사진처럼 변환하는 중이에요.',
+      });
       const grounded = state.current.grounding?.scene;
       // An empty room is described without fixtures: a described fixture gets drawn.
       const sentScene = mode && grounded ? { ...grounded, fixtures: [], mode } : mode ? undefined : grounded;
-      let blob = await requestFluxImage(state.current.image, seed, controller.signal, userId, sentScene);
+      let blob = await requestFluxImage(
+        state.current.image,
+        seed,
+        controller.signal,
+        userId,
+        sentScene,
+        requested,
+      );
       controller.signal.throwIfAborted();
       // Only a finished server conversion counts toward this browser's usual time.
       finishWait(true);
@@ -411,7 +432,7 @@ export default function AiExport({
             encode: pixelsToPng,
             decode: readPixels,
             request: (image, reference, requestSeed, product, signal) =>
-              requestFluxProduct(image, reference, requestSeed, product, signal, userId),
+              requestFluxProduct(image, reference, requestSeed, product, signal, userId, requested),
             cutout: async (image) => {
               if (!state.current.background) {
                 const { BackgroundRemovalClient } = await import('@/lib/background-removal/client');
@@ -460,6 +481,7 @@ export default function AiExport({
         state.current.urls.push(rawUrl, ...(correctedUrl ? [correctedUrl] : []));
         if (!live.current) return;
         setResult({ url: rawUrl, correctedUrl, elapsed: (performance.now() - started) / 1000 });
+        setResultVariant(requested);
         setShifted(composed.shifted);
         setColors(
           !composed.review.framing.aligned
@@ -476,6 +498,7 @@ export default function AiExport({
         const url = URL.createObjectURL(blob);
         state.current.urls.push(url);
         setResult({ url, elapsed: (performance.now() - started) / 1000 });
+        setResultVariant(requested);
       }
       // Walls and floor back to the render's colours where the model kept the framing (no AI call).
       if (color && !composite) {
@@ -565,6 +588,8 @@ export default function AiExport({
     state.current.controller?.abort();
   }
   const shown = showOriginal || !result.correctedUrl ? result.url : result.correctedUrl;
+  const shownName = fluxVariantName(result.url ? resultVariant : variant);
+  const shownModel = `flux-2-klein-${result.url ? resultVariant : variant}`;
   const notices = fluxResultNotices({
     products: placed ?? [],
     check,
@@ -604,6 +629,32 @@ export default function AiExport({
           )}
         </>
       )}
+      <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
+        <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">AI 모델</legend>
+        <div className="flex flex-wrap gap-1.5">
+          {FLUX_VARIANTS.map((choice) => (
+            <label key={choice.value} className={chipClass(choice.value === variant)}>
+              <input
+                type="radio"
+                name="flux-variant"
+                className="sr-only"
+                value={choice.value}
+                checked={choice.value === variant}
+                onChange={() => setVariant(choice.value)}
+              />
+              {choice.label}
+            </label>
+          ))}
+        </div>
+        <div
+          className="mt-1.5 text-xs leading-relaxed text-[color:var(--muted)]"
+          data-testid="flux-variant-note"
+        >
+          {variant === '9b'
+            ? `테스트용: 더 큰 모델이에요. AI 요청 1번에 약 ${FLUX_9B_NEURONS.toLocaleString('ko-KR')}뉴런으로, 4B(약 110뉴런)의 약 13배예요.`
+            : '기본 모델이에요. AI 요청 1번에 약 110뉴런을 써요.'}
+        </div>
+      </fieldset>
       {room && (
         <fieldset className="mb-3 min-w-0" disabled={busy || disabled}>
           <legend className="mb-1.5 text-xs font-semibold text-[color:var(--ink)]">변환 방식</legend>
@@ -627,7 +678,7 @@ export default function AiExport({
             data-testid="flux-composite-note"
           >
             {refining
-              ? refineNote(room?.refinable ?? 0)
+              ? refineNote(room?.refinable ?? 0, variant)
               : mode
                 ? `실험: AI에는 제품을 뺀 빈 방${mode === 'placeholders' ? '(제품 자리는 회색 표시)' : ''}을 보내고, 결과 위에 3D 렌더의 제품을 같은 자리·크기 그대로 올려요. 제품 모양은 그대로지만 매끈한 3D 질감으로 보일 수 있어요.`
                 : '제품까지 AI가 다시 그려요. 사진 같지만 제품 모양이 바뀌거나 없던 물건이 생길 수 있어요.'}
@@ -678,10 +729,10 @@ export default function AiExport({
           )}
         </div>
         <div className={styles.card}>
-          <h4>FLUX.2 klein 4B</h4>
+          <h4>FLUX.2 klein {shownName}</h4>
           <div className={styles.preview}>
             {shown ? (
-              <img src={shown} alt="FLUX 4B 현장 사진 변환 결과" />
+              <img src={shown} alt={`FLUX ${shownName} 현장 사진 변환 결과`} />
             ) : wait ? (
               // The first conversion waits where its result will appear.
               <div className="w-full max-w-xs px-3">
@@ -696,17 +747,17 @@ export default function AiExport({
           <div className={styles.actions}>
             <button type="button" className="btn" disabled={busy || disabled} onClick={() => void generate()}>
               {busy
-                ? '4B 변환 중…'
-                : `AI 변환 · flux-2-klein-4b${result.url && !turned ? ' 다시 만들기' : ''}`}
+                ? `${fluxVariantName(variant)} 변환 중…`
+                : `AI 변환 · flux-2-klein-${variant}${result.url && !turned && resultVariant === variant ? ' 다시 만들기' : ''}`}
             </button>
             <AiLimitHint />
             {shown && (
               <a
                 className="btn"
                 href={shown}
-                download={`${filename}-flux-2-klein-4b${shown === result.url && result.correctedUrl ? '-AI원본색' : ''}.png`}
+                download={`${filename}-${shownModel}${shown === result.url && result.correctedUrl ? '-AI원본색' : ''}.png`}
               >
-                4B PNG 저장
+                {shownName} PNG 저장
               </a>
             )}
             {result.correctedUrl && (

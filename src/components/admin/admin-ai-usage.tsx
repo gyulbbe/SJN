@@ -8,6 +8,7 @@ import { adminRequest } from './data';
 const MODEL_LABELS: Record<string, string> = {
   '@cf/google/gemma-4-26b-a4b-it': '사진 분석 · Gemma',
   '@cf/black-forest-labs/flux-2-klein-4b': 'AI 현장 사진 · FLUX.2 klein 4B',
+  '@cf/black-forest-labs/flux-2-klein-9b': 'AI 현장 사진 · FLUX.2 klein 9B',
 };
 const neurons = (value: number) => Math.round(value).toLocaleString('ko-KR');
 const kst = (iso: string, options: Intl.DateTimeFormatOptions) =>

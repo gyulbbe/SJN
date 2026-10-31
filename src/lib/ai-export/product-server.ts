@@ -1,5 +1,5 @@
 import { getRuntimeEnvironment } from '@/lib/platform/runtime';
-import { FLUX_MAX_IMAGE_BYTES } from './contract';
+import { FLUX_MAX_IMAGE_BYTES, FLUX_MODELS } from './contract';
 import { buildFluxProductPrompt, fluxProductSchema } from './product-prompt';
 import {
   callFlux,
@@ -9,6 +9,7 @@ import {
   readFluxForm,
   readFluxPng,
   readFluxSeed,
+  readFluxVariant,
   type FluxEnvironment,
 } from './server';
 
@@ -30,8 +31,9 @@ export async function runFluxProductRefine(
 ) {
   const ai = await openFluxRequest(request, environment);
   const form = await readFluxForm(request, MAX_REQUEST_BYTES);
-  checkFluxFields(form, ['image', 'seed', 'product'], ['reference']);
+  checkFluxFields(form, ['image', 'seed', 'product'], ['reference', 'model']);
   const seed = readFluxSeed(form);
+  const variant = readFluxVariant(form);
   const { blob: image, header } = await readFluxPng(
     form.get('image'),
     '올바른 제품 PNG 이미지를 전달해 주세요.',
@@ -67,6 +69,7 @@ export async function runFluxProductRefine(
     request,
     ai,
     model,
+    modelId: FLUX_MODELS[variant],
     diagnostics: { promptLength: prompt.length, product: product.data.kind, references: reference ? 1 : 0 },
   });
 }
