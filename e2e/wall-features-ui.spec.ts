@@ -4,7 +4,7 @@ import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
-import { savedProject, storedProject } from '../tests/helpers/editor-actions';
+import { addWallNiche, editorAction, savedProject, storedProject } from '../tests/helpers/editor-actions';
 import type { ProjectDocument } from '../src/lib/types';
 
 let app: AuthenticatedApp;
@@ -17,7 +17,7 @@ test.afterEach(async () => {
 
 test.use({ channel: 'chrome', actionTimeout: 15000 });
 test.setTimeout(180000);
-const form = (page: Page) => page.getByRole('dialog', { name: '벽 구조 편집', exact: true });
+const card = (page: Page) => page.getByTestId('wall-feature-card');
 const viewer = (page: Page) => page.getByRole('dialog', { name: '공간 둘러보기', exact: true });
 const active = (project: ProjectDocument) =>
   project.designs.find((design) => design.id === project.activeDesignId)!;
@@ -42,15 +42,14 @@ async function closeViewer(page: Page) {
   await viewer(page).getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
   await expect(viewer(page)).toHaveCount(0);
 }
-async function editStructure(page: Page) {
-  const button = page.getByRole('button', { name: /^벽 구조 편집/ });
-  if (!(await button.isVisible()))
-    await page
-      .getByRole('button', { name: /^(자재·공간 속성|.* 속성)$/ })
-      .last()
-      .click();
-  await button.click();
-  await expect(form(page)).toBeVisible();
+async function openViewer(page: Page) {
+  await (await editorAction(page, '공간 둘러보기')).click();
+  await opened(page);
+}
+/** Where the selected feature's outline is on screen (the 3D camera keeps it there). */
+async function selectedCentre(page: Page) {
+  const box = (await page.getByTestId('wall-feature-selected').boundingBox())!;
+  return [box.x + box.width / 2, box.y + box.height / 2] as const;
 }
 async function diff(a: Buffer, b: Buffer) {
   const images = await Promise.all(
@@ -188,24 +187,24 @@ test('실제 벽 구조 UI: 유효성·취소·공통 공간보기·이력·저�
   const network = await observe(page),
     initial = await start(page);
   const baseline = JSON.stringify(initial.shared.baseline);
-  await editStructure(page);
-  await form(page).getByRole('button', { name: '벽 홈 추가', exact: true }).click();
-  await form(page).getByLabel('깊이 (mm)', { exact: true }).fill('0');
-  await expect(form(page).getByRole('alert')).toBeVisible();
-  await expect(form(page).getByRole('button', { name: '적용하고 공간 보기', exact: true })).toBeDisabled();
-  await form(page).getByLabel('깊이 (mm)', { exact: true }).fill('200');
-  await form(page).getByRole('button', { name: '벽 홈 추가', exact: true }).click();
-  await expect(form(page).getByRole('alert')).toContainText('겹치거나');
-  await expect(form(page).getByRole('button', { name: '적용하고 공간 보기', exact: true })).toBeDisabled();
-  await form(page).getByRole('button', { name: '선택한 구조 삭제', exact: true }).click();
-  await expect(form(page).getByRole('alert')).toHaveCount(0);
+  await page.getByTestId('wall-feature-tool').click();
+  const flat = (await page.getByTestId('editor-canvas').boundingBox())!;
+  const wall = [flat.x + flat.width * 0.5, flat.y + flat.height * 0.42] as const;
+  await page.mouse.click(...wall);
+  await card(page).getByLabel('깊이 (mm)', { exact: true }).fill('0');
+  await expect(card(page).getByRole('alert')).toBeVisible();
+  await expect(card(page).getByRole('button', { name: '적용', exact: true })).toBeDisabled();
+  await card(page).getByLabel('깊이 (mm)', { exact: true }).fill('200');
+  await expect(card(page).getByRole('alert')).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('draft-valid.png'), fullPage: true });
-  await form(page).getByRole('button', { name: '취소', exact: true }).click();
+  await card(page).getByRole('button', { name: '취소', exact: true }).click();
   expect(await storedProject(page)).toEqual(initial);
-  await editStructure(page);
-  await form(page).getByRole('button', { name: '벽 홈 추가', exact: true }).click();
-  await form(page).getByRole('button', { name: '적용하고 공간 보기', exact: true }).click();
-  await opened(page);
+  await page.mouse.click(...wall);
+  await card(page).getByRole('button', { name: '적용', exact: true }).click();
+  await ready(page);
+  const centre = await selectedCentre(page);
+  await page.getByRole('button', { name: '선택 / 이동', exact: true }).click();
+  await openViewer(page);
   await viewer(page).getByRole('button', { name: 'After', exact: true }).click();
   const added = await savedProject(page, initial.editRevision);
   expect(active(added).scene.wallFeatures).toHaveLength(1);
@@ -248,25 +247,25 @@ test('실제 벽 구조 UI: 유효성·취소·공통 공간보기·이력·저�
     .locator('canvas')
     .screenshot({ path: info.outputPath('after-reload.png') });
   expect(await diff(beforeReload, afterReload)).toBeLessThan(0.1);
-  await editStructure(page);
-  await form(page).getByRole('combobox', { name: '형태', exact: true }).selectOption('floor-alcove');
-  await expect(form(page).getByLabel('높이 (mm)', { exact: true })).toHaveCount(0);
-  await form(page).getByRole('button', { name: '적용하고 공간 보기', exact: true }).click();
-  await opened(page);
+  // 바닥에서 0 reaches the floor: stored without a height of its own.
+  await page.getByTestId('wall-feature-tool').click();
+  await page.mouse.click(...centre);
+  await card(page).getByLabel('바닥에서 (mm)', { exact: true }).fill('0');
+  await card(page).getByRole('button', { name: '적용', exact: true }).click();
+  await ready(page);
+  const low = await selectedCentre(page);
+  await openViewer(page);
   const alcove = await savedProject(page, reloaded.editRevision);
   expect(active(alcove).scene.wallFeatures![0].kind).toBe('floor-alcove');
   expect(Object.hasOwn(active(alcove).scene.wallFeatures![0], 'heightMm')).toBe(false);
   await page.screenshot({ path: info.outputPath('alcove-viewer.png'), fullPage: true });
   await closeViewer(page);
   await ready(page);
-  await editStructure(page);
-  await form(page).getByRole('button', { name: '선택한 구조 삭제', exact: true }).click();
-  await form(page).getByRole('button', { name: '적용하고 공간 보기', exact: true }).click();
-  await opened(page);
+  await page.mouse.click(...low);
+  await card(page).getByRole('button', { name: '삭제', exact: true }).click();
   const removed = await savedProject(page, alcove.editRevision);
   expect(Object.hasOwn(active(removed).scene, 'wallFeatures')).toBe(false);
   expect(JSON.stringify(removed.shared.baseline)).toBe(baseline);
-  await closeViewer(page);
   await ready(page, false);
   await page.reload();
   await ready(page, false);
@@ -291,11 +290,7 @@ test('구조 있는 메인 3D: 실제 제품 선택·설치면 드래그·90도�
   const network = await observe(page);
   const initial = await start(page, true);
   expect(active(initial).scene.fixtures).toHaveLength(1);
-  await editStructure(page);
-  await form(page).getByRole('button', { name: '벽 홈 추가', exact: true }).click();
-  await form(page).getByRole('button', { name: '적용하고 공간 보기', exact: true }).click();
-  await opened(page);
-  await closeViewer(page);
+  await addWallNiche(page);
   await ready(page);
   const added = await savedProject(page, initial.editRevision);
   const capture = await main(page)

@@ -272,7 +272,6 @@ export default function Inspector({
   open,
   onClose,
   onRoomResize,
-  onWallFeatures,
   onMaterialsChanged,
 }: {
   embedded?: boolean;
@@ -280,7 +279,6 @@ export default function Inspector({
   open: boolean;
   onClose: () => void;
   onRoomResize: () => void;
-  onWallFeatures?: () => void;
   onMaterialsChanged: (versionIds: string[]) => Promise<void>;
 }) {
   const repositories = useRepositories();
@@ -669,16 +667,6 @@ export default function Inspector({
             <button className="btn small" onClick={onRoomResize} disabled={!!st.draft}>
               공간 크기 변경
             </button>
-            {onWallFeatures && (
-              <button
-                className="btn small"
-                onClick={onWallFeatures}
-                disabled={!!st.draft}
-                style={{ marginLeft: 8 }}
-              >
-                벽 구조 편집{s.wallFeatures?.length ? ' · ' + s.wallFeatures.length : ''}
-              </button>
-            )}
           </section>
         )}
         {st.editing === 'before' && st.project?.shared.comparison && (

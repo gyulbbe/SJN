@@ -2,7 +2,7 @@ import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
-import { storedProject } from '../tests/helpers/editor-actions';
+import { addWallNiche, storedProject } from '../tests/helpers/editor-actions';
 import { defaultRoomView } from '../src/lib/room-viewer/view-state';
 import type { ProjectDocument } from '../src/lib/types';
 import type { RoomFace } from '../src/lib/room-types';
@@ -60,19 +60,7 @@ async function createStageRoom(page: Page) {
   await page.locator('button.material-tile').filter({ hasText: '끌기 시험 제품' }).click();
   await expect(page.getByLabel('제품 배율', { exact: true })).toBeVisible();
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
-  const structure = page.getByRole('dialog', { name: '벽 구조 편집', exact: true });
-  const edit = page.getByRole('button', { name: /^벽 구조 편집/ });
-  if (!(await edit.isVisible()))
-    await page
-      .getByRole('button', { name: /^(자재·공간 속성|.* 속성)$/ })
-      .last()
-      .click();
-  await edit.click();
-  await structure.getByRole('button', { name: '벽 홈 추가', exact: true }).click();
-  await structure.getByRole('button', { name: '적용하고 공간 보기', exact: true }).click();
-  const viewer = page.getByRole('dialog', { name: '공간 둘러보기', exact: true });
-  await expect(viewer).toBeVisible();
-  await viewer.getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
+  await addWallNiche(page);
   await ready(page);
 }
 

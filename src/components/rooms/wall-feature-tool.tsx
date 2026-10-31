@@ -27,11 +27,10 @@ import {
   putWallFeature,
   removeWallFeature,
   WALL_FACE_NOTE,
-  WALL_FEATURE_KIND_NAMES,
+  wallFeatureDrawIssue,
   wallFeatureTitle,
   wallFeatureToolIssue,
   withFields,
-  withKind,
   type WallFeatureFields,
 } from '@/lib/wall-feature-editing';
 import { WALL_FEATURE_MAX_DEPTH_MM, type WallFeatureFace, type WallFeatureV1 } from '@/lib/wall-features';
@@ -94,10 +93,13 @@ export function useWallFeatureTool({
   }, [edit, features]);
 
   const room = scene?.room;
-  const options = { kind: drawing.kind, depthMm: drawing.depthMm, snap: drawing.snap, materials };
+  const options = { depthMm: drawing.depthMm, snap: drawing.snap, materials };
   /** Starts a drawing where the pointer went down; false (with a note) when it cannot. */
   function start(face: RoomFace | null | undefined, uv: FacePoint | null | undefined): boolean {
-    const problem = issue ?? (face && uv && isWallFace(face) ? null : WALL_FACE_NOTE);
+    const problem =
+      issue ??
+      (scene && wallFeatureDrawIssue(scene)) ??
+      (face && uv && isWallFace(face) ? null : WALL_FACE_NOTE);
     if (problem || !face || !uv || !isWallFace(face)) {
       setNote(problem ?? WALL_FACE_NOTE);
       return false;
@@ -319,7 +321,7 @@ const shown = (value: number) => (Number.isFinite(value) ? String(+value.toFixed
 /**
  * A feature's number fields measured like a partial tile's (from the left end and the floor), depth
  * first. Typed text stays as typed and untouched fields keep their exact values; give it a `key` of
- * the feature's id and kind so another feature or kind starts afresh.
+ * the feature's id so another feature starts afresh.
  */
 export function WallFeatureFieldInputs({
   feature,
@@ -348,7 +350,6 @@ export function WallFeatureFieldInputs({
     depth.current?.focus();
     depth.current?.select();
   }, [focusDepth]);
-  const alcove = feature.kind === 'floor-alcove';
   const input = (key: keyof WallFeatureFields, label: string) => (
     <label className="field" key={key}>
       {label} (mm)
@@ -373,9 +374,9 @@ export function WallFeatureFieldInputs({
     <>
       {input('depthMm', '깊이')}
       {input('leftMm', '왼쪽 끝에서')}
-      {alcove ? input('heightMm', '윗면 높이') : input('bottomMm', '바닥에서')}
+      {input('bottomMm', '바닥에서')}
       {input('widthMm', '폭')}
-      {!alcove && input('heightMm', '높이')}
+      {input('heightMm', '높이')}
     </>
   );
 }
@@ -401,12 +402,11 @@ export function WallFeatureCard({
   useLayoutEffect(() => {
     const measured = form.current?.offsetHeight ?? 0;
     if (measured !== height) setHeight(measured);
-  });
+  }, [height, tool.edit]);
   const edit = tool.edit;
   if (!edit) return null;
   const feature = edit.feature;
   const problem = featureIssue(room, latestScene()?.wallFeatures, feature) ?? edit.error;
-  const alcove = feature.kind === 'floor-alcove';
   const x = anchor
     ? anchor.right + 12 + CARD_WIDTH <= stage.width - 8
       ? anchor.right + 12
@@ -441,26 +441,9 @@ export function WallFeatureCard({
       className="absolute left-(--card-x) top-(--card-y) z-20 flex max-h-(--card-h) w-66 flex-col gap-2 overflow-y-auto rounded-[10px] border border-(--line) bg-white p-3 text-[13px] shadow-[0_6px_24px_#2b3d4330] max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:left-0 max-sm:top-auto max-sm:max-h-[65vh] max-sm:w-auto max-sm:rounded-b-none"
     >
       <strong className="text-[13px]">{wallFeatureTitle(feature)}</strong>
-      <label className="field">
-        형태
-        <select
-          className="input"
-          aria-label="형태"
-          value={feature.kind}
-          onChange={(event) =>
-            tool.setEdit(withKind(feature, event.target.value as WallFeatureV1['kind'], room))
-          }
-        >
-          {Object.entries(WALL_FEATURE_KIND_NAMES).map(([kind, name]) => (
-            <option key={kind} value={kind}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
       <div className="grid grid-cols-2 gap-2">
         <WallFeatureFieldInputs
-          key={feature.id + feature.kind}
+          key={feature.id}
           feature={feature}
           room={room}
           onChange={tool.setEdit}
@@ -469,7 +452,7 @@ export function WallFeatureCard({
       </div>
       <p className="m-0 text-[11px] leading-snug text-[#6b777a]">
         왼쪽은 방 안에서 이 벽을 마주 봤을 때의 왼쪽이에요. 깊이는 최대 {WALL_FEATURE_MAX_DEPTH_MM}mm.
-        {alcove && ' 윗면에서 바닥까지 열려요.'}
+        바닥에서를 0으로 넣으면 바닥까지 이어져요.
       </p>
       {problem && (
         <p role="alert" className="m-0 text-[12px] text-(--danger)">
@@ -496,7 +479,7 @@ export function WallFeatureCard({
 /** The tool button: an icon in the 2D toolbar, words in the 3D one. */
 export function WallFeatureToolButton({ tool, compact }: { tool: WallFeatureTool; compact: boolean }) {
   const st = useEditor();
-  const title = tool.issue ?? '벽 구조: 벽을 끌거나 눌러 벽 홈·열린 공간을 만들어요';
+  const title = tool.issue ?? '벽 구조: 벽을 끌거나 눌러 벽 홈을 만들어요';
   return (
     <button
       title={title}
@@ -514,31 +497,13 @@ export function WallFeatureToolButton({ tool, compact }: { tool: WallFeatureTool
   );
 }
 
-/** While the tool is on: which shape it draws, grout snapping and what to do (or why not). */
+/** While the tool is on: grout snapping and what to do (or why not). */
 export function WallFeatureToolOptions({ tool, compact }: { tool: WallFeatureTool; compact: boolean }) {
   const st = useEditor();
   const drawing = st.wallFeatureDrawing;
   if (!tool.active && !tool.note) return null;
   return (
     <>
-      {tool.active && (
-        <select
-          className="input"
-          aria-label="그릴 벽 구조 형태"
-          data-testid="wall-feature-kind"
-          style={{ width: 'auto', padding: '4px 6px', fontSize: 12 }}
-          value={drawing.kind}
-          onChange={(event) =>
-            st.setWallFeatureDrawing({ kind: event.target.value as WallFeatureV1['kind'] })
-          }
-        >
-          {Object.entries(WALL_FEATURE_KIND_NAMES).map(([kind, name]) => (
-            <option key={kind} value={kind}>
-              {name}
-            </option>
-          ))}
-        </select>
-      )}
       {tool.active && (
         <button
           title="경계를 바탕 타일 줄눈에 맞춤"

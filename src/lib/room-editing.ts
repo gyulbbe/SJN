@@ -231,7 +231,7 @@ export function roomResetWarnings(scene: Scene, nextRoom?: RoomDimensions | null
   if (scene.wallFeatures?.length) {
     messages.push('벽 구조의 거리·폭·깊이는 유지해요. 새 공간 범위를 벗어나면 크기를 변경하지 않아요.');
     if (scene.wallFeatures.some((feature) => feature.kind === 'floor-alcove'))
-      messages.push('바닥까지 열린 후퇴 공간은 새 바닥 높이까지 이어져 높이가 달라질 수 있어요.');
+      messages.push('바닥까지 이어진 벽 홈은 새 바닥 높이까지 이어져 높이가 달라질 수 있어요.');
   }
   return messages;
 }

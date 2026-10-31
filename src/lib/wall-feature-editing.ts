@@ -17,10 +17,6 @@ import {
  */
 export const WALL_FEATURE_EDGE_MM = 10;
 export const WALL_FEATURE_DEFAULT_DEPTH_MM = 200;
-export const WALL_FEATURE_KIND_NAMES: Record<WallFeatureV1['kind'], string> = {
-  'closed-niche': '벽 홈',
-  'floor-alcove': '바닥까지 열린 공간',
-};
 export const WALL_FACE_NOTE = '왼쪽·정면·오른쪽 벽을 끌어 주세요.';
 export const WALL_FEATURE_SIZE_NOTE = `가로·세로 ${REGION_MIN_MM}mm보다 크게 끌어 주세요.`;
 
@@ -35,24 +31,25 @@ export function wallFeatureToolIssue(input: {
   if (!input.scene?.room) return '벽 구조는 방 치수가 있는 공간에서만 만들 수 있어요.';
   if (!input.writable) return '읽기 전용이라 벽 구조를 만들 수 없어요.';
   if (input.mode !== 'after') return '비교 보기에서는 벽 구조를 그릴 수 없어요.';
-  if ((input.scene.wallFeatures?.length ?? 0) >= WALL_FEATURE_MAX_COUNT)
-    return `벽 구조는 장면당 ${WALL_FEATURE_MAX_COUNT}개까지 만들 수 있어요.`;
   if (input.drafting) return '진행 중인 편집을 마친 뒤 써 주세요.';
   return null;
 }
 
+/** Why no new feature can be drawn; the ones already there can still be picked, moved and deleted. */
+export function wallFeatureDrawIssue(scene: Pick<Scene, 'wallFeatures'>): string | null {
+  return (scene.wallFeatures?.length ?? 0) >= WALL_FEATURE_MAX_COUNT
+    ? `벽 구조는 장면당 ${WALL_FEATURE_MAX_COUNT}개까지 만들 수 있어요. 놓인 구조를 눌러 고치거나 지워 주세요.`
+    : null;
+}
+
 export const isWallFace = (face: RoomFace): face is WallFeatureFace => face !== 'floor';
-export const wallFeatureTitle = (feature: Pick<WallFeatureV1, 'face' | 'kind'>) =>
-  `${ROOM_FACE_NAMES[feature.face]} · ${WALL_FEATURE_KIND_NAMES[feature.kind]}`;
+/** One thing on screen, 벽 홈; stored as `floor-alcove` when it reaches the floor (바닥에서 0). */
+export const wallFeatureTitle = (feature: Pick<WallFeatureV1, 'face'>) =>
+  `${ROOM_FACE_NAMES[feature.face]} · 벽 홈`;
 
 const within = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 
-function build(
-  face: WallFeatureFace,
-  kind: WallFeatureV1['kind'],
-  rect: SurfaceRegion,
-  depthMm: number,
-): WallFeatureV1 {
+function build(face: WallFeatureFace, rect: SurfaceRegion, depthMm: number, toFloor = false): WallFeatureV1 {
   const base = {
     version: 1 as const,
     id: crypto.randomUUID(),
@@ -63,11 +60,12 @@ function build(
     widthMm: rect.widthMm,
     depthMm,
   };
-  return kind === 'closed-niche' ? { ...base, kind, heightMm: rect.heightMm } : { ...base, kind };
+  return toFloor
+    ? { ...base, kind: 'floor-alcove' }
+    : { ...base, kind: 'closed-niche', heightMm: rect.heightMm };
 }
 
 export type WallFeatureDraw = {
-  kind: WallFeatureV1['kind'];
   depthMm: number;
   snap: boolean;
   materials: Record<string, MaterialVersion>;
@@ -76,8 +74,8 @@ export type DrawnWallFeature = { feature: WallFeatureV1; issue?: never } | { fea
 
 /**
  * The feature a drag between two wall points makes: cut to the wall and WALL_FEATURE_EDGE_MM inside
- * it, an alcove reaching the floor whatever the drag's bottom, and (when asked) its edges on the
- * wall's base grout lines (never the wall's own ends).
+ * it, reaching the floor when the drag gets within that distance of it or past it, and (when asked)
+ * its edges on the wall's base grout lines (never the wall's own ends).
  */
 export function featureFromDrag(
   scene: Scene,
@@ -92,27 +90,26 @@ export function featureFromDrag(
   const left = cut(Math.min(from.u, to.u), size.width),
     right = cut(Math.max(from.u, to.u), size.width),
     top = cut(Math.min(from.v, to.v), size.height),
-    bottom = draw.kind === 'floor-alcove' ? size.height : cut(Math.max(from.v, to.v), size.height);
+    toFloor = Math.max(from.v, to.v) * size.height >= size.height - WALL_FEATURE_EDGE_MM,
+    bottom = toFloor ? size.height : cut(Math.max(from.v, to.v), size.height);
   if (right - left < REGION_MIN_MM || bottom - top < REGION_MIN_MM) return { issue: WALL_FEATURE_SIZE_NOTE };
   let rect: SurfaceRegion = { leftMm: left, topMm: top, widthMm: right - left, heightMm: bottom - top };
   if (draw.snap)
     rect = snapRegion(rect, size, regionSnapBase(scene, face, rect, draw.materials), {
       inset: WALL_FEATURE_EDGE_MM,
     });
-  if (draw.kind === 'floor-alcove') rect = { ...rect, heightMm: size.height - rect.topMm };
-  return { feature: build(face, draw.kind, rect, draw.depthMm) };
+  return { feature: build(face, rect, draw.depthMm, toFloor) };
 }
 
 /**
- * A click places the editor dialog's default size (width min(600, wall/3), height min(500, room
- * height/3)) centred on the pressed point and pushed inside the wall; an alcove's top sits half that
- * height above the point and it reaches the floor.
+ * A click places the default size (width min(600, wall/3), height min(500, room height/3)) centred
+ * on the pressed point and pushed inside the wall.
  */
 export function featureFromClick(
   room: RoomDimensions,
   face: WallFeatureFace,
   at: FacePoint,
-  draw: Pick<WallFeatureDraw, 'kind' | 'depthMm'>,
+  draw: Pick<WallFeatureDraw, 'depthMm'>,
 ): WallFeatureV1 {
   const size = roomFaceSizeMm(room, face);
   const width = Math.min(600, Math.round(size.width / 3)),
@@ -122,28 +119,17 @@ export function featureFromClick(
     WALL_FEATURE_EDGE_MM,
     size.width - WALL_FEATURE_EDGE_MM - width,
   );
-  const lowest = draw.kind === 'floor-alcove' ? REGION_MIN_MM : WALL_FEATURE_EDGE_MM + height;
   const topMm = within(
     Math.round(at.v * size.height - height / 2),
     WALL_FEATURE_EDGE_MM,
-    size.height - lowest,
+    size.height - WALL_FEATURE_EDGE_MM - height,
   );
-  return build(
-    face,
-    draw.kind,
-    {
-      leftMm,
-      topMm,
-      widthMm: width,
-      heightMm: draw.kind === 'floor-alcove' ? size.height - topMm : height,
-    },
-    draw.depthMm,
-  );
+  return build(face, { leftMm, topMm, widthMm: width, heightMm: height }, draw.depthMm);
 }
 
 /**
- * A feature moved by a wall-UV distance, kept WALL_FEATURE_EDGE_MM inside its wall. An alcove moves
- * only sideways: moving its top would change its height.
+ * A feature moved by a wall-UV distance, kept WALL_FEATURE_EDGE_MM inside its wall. One reaching
+ * the floor moves only sideways: moving its top would change its height.
  */
 export function movedFeature(
   feature: WallFeatureV1,
@@ -186,7 +172,7 @@ export function putWallFeature(scene: Scene, feature: WallFeatureV1): void {
     ? list.map((item) => (item.id === feature.id ? structuredClone(feature) : item))
     : [...list, structuredClone(feature)];
 }
-/** Removes a feature from a draft scene; the last one leaves no `wallFeatures` key (as the dialog). */
+/** Removes a feature from a draft scene; the last one leaves no `wallFeatures` key. */
 export function removeWallFeature(scene: Scene, id: string): void {
   const rest = (scene.wallFeatures ?? []).filter((item) => item.id !== id);
   if (rest.length) scene.wallFeatures = rest;
@@ -206,20 +192,9 @@ export function featureUv(feature: WallFeatureV1, room: RoomDimensions): RegionB
 }
 
 /**
- * The card's and dialog's fields: measured from the floor like a partial tile's, while storage keeps
- * the distance from the ceiling. `heightMm` of an alcove is its top's height (윗면 높이).
+ * The card's fields: measured from the floor like a partial tile's, while storage keeps the distance
+ * from the ceiling. 바닥에서 0 is the stored `floor-alcove`, which holds no height of its own.
  */
-/** A feature's fields other than its kind and height (an alcove stores no height). */
-const common = (feature: WallFeatureV1) => ({
-  version: feature.version,
-  id: feature.id,
-  source: feature.source,
-  face: feature.face,
-  leftMm: feature.leftMm,
-  topMm: feature.topMm,
-  widthMm: feature.widthMm,
-  depthMm: feature.depthMm,
-});
 export type WallFeatureFields = {
   leftMm: number;
   bottomMm: number;
@@ -244,32 +219,16 @@ export function withFields(
   room: RoomDimensions,
 ): WallFeatureV1 {
   const base = {
-    ...common(feature),
+    version: feature.version,
+    id: feature.id,
+    source: feature.source,
+    face: feature.face,
     leftMm: fields.leftMm,
     widthMm: fields.widthMm,
     depthMm: fields.depthMm,
-    topMm: room.heightMm - (feature.kind === 'floor-alcove' ? 0 : fields.bottomMm) - fields.heightMm,
+    topMm: room.heightMm - fields.bottomMm - fields.heightMm,
   };
-  return feature.kind === 'closed-niche'
-    ? { ...base, kind: 'closed-niche', heightMm: fields.heightMm }
-    : { ...base, kind: 'floor-alcove' };
-}
-
-/**
- * The same opening as the other kind: a niche becoming an alcove keeps its top and reaches the
- * floor; an alcove becoming a niche keeps its top with the default height, short of the floor.
- */
-export function withKind(
-  feature: WallFeatureV1,
-  kind: WallFeatureV1['kind'],
-  room: RoomDimensions,
-): WallFeatureV1 {
-  if (feature.kind === kind) return feature;
-  const base = common(feature);
-  if (kind === 'floor-alcove') return { ...base, kind };
-  const heightMm = Math.max(
-    0,
-    Math.min(500, Math.round(room.heightMm / 3), room.heightMm - WALL_FEATURE_EDGE_MM - feature.topMm),
-  );
-  return { ...base, kind, heightMm };
+  return fields.bottomMm === 0
+    ? { ...base, kind: 'floor-alcove' }
+    : { ...base, kind: 'closed-niche', heightMm: fields.heightMm };
 }

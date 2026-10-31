@@ -193,7 +193,7 @@ export function validateWallFeatures(
       ids.add(id);
     }
     if (input.kind !== 'closed-niche' && input.kind !== 'floor-alcove')
-      issue('invalid-kind', 'kind', '닫힌 홈 또는 바닥까지 열린 공간을 선택해 주세요.');
+      issue('invalid-kind', 'kind', '지원하지 않는 벽 구조 형태예요.');
     if (input.source !== 'user')
       issue('invalid-source', 'source', '첫 벽 구조 형식은 사용자 입력만 지원해요.');
     if (!['left', 'back', 'right'].includes(input.face as string))
@@ -231,7 +231,7 @@ export function validateWallFeatures(
       issue(
         'out-of-bounds',
         feature.kind === 'closed-niche' ? 'heightMm' : 'topMm',
-        '닫힌 홈은 바닥보다 높아야 하고, 열린 공간에도 양수 높이가 필요해요.',
+        '벽 홈은 방 높이 안에 있어야 해요. 바닥까지 이으려면 바닥에서를 0으로 넣어 주세요.',
       );
     if (right <= feature.leftMm || bottom <= feature.topMm)
       issue('invalid-size', undefined, '벽 구조 폭과 높이가 계산 가능한 양수 범위여야 해요.');

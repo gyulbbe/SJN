@@ -16,10 +16,10 @@ import {
   WALL_FACE_NOTE,
   WALL_FEATURE_EDGE_MM,
   WALL_FEATURE_SIZE_NOTE,
+  wallFeatureDrawIssue,
   wallFeatureTitle,
   wallFeatureToolIssue,
   withFields,
-  withKind,
   type WallFeatureDraw,
 } from '../src/lib/wall-feature-editing';
 import { validateWallFeatures, type WallFeatureV1 } from '../src/lib/wall-features';
@@ -68,8 +68,7 @@ function scene(tiled = true): Scene {
     color: { ...DEFAULT_COLOR },
   };
 }
-const niche = (snap = false): WallFeatureDraw => ({ kind: 'closed-niche', depthMm: 200, snap, materials });
-const alcove = (snap = false): WallFeatureDraw => ({ kind: 'floor-alcove', depthMm: 250, snap, materials });
+const niche = (snap = false): WallFeatureDraw => ({ depthMm: 200, snap, materials });
 const drawn = (made: ReturnType<typeof featureFromDrag>) => {
   if (!made.feature) throw new Error(made.issue);
   return made.feature;
@@ -82,7 +81,7 @@ const box = (feature: WallFeatureV1) => ({
 });
 
 describe('wall-feature tool', () => {
-  it('is offered on a writable room shown as itself, up to 24 features, and pauses during another edit', () => {
+  it('is offered on a writable room shown as itself and pauses during another edit; 24 only stops drawing', () => {
     const value = scene();
     const ok = { scene: value, writable: true, mode: 'after' as const, drafting: false };
     expect(wallFeatureToolIssue(ok)).toBeNull();
@@ -95,13 +94,16 @@ describe('wall-feature tool', () => {
     const full = Array.from({ length: 24 }, () =>
       featureFromClick(DEFAULT_ROOM, 'back', { u: 0.5, v: 0.5 }, niche()),
     );
-    expect(wallFeatureToolIssue({ ...ok, scene: { ...value, wallFeatures: full } })).toBe(
-      '벽 구조는 장면당 24개까지 만들 수 있어요.',
+    // With no other way to delete one, the tool stays on at 24 for picking, moving and deleting.
+    expect(wallFeatureToolIssue({ ...ok, scene: { ...value, wallFeatures: full } })).toBeNull();
+    expect(wallFeatureDrawIssue({ wallFeatures: full })).toBe(
+      '벽 구조는 장면당 24개까지 만들 수 있어요. 놓인 구조를 눌러 고치거나 지워 주세요.',
     );
+    expect(wallFeatureDrawIssue({ wallFeatures: full.slice(1) })).toBeNull();
     expect(isWallFace('floor')).toBe(false);
     expect(['left', 'back', 'right'].every((face) => isWallFace(face as 'left'))).toBe(true);
     expect(WALL_FACE_NOTE).toBe('왼쪽·정면·오른쪽 벽을 끌어 주세요.');
-    expect(wallFeatureTitle({ face: 'back', kind: 'floor-alcove' })).toBe('정면 벽 · 바닥까지 열린 공간');
+    expect(wallFeatureTitle({ face: 'back' })).toBe('정면 벽 · 벽 홈');
   });
 
   it('turns a drag into a niche in wall millimetres, cut 10 mm inside the wall and the ceiling', () => {
@@ -116,8 +118,8 @@ describe('wall-feature tool', () => {
     });
     expect(box(plain)).toEqual({ left: 240, top: 480, width: 480, height: 720 });
     // Past the corners and the ceiling: cut to the margin, never 0 or the wall's end.
-    const outside = drawn(featureFromDrag(value, 'left', { u: -0.2, v: -0.1 }, { u: 1.3, v: 1.2 }, niche()));
-    expect(box(outside)).toEqual({ left: 10, top: 10, width: 2380, height: 2380 });
+    const outside = drawn(featureFromDrag(value, 'left', { u: -0.2, v: -0.1 }, { u: 1.3, v: 0.9 }, niche()));
+    expect(box(outside)).toEqual({ left: 10, top: 10, width: 2380, height: 2150 });
     expect(validateWallFeatures(DEFAULT_ROOM, [outside])).toEqual([]);
     expect(featureFromDrag(value, 'back', { u: 0.1, v: 0.1 }, { u: 0.115, v: 0.4 }, niche())).toEqual({
       issue: WALL_FEATURE_SIZE_NOTE,
@@ -125,13 +127,16 @@ describe('wall-feature tool', () => {
     expect(WALL_FEATURE_SIZE_NOTE).toBe('가로·세로 50mm보다 크게 끌어 주세요.');
   });
 
-  it('makes an alcove reach the floor whatever the drag bottom', () => {
+  it('reaches the floor when the drag gets within 10 mm of it or past it, and not otherwise', () => {
     const value = scene();
+    expect(
+      drawn(featureFromDrag(value, 'right', { u: 0.1, v: 0.5 }, { u: 0.3, v: 0.99 }, niche())).kind,
+    ).toBe('closed-niche');
     for (const to of [
-      { u: 0.3, v: 0.6 },
+      { u: 0.3, v: 0.997 },
       { u: 0.3, v: 1.4 },
     ]) {
-      const made = drawn(featureFromDrag(value, 'right', { u: 0.1, v: 0.5 }, to, alcove()));
+      const made = drawn(featureFromDrag(value, 'right', { u: 0.1, v: 0.5 }, to, niche()));
       expect(made).toMatchObject({
         kind: 'floor-alcove',
         face: 'right',
@@ -168,7 +173,7 @@ describe('wall-feature tool', () => {
     );
     expect(box(bare)).toEqual({ left: 240, top: 490, width: 490, height: 710 });
     const snappedAlcove = drawn(
-      featureFromDrag(scene(), 'back', { u: 0.1, v: 0.2 }, { u: 0.3, v: 0.5 }, alcove(true)),
+      featureFromDrag(scene(), 'back', { u: 0.1, v: 0.2 }, { u: 0.3, v: 1.1 }, niche(true)),
     );
     expect(snappedAlcove).toMatchObject({ leftMm: 302, topMm: 604, widthMm: 300 });
     expect(featureUv(snappedAlcove, DEFAULT_ROOM).bottom).toBe(1);
@@ -189,18 +194,18 @@ describe('wall-feature tool', () => {
     });
     const room = { ...DEFAULT_ROOM, widthMm: 1200 };
     expect(featureFromClick(room, 'back', { u: 0.5, v: 0.5 }, niche()).widthMm).toBe(400);
-    const low = featureFromClick(DEFAULT_ROOM, 'back', { u: 0.5, v: 1 }, alcove());
-    expect(low).toMatchObject({ kind: 'floor-alcove', topMm: 2150 });
-    expect(low).not.toHaveProperty('heightMm');
+    // A click is never one reaching the floor, even at the wall's foot.
+    const low = featureFromClick(DEFAULT_ROOM, 'back', { u: 0.5, v: 1 }, niche());
+    expect(low).toMatchObject({ kind: 'closed-niche', topMm: 1890, heightMm: 500 });
     for (const made of [low, featureFromClick(DEFAULT_ROOM, 'right', { u: 0, v: 0 }, niche())])
       expect(validateWallFeatures(DEFAULT_ROOM, [made])).toEqual([]);
   });
 
-  it('moves inside the margins, an alcove only sideways', () => {
+  it('moves inside the margins, one reaching the floor only sideways', () => {
     const feature = featureFromClick(DEFAULT_ROOM, 'back', { u: 0.5, v: 0.5 }, niche());
     expect(box(movedFeature(feature, DEFAULT_ROOM, 1, -1))).toMatchObject({ left: 1790, top: 10 });
     expect(box(movedFeature(feature, DEFAULT_ROOM, -0.1, 0.1))).toMatchObject({ left: 660, top: 1190 });
-    const open = featureFromClick(DEFAULT_ROOM, 'back', { u: 0.5, v: 0.5 }, alcove());
+    const open = drawn(featureFromDrag(scene(), 'back', { u: 0.375, v: 0.4 }, { u: 0.625, v: 1.1 }, niche()));
     expect(movedFeature(open, DEFAULT_ROOM, 0.1, 0.3)).toMatchObject({ leftMm: 1140, topMm: open.topMm });
   });
 
@@ -229,15 +234,23 @@ describe('wall-feature tool', () => {
       topMm: 700,
       heightMm: 500,
     });
-    const open = drawn(featureFromDrag(scene(), 'back', { u: 0.1, v: 0.5 }, { u: 0.3, v: 0.6 }, alcove()));
+    const open = drawn(featureFromDrag(scene(), 'back', { u: 0.1, v: 0.5 }, { u: 0.3, v: 1.2 }, niche()));
     expect(featureFields(open, DEFAULT_ROOM)).toMatchObject({ bottomMm: 0, heightMm: 1200 });
     const taller = withFields(open, { ...featureFields(open, DEFAULT_ROOM), heightMm: 1500 }, DEFAULT_ROOM);
     expect(taller).toMatchObject({ kind: 'floor-alcove', topMm: 900 });
     expect(taller).not.toHaveProperty('heightMm');
-    // A kind change keeps the top; the niche's default height stays short of the floor.
-    expect(withKind(feature, 'floor-alcove', DEFAULT_ROOM)).not.toHaveProperty('heightMm');
-    expect(withKind(open, 'closed-niche', DEFAULT_ROOM)).toMatchObject({ topMm: 1200, heightMm: 500 });
-    expect(withKind({ ...open, topMm: 2200 }, 'closed-niche', DEFAULT_ROOM)).toMatchObject({ heightMm: 190 });
+    // One kind on screen: 바닥에서 alone decides how it is stored, both ways.
+    const down = withFields(feature, { ...fields, bottomMm: 0 }, DEFAULT_ROOM);
+    expect(down).toMatchObject({ kind: 'floor-alcove', topMm: 1680 });
+    expect(down).not.toHaveProperty('heightMm');
+    expect(validateWallFeatures(DEFAULT_ROOM, [down])).toEqual([]);
+    const up = withFields(down, { ...featureFields(down, DEFAULT_ROOM), bottomMm: 300 }, DEFAULT_ROOM);
+    expect(up).toMatchObject({ kind: 'closed-niche', topMm: 1380, heightMm: 720 });
+    expect(validateWallFeatures(DEFAULT_ROOM, [up])).toEqual([]);
+    expect(
+      validateWallFeatures(DEFAULT_ROOM, [withFields(feature, { ...fields, bottomMm: -5 }, DEFAULT_ROOM)])
+        .length,
+    ).toBeGreaterThan(0);
   });
 
   it('adds, replaces and removes a feature of a draft scene', () => {
@@ -281,16 +294,14 @@ describe('wall-feature tool', () => {
     expect(getActiveDesign(useEditor.getState().project!)!.scene).not.toHaveProperty('wallFeatures');
     expect(useEditor.getState().selection).toBeNull();
     // The drawing choices survive edits and reset with another project.
-    useEditor.getState().setWallFeatureDrawing({ depthMm: 350, kind: 'floor-alcove' });
+    useEditor.getState().setWallFeatureDrawing({ depthMm: 350 });
     useEditor.getState().redo();
     expect(useEditor.getState().wallFeatureDrawing).toEqual({
-      kind: 'floor-alcove',
       snap: true,
       depthMm: 350,
     });
     useEditor.getState().load(project);
     expect(useEditor.getState().wallFeatureDrawing).toEqual({
-      kind: 'closed-niche',
       snap: true,
       depthMm: 200,
     });

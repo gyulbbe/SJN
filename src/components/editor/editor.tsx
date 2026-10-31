@@ -102,7 +102,6 @@ import { FixtureKindChips } from './fixture-kind-chips';
 import { importImage } from '@/lib/images';
 import RoomDialog from '@/components/rooms/room-dialog';
 import RoomViewer from '@/components/rooms/room-viewer';
-import WallFeaturesDialog from '@/components/rooms/wall-features-dialog';
 import { removeWallFeature } from '@/lib/wall-feature-editing';
 import RoomCanvasWorkspace from '@/components/rooms/room-canvas-workspace';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
@@ -223,13 +222,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
   const exportAbort = useRef<AbortController | null>(null);
   const [photoEffects, setPhotoEffects] = usePhotoEffectsPreference();
-  const [wallEditor, setWallEditor] = useState<{
-    projectId: string;
-    editRevision: number;
-    activeDesignId: string | null;
-    editing: 'before' | 'after';
-    scene: Scene;
-  } | null>(null);
   const [recoveryStatus, setRecoveryStatus] = useState('');
   const [recoveryPrompt, setRecoveryPrompt] = useState<{
     record: ProjectRecovery;
@@ -299,7 +291,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   useEffect(() => {
     setRoomOpen(false);
     setRoomViewerOpen(false);
-    setWallEditor(null);
     const requests = roomRequest;
     return () => {
       requests.current++;
@@ -753,7 +744,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
           target.closest('input,textarea,select,[role="textbox"],[role="combobox"]'))
       )
         return;
-      if (roomViewerOpen || wallEditor || designsOpen || comparisonOpen || legacyOpen) return;
+      if (roomViewerOpen || designsOpen || comparisonOpen || legacyOpen) return;
       if (referenceOpen) {
         if (e.key === 'Escape') setReferenceOpen(false);
         return;
@@ -834,7 +825,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     detectionStatus,
     roomOpen,
     roomViewerOpen,
-    wallEditor,
     referenceOpen,
     designsOpen,
     comparisonOpen,
@@ -1624,19 +1614,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         open={inspectorOpen}
         onClose={() => setInspectorOpen(false)}
         onRoomResize={() => setRoomOpen(true)}
-        onWallFeatures={() => {
-          if (!writable || !flushMaterialUsageInputs()) return;
-          useEditor.getState().commit();
-          const current = useEditor.getState();
-          if (!current.project) return;
-          setWallEditor({
-            projectId: current.project.id,
-            editRevision: current.project.editRevision,
-            activeDesignId: current.project.activeDesignId,
-            editing: current.editing,
-            scene: structuredClone(getEditingScene(current.project, current.editing)),
-          });
-        }}
         onMaterialsChanged={readVersions}
       />
     </details>
@@ -2679,34 +2656,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             />
           </div>
         </div>
-      )}
-      {wallEditor?.scene.room && (
-        <WallFeaturesDialog
-          room={wallEditor.scene.room}
-          initial={wallEditor.scene.wallFeatures ?? []}
-          targetName={wallEditor.editing === 'before' ? '공통 Before' : (activeDesign?.name ?? 'After')}
-          onClose={() => setWallEditor(null)}
-          onApply={(features) => {
-            const current = useEditor.getState();
-            if (
-              !writable ||
-              !current.project ||
-              current.project.id !== wallEditor.projectId ||
-              current.project.editRevision !== wallEditor.editRevision ||
-              current.editing !== wallEditor.editing ||
-              current.project.activeDesignId !== wallEditor.activeDesignId ||
-              current.draft
-            )
-              throw new Error('편집 중 공간이 바뀌었어요. 창을 닫고 현재 공간에서 다시 열어 주세요.');
-            if (JSON.stringify(wallEditor.scene.wallFeatures ?? []) !== JSON.stringify(features))
-              current.change((target) => {
-                if (features.length) target.wallFeatures = structuredClone(features);
-                else delete target.wallFeatures;
-              });
-            setWallEditor(null);
-            if (!isGuest) setRoomViewerOpen(true);
-          }}
-        />
       )}
       {roomOpen && st.project.shared.baseline.room && (
         <RoomDialog

@@ -1,7 +1,7 @@
 import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated-app';
 import { expect, test } from '@playwright/test';
 import { Quaternion, Vector3 } from 'three';
-import { storedProject } from '../tests/helpers/editor-actions';
+import { addWallNiche, storedProject } from '../tests/helpers/editor-actions';
 import { cameraQuarterAzimuth, normalizeRoomView, snapQuarter } from '../src/lib/room-viewer/view-state';
 
 let app: AuthenticatedApp;
@@ -30,20 +30,7 @@ test('편집기 가운데 화면: 위·아래 버튼 없이 네 방향으로만 
   await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
   await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
   // A wall niche turns the centre into the 3D room stage.
-  const form = page.getByRole('dialog', { name: '벽 구조 편집', exact: true });
-  const edit = page.getByRole('button', { name: /^벽 구조 편집/ });
-  if (!(await edit.isVisible()))
-    await page
-      .getByRole('button', { name: /^(자재·공간 속성|.* 속성)$/ })
-      .last()
-      .click();
-  await edit.click();
-  await form.getByRole('button', { name: '벽 홈 추가', exact: true }).click();
-  await form.getByRole('button', { name: '적용하고 공간 보기', exact: true }).click();
-  await page
-    .getByRole('dialog', { name: '공간 둘러보기', exact: true })
-    .getByRole('button', { name: '공간 둘러보기 닫기', exact: true })
-    .click();
+  await addWallNiche(page);
   const stage = page.getByTestId('room-editor-canvas');
   await expect(stage).toHaveAttribute('aria-busy', 'false', { timeout: 45000 });
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });

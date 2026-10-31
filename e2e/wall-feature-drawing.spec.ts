@@ -147,6 +147,11 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   const requests = watchRequests(page);
   const H = active(initial).scene.room!.heightMm;
 
+  // The right panel has no structure dialog any more; the tool is the way in.
+  await page.getByRole('button', { name: '편집 속성으로 이동', exact: true }).click();
+  await expect(page.getByRole('button', { name: '공간 크기 변경', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^벽 구조 편집/ })).toHaveCount(0);
+
   // 1. 2D: a drag on the back wall shows the outline and asks nothing of the server.
   await tool(page).click();
   await expect(tool(page)).toHaveAttribute('aria-pressed', 'true');
@@ -192,17 +197,20 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   await shot(page, '3d-result', info);
   let at = await backWallPixels(page, niche, H);
 
-  // 2. A click places the default size: here an alcove centred at 1800 mm, which reaches the floor.
-  await page.getByTestId('wall-feature-kind').selectOption('floor-alcove');
+  // 2. A drag past the wall's foot makes one reaching the floor: still just a 벽 홈 on screen.
+  await page.getByTestId('wall-feature-snap').click();
   saves = requests.saves();
-  await page.mouse.click(...at(1800, 1200));
+  await page.mouse.move(...at(1500, 950));
+  await page.mouse.down();
+  await page.mouse.move(...at(2100, H + 150), { steps: 10 });
+  await page.mouse.up();
   await expect(card(page)).toBeVisible();
-  await expect(card(page)).toContainText('정면 벽 · 바닥까지 열린 공간');
-  // Its top is half the default height (250 mm) above the pressed point.
+  await expect(card(page)).toContainText('정면 벽 · 벽 홈');
+  await expect(card(page).getByLabel('형태')).toHaveCount(0);
+  await expect(card(page).getByLabel('바닥에서 (mm)', { exact: true })).toHaveValue('0');
   expect(
-    Math.abs(Number(await card(page).getByLabel('윗면 높이 (mm)', { exact: true }).inputValue()) - 1450),
+    Math.abs(Number(await card(page).getByLabel('높이 (mm)', { exact: true }).inputValue()) - 1450),
   ).toBeLessThan(60);
-  await expect(card(page).getByLabel('높이 (mm)', { exact: true })).toHaveCount(0);
   // The last applied depth comes first.
   await expect(depth(page)).toHaveValue('350');
   await page.keyboard.press('Enter');
@@ -217,7 +225,7 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   at = await backWallPixels(page, alcove, H);
 
   // 3. A drag that overlaps the niche turns red and makes nothing, with the reason.
-  await page.getByTestId('wall-feature-kind').selectOption('closed-niche');
+  await page.getByTestId('wall-feature-snap').click();
   saves = requests.saves();
   await page.mouse.move(...at(120, Math.max(40, niche.topMm - 120)));
   await page.mouse.down();

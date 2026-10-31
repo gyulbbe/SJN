@@ -2,7 +2,7 @@ import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import sharp from 'sharp';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { editorAction, savedProject, storedProject } from '../tests/helpers/editor-actions';
+import { addWallNiche, editorAction, savedProject, storedProject } from '../tests/helpers/editor-actions';
 import type { ProjectDocument, Surface } from '../src/lib/types';
 
 let app: AuthenticatedApp;
@@ -275,15 +275,7 @@ test('3D 편집 화면(벽 구조 있음): 끌어서 만들고 윤곽·이동이
   await registerTile(page, ACCENT, '#1d3557');
   await tileEverything(page);
   // A wall niche turns the centre into the 3D room stage.
-  const edit = page.getByRole('button', { name: /^벽 구조 편집/ });
-  if (!(await edit.isVisible())) await page.getByRole('button', { name: /속성$/ }).last().click();
-  await edit.click();
-  const structure = page.getByRole('dialog', { name: '벽 구조 편집', exact: true });
-  await structure.getByRole('button', { name: '벽 홈 추가', exact: true }).click();
-  await structure.getByRole('button', { name: '적용하고 공간 보기', exact: true }).click();
-  const viewer = page.getByRole('dialog', { name: '공간 둘러보기', exact: true });
-  await expect(viewer).toBeVisible();
-  await viewer.getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
+  await addWallNiche(page);
   await stageReady(page);
   let project = await storedProject(page);
   const requests = watchRequests(page);
@@ -328,6 +320,7 @@ test('3D 편집 화면(벽 구조 있음): 끌어서 만들고 윤곽·이동이
 
   // The spatial viewer and the download draw the same region.
   await (await editorAction(page, '공간 둘러보기')).click();
+  const viewer = page.getByRole('dialog', { name: '공간 둘러보기', exact: true });
   await expect(viewer).toBeVisible();
   await page.waitForTimeout(1500);
   expect(await accentPixels(await viewer.locator('canvas').first().screenshot())).toBeGreaterThan(300);

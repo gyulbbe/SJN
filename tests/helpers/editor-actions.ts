@@ -23,6 +23,20 @@ export async function savedProject(page: Page, afterRevision?: number) {
   return storedProject(page);
 }
 
+/**
+ * A wall niche turns the centre into the 3D room stage: pressed on the back wall with the 벽 구조
+ * tool, applied from its card, back on 선택 / 이동. From the 2D canvas of a default room.
+ */
+export async function addWallNiche(page: Page) {
+  await page.getByTestId('wall-feature-tool').click();
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.42);
+  await expect(page.getByTestId('wall-feature-card')).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('room-editor-canvas')).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: '선택 / 이동', exact: true }).click();
+}
+
 /** Surface selection uses the material placement control, without a layer list or geometry handles. */
 export async function selectSurface(page: Page, surface: Pick<Surface, 'id' | 'kind'>) {
   await page
