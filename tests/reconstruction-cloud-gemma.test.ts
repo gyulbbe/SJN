@@ -472,6 +472,31 @@ describe('Cloudflare Gemma transport (mocked model; no AI accuracy claim or remo
       expect(run).toHaveBeenCalledTimes(1);
     },
   );
+  it('keeps why the provider refused in the failure diagnostics, without ids or image bytes', async () => {
+    const account = '0123456789abcdef0123456789abcdef';
+    const refused = {
+      success: false,
+      errors: [{ code: 5004, message: `Invalid data at /accounts/${account}/ai/run` }],
+      echo: 'data:image/jpeg;base64,AAAA',
+    };
+    for (const [status, reply] of [
+      [400, () => Response.json(refused, { status: 400 })],
+      [
+        400,
+        () => new Response(`plain refusal /accounts/${account}/ data:image/png;base64,AAAA`, { status: 400 }),
+      ],
+      [200, () => Response.json(refused)],
+    ] as const) {
+      const { env } = runtime(async () => reply());
+      const failure = await runCloudGemmaModel(request(), env).catch((error) => error);
+      const answer = await cloudGemmaErrorResponse(failure).json();
+      expect(answer.diagnostics.upstreamStatus).toBe(status);
+      expect(answer.diagnostics.providerResponse).toMatch(/5004|plain refusal/);
+      const said = JSON.stringify(answer);
+      expect(said).not.toContain(account);
+      expect(said).not.toContain('base64,AAAA');
+    }
+  });
   it('does not retry auth failures, quota exhaustion, 429 or 503 on the server', async () => {
     for (const [status, body, code, retryable] of [
       [429, { errors: [{ code: 3036, message: 'daily free allocation' }] }, 'quota_exhausted', false],

@@ -33,7 +33,12 @@ import {
   type CloudGemmaInput,
   type CloudGemmaOperation,
 } from './cloud-gemma-contract';
-import { CloudGemmaError, classifyCloudGemmaFailure, cloudProviderException } from './cloud-gemma-errors';
+import {
+  CloudGemmaError,
+  classifyCloudGemmaFailure,
+  cloudProviderException,
+  providerRefusal,
+} from './cloud-gemma-errors';
 import {
   INVENTORY_OUTPUT_CONTRACT,
   EXTENDED_INVENTORY_OUTPUT_CONTRACT,
@@ -662,17 +667,21 @@ export async function runCloudGemmaModel(request: Request, environment = getRunt
     const bytes = await boundedBytes(response, MAX_RESPONSE, signal, 'response');
     let body: unknown;
     const text = new TextDecoder().decode(bytes);
+    // A refused request says why (its error codes and messages only; other bodies stay private).
+    const failed = (status: number, detail: unknown) => {
+      const failure = classifyCloudGemmaFailure(status, detail, response.headers.get('Retry-After'));
+      if (failure.code === 'invalid_input') diagnostics.providerResponse = providerRefusal(detail);
+      return failure;
+    };
     try {
       body = JSON.parse(text);
     } catch {
-      if (!response.ok)
-        throw classifyCloudGemmaFailure(response.status, text, response.headers.get('Retry-After'));
+      if (!response.ok) throw failed(response.status, text);
       throw new CloudGemmaError('Gemma가 올바른 응답 JSON을 반환하지 않았어요.', 'invalid_response', 502);
     }
-    if (!response.ok)
-      throw classifyCloudGemmaFailure(response.status, body, response.headers.get('Retry-After'));
+    if (!response.ok) throw failed(response.status, body);
     if (body && typeof body === 'object' && 'success' in body && body.success === false)
-      throw classifyCloudGemmaFailure(502, body, response.headers.get('Retry-After'));
+      throw failed(502, body);
     const unwrapped = body && typeof body === 'object' && 'result' in body ? body.result : body;
     const result = completionSchema.safeParse(unwrapped);
     if (!result.success)

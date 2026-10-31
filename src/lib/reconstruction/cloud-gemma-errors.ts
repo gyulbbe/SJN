@@ -105,6 +105,8 @@ function sanitizedProviderText(value: string, limit: number): string {
   return (
     value
       .replace(/data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/gi, '[image redacted]')
+      // An error can repeat the request's path: a Cloudflare account ID stays out of diagnostics.
+      .replace(/\b[0-9a-f]{32}\b/gi, '[id redacted]')
       // Consume a whole quoted credential or authentication scheme, not only "Basic"/"Bearer".
       .replace(
         /((?:api[_-]?(?:key|token)|access[_-]?token|oauth[_-]?token|(?:proxy[_-]?)?authorization|x[_-]auth[_-]?(?:key|token)|(?:client[_-]?)?secret)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:Basic|Bearer)\s+[^\s"'&,;}]+|[^\s"'&,;}]+)/gi,
@@ -128,6 +130,21 @@ function sanitizedProviderText(value: string, limit: number): string {
   );
 }
 
+/** Why a refused request was refused: Cloudflare's error codes and messages, or a plain-text answer. */
+export function providerRefusal(detail: unknown): string {
+  const errors = detail && typeof detail === 'object' ? (detail as { errors?: unknown }).errors : undefined;
+  const said = Array.isArray(errors)
+    ? JSON.stringify(
+        errors.slice(0, 5).map((item: { code?: unknown; message?: unknown }) => ({
+          code: item?.code,
+          message: item?.message,
+        })),
+      )
+    : typeof detail === 'string'
+      ? detail
+      : '';
+  return sanitizedProviderText(said, 1000);
+}
 /** Bounded provider exception diagnostics: never expose credentials or inline image bytes. */
 export function cloudProviderException(error: unknown) {
   const value = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
