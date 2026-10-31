@@ -57,7 +57,7 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - **렌즈 20°다**(2026-10-01, 이전에는 40°). 긴 렌즈로 바꿔 원근을 줄였다. 40° 렌즈에서는 옆에 있는 제품의 옆면이 크고 비스듬하게 그려져 AI가 다른 모양으로 다시 그렸다. 카메라가 방에서 뒤로 물러나(2.4m 방 기준 중심에서 약 3.9m → 8.0m) 방 전체가 그대로 들어오고, 정면에서 뒤 벽의 폭이 앞쪽 열린 면의 약 0.53배에서 0.74배로 넓어져 방이 깔때기처럼 좁아 보이지 않는다.
   - 방 상자(벽에 넣은 구조 포함)의 여덟 모서리가 화면 긴 쪽의 97%를 채우도록 확대하고 가운데에 맞춘다(주점 이동이라 원근은 그대로다). 렌즈가 바뀌어도 방이 화면에서 차지하는 크기는 같다(정면 65% × 97%).
   - 설비 상자·면 마스크·합성 레이어·프롬프트 위치는 모두 같은 카메라를 따르므로 따로 고친 것이 없다. 이전 입력과 나란히 비교한 그림은 `tests/flux-orbit-fov-browser.ts`가 `test-results/flux-orbit-fov/`에 만든다.
-  - 카메라 쪽 벽은 공간 둘러보기처럼 가린다(`viewerFaceIsVisible`). 천장은 궤도 시점에서 그리지 않는다.
+  - 카메라 쪽 벽은 공간 둘러보기처럼 가린다(`viewerFaceIsVisible`). 천장은 궤도 시점에서 그리지 않는다. 장면에 SMC 천장이 있으면 카메라가 천장 아래일 때 그린다(위에서 보는 시점은 방을 가리지 않게 숨긴다).
   - 공간 둘러보기는 이 투영을 만들지 않는다. 저장 스키마(`roomView`)는 엄격해서 `room-orbit`을 받지 않으므로 프로젝트에 저장될 수 없다. 옛 `roomView`는 그대로 읽힌다.
 - **돌리기(네 방향만, 2026-10-05):** 변환 창의 "AI 입력 시점" 3D 미리보기([picker](../src/components/editor/ai-view-picker.tsx))
   - 시점은 **정면·오른쪽·뒤·왼쪽 네 방향(90° 간격), 높이각 0°** 하나뿐이다. 제품이 방향별 평면 사진이라 자유로운 3D 회전은 의미가 없다. 이전의 끌기(방위·높이각), "위에서"·"옆에서" 버튼, ↑↓ 키는 없앴다(끌어도 시점이 바뀌지 않는다). `FOUR_DIRECTION_VIEWS`([view-state](../src/lib/room-viewer/view-state.ts))를 `false`로 하면 `turnFluxOrbit`의 위·옆 동작과 사이 각도(`snapFluxOrbit`)는 돌아오지만, 선택기의 끌기·위에서/옆에서 버튼·↑↓ 키는 코드를 지웠으므로 돌아오지 않는다. 커밋 `df9880f`에서만 되살릴 수 있다(`git show df9880f:src/components/editor/ai-view-picker.tsx`).
@@ -77,7 +77,7 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
     - 색 검사·보정, 합성 방식, 결과 확인(Gemma), 다운로드는 모두 되돌린 뒤의 그림을 쓴다.
   - **단면 문장**(`FLUX_CUTAWAY_SENTENCE`): 방 바깥 시점이면 장면에 `view: 'cutaway'`를 보낸다. 서버가 고정 지시 바로 뒤에 넣는다. 뜻은 "방을 바깥에서 본 단면 그림이다. 카메라 쪽 벽은 일부러 뺐다. 열린 쪽과 주변 흰 배경에 벽·유리·문·창·물건을 추가하지 말라"이다.
     - 빈 방 합성 프롬프트에도 넣는다. 길이 한도 때문에 줄일 때도 빼지 않는다.
-  - 천장 문장은 천장이 보일 때만 넣는다(`visibleCeiling`, 배경은 천장으로 세지 않는다). 궤도 시점은 천장을 그리지 않으므로 넣지 않는다.
+  - 천장 문장은 천장이 보일 때만 넣는다(`visibleCeiling`, 배경은 천장으로 세지 않는다). 궤도 시점은 천장을 그리지 않으므로 넣지 않는다. SMC 천장이 보이는 궤도 시점은 SMC 문장을 넣고 도장 문장은 넣지 않는다.
 - **지운 것(방 안 AI 시점):**
   - `RoomEye.pitch`, `ROOM_EYE_MAX_PITCH`, 기울인 눈의 좌우 한계 예외
   - `fluxEyeView`, 앞쪽 광선 검사(`fluxDirectionOutside`), 방향 자르기(`clampFluxDirection`, `fluxDirectionLimits`), `FLUX_EYE_HEIGHT_MM`·`FLUX_EYE_FOV`·`FLUX_TURN_STEP`
@@ -105,7 +105,7 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 설비 최대 12개: 종류(변기·세면대·하부장·욕조·샤워·수전·거울 등 15종), 형태(벽걸이·바닥형·원형 등 최대 4개), 설치 면(바닥·뒷벽·왼벽·오른벽), 색, 마감(무광·반광·유광·폴리싱·금속), 가로×높이×깊이 mm, 입력 이미지 기준 상자 `[left, top, right, bottom]`(0~1)
   - 타일 면 최대 8개: 면, 대표색, 타일 크기 mm, 배열(grid·brick), 줄눈 색·폭, 마감
   - 부분 타일 영역(2026-10-22): 같은 항목에 `box`(image 0 기준 상자)를 더해 한 면의 네모로 보낸다. 바탕 면 문장 뒤에 면적 큰 순서로 넣고, 바탕과 같은 타일이거나 화면에 안 보이면 뺀다. 상자는 `RoomViewerRenderer.surfaceBounds`가 영역 칸을 투영해 구한다. 문장은 "On the back wall, the rectangular area at x …%, y …% of image 0 has … tiles; the rest of the back wall keeps its own tiles."이다. 영역이 있는 벽은 결과 확인의 타일 배열 답에서 뺀다([결과](tile-regions-results-20261022.md) 7절).
-  - 천장(선택): `{ color, light: 'flat-panel' }`. 방 안 입력에서 마스크에 천장이 1% 이상 보일 때만 보낸다(`visibleCeiling`). 색은 뷰어 천장 도색(`#f3f2ee`)에 사진 조명을 곱한 값이다. 없는 요청(2D 합성, 이전 형식)도 받는다.
+  - 천장(선택): `{ color, light: 'flat-panel' }`. 방 안 입력에서 마스크에 천장이 1% 이상 보일 때만 보낸다(`visibleCeiling`). 색은 뷰어 천장 도색(`#f3f2ee`)에 사진 조명을 곱한 값이다. 없는 요청(2D 합성, 이전 형식)도 받는다. SMC 천장은 `{ color, light: 'flat-panel' | 'none', material: 'smc' }`이다.
 - **상자**: 방 안 입력(방이 있는 모든 프로젝트)은 같은 카메라로 `RoomViewerRenderer.fixtureBounds`가 설비 메시 경계 상자를 투영해 구한다. 방이 없는 옛 장면의 2D 합성은 설비의 `position`·`width`·`height`·`anchor`·`rotation`(화면비 보정 회전) 또는 `projectedQuad`에서 구한다. 화면 밖이거나 면적 0.02% 미만인 설비, 욕조 테두리 연결이 보류되어 그려지지 않는 유리는 뺀다.
 - **색·마감**: 표준 모형은 `reconstruction.color`, 사진 제품은 자재 색 hex 또는 제품 이미지의 불투명 픽셀 평균(브라우저에서 읽기만 하고 보내지 않는다), 그 밖에는 렌더의 설비 영역 평균, 타일은 텍스처 평균을 쓴다. 마감은 자재 마감 글을 분류하고, 글이 없으면 도기(변기·세면대·욕조)는 유광, 수전·샤워는 금속으로 본다.
   - 사진 조명 맞춤 프로젝트는 입력 그림에 사진 조명이 곱해져 있으므로, 자재·텍스처에서 온 색에도 같은 조명을 곱해 "그림 0에 보이는 색"으로 쓴다(`litColor`). 렌더에서 잰 색은 이미 조명이 들어 있어 그대로다.
@@ -114,7 +114,7 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
 - **프롬프트**: [프롬프트 빌더](../src/lib/ai-export/prompt.ts)가 서버에서 영어 문장을 결정적으로 만든다.
   - 기존 보존 지시로 시작한다.
   - 바로 뒤에 타일 면 문장을 쓴다. 예: "Left wall and back wall and right wall: white (#ecebe6) matte tiles, 300 × 600 mm, grid layout, light grey (#d9d8d2) grout 2 mm. Keep this exact white as it appears in image 0; do not warm, yellow or tint it." 유채색은 "…; do not change its hue or saturation."이다.
-  - 방 안 입력이면 다음에 천장 문장을 쓴다: "The ceiling is plain white (#f3f2ee) paint with one flat square light panel."
+  - 방 안 입력이면 다음에 천장 문장을 쓴다: "The ceiling is plain white (#f3f2ee) paint with one flat square light panel." SMC 천장은 "The ceiling is a moulded <색> SMC bathroom ceiling with one flat square light panel."이고, 조명을 끄면 끝이 "with no light fixture."다.
   - 다음에 설비마다 "N. A white (#f2f1ec) glossy floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size." 형식의 한 문장을 쓴다.
   - 끝에 "Image 0 contains exactly these fixtures: 1 toilet, 1 washbasin." 요약을 붙인다. 장면이 비어 있으면 기존 고정 지시문 그대로다.
   - 2026-09-27 전에는 타일 면 문장이 맨 끝이었고 "off-white"를 썼다.

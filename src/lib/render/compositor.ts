@@ -1,3 +1,11 @@
+import { ROOM_BACKGROUND_CEILING_COLOR } from '../room-background';
+import {
+  ceilingLampBounds,
+  ceilingQuad,
+  CEILING_LIGHT_OFF_LEVEL,
+  roomOpeningQuad,
+  SMC_CEILING_COLOR,
+} from '../smc-ceiling';
 import { resolvedBathRimScene, resolveBathRimFixture } from '../reconstruction/bath-rim';
 import {
   CanvasTexture,
@@ -278,14 +286,39 @@ void main(){
 const outputShader = `
 varying vec2 vUv;uniform sampler2D edited;uniform sampler2D original;uniform sampler2D beforeEdited;
 uniform vec4 adjustment;uniform vec4 beforeAdjustment;uniform float hasBeforeScene;
-uniform float mode;uniform float splitPosition;uniform vec3 lighting;
+uniform float mode;uniform float splitPosition;uniform vec3 lighting;uniform float afterLevel;uniform mat3 afterLevelPlane;
 ${colorFunctions}
 void main(){
   vec3 before=texture2D(original,vUv).rgb;
   // The photo's light (a comparison's PhotoLighting) under the user's colour adjustment; 1 otherwise.
   if(hasBeforeScene>.5) before=encodeSRGB(adjustColor(texture2D(beforeEdited,vUv).rgb*lighting,beforeAdjustment));
-  vec3 after=encodeSRGB(adjustColor(texture2D(edited,vUv).rgb*lighting,adjustment));
+  vec3 level=afterLevelPlane*vec3(vUv.x,1.-vUv.y,1.);
+  vec2 room=level.xy/level.z;
+  bool dark=afterLevel<1.&&room.x>=0.&&room.x<=1.&&room.y>=0.&&room.y<=1.;
+  vec3 after=encodeSRGB(adjustColor(texture2D(edited,vUv).rgb*lighting*(dark?afterLevel:1.),adjustment));
   gl_FragColor=vec4(mode<.5?before:(mode>1.5&&vUv.x<splitPosition?before:after),1.);
+}
+`;
+
+/** The SMC ceiling over the background's ceiling, keeping that ceiling's baked shade; its panel on top. */
+const ceilingShader = `
+varying vec2 vUv;uniform sampler2D previousImage;uniform mat3 inversePlane;
+uniform vec3 ceilingColor;uniform float shadeBase;uniform vec4 lamp;
+void main(){
+  vec4 background=texture2D(previousImage,vUv);
+  vec3 projected=inversePlane*vec3(vUv.x,1.-vUv.y,1.);
+  vec2 uv=projected.xy/projected.z;
+  vec2 edge=max(fwidth(uv),vec2(.00001));
+  vec2 inside=smoothstep(vec2(0.),edge,uv)*(1.-smoothstep(1.-edge,vec2(1.),uv));
+  float amount=inside.x*inside.y;
+  if(amount<=0.||projected.z==0.){gl_FragColor=background;return;}
+  float shade=clamp(dot(background.rgb,vec3(.2126,.7152,.0722))/shadeBase,.6,1.);
+  vec3 color=ceilingColor*shade;
+  if(lamp.z>lamp.x){
+    vec2 from=smoothstep(lamp.xy,lamp.xy+edge,uv),to=1.-smoothstep(lamp.zw-edge,lamp.zw,uv);
+    color=mix(color,vec3(1.),from.x*from.y*to.x*to.y);
+  }
+  gl_FragColor=vec4(mix(background.rgb,color,amount),background.a);
 }
 `;
 
@@ -375,6 +408,7 @@ export class PhotoCompositor {
   private readonly tileMaterial = shader(tileShader);
   private readonly fixtureMaterial = shader(fixtureShader);
   private readonly standardCompositeMaterial = shader(standardCompositeShader);
+  private readonly ceilingMaterial = shader(ceilingShader);
   private readonly standardModels: StandardModelRenderer;
   private readonly outputMaterial = shader(outputShader);
   private readonly copyMaterial = shader(copyShader);
@@ -968,6 +1002,23 @@ export class PhotoCompositor {
     let index = 0;
     uniform(this.backgroundMaterial, 'image', background);
     this.draw(this.backgroundMaterial, this.targets[index]);
+    if (scene.ceiling && scene.room) {
+      const shader = this.ceilingMaterial;
+      const paint = new Color(SMC_CEILING_COLOR),
+        base = new Color(ROOM_BACKGROUND_CEILING_COLOR);
+      const values: Record<string, unknown> = {
+        previousImage: this.targets[index].texture,
+        inversePlane: new Matrix3().set(
+          ...homography(ceilingQuad(scene.room, scene.imageWidth / scene.imageHeight)),
+        ),
+        ceilingColor: paint,
+        shadeBase: 0.2126 * base.r + 0.7152 * base.g + 0.0722 * base.b,
+        lamp: scene.ceiling.light ? new Vector4(...ceilingLampBounds(scene.room)) : new Vector4(0, 0, 0, 0),
+      };
+      Object.entries(values).forEach(([key, value]) => uniform(shader, key, value));
+      index = 1 - index;
+      this.draw(shader, this.targets[index]);
+    }
     for (const {
       surface,
       material,
@@ -1094,6 +1145,17 @@ export class PhotoCompositor {
     uniform(final, 'beforeAdjustment', colorVector(before?.scene.color ?? this.snapshot.scene.color));
     uniform(final, 'adjustment', colorVector(this.snapshot.scene.color));
     uniform(final, 'lighting', new Vector3(...(this.snapshot.lighting ?? [1, 1, 1])));
+    // An SMC ceiling's light off darkens the room, not the backdrop around it.
+    const shown = this.snapshot.scene;
+    const dark = shown.ceiling && !shown.ceiling.light && shown.room;
+    uniform(final, 'afterLevel', dark ? CEILING_LIGHT_OFF_LEVEL : 1);
+    uniform(
+      final,
+      'afterLevelPlane',
+      dark
+        ? new Matrix3().set(...homography(roomOpeningQuad(dark, shown.imageWidth / shown.imageHeight)))
+        : new Matrix3(),
+    );
     uniform(final, 'mode', mode === 'before' ? 0 : mode === 'after' ? 1 : 2);
     uniform(final, 'splitPosition', Math.max(0, Math.min(1, split)));
     this.draw(final, null);
@@ -1264,6 +1326,7 @@ export class PhotoCompositor {
       this.tileMaterial,
       this.fixtureMaterial,
       this.standardCompositeMaterial,
+      this.ceilingMaterial,
       this.outputMaterial,
       this.copyMaterial,
     ].forEach((m) => m.dispose());

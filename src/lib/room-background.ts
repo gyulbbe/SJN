@@ -18,12 +18,14 @@ import type { RoomDimensions, RoomFace } from './room-types';
 export type RoomBackground = { blob: Blob; width: number; height: number };
 type BackgroundSize = { width?: number; height?: number };
 type BackgroundFace = RoomFace | 'ceiling';
+/** The ceiling's colour here; the 2D SMC ceiling reads its baked shade against it. */
+export const ROOM_BACKGROUND_CEILING_COLOR = '#f6f4ef';
 const COLORS: Record<BackgroundFace, string> = {
   floor: '#d5d1c9',
   left: '#e9e6df',
   back: '#f0ede7',
   right: '#dcd8d0',
-  ceiling: '#f6f4ef',
+  ceiling: ROOM_BACKGROUND_CEILING_COLOR,
 };
 
 function makeFace(room: RoomDimensions, face: BackgroundFace): Mesh<BufferGeometry, MeshBasicMaterial> {

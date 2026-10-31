@@ -631,6 +631,7 @@
   .studio-editor .workspace-toolbar {
     padding: var(--space-1) var(--space-2);
     gap: var(--space-1);
+    flex-wrap: wrap;
   }
   .studio-editor .workspace-toolbar .btn {
     font-size: 12px;

@@ -1,3 +1,4 @@
+import { SMC_CEILING_COLOR } from '../smc-ceiling';
 import {
   categoryLabels,
   isImageAsset,
@@ -521,9 +522,17 @@ export async function buildFluxGrounding(input: {
   }
   regions.sort((a, b) => b.area - a.area);
   for (const region of regions) if (surfaces.length < FLUX_MAX_SURFACES) surfaces.push(region.surface);
+  // A shown ceiling is the scene's SMC one when it has it, and the viewer's paint otherwise.
+  const smc = snapshot.scene.ceiling;
   const ceiling =
     input.ceiling && HEX.test(input.ceiling)
-      ? { color: litColor(input.ceiling.toLowerCase(), snapshot.lighting), light: 'flat-panel' as const }
+      ? smc
+        ? {
+            color: litColor(SMC_CEILING_COLOR, snapshot.lighting),
+            light: smc.light ? ('flat-panel' as const) : ('none' as const),
+            material: 'smc' as const,
+          }
+        : { color: litColor(input.ceiling.toLowerCase(), snapshot.lighting), light: 'flat-panel' as const }
       : undefined;
   return {
     scene: {

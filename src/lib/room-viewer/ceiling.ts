@@ -9,7 +9,9 @@ import {
   Vector3,
 } from 'three';
 import { CORNER_OCCLUSION_GLSL, TONE_MAPPING_GLSL } from '../render/realistic-lighting';
+import { SMC_CEILING_COLOR } from '../smc-ceiling';
 import type { RoomDimensions } from '../room-types';
+import type { Scene } from '../types';
 
 /** Neutral matte ceiling paint; no product, quote or selection is attached to it. */
 export const VIEWER_CEILING_COLOR = '#f3f2ee';
@@ -19,28 +21,33 @@ export const VIEWER_LAMP_SIZE_MM = 600;
 const LAMP_RADIANCE = 3;
 /** Fill for the light bounced up from walls and floor (keeps the ceiling near the upper walls). */
 const CEILING_BOUNCE = 0.5;
+/** The SMC ceiling's fill, set by eye against the upper walls: lit, and with its light off. */
+const SMC_BOUNCE = 0.8;
+const SMC_BOUNCE_DARK = 0.42;
 
 /**
  * Closes the room from inside for in-room eye views: a ceiling plane and the visible light panel.
  * Kept out of the surface and fixture groups, so picking, fixture boxes, contact shadows and quotes
  * never see it. Hidden by default; the renderer shows it only for 'room-eye' views, because orbit
  * views look in from outside (the ceiling would cover them) and saved photo cameras must keep
- * rendering exactly as before.
+ * rendering exactly as before. A scene's SMC ceiling is shown in every view (the four-direction
+ * cameras look up at it from below) in its own colour, with the panel only while its light is on.
  */
-export function buildViewerCeiling(room: RoomDimensions) {
+export function buildViewerCeiling(room: RoomDimensions, smc?: Scene['ceiling']) {
+  const paint = smc ? SMC_CEILING_COLOR : VIEWER_CEILING_COLOR;
   const group = new Group();
   group.name = 'viewer-ceiling';
   group.visible = false;
   const ceilingGeometry = new PlaneGeometry(room.widthMm, room.depthMm);
   const ceilingMaterial = new MeshStandardMaterial({
-    color: VIEWER_CEILING_COLOR,
+    color: paint,
     roughness: 0.9,
     metalness: 0,
     side: DoubleSide,
     // The environment map sees the dark floor from a downward face; a real ceiling is lit by the
     // bright walls and floor bouncing the downlight. A constant fill stands in for that bounce.
-    emissive: VIEWER_CEILING_COLOR,
-    emissiveIntensity: CEILING_BOUNCE,
+    emissive: paint,
+    emissiveIntensity: smc ? (smc.light ? SMC_BOUNCE : SMC_BOUNCE_DARK) : CEILING_BOUNCE,
   });
   ceilingMaterial.onBeforeCompile = (shader) => {
     // Same room-corner darkening and tone mapping as the walls (surfaces.ts), without tiles.
@@ -84,6 +91,7 @@ export function buildViewerCeiling(room: RoomDimensions) {
   lamp.position.set(0, room.heightMm - 2, room.depthMm * 0.52);
   lamp.castShadow = false;
   lamp.receiveShadow = false;
+  lamp.visible = !smc || smc.light;
   group.add(ceiling, lamp);
 
   let disposed = false;

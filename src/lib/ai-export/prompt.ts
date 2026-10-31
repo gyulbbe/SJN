@@ -179,6 +179,8 @@ function surfaceSentence(surface: FluxSurface, compact = false): string {
 
 /** A view that shows the ceiling: said plainly, as it is, so the model has nothing to invent there. */
 export function ceilingSentence(ceiling: FluxCeiling): string {
+  if (ceiling.material === 'smc')
+    return `The ceiling is a moulded ${colorWords(ceiling.color)} SMC bathroom ceiling with ${ceiling.light === 'none' ? 'no light fixture' : 'one flat square light panel'}.`;
   return `The ceiling is plain ${colorWords(ceiling.color)} paint with one flat square light panel.`;
 }
 

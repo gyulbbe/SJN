@@ -206,6 +206,8 @@ export type Scene = {
   room?: RoomDefinition;
   /** Scene-specific, explicitly authored wall structure; absent for legacy and blank scenes. */
   wallFeatures?: WallFeatureV1[];
+  /** The SMC ceiling option (After designs of a room only): shown, not priced. Its light is its panel and the room's downlight together. */
+  ceiling?: { kind: 'smc'; light: boolean };
   originalAssetId: string;
   previewAssetId: string;
   backgroundAssetId?: string;

@@ -213,6 +213,10 @@ const colorVector = (input: ColorAdjust) => {
     : DEFAULT_COLOR;
   return new Vector4(c.exposure, c.contrast, c.saturation, c.warmth);
 };
+/** In-room eye views close the room; a scene's SMC ceiling shows while the camera is under it (the AI's top view looks down from above). */
+const ceilingShown = (scene: Scene, state: RoomViewState, camera: { position: { y: number } }) =>
+  state.projection === 'room-eye' ||
+  (!!scene.ceiling && !!scene.room && camera.position.y < scene.room.heightMm);
 /** Cost, name and application revision fields do not enter geometry/texture preparation. */
 export function roomViewerSceneKey(scene: Scene, materials: Record<string, MaterialVersion>): string {
   const ids = [
@@ -409,8 +413,15 @@ export class RoomViewerRenderer {
     world.environment = this.environment?.texture ?? null;
     world.environmentIntensity = this.environment?.intensity ?? 1;
     const lights = createRoomLightRig(room, { environment: !!this.environment });
-    // Closes the room for in-room eye views only; hidden for orbit and photo cameras.
-    const ceiling = buildViewerCeiling(room);
+    // Closes the room for in-room eye views only (a scene's SMC ceiling: every view).
+    const ceiling = buildViewerCeiling(room, scene.ceiling);
+    // An SMC ceiling with its light off: the downlight goes with the panel; the bounce stays.
+    if (scene.ceiling && !scene.ceiling.light)
+      for (const light of lights)
+        if ((light as SpotLight).isSpotLight) {
+          (light as SpotLight).intensity = 0;
+          light.castShadow = false;
+        }
     world.add(surfaces.group, fixtures.group, ceiling.group, ...lights);
     // Objects standing on the floor get a soft contact shade (Before and After alike).
     const contacts: Box3[] = [];
@@ -656,7 +667,7 @@ export class RoomViewerRenderer {
     const { camera, rect, targetWidth, size, state } = frame;
     prepared.surfaces.updateView(camera);
     prepared.fixtures.updateView(camera);
-    prepared.ceiling.setVisible(state.projection === 'room-eye');
+    prepared.ceiling.setVisible(ceilingShown(prepared.source, state, camera));
     // With a backdrop the room is drawn over a clear target; the output pass lays it on the colour.
     const background = prepared.world.background;
     const clearColor = this.backdrop ? this.renderer.getClearColor(new Color()) : undefined;
@@ -1203,7 +1214,7 @@ export class RoomViewerRenderer {
     const after = this.prepared.after;
     after.surfaces.updateView(camera);
     after.fixtures.updateView(camera);
-    after.ceiling.setVisible(state.projection === 'room-eye');
+    after.ceiling.setVisible(ceilingShown(after.source, state, camera));
     const surfaces = new Map(after.source.surfaces.map((surface) => [surface.id, surface]));
     const regions: { key: string; kind: 'wall' | 'floor' }[] = [];
     const regionFor = (key: string, kind: 'wall' | 'floor') => {
@@ -1353,7 +1364,7 @@ export class RoomViewerRenderer {
     const after = this.prepared!.after;
     after.surfaces.updateView(camera);
     after.fixtures.updateView(camera);
-    after.ceiling.setVisible(state.projection === 'room-eye');
+    after.ceiling.setVisible(ceilingShown(after.source, state, camera));
     const fixtures = new Set<Mesh>();
     after.fixtures.group.traverse((node) => {
       if (node instanceof Mesh) fixtures.add(node);

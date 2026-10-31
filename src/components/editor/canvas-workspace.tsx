@@ -17,6 +17,7 @@ import { useRepositories } from '@/components/repository-context';
 import { useEditor } from '@/lib/editor-store';
 import { getActiveDesign, getEditingScene } from '@/lib/comparison';
 import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
+import { CeilingOptions } from '@/components/rooms/ceiling-options';
 import { homography, inverseHomography, transformPoint } from '@/lib/render/math';
 import { roomFaceSizeMm } from '@/lib/room-geometry';
 import { createRegionSurface, REGION_MIN_MM, type RegionBounds } from '@/lib/room-surface-regions';
@@ -499,6 +500,7 @@ export default function CanvasWorkspace({
         </button>
         <WallFeatureToolButton tool={wallTool} compact />
         <WallFeatureToolOptions tool={wallTool} compact />
+        <CeilingOptions compact />
         {st.tool === 'region' && (
           <button
             title="경계를 바탕 타일 줄눈에 맞춤"

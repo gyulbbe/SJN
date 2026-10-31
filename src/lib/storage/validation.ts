@@ -337,6 +337,7 @@ const wallFeatureSchema = z.discriminatedUnion('kind', [
 const sceneObject = z.object({
   room: roomDefinitionSchema.optional(),
   wallFeatures: z.array(wallFeatureSchema).max(WALL_FEATURE_MAX_COUNT).optional(),
+  ceiling: z.strictObject({ kind: z.literal('smc'), light: z.boolean() }).optional(),
   originalAssetId: id,
   previewAssetId: id,
   backgroundAssetId: id.optional(),
@@ -350,6 +351,12 @@ const sceneObject = z.object({
 const imageLimit = (value: { imageWidth: number; imageHeight: number }) =>
   value.imageWidth * value.imageHeight <= 40_000_000;
 function refineSceneWallFeatures(value: z.infer<typeof sceneObject>, context: z.RefinementCtx) {
+  if (value.ceiling && !value.room)
+    context.addIssue({
+      code: 'custom',
+      message: 'SMC 천장은 방 치수가 있는 공간에서만 쓸 수 있어요.',
+      path: ['ceiling'],
+    });
   for (const issue of validateWallFeatures(value.room, value.wallFeatures))
     context.addIssue({ code: 'custom', message: issue.message, path: issue.path });
   const ids = [
@@ -366,10 +373,12 @@ const scene = sceneObject
   .refine(imageLimit, '최대 4천만 화소까지 지원해요.')
   .superRefine(refineSceneWallFeatures);
 /** Regions are After design work only; the shared Before and baseline never hold them. */
-const beforeScene = scene.refine(
-  (value) => !value.surfaces.some((surface) => surface.region),
-  '부분 타일은 After 시안에만 둘 수 있어요.',
-);
+const beforeScene = scene
+  .refine(
+    (value) => !value.surfaces.some((surface) => surface.region),
+    '부분 타일은 After 시안에만 둘 수 있어요.',
+  )
+  .refine((value) => !value.ceiling, 'SMC 천장은 After 시안에만 둘 수 있어요.');
 const unit = z.number().finite().min(0).max(1);
 const reconstructionTileSchema = z.object({
   groutColor: z

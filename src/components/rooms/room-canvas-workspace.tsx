@@ -21,6 +21,7 @@ import {
 import type { AssetReader } from '@/lib/render/compositor';
 import { projectDesignPreviewRoomContext } from '@/lib/render/design-preview-context';
 import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
+import { CeilingOptions } from './ceiling-options';
 import { RoomViewerRenderer } from '@/lib/room-viewer/renderer';
 import { applyWallContact, WALL_SNAP_MM, wallDistanceMm } from '@/lib/room-wall-contact';
 import {
@@ -600,6 +601,7 @@ export default function RoomCanvasWorkspace({
         </button>
         <WallFeatureToolButton tool={wallTool} compact={false} />
         <WallFeatureToolOptions tool={wallTool} compact={false} />
+        <CeilingOptions compact={false} />
         {st.tool === 'region' && (
           <button
             className={'btn small ' + (regionSnap ? 'active' : '')}

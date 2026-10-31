@@ -98,7 +98,9 @@ export const fluxSurfaceSchema = z
  */
 export const fluxCeilingSchema = z.strictObject({
   color: fluxHex,
-  light: z.enum(['flat-panel']),
+  light: z.enum(['flat-panel', 'none']),
+  /** A scene's SMC ceiling; absent for the viewer's plain painted one. */
+  material: z.enum(['smc']).optional(),
 });
 /**
  * The composite export sends the room without its fixtures (they are put back on top afterwards):
