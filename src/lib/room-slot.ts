@@ -52,7 +52,7 @@ function anchorShare(anchor: Point, bounds: ProductBounds) {
 }
 
 /** The face's length along u and along v (mm), from the same points the rest of the room uses. */
-function faceLengths(room: RoomDimensions, face: RoomFace) {
+export function faceLengths(room: RoomDimensions, face: RoomFace) {
   const origin = roomFacePoint(room, face, 0, 0);
   return {
     u: roomFacePoint(room, face, 1, 0).distanceTo(origin),
@@ -143,6 +143,16 @@ const rectAt = (face: RoomFace, box: SlotBox, s: number, t: number): Rect => {
 const overlaps = (a: Rect, b: Rect, gap: number) =>
   a.s0 < b.s1 + gap && b.s0 < a.s1 + gap && a.t0 < b.t1 + gap && b.t0 < a.t1 + gap;
 const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
+
+/** Whether two boxes on a face overlap or stand closer than the free space kept between products. */
+export function boxesClose(room: RoomDimensions, face: RoomFace, a: PlacedBox, b: PlacedBox): boolean {
+  const length = faceLengths(room, face);
+  return overlaps(
+    rectAt(face, a, a.u * length.u, a.v * length.v),
+    rectAt(face, b, b.u * length.u, b.v * length.v),
+    SLOT_GAP_MM,
+  );
+}
 
 /**
  * The free place nearest the default one. The default place wins when the whole box is on the face

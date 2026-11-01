@@ -1,4 +1,5 @@
 import { materialKindRowSchema } from '../material-kinds';
+import { loadPublicLayouts } from '../catalog/client';
 import { z } from 'zod';
 import { normalizeProjectDocument, projectComparisons, projectScenes } from '../comparison';
 import {
@@ -436,6 +437,18 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
         };
       },
       find: denied,
+      async fixtureLayouts() {
+        const draft = current();
+        const data = await loadPublicLayouts(deps.fetch);
+        if (read()?.document.id !== draft.document.id) throw new Error('체험 공간이 바뀌었어요.');
+        // Known here, their images can be read and a draft using them saved, with no further request.
+        currentPlacements ??= new Map();
+        for (const placement of data.placements) {
+          placements.set(placement.versionId, placement);
+          currentPlacements.set(placement.materialId, placement);
+        }
+        return data;
+      },
       async getVersion(id) {
         current();
         const placement = placements.get(id);

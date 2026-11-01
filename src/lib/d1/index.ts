@@ -1,4 +1,5 @@
 import { requireActiveAdmin } from '../admin/access';
+import { manageFixtureLayouts } from '../catalog/layouts-server';
 import { manageCatalog } from '../catalog/server';
 import { assets } from './assets';
 import { cleanup } from './cleanup';
@@ -47,6 +48,7 @@ export async function handleD1Request(
     const operation = body.operation;
     if (
       resource === 'catalog' ||
+      resource === 'fixture-layouts' ||
       (resource === 'materials' &&
         !['list', 'getVersion', 'page', 'getVersions', 'find'].includes(String(operation)))
     ) {
@@ -78,11 +80,13 @@ export async function handleD1Request(
         ? await projects(ctx, body)
         : resource === 'catalog'
           ? await manageCatalog(ctx, body)
-          : resource === 'project-materials'
-            ? await materials(ctx, body, true)
-            : resource === 'materials'
-              ? await materials(ctx, body)
-              : await cleanup(ctx, body);
+          : resource === 'fixture-layouts'
+            ? await manageFixtureLayouts(ctx, body)
+            : resource === 'project-materials'
+              ? await materials(ctx, body, true)
+              : resource === 'materials'
+                ? await materials(ctx, body)
+                : await cleanup(ctx, body);
     return mutating ? mutationResponse(result) : json(result);
   } catch (error) {
     // An uncertain response or simultaneous retry can lose the mutation UNIQUE race.

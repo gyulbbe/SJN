@@ -1,6 +1,6 @@
 import { getRuntimeEnvironment, continueInBackground } from '../platform/runtime';
 import { configuredStorage, blockedStatus, type RuntimeSettings, type StorageStatus } from './config';
-import type { D1Bindings } from '../d1/types';
+import type { D1Bindings, D1Resource } from '../d1/types';
 import { detectServiceLimit, serviceLimitResponse } from '../platform/service-limit';
 
 export function runtimeSelection() {
@@ -94,10 +94,7 @@ export function serverError(error: unknown): Response {
   );
 }
 
-export async function d1Route(
-  resource: 'projects' | 'materials' | 'assets' | 'cleanup' | 'role' | 'catalog' | 'project-materials',
-  request: Request,
-) {
+export async function d1Route(resource: D1Resource, request: Request) {
   try {
     const env = requireD1Environment();
     if (!['GET', 'HEAD'].includes(request.method)) {

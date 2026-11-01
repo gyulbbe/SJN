@@ -61,14 +61,7 @@ import DesignComparison from '@/components/designs/design-comparison';
 import { getEditingScene, projectScenes } from '@/lib/comparison';
 import ReconstructionReviewPanel from '@/components/reconstruction/reconstruction-review';
 import reconstructionStyles from '@/components/reconstruction/reconstruction.module.css';
-import {
-  DEFAULT_COLOR,
-  EMPTY_MASK,
-  type MaterialKind,
-  type MaterialVersion,
-  type Scene,
-  type ProjectDocument,
-} from '@/lib/types';
+import { type MaterialKind, type MaterialVersion, type Scene, type ProjectDocument } from '@/lib/types';
 import { AssetImage } from '@/components/materials/asset-image';
 import { useSharedCatalogAdmin } from '@/components/materials/shared-access';
 import { fixturesOpenForTests } from '@/lib/fixture-access';
@@ -110,7 +103,19 @@ import { projectPhotoLight } from '@/lib/reconstruction/photo-lighting';
 import type { RoomDefinition, RoomFace } from '@/lib/room-types';
 import { renderRoomBackground } from '@/lib/room-background';
 import { projectWallFeatureResizeError, roomResetWarnings } from '@/lib/room-editing';
-import { createRoomPlacement, projectRoomFixture } from '@/lib/room-fixtures';
+import { createPlacedFixture, createRoomPlacement, projectRoomFixture } from '@/lib/room-fixtures';
+import {
+  keptByLayout,
+  layoutBlockedReason,
+  layoutItemsFromScene,
+  layoutNotes,
+  layoutView,
+  placeLayout,
+  type PreparedItem,
+} from '@/lib/fixture-layouts';
+import type { PublicLayout } from '@/lib/fixture-layout-contract';
+import type { PublicPlacement } from '@/lib/catalog/placement-contract';
+import { FixtureLayoutsPanel, RegisterLayoutDialog, useFixtureLayouts } from './fixture-layouts-panel';
 import { homography, transformPoint } from '@/lib/render/math';
 import { detectSurfaces } from '@/lib/render/auto-surfaces';
 import type { RoomSegmentation } from '@/lib/segmentation';
@@ -189,6 +194,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     [materials, setMaterials] = useState<Record<string, MaterialVersion>>({}),
     [error, setError] = useState(''),
     [tab, setTab] = useState<'wall' | 'floor' | 'fixtures'>('floor'),
+    // The 기본 배치 tab shows in place of the drawer, whose tab and list stay as they were (no request).
+    [layoutsOpen, setLayoutsOpen] = useState(false),
+    [placingLayout, setPlacingLayout] = useState(''),
+    [registering, setRegistering] = useState(false),
     // The 위생도기 tab's kind chip; kept while the editor is open.
     [fixtureKind, setFixtureKind] = useState<'all' | MaterialKind>('all'),
     [search, setSearch] = useState(''),
@@ -362,11 +371,17 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     const selected =
       current.project &&
       getEditingScene(current.project, current.editing).surfaces.find((s) => s.id === st.selection);
-    if (selected) setTab(selected.kind);
+    if (selected) {
+      setTab(selected.kind);
+      setLayoutsOpen(false);
+    }
   }, [st.selection, id, st.editing]);
   const pendingKind = st.pendingRegion?.kind;
   useEffect(() => {
-    if (pendingKind) setTab(pendingKind);
+    if (pendingKind) {
+      setTab(pendingKind);
+      setLayoutsOpen(false);
+    }
   }, [pendingKind]);
   useEffect(() => {
     if (!canPlaceFixtures && tab === 'fixtures') setTab('floor');
@@ -846,6 +861,18 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     legacyOpen,
   ]);
   const scene = st.draft || (st.project ? getEditingScene(st.project, st.editing) : undefined);
+  const layouts = useFixtureLayouts(repositories.materials.fixtureLayouts, layoutsOpen, scopeKey);
+  const layoutDisabledReason = layoutBlockedReason({
+    writable,
+    before: st.editing === 'before',
+    hasRoom: !!scene?.room,
+  });
+  const layoutRegisterReason =
+    st.editing === 'before' || !scene?.room
+      ? 'After 시안의 공간에서 등록할 수 있어요.'
+      : !scene.fixtures.length
+        ? '먼저 위생도기 탭에서 제품을 놓아 주세요.'
+        : '';
   async function leave(path: string) {
     if (!flushMaterialUsageInputs()) return;
     useEditor.getState().commit();
@@ -1157,22 +1184,16 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
         return;
       let slot: FreeSlot | undefined;
       st.change((s) => {
-        const fixture = {
+        const fixture = createPlacedFixture({
           id: fixtureId,
-          name: m.name,
-          materialVersionId: m.id,
+          material: m,
           viewIndex,
+          view,
           position,
           width,
           height: (((width * scene.imageWidth) / scene.imageHeight) * asset.height) / asset.width,
-          rotation: 0,
-          anchor: { ...view.anchor },
-          locked: false,
-          shadow: { x: 0, y: 0.005, opacity: 0.3, blur: 0.015, scale: 0.7 },
-          occlusion: EMPTY_MASK(),
-          color: { ...DEFAULT_COLOR },
           roomPlacement,
-        };
+        });
         if (previous?.roomPlacement && fixture.roomPlacement)
           Object.assign(fixture.roomPlacement, {
             face: previous.roomPlacement.face,
@@ -1223,6 +1244,115 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     }
     st.setMode('after');
     setCatalogOpen(false);
+  }
+  /**
+   * Places a 기본 배치: every material and photo is read first, then one change (one undo step, one
+   * save). The products not locked make way (src/lib/fixture-layouts.ts).
+   */
+  async function applyLayout(layout: PublicLayout, placements: PublicPlacement[]) {
+    const captured = useEditor.getState();
+    const project = captured.project;
+    const room = scene?.room;
+    if (!writable || !room || !activeDesign || !project || captured.draft || captured.editing === 'before')
+      return;
+    const request = ++applyRequest.current;
+    setError('');
+    setDetectionStatus('');
+    setDetectionNotice('');
+    setPlacingLayout(layout.id);
+    const stale = () => {
+      const current = useEditor.getState();
+      return (
+        applyRequest.current !== request ||
+        current.project?.id !== project.id ||
+        current.project.editRevision !== project.editRevision ||
+        current.project.activeDesignId !== project.activeDesignId ||
+        current.editing !== captured.editing ||
+        !!current.draft
+      );
+    };
+    try {
+      const byMaterial = new Map(placements.map((placement) => [placement.materialId, placement]));
+      const versionIds = [
+        ...new Set(layout.items.flatMap((item) => byMaterial.get(item.materialId)?.versionId ?? [])),
+      ];
+      const unread = versionIds.filter((versionId) => !materialsRef.current[versionId]);
+      const batch = unread.length
+        ? await repositories.materials.getVersions(unread, { withCurrent: true })
+        : { versions: [], current: [] };
+      if (stale()) return;
+      const read = Object.fromEntries(batch.versions.map((version) => [version.id, version]));
+      const known = { ...materialsRef.current, ...read };
+      const otherPhoto: { name: string; missing: string; used: string }[] = [];
+      let missing = layout.missing;
+      const chosen = layout.items.flatMap((item) => {
+        const placement = byMaterial.get(item.materialId);
+        const material = placement && known[placement.versionId];
+        const choice = material && layoutView(material, item);
+        const view = choice && material.views[choice.index];
+        if (!material || !choice || !view) {
+          missing++;
+          return [];
+        }
+        if (choice.missing)
+          otherPhoto.push({ name: material.name, missing: choice.missing, used: view.direction });
+        return [{ item, material, viewIndex: choice.index, view }];
+      });
+      const prepared: PreparedItem[] = await Promise.all(
+        chosen.map(async ({ item, material, viewIndex, view }) => {
+          const asset = await repositories.assets.get(view.assetId);
+          const { imageAspect, contentBounds } = await createRoomPlacement(material, asset, item.face);
+          return { item, material, viewIndex, imageAspect, contentBounds };
+        }),
+      );
+      if (stale()) return;
+      // The store must know the new materials before the change, or a product against a wall is not
+      // drawn there until the next change (room-editing.ts reprojectFixture).
+      materialsRef.current = known;
+      setMaterials((previous) => ({ ...previous, ...read }));
+      if (batch.current.length)
+        setLatest((previous) => [
+          ...previous.filter(
+            (entry) => !batch.current.some((item) => item.material.id === entry.material.id),
+          ),
+          ...batch.current,
+        ]);
+      useEditor.getState().initializeUsage(known);
+      let placed: ReturnType<typeof placeLayout> | undefined;
+      let replaced = 0;
+      st.change((s) => {
+        if (!s.room) return;
+        const kept = keptByLayout(s.fixtures);
+        replaced = s.fixtures.length - kept.length;
+        placed = placeLayout({
+          room: s.room,
+          aspect: s.imageWidth / s.imageHeight,
+          registeredRoom: layout.room,
+          items: prepared,
+          kept,
+          materials: known,
+          newId: () => crypto.randomUUID(),
+        });
+        s.fixtures = [...kept, ...placed.fixtures];
+      });
+      st.select(null);
+      st.setTool('select');
+      st.setMode('after');
+      setCatalogOpen(false);
+      const result = placed as ReturnType<typeof placeLayout> | undefined;
+      const notes = layoutNotes({
+        replaced,
+        missing,
+        otherPhoto,
+        tooBig: result?.tooBig ?? [],
+        crowded: result?.crowded ?? [],
+      });
+      if (notes.length) setDetectionNotice(notes.join(' '));
+    } catch (e) {
+      if (!stale()) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPlacingLayout('');
+    }
   }
   async function resizeRoom(room: RoomDefinition) {
     const captured = useEditor.getState();
@@ -2132,9 +2262,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               </div>
               <div className="catalog-tabs">
                 <button
-                  className={tab === 'wall' ? 'active' : ''}
-                  aria-pressed={tab === 'wall'}
+                  className={!layoutsOpen && tab === 'wall' ? 'active' : ''}
+                  aria-pressed={!layoutsOpen && tab === 'wall'}
                   onClick={() => {
+                    setLayoutsOpen(false);
                     setTab('wall');
                     st.select(null);
                     st.setTool('select');
@@ -2145,9 +2276,10 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                   벽 타일
                 </button>
                 <button
-                  className={tab === 'floor' ? 'active' : ''}
-                  aria-pressed={tab === 'floor'}
+                  className={!layoutsOpen && tab === 'floor' ? 'active' : ''}
+                  aria-pressed={!layoutsOpen && tab === 'floor'}
                   onClick={() => {
+                    setLayoutsOpen(false);
                     setTab('floor');
                     st.select(null);
                     st.setTool('select');
@@ -2157,11 +2289,27 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 >
                   바닥 타일
                 </button>
+                {!adminContext && (
+                  <button
+                    className={layoutsOpen ? 'active' : ''}
+                    aria-pressed={layoutsOpen}
+                    onClick={() => {
+                      setLayoutsOpen(true);
+                      st.select(null);
+                      st.setTool('select');
+                      applyRequest.current++;
+                      setDetectionStatus('');
+                    }}
+                  >
+                    기본 배치
+                  </button>
+                )}
                 {canPlaceFixtures && (
                   <button
-                    className={tab === 'fixtures' ? 'active' : ''}
-                    aria-pressed={tab === 'fixtures'}
+                    className={!layoutsOpen && tab === 'fixtures' ? 'active' : ''}
+                    aria-pressed={!layoutsOpen && tab === 'fixtures'}
                     onClick={() => {
+                      setLayoutsOpen(false);
                       setTab('fixtures');
                       applyRequest.current++;
                       setDetectionStatus('');
@@ -2172,7 +2320,7 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                 )}
               </div>
               {/* The kinds take the place of the old placing tip: two rows of cards stay in view. */}
-              {tab === 'fixtures' && (
+              {!layoutsOpen && tab === 'fixtures' && (
                 <FixtureKindChips
                   value={fixtureKind}
                   onChange={(kind) => {
@@ -2182,8 +2330,19 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                   }}
                 />
               )}
+              {layoutsOpen && (
+                <FixtureLayoutsPanel
+                  state={layouts.state}
+                  disabledReason={layoutDisabledReason}
+                  busyId={placingLayout}
+                  onPick={(layout, placements) => void applyLayout(layout, placements)}
+                  onRetry={() => void layouts.reload()}
+                  onRegister={canManageCatalog ? () => setRegistering(true) : undefined}
+                  registerReason={layoutRegisterReason}
+                />
+              )}
               {/* One row in a wide panel (the drawer), two rows in the narrow desktop panel. */}
-              <div className="catalog-query">
+              <div className={`catalog-query ${layoutsOpen ? '!hidden' : ''}`}>
                 {tab !== 'fixtures' && (
                   <label className="catalog-target">
                     적용 위치
@@ -2233,12 +2392,12 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               </div>
               <MaterialFacets
                 compact
-                className="catalog-facets"
+                className={`catalog-facets ${layoutsOpen ? '!hidden' : ''}`}
                 options={catalogFacets}
                 value={facets}
                 onChange={setFacets}
               />
-              <div className="catalog-grid" ref={drawerGrid}>
+              <div className={`catalog-grid ${layoutsOpen ? '!hidden' : ''}`} ref={drawerGrid}>
                 {items.length === 0 && drawer.status === 'loading' && (
                   <div className="empty-catalog" role="status">
                     자재를 불러오는 중…
@@ -2481,6 +2640,22 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             <X size={15} />
           </button>
         </div>
+      )}
+      {registering && canManageCatalog && scene.room && (
+        <RegisterLayoutDialog
+          registered={layoutItemsFromScene(scene, materials)}
+          room={{
+            widthMm: scene.room.widthMm,
+            depthMm: scene.room.depthMm,
+            heightMm: scene.room.heightMm,
+          }}
+          userId={userId}
+          onClose={() => setRegistering(false)}
+          onSaved={() => {
+            setRegistering(false);
+            void layouts.reload();
+          }}
+        />
       )}
       {form && canManageCatalog && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="신규 자재 등록">

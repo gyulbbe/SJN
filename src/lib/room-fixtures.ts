@@ -1,6 +1,14 @@
 import { Vector3 } from 'three';
 import type { RoomDefinition, RoomDimensions, RoomFace, RoomPlacement, ProductBounds } from './room-types';
-import type { AssetRecord, FixtureInstance, MaterialVersion, Point, Quad } from './types';
+import {
+  DEFAULT_COLOR,
+  EMPTY_MASK,
+  type AssetRecord,
+  type FixtureInstance,
+  type MaterialVersion,
+  type Point,
+  type Quad,
+} from './types';
 import { viewDirection, type ProductDirection } from './product-direction';
 import { createRoomCamera, roomFacePoint } from './room-geometry';
 import { homography, transformPoint } from './render/math';
@@ -234,6 +242,39 @@ export function productContentBounds(asset: AssetRecord): Promise<ProductBounds>
   boundsCache.set(asset.id, task);
   void task.catch(() => boundsCache.delete(asset.id));
   return task;
+}
+/** The shadow a newly placed product starts with. */
+const NEW_FIXTURE_SHADOW = { x: 0, y: 0.005, opacity: 0.3, blur: 0.015, scale: 0.7 };
+/**
+ * A newly placed photo product, before it is drawn (one kind of product, one set of starting values:
+ * a product picked from the drawer and one of a 기본 배치 both start here).
+ */
+export function createPlacedFixture(input: {
+  id: string;
+  material: Pick<MaterialVersion, 'id' | 'name'>;
+  viewIndex: number;
+  view: Pick<MaterialVersion['views'][number], 'anchor'>;
+  roomPlacement?: RoomPlacement;
+  position?: Point;
+  width?: number;
+  height?: number;
+}): FixtureInstance {
+  return {
+    id: input.id,
+    name: input.material.name,
+    materialVersionId: input.material.id,
+    viewIndex: input.viewIndex,
+    position: input.position ?? { x: 0.5, y: 0.77 },
+    width: input.width ?? 0.24,
+    height: input.height ?? 0.24,
+    rotation: 0,
+    anchor: { ...input.view.anchor },
+    locked: false,
+    shadow: { ...NEW_FIXTURE_SHADOW },
+    occlusion: EMPTY_MASK(),
+    color: { ...DEFAULT_COLOR },
+    roomPlacement: input.roomPlacement,
+  };
 }
 export async function createRoomPlacement(
   material: MaterialVersion,

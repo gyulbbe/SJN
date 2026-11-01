@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import type { MaterialCard } from '../catalog/cards';
 import type { ListImagePage } from '../d1/list-images';
+import type { PublicLayouts } from '../fixture-layout-contract';
 import type { LibraryScope, MaterialPage, MaterialPageQuery } from '../catalog/paging';
 /** A complete in-memory project export; imported together or not at all. */
 export type ProjectResourceBundle = {
@@ -40,6 +41,8 @@ export interface MaterialRepository {
   /** Versions in one request (up to 100 per call; more are split). */
   getVersions(ids: string[], options?: { withCurrent?: boolean }): Promise<VersionBatch>;
   find(match: ReconstructionMatch): Promise<MaterialVersion | null>;
+  /** 기본 배치 and what is needed to place them (a member's and a guest's; docs/fixture-layouts-results-20261101.md). */
+  fixtureLayouts?(): Promise<PublicLayouts>;
   /** Administrator list image backfill: card images and whether each has a list image (by ids or a page). */
   listImages?(
     request: { ids: string[] } | { cursor?: string },

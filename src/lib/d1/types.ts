@@ -45,4 +45,11 @@ export interface D1Actor {
   isAdmin: boolean;
 }
 export type D1Resource =
-  'projects' | 'materials' | 'assets' | 'cleanup' | 'role' | 'catalog' | 'project-materials';
+  | 'projects'
+  | 'materials'
+  | 'assets'
+  | 'cleanup'
+  | 'role'
+  | 'catalog'
+  | 'project-materials'
+  | 'fixture-layouts';

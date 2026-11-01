@@ -8,6 +8,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { applyD1Migrations, allD1Migrations } from '../../tests/helpers/d1-migrations';
 import { handleD1Request } from '../../src/lib/d1';
 import { publicMaterials, publicImage, publicPlacement } from '../../src/lib/catalog/public';
+import { publicLayouts } from '../../src/lib/catalog/layouts-server';
 import type { D1Bindings, D1Resource } from '../../src/lib/d1/types';
 import type { MaterialVersion, ProjectDocument } from '../../src/lib/types';
 
@@ -84,6 +85,7 @@ export async function authenticatedApp(
     if (path === '/api/catalog/materials') return fulfill(route, await publicMaterials(env, request));
     if (path === '/api/catalog/images') return fulfill(route, await publicImage(env, request));
     if (path === '/api/catalog/placement') return fulfill(route, await publicPlacement(env, request));
+    if (path === '/api/catalog/layouts') return fulfill(route, await publicLayouts(env));
     if (!signedIn) return route.fulfill({ status: 401, json: { error: '로그인이 필요해요.' } });
     if (path === '/api/admin/users') return fulfill(route, await handleAdminUsers(request, env, actor));
     if (path === '/api/admin/projects') return fulfill(route, await adminProjects({ env, actor }, request));

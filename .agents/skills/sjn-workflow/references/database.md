@@ -32,6 +32,7 @@
 | [0009](../../../../migrations/d1/0009_material_list.sql) | 목록 요약 `d1_material_list`(버전마다: 자재 상태 사본·종류·용도 lane·코드·검색 열·가시성 `class`), `d1_material_list_facets`(분류 값), `d1_material_list_counts`(공유 현재 자재 수). 트리거가 자재·버전의 모든 쓰기에서 갱신. 준비 검사에 표 3개 추가, 메타 버전은 그대로 |
 | [0010](../../../../migrations/d1/0010_material_order.sql) | 요약 두 표에 정렬 열 `prio`·`name_key`(`lower(trim(이름))` 앞 100자)·`created_at`(자재 등록 시각), 정렬 3계열(우선순위·이름·최신 등록) × 0009 모양 5개 = 부분 인덱스 15개, 버전 트리거 재작성. `d1_materials.priority`도 더했지만 0011부터 쓰지 않음(비움). 준비 검사에 새 열·인덱스 이름 추가, 메타 버전은 그대로 |
 | [0012](../../../../migrations/d1/0012_material_kinds.sql) | 위생도기 종류 표 `d1_material_kinds`(`code` PK, 이름·정규화 이름 UNIQUE, 표시 순서 NULL 또는 0~9999, 사용, 기본 여부): 기본 13행(변기~낮은 칸막이, 기타). 관리자가 더한 종류의 코드(`k-`+10자)는 자재 `category`에 저장. 부분 인덱스 `d1_versions_added_kind`(`d1_material_versions(category) WHERE substr(category,1,2)='k-'`, 지우기 전 사용 확인). 기존 자재·요약은 다시 쓰지 않음. 준비 검사에 표·인덱스 이름 추가 |
+| [0013](../../../../migrations/d1/0013_fixture_layouts.sql) | 기본 배치 표 `d1_fixture_layouts`(이름·표시 순서·사용·`items_json`(자재 id)·`room_json`·`revision`·`created_by`). 행을 넣지 않고 기존 표를 다시 쓰지 않음. 준비 검사가 표를 요구하므로 원격 적용은 main 병합 전. 소스에 추가만 했고 원격 적용은 미확인 |
 | [0011](../../../../migrations/d1/0011_brand_order.sql) | 분류 표시 순서 `display_order`(`d1_catalog_options`·`d1_material_subcategories`, NULL=빈칸 또는 0~9999, 모두 빈칸으로 시작; `sort_order`는 더 읽지 않음). 요약 `prio` = 버전에 연결된 브랜드의 표시 순서(없으면 10000): 버전 트리거 재작성, 브랜드 연결·해제·순서 변경 트리거, 자재별 우선순위 비움(0010 트리거 이름은 유지). 준비 검사에 열·트리거 이름 추가 |
 
 `0001~0010`은 수정하지 않는다. `0005`는 기존 회원을 active/revision 0으로 backfill하고 기존 역할·세션·자료를 보존한다. 신규 회원 상태 생성, 정지 시 세션 삭제, 정지 회원 session INSERT/UPDATE 거부는 SQL trigger로도 보장한다. `owner_id`·`current_version_id`는 기존 논리 관계이며 새 FK를 만들려고 기존 테이블을 재생성하지 않는다. 카탈로그·새 프로젝트 편집 범위의 참조는 FK를 사용한다.
@@ -51,6 +52,7 @@
 - 관리자 자산/버전은 해당 문서의 참조, 그 관리자·프로젝트에서 새로 만든 자료, 허용된 공용 카탈로그로 제한한다. 관계없는 회원 개인 자료는 제외한다. 별도 추적 테이블은 접근 범위이며 미사용 자료를 영구 보존하는 참조가 아니다.
 - 관리자 목록·읽기·변경·저장·관련 자료 접근은 `d1_admin_audit`에 기록한다. 역할/상태/revision 등의 작은 요약만 남기고 토큰·프로젝트 원문·사진·R2 키는 넣지 않는다. 감사 실패 시 보호 작업도 실패한다. 계정/프로젝트 삭제로 감사가 cascade되지 않지만 운영 DB 권한까지 막는 변조 방지 기능은 아니다.
 - [공용 카탈로그](../../../../src/lib/catalog/public.ts)의 GET 목록·표시 이미지·배치 API는 로그인 없이 shared/active/catalog 현재 버전만 제공한다. 목록과 배치 목록은 48개씩 나눈 쪽이다(`category·usage·q·facets·sort·options·cursor·limit`, `sort`는 기본값이면 빠짐). 배치는 `?ids=`로 쓴 자재만 확인할 수 있고 매개변수 없는 무제한 목록은 없다. [배치 DTO](../../../../src/lib/catalog/placement-contract.ts)는 버전 ID·규격·설치 방식·줄눈·표시 이미지와 배치 기준점만 포함하며 회원 정보·R2 키·전체 payload·원본·메시·source/product3d 참조를 공개하지 않는다. 배치 이미지가 일부라도 공개 불가하면 해당 자재의 배치 DTO는 제외하여 기존 뷰 인덱스를 보존한다. `/api/d1/**`와 관리자 API의 인증·소유권 검사는 유지한다.
+- [기본 배치](../../../../src/lib/catalog/layouts-server.ts): `GET /api/catalog/layouts`는 로그인 없이 사용 중인 배치와 자재의 공개 배치 정보만 준다(공개할 수 없는 자재는 빼고 개수만). `/api/d1/fixture-layouts`는 활성 관리자만 쓰고, 등록 때 모든 자재가 공개 공용 자재인지 서버에서 확인한다.
 - 일반 회원 모형은 `personal/project`로 제한된 생성 API를 쓴다. 자재 수정은 새 버전이고 기존 프로젝트의 과거 버전·연결 이미지·이름 스냅샷을 보존한다.
 
 ## 저장·정리
@@ -63,7 +65,7 @@ R2와 D1은 하나의 트랜잭션이 아니다. `stageObject`가 업로드 전�
 
 `npm run db:dev:migrate`는 `wrangler.dev.jsonc --local --persist-to .wrangler/development`의 로컬 DB에만 적용한다. 원격 `sjn`과 로컬 개발 DB는 2026-09-17 승인 후 0001~0006 적용을 완료했다. 원격 0007은 2026-09-23 적용을 마쳤다(위 확인 기준 참고). 이후 원격 변경은 승인된 대상과 미적용 목록을 다시 확인한다. migration 작성이나 문서 변경을 운영 적용 허가로 해석하지 않는다.
 
-빈 DB 0001~0012, 기존 DB upgrade, seed 중복 방지, FK·불변 참조·관리자 감사·정지·동시 변경·재시도를 격리 Miniflare로 검사한다. 주된 테스트는 `tests/d1-auth.test.ts`, `d1-admin-users.test.ts`, `admin-projects.test.ts`, `d1-storage.test.ts`, `d1-catalog.test.ts`, `d1-visibility-equivalence.test.ts`, `d1-material-paging-equivalence.test.ts`, `d1-material-list-sync.test.ts`, `d1-material-order.test.ts`(정렬·브랜드 우선순위·표시 순서 값), `d1-material-kinds.test.ts`(위생도기 종류·0012)다. 쿼리별 읽은 행 수는 `SJN_D1_COST=1 npx vitest run tests/d1-read-cost.test.ts`와 `tests/d1-material-paging-cost.test.ts`로 잰다. 아이디 가입·로그인·중복·정지·속도 제한은 `tests/d1-auth.test.ts`가 실제 Better Auth와 Miniflare D1로 검사한다. 브라우저 fixture와 로컬 Google provider를 실제 Google·운영 R2 검증으로 보고하지 않는다. 준비 확인은 읽기 전용이며 앱이 테이블을 자동 생성하지 않는다.
+빈 DB 0001~0013, 기존 DB upgrade, seed 중복 방지, FK·불변 참조·관리자 감사·정지·동시 변경·재시도를 격리 Miniflare로 검사한다. 주된 테스트는 `tests/d1-auth.test.ts`, `d1-admin-users.test.ts`, `admin-projects.test.ts`, `d1-storage.test.ts`, `d1-catalog.test.ts`, `d1-visibility-equivalence.test.ts`, `d1-material-paging-equivalence.test.ts`, `d1-material-list-sync.test.ts`, `d1-material-order.test.ts`(정렬·브랜드 우선순위·표시 순서 값), `d1-material-kinds.test.ts`(위생도기 종류·0012)다. 쿼리별 읽은 행 수는 `SJN_D1_COST=1 npx vitest run tests/d1-read-cost.test.ts`와 `tests/d1-material-paging-cost.test.ts`로 잰다. 아이디 가입·로그인·중복·정지·속도 제한은 `tests/d1-auth.test.ts`가 실제 Better Auth와 Miniflare D1로 검사한다. 브라우저 fixture와 로컬 Google provider를 실제 Google·운영 R2 검증으로 보고하지 않는다. 준비 확인은 읽기 전용이며 앱이 테이블을 자동 생성하지 않는다.
 
 관련 스키마·권한·참조·실행 경계가 바뀌면 이 요약과 [상세 설계](../../../../docs/database-design.md), [설정 가이드](../../../../docs/cloudflare-storage-setup.md)를 함께 갱신한다.
 

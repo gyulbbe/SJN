@@ -205,7 +205,7 @@ export async function publicPlacement(env: D1Bindings, request: Request): Promis
   return json({ ...rest, placements });
 }
 /** The current public versions of these materials (the old list's condition, by id). */
-async function currentPublic(env: D1Bindings, materialIds: string[]): Promise<PublicVersionRow[]> {
+export async function currentPublic(env: D1Bindings, materialIds: string[]): Promise<PublicVersionRow[]> {
   const rows = await env.DB.prepare(
     `SELECT m.id,v.id AS version_id,v.version,v.payload_json FROM json_each(?) q CROSS JOIN d1_materials m
      CROSS JOIN d1_material_versions v WHERE m.id=q.value AND v.id=m.current_version_id AND ${visible}

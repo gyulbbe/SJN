@@ -10,6 +10,7 @@ import type {
 import type { Repositories, VersionBatch } from './contracts';
 import { sharedAssetReads, versionBatches } from './batches';
 import { listImageRecord } from '../list-images';
+import { loadPublicLayouts } from '../catalog/client';
 import type { MaterialCard } from '../catalog/cards';
 import type { MaterialPage } from '../catalog/paging';
 import { StorageConflictError } from './references';
@@ -152,6 +153,7 @@ export function createCloudRepositories(mode: 'd1' = 'd1', userId = ''): Reposit
           }),
         ),
       find: (match) => invoke<MaterialVersion | null>('materials', 'find', { match }),
+      fixtureLayouts: () => loadPublicLayouts(),
       listImages: (request) => invoke('materials', 'listImages', request),
       getVersion: (id) => invoke<MaterialVersion>('materials', 'getVersion', { id }),
       create: (input) =>

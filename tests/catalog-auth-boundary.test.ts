@@ -4,6 +4,7 @@ const state = vi.hoisted(() => ({
   materials: vi.fn(),
   image: vi.fn(),
   placement: vi.fn(),
+  layouts: vi.fn(),
   env: {} as Record<string, unknown>,
 }));
 vi.mock('../src/lib/auth/d1', () => ({ getD1Actor: state.actor }));
@@ -15,11 +16,13 @@ vi.mock('../src/lib/catalog/public', () => ({
   publicImage: state.image,
   publicPlacement: state.placement,
 }));
+vi.mock('../src/lib/catalog/layouts-server', () => ({ publicLayouts: state.layouts }));
 import { GET as catalog } from '../src/app/api/catalog/materials/route';
 import { GET as image } from '../src/app/api/catalog/images/route';
 import { GET as placement } from '../src/app/api/catalog/placement/route';
+import { GET as layouts } from '../src/app/api/catalog/layouts/route';
 const listRequest = () => new Request('https://sjn.test/api/catalog/materials');
-const routes = [() => catalog(listRequest()), image, placement];
+const routes = [() => catalog(listRequest()), image, placement, layouts];
 beforeEach(() => {
   vi.resetAllMocks();
   state.env = {
@@ -28,6 +31,7 @@ beforeEach(() => {
     ASSET_BUCKET: { get: vi.fn() },
   };
   state.materials.mockResolvedValue(Response.json({ materials: [] }));
+  state.layouts.mockResolvedValue(Response.json({ layouts: [], placements: [] }));
   state.image.mockResolvedValue(new Response('public image'));
   state.placement.mockResolvedValue(Response.json({ placements: [] }));
 });

@@ -145,7 +145,7 @@ describe('migration 0012', { timeout: 60000 }, () => {
 
   it('upgrades a 0011 database without touching a material or list row; cost of the migration', async () => {
     const db = (await mf.getD1Database('UPGRADE')) as unknown as D1DatabaseLike;
-    await applyD1Migrations(db, allD1Migrations.slice(0, -1));
+    await applyD1Migrations(db, allD1Migrations.slice(0, allD1Migrations.indexOf('0012_material_kinds.sql')));
     // A material straight into the 0011 tables (the triggers fill the list summary).
     const payload = (id: string, materialId: string) =>
       JSON.stringify({
@@ -198,6 +198,11 @@ describe('migration 0012', { timeout: 60000 }, () => {
     );
     expect(cost.rowsWritten).toBeLessThanOrEqual(60);
     expect(await snapshot()).toBe(before);
+    // The readiness check also needs what came after 0012.
+    await applyD1Migrations(
+      db,
+      allD1Migrations.slice(allD1Migrations.indexOf('0012_material_kinds.sql') + 1),
+    );
     await expect(checkD1Storage({ ...env, DB: db } as D1Bindings)).resolves.toBeUndefined();
   });
 });

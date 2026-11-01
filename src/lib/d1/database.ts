@@ -278,6 +278,8 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
     'd1_material_subcategories',
     // 0012: the 위생도기 kinds an administrator manages.
     'd1_material_kinds',
+    // 0013: 기본 배치, the product sets an administrator registers.
+    'd1_fixture_layouts',
     'd1_material_version_options',
     'd1_storage_meta',
     'd1_projects',
