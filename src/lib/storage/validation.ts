@@ -323,16 +323,28 @@ const wallFeatureBase = {
   id,
   face: z.enum(['left', 'back', 'right']),
   leftMm: z.number().finite(),
-  topMm: z.number().finite(),
   widthMm: z.number().finite().positive(),
   depthMm: z.number().finite().positive().max(WALL_FEATURE_MAX_DEPTH_MM),
   source: z.literal('user'),
 };
 const wallFeatureSchema = z.discriminatedUnion('kind', [
   z
-    .object({ ...wallFeatureBase, kind: z.literal('closed-niche'), heightMm: z.number().finite().positive() })
+    .object({
+      ...wallFeatureBase,
+      kind: z.literal('closed-niche'),
+      topMm: z.number().finite(),
+      heightMm: z.number().finite().positive(),
+    })
     .strict(),
-  z.object({ ...wallFeatureBase, kind: z.literal('floor-alcove') }).strict(),
+  z.object({ ...wallFeatureBase, kind: z.literal('floor-alcove'), topMm: z.number().finite() }).strict(),
+  z
+    .object({
+      ...wallFeatureBase,
+      kind: z.literal('ledge'),
+      bottomMm: z.number().finite().nonnegative(),
+      heightMm: z.number().finite().positive(),
+    })
+    .strict(),
 ]);
 const sceneObject = z.object({
   room: roomDefinitionSchema.optional(),

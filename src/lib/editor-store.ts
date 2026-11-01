@@ -1,3 +1,8 @@
+import {
+  WALL_FEATURE_DEFAULT_DEPTH_MM,
+  WALL_LEDGE_DEFAULT_DEPTH_MM,
+  type WallFeatureShape,
+} from './wall-feature-editing';
 import { normalizeRoomView, resetRoomView, type RoomViewState } from './room-viewer/view-state';
 import { create } from 'zustand';
 import {
@@ -43,6 +48,10 @@ export type WallFeatureDrawing = {
   snap: boolean;
   /** The depth last applied in this editing session (the card's first value). */
   depthMm: number;
+  /** What a drag or a click makes next: a 벽 홈 or a 젠다이. */
+  shape: WallFeatureShape;
+  /** The depth last applied to a 젠다이, which has its own usual size. */
+  ledgeDepthMm: number;
 };
 export type RoomResizeAssets = Pick<
   Scene,
@@ -121,7 +130,12 @@ function selectionFor(project: ProjectDocument, side: EditingSide, selected: str
     ? selected
     : null;
 }
-const WALL_FEATURE_DRAWING: WallFeatureDrawing = { snap: true, depthMm: 200 };
+const WALL_FEATURE_DRAWING: WallFeatureDrawing = {
+  snap: true,
+  depthMm: WALL_FEATURE_DEFAULT_DEPTH_MM,
+  shape: 'niche',
+  ledgeDepthMm: WALL_LEDGE_DEFAULT_DEPTH_MM,
+};
 function setScene(project: ProjectDocument, side: EditingSide, scene: Scene) {
   if (side === 'before' && project.shared.comparison) project.shared.comparison.before = scene;
   else {

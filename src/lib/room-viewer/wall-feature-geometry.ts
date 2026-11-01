@@ -2,6 +2,7 @@ import { Box3, BufferGeometry, Float32BufferAttribute, Vector3 } from 'three';
 import { roomFacePoint } from '../room-geometry';
 import type { RoomDefinition, RoomFace } from '../room-types';
 import {
+  ledgeEndWall,
   resolveWallFeature,
   validateWallFeatures,
   WallFeatureValidationError,
@@ -15,7 +16,14 @@ type WallFace = WallFeatureV1['face'];
 type Triple = [number, number, number];
 type Uv = [number, number];
 export type WallFeaturePieceRole =
-  'base-wall' | 'rear' | 'reveal-left' | 'reveal-right' | 'reveal-top' | 'reveal-bottom' | 'floor-extension';
+  | 'base-wall'
+  | 'rear'
+  | 'front'
+  | 'reveal-left'
+  | 'reveal-right'
+  | 'reveal-top'
+  | 'reveal-bottom'
+  | 'floor-extension';
 export type WallFeaturePiece = {
   geometry: BufferGeometry;
   /** The wall containing the opening, including for an alcove floor extension. */
@@ -28,6 +36,10 @@ export type WallFeaturePiece = {
   uvChart: 'wall-global' | 'wall-unfolded' | 'floor-global';
   expectedNormal: Triple;
   worldBounds: Box3;
+  /** A piece of a ledge, which stands in the room: it casts a shadow and goes with its wall. */
+  protrudes?: true;
+  /** A ledge's end flat on this wall: seen only while that wall is hidden, and never tiled. */
+  againstFace?: WallFace;
 };
 export type WallFeaturePieces = {
   pieces: WallFeaturePiece[];
@@ -112,6 +124,7 @@ export function buildWallFeaturePieces(
     uv: Uv[],
     expectedNormal: Triple,
     featureId?: string,
+    ledge?: { againstFace?: WallFace },
   ) => {
     const geometry = new BufferGeometry();
     try {
@@ -155,6 +168,8 @@ export function buildWallFeaturePieces(
               : 'wall-global',
         expectedNormal,
         worldBounds: geometry.boundingBox!.clone(),
+        ...(ledge ? { protrudes: true as const } : {}),
+        ...(ledge?.againstFace ? { againstFace: ledge.againstFace } : {}),
       };
       geometry.userData.wallFeature = {
         ownerFace,
@@ -218,10 +233,21 @@ export function buildWallFeaturePieces(
     return result;
   };
   const addInterior = (feature: ResolvedWallFeature, cells: ViewerSurfacePatch[]) => {
-    const { face, id, opening: o, depthMm: d, wallSpanMm: length } = feature;
+    const { face, id, opening: o, wallSpanMm: length } = feature;
+    // A ledge is the same box turned out into the room: a negative depth, with its faces looking out.
+    const out = !!feature.protrudes;
+    const d = out ? -feature.depthMm : feature.depthMm;
+    const look = out ? -1 : 1;
     const uAxis = roomFacePoint(room, face, 1, 0)
       .sub(roomFacePoint(room, face, 0, 0))
-      .normalize();
+      .normalize()
+      .multiplyScalar(look);
+    const ledge = (end?: 'left' | 'right') => {
+      if (!out) return undefined;
+      const atEnd = end === 'left' ? o.left === 0 : end === 'right' ? o.right === 1 : false;
+      const againstFace = end && atEnd ? ledgeEndWall(face, end) : undefined;
+      return againstFace ? { againstFace } : {};
+    };
     for (const patch of cells) {
       const top = Math.max(o.top, patch.from),
         bottom = Math.min(o.bottom, patch.to);
@@ -231,12 +257,13 @@ export function buildWallFeaturePieces(
       if (left < right)
         add(
           face,
-          'rear',
+          out ? 'front' : 'rear',
           patch,
           rect(face, left, top, right, bottom, d),
           rectUv(left, top, right, bottom),
           normalFor(face),
           id,
+          ledge(),
         );
       if (cellLeft(patch) <= o.left && o.left < cellRight(patch))
         add(
@@ -257,6 +284,7 @@ export function buildWallFeaturePieces(
           ],
           uAxis.toArray(),
           id,
+          ledge('left'),
         );
       if (cellLeft(patch) < o.right && o.right <= cellRight(patch))
         add(
@@ -277,6 +305,7 @@ export function buildWallFeaturePieces(
           ],
           uAxis.clone().negate().toArray(),
           id,
+          ledge('right'),
         );
     }
     for (const part of along(cells, 'v', o.top, 'after', o.left, o.right))
@@ -296,8 +325,9 @@ export function buildWallFeaturePieces(
           [part.to, o.top + d / room.heightMm],
           [part.from, o.top + d / room.heightMm],
         ],
-        [0, -1, 0],
+        [0, -look, 0],
         id,
+        ledge(),
       );
     const bottomPoints = (from: number, to: number) => [
       point(face, from, o.bottom),
@@ -319,7 +349,8 @@ export function buildWallFeaturePieces(
           id,
         );
       }
-    else
+    // A ledge on the floor has no underside.
+    else if (!out || o.bottom < 1)
       for (const part of along(cells, 'v', o.bottom, 'before', o.left, o.right))
         add(
           face,
@@ -332,8 +363,9 @@ export function buildWallFeaturePieces(
             [part.to, o.bottom - d / room.heightMm],
             [part.from, o.bottom - d / room.heightMm],
           ],
-          [0, 1, 0],
+          [0, look, 0],
           id,
+          ledge(),
         );
   };
   /** The floor cells along a wall's foot, as wall u from `from` to `to` (left wall u = 1 − floor v). */

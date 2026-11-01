@@ -551,7 +551,9 @@ export default function RoomCanvasWorkspace({
     const engine = renderer.current;
     if (!engine || loading || failure) return [];
     return wallTool.shapes.flatMap((shape) => {
-      const points = boxCorners(shape.box).map(({ u, v }) => engine.faceToFrame(shape.face, u, v));
+      const points = boxCorners(shape.box).map(({ u, v }) =>
+        engine.faceToFrame(shape.face, u, v, shape.outMm),
+      );
       return points.every((point) => point)
         ? [{ ...shape, points: points as { x: number; y: number }[] }]
         : [];

@@ -47,6 +47,8 @@ export type WallFeatureShape = {
   source: 'draw' | 'edit' | 'move' | 'selected';
   /** It would overlap or touch another feature (or is otherwise invalid). */
   warn: boolean;
+  /** A ledge's outline lies on its front, this far before the wall. */
+  outMm: number;
 };
 
 const latestScene = () => {
@@ -94,7 +96,12 @@ export function useWallFeatureTool({
   }, [edit, features]);
 
   const room = scene?.room;
-  const options = { depthMm: drawing.depthMm, snap: drawing.snap, materials };
+  const options = {
+    depthMm: drawing.shape === 'ledge' ? drawing.ledgeDepthMm : drawing.depthMm,
+    snap: drawing.snap,
+    materials,
+    shape: drawing.shape,
+  };
   /** Starts a drawing where the pointer went down; false (with a note) when it cannot. */
   function start(face: RoomFace | null | undefined, uv: FacePoint | null | undefined): boolean {
     const problem =
@@ -178,7 +185,11 @@ export function useWallFeatureTool({
   function apply(feature: WallFeatureV1) {
     const error = write(feature);
     if (error) return setEdit((current) => current && { ...current, error });
-    useEditor.getState().setWallFeatureDrawing({ depthMm: feature.depthMm });
+    useEditor
+      .getState()
+      .setWallFeatureDrawing(
+        feature.kind === 'ledge' ? { ledgeDepthMm: feature.depthMm } : { depthMm: feature.depthMm },
+      );
     setEdit(null);
   }
   function remove(id: string) {
@@ -196,6 +207,7 @@ export function useWallFeatureTool({
           box,
           source,
           warn: source !== 'selected' && !!featureIssue(room, features, feature),
+          outMm: feature.kind === 'ledge' ? feature.depthMm : 0,
         });
     };
     const busy = edit?.feature.id ?? moving?.id;
@@ -209,6 +221,7 @@ export function useWallFeatureTool({
           face: draw.face,
           source: 'draw',
           warn: false,
+          outMm: 0,
           box: {
             left: Math.min(draw.from.u, draw.to.u),
             right: Math.max(draw.from.u, draw.to.u),
@@ -452,8 +465,9 @@ export function WallFeatureCard({
         />
       </div>
       <p className="m-0 text-[11px] leading-snug text-[#6b777a]">
-        왼쪽은 방 안에서 이 벽을 마주 봤을 때의 왼쪽이에요. 깊이는 최대 {WALL_FEATURE_MAX_DEPTH_MM}mm.
-        바닥에서를 0으로 넣으면 바닥까지 이어져요.
+        왼쪽은 방 안에서 이 벽을 마주 봤을 때의 왼쪽이에요.{' '}
+        {feature.kind === 'ledge' ? '깊이는 벽에서 나온 길이로' : '깊이는'} 최대 {WALL_FEATURE_MAX_DEPTH_MM}
+        mm. 바닥에서를 0으로 넣으면 바닥까지 이어져요.
       </p>
       {problem && (
         <p role="alert" className="m-0 text-[12px] text-(--danger)">
@@ -480,7 +494,7 @@ export function WallFeatureCard({
 /** The tool button: an icon in the 2D toolbar, words in the 3D one. */
 export function WallFeatureToolButton({ tool, compact }: { tool: WallFeatureTool; compact: boolean }) {
   const st = useEditor();
-  const title = tool.issue ?? '벽 구조: 벽을 끌거나 눌러 벽 홈을 만들어요';
+  const title = tool.issue ?? '벽 구조: 벽을 끌거나 눌러 벽 홈이나 젠다이를 만들어요';
   return (
     <button
       title={title}
@@ -515,13 +529,36 @@ export function WallFeature3dNotice({ tool }: { tool: WallFeatureTool }) {
   );
 }
 
-/** While the tool is on: grout snapping and what to do (or why not). */
+/** While the tool is on: what it makes next, grout snapping and what to do (or why not). */
 export function WallFeatureToolOptions({ tool, compact }: { tool: WallFeatureTool; compact: boolean }) {
   const st = useEditor();
   const drawing = st.wallFeatureDrawing;
   if (!tool.active && !tool.note) return null;
   return (
     <>
+      {tool.active && (
+        <span role="group" aria-label="만들 벽 구조" className="flex shrink-0 gap-1">
+          {(
+            [
+              ['niche', '홈'],
+              ['ledge', '젠다이'],
+            ] as const
+          ).map(([shape, label]) => (
+            <button
+              key={shape}
+              title={
+                shape === 'ledge' ? '벽에서 튀어나온 조적 젠다이를 만들어요' : '벽 안으로 파인 홈을 만들어요'
+              }
+              aria-pressed={drawing.shape === shape}
+              data-testid={'wall-feature-shape-' + shape}
+              className={`btn small shrink-0 ${drawing.shape === shape ? 'active' : ''}`}
+              onClick={() => st.setWallFeatureDrawing({ shape })}
+            >
+              {label}
+            </button>
+          ))}
+        </span>
+      )}
       {tool.active && (
         <button
           title="경계를 바탕 타일 줄눈에 맞춤"

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { roomDefinitionSchema } from './room-validation';
-import type { RoomDimensions } from './room-types';
+import type { RoomDimensions, RoomFace } from './room-types';
 
 export const WALL_FEATURE_MAX_COUNT = 24;
 /** Supported modelling depth, not an estimate of the real wall thickness. */
@@ -14,15 +14,18 @@ type WallFeatureBaseV1 = {
   face: WallFeatureFace;
   /** Distance from the wall's u=0 edge; never a photograph x coordinate. */
   leftMm: number;
-  /** Distance down from the room ceiling. */
-  topMm: number;
   widthMm: number;
   depthMm: number;
   /** Explicitly authored values; this does not claim a physical measurement. */
   source: 'user';
 };
+/** `topMm` is the distance down from the room ceiling; a ledge stands on `bottomMm` above the floor. */
 export type WallFeatureV1 = WallFeatureBaseV1 &
-  ({ kind: 'closed-niche'; heightMm: number } | { kind: 'floor-alcove'; heightMm?: never });
+  (
+    | { kind: 'closed-niche'; topMm: number; heightMm: number }
+    | { kind: 'floor-alcove'; topMm: number; heightMm?: never }
+    | { kind: 'ledge'; bottomMm: number; heightMm: number; topMm?: never }
+  );
 
 export type WallFeaturePoint3 = readonly [number, number, number];
 export type WallFeatureBounds = Readonly<{
@@ -46,8 +49,10 @@ export type ResolvedWallFeature = Readonly<{
   opening: WallFeatureOpening;
   openingMm: WallFeatureOpening;
   inwardNormal: WallFeaturePoint3;
-  /** The full void from its mouth to the rear face, in room millimetres. */
+  /** The full void from its mouth to the rear face (a ledge: its solid), in room millimetres. */
   worldBounds: WallFeatureBounds;
+  /** A ledge stands out into the room instead of going into the wall. */
+  protrudes?: true;
 }>;
 
 export type WallFeatureIssueCode =
@@ -86,17 +91,7 @@ export class WallFeatureValidationError extends Error {
 }
 
 const uuid = z.string().uuid();
-const commonKeys = new Set([
-  'version',
-  'id',
-  'kind',
-  'face',
-  'leftMm',
-  'topMm',
-  'widthMm',
-  'depthMm',
-  'source',
-]);
+const commonKeys = new Set(['version', 'id', 'kind', 'face', 'leftMm', 'widthMm', 'depthMm', 'source']);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -109,25 +104,33 @@ function validRoom(room: RoomDimensions | undefined): room is RoomDimensions {
 
 function resolveValid(room: RoomDimensions, feature: WallFeatureV1): ResolvedWallFeature {
   const wallSpanMm = feature.face === 'back' ? room.widthMm : room.depthMm;
+  const ledge = feature.kind === 'ledge';
   const left = feature.leftMm,
     right = left + feature.widthMm,
-    top = feature.topMm,
-    bottom = feature.kind === 'floor-alcove' ? room.heightMm : top + feature.heightMm;
+    top = ledge ? room.heightMm - feature.bottomMm - feature.heightMm : feature.topMm,
+    bottom = ledge
+      ? room.heightMm - feature.bottomMm
+      : feature.kind === 'floor-alcove'
+        ? room.heightMm
+        : top + feature.heightMm;
   const lowY = room.heightMm - bottom,
     highY = room.heightMm - top,
+    // Measured from the wall's plane along the room's inward normal: a void behind it, a ledge before it.
+    near = ledge ? feature.depthMm : 0,
+    far = ledge ? 0 : feature.depthMm,
     d = feature.depthMm;
   let min: WallFeaturePoint3, max: WallFeaturePoint3, inwardNormal: WallFeaturePoint3;
   if (feature.face === 'back') {
-    min = [left - room.widthMm / 2, lowY, -d];
-    max = [right - room.widthMm / 2, highY, 0];
+    min = [left - room.widthMm / 2, lowY, 0 - far];
+    max = [right - room.widthMm / 2, highY, near];
     inwardNormal = [0, 0, 1];
   } else if (feature.face === 'left') {
-    min = [-room.widthMm / 2 - d, lowY, room.depthMm - right];
-    max = [-room.widthMm / 2, highY, room.depthMm - left];
+    min = [-room.widthMm / 2 - far, lowY, room.depthMm - right];
+    max = [-room.widthMm / 2 + near, highY, room.depthMm - left];
     inwardNormal = [1, 0, 0];
   } else {
-    min = [room.widthMm / 2, lowY, left];
-    max = [room.widthMm / 2 + d, highY, right];
+    min = [room.widthMm / 2 - near, lowY, left];
+    max = [room.widthMm / 2 + far, highY, right];
     inwardNormal = [-1, 0, 0];
   }
   return {
@@ -146,7 +149,51 @@ function resolveValid(room: RoomDimensions, feature: WallFeatureV1): ResolvedWal
     openingMm: { left, top, right, bottom },
     inwardNormal,
     worldBounds: { min, max },
+    ...(ledge ? { protrudes: true as const } : {}),
   };
+}
+
+/** The room face a ledge's end lies against: only a wall stands there, the room's front is open. */
+export function ledgeEndWall(
+  face: WallFeatureFace,
+  end: 'left' | 'right',
+): Extract<RoomFace, 'left' | 'back' | 'right'> | undefined {
+  if (face === 'back') return end === 'left' ? 'left' : 'right';
+  if (face === 'left') return end === 'right' ? 'back' : undefined;
+  return end === 'left' ? 'back' : undefined;
+}
+
+export type LedgeFootprint = {
+  face: RoomFace;
+  left: number;
+  right: number;
+  /** Top to bottom on a wall, back to front on the floor (the face's own UV). */
+  from: number;
+  to: number;
+};
+/** What a ledge covers beyond its own wall: the floor under it and any wall its end lies against. */
+export function ledgeFootprints(room: RoomDimensions, feature: ResolvedWallFeature): LedgeFootprint[] {
+  if (!feature.protrudes) return [];
+  const { min, max } = feature.worldBounds;
+  const { widthMm: w, depthMm: d, heightMm: h } = room;
+  const result: LedgeFootprint[] = [];
+  if (min[1] === 0)
+    result.push({
+      face: 'floor',
+      left: (min[0] + w / 2) / w,
+      right: (max[0] + w / 2) / w,
+      from: min[2] / d,
+      to: max[2] / d,
+    });
+  const from = 1 - max[1] / h,
+    to = 1 - min[1] / h;
+  if (feature.face !== 'left' && min[0] === -w / 2)
+    result.push({ face: 'left', left: 1 - max[2] / d, right: 1 - min[2] / d, from, to });
+  if (feature.face !== 'right' && max[0] === w / 2)
+    result.push({ face: 'right', left: min[2] / d, right: max[2] / d, from, to });
+  if (feature.face !== 'back' && min[2] === 0)
+    result.push({ face: 'back', left: (min[0] + w / 2) / w, right: (max[0] + w / 2) / w, from, to });
+  return result;
 }
 
 /**
@@ -192,14 +239,19 @@ export function validateWallFeatures(
       if (ids.has(id)) issue('duplicate-id', 'id', '같은 장면의 벽 구조 ID가 중복되었어요.');
       ids.add(id);
     }
-    if (input.kind !== 'closed-niche' && input.kind !== 'floor-alcove')
+    const ledge = input.kind === 'ledge';
+    if (input.kind !== 'closed-niche' && input.kind !== 'floor-alcove' && !ledge)
       issue('invalid-kind', 'kind', '지원하지 않는 벽 구조 형태예요.');
     if (input.source !== 'user')
       issue('invalid-source', 'source', '첫 벽 구조 형식은 사용자 입력만 지원해요.');
     if (!['left', 'back', 'right'].includes(input.face as string))
       issue('invalid-face', 'face', '벽 구조는 왼쪽·정면·오른쪽 벽에만 놓을 수 있어요.');
     for (const key of Object.keys(input))
-      if (!commonKeys.has(key) && !(input.kind === 'closed-niche' && key === 'heightMm'))
+      if (
+        !commonKeys.has(key) &&
+        !(ledge ? key === 'bottomMm' || key === 'heightMm' : key === 'topMm') &&
+        !(input.kind === 'closed-niche' && key === 'heightMm')
+      )
         issue(
           'unexpected-field',
           key,
@@ -207,16 +259,18 @@ export function validateWallFeatures(
         );
     const fields = [
       'leftMm',
-      'topMm',
+      ledge ? 'bottomMm' : 'topMm',
       'widthMm',
       'depthMm',
-      ...(input.kind === 'closed-niche' ? ['heightMm'] : []),
+      ...(input.kind === 'closed-niche' || ledge ? ['heightMm'] : []),
     ];
     for (const field of fields) {
       const value = input[field];
       if (typeof value !== 'number' || !Number.isFinite(value))
         issue('invalid-number', field, '벽 구조 치수는 유한한 숫자여야 해요.');
-      else if (value <= 0) issue('invalid-size', field, '벽 구조 치수와 천장·옆벽 여백은 0보다 커야 해요.');
+      // A ledge may stand on the floor and reach its wall's end.
+      else if (ledge && (field === 'leftMm' || field === 'bottomMm') ? value < 0 : value <= 0)
+        issue('invalid-size', field, '벽 구조 치수와 천장·옆벽 여백은 0보다 커야 해요.');
       else if (field === 'depthMm' && value > WALL_FEATURE_MAX_DEPTH_MM)
         issue('invalid-size', field, '벽 구조 깊이는 지원 범위인 1000mm 이하여야 해요.');
     }
@@ -224,17 +278,28 @@ export function validateWallFeatures(
     const feature = input as WallFeatureV1;
     const span = feature.face === 'back' ? room.widthMm : room.depthMm;
     const right = feature.leftMm + feature.widthMm;
-    const bottom = feature.kind === 'floor-alcove' ? room.heightMm : feature.topMm + feature.heightMm;
-    if (right >= span || !Number.isFinite(right))
-      issue('out-of-bounds', 'widthMm', '벽 구조의 오른쪽 가장자리는 벽 안에 있어야 해요.');
-    if (feature.topMm >= room.heightMm || (feature.kind === 'closed-niche' && bottom >= room.heightMm))
-      issue(
-        'out-of-bounds',
-        feature.kind === 'closed-niche' ? 'heightMm' : 'topMm',
-        '벽 홈은 방 높이 안에 있어야 해요. 바닥까지 이으려면 바닥에서를 0으로 넣어 주세요.',
-      );
-    if (right <= feature.leftMm || bottom <= feature.topMm)
-      issue('invalid-size', undefined, '벽 구조 폭과 높이가 계산 가능한 양수 범위여야 해요.');
+    if (feature.kind === 'ledge') {
+      if (right > span || !Number.isFinite(right))
+        issue('out-of-bounds', 'widthMm', '젠다이의 오른쪽 끝은 벽 안에 있어야 해요.');
+      const top = room.heightMm - feature.bottomMm - feature.heightMm;
+      if (!(top > 0)) issue('out-of-bounds', 'heightMm', '젠다이의 윗면은 천장 아래에 있어야 해요.');
+      if (feature.depthMm >= (feature.face === 'back' ? room.depthMm : room.widthMm))
+        issue('out-of-bounds', 'depthMm', '젠다이의 깊이는 방 안에 들어와야 해요.');
+      if (right <= feature.leftMm)
+        issue('invalid-size', undefined, '벽 구조 폭과 높이가 계산 가능한 양수 범위여야 해요.');
+    } else {
+      const bottom = feature.kind === 'floor-alcove' ? room.heightMm : feature.topMm + feature.heightMm;
+      if (right >= span || !Number.isFinite(right))
+        issue('out-of-bounds', 'widthMm', '벽 구조의 오른쪽 가장자리는 벽 안에 있어야 해요.');
+      if (feature.topMm >= room.heightMm || (feature.kind === 'closed-niche' && bottom >= room.heightMm))
+        issue(
+          'out-of-bounds',
+          feature.kind === 'closed-niche' ? 'heightMm' : 'topMm',
+          '벽 홈은 방 높이 안에 있어야 해요. 바닥까지 이으려면 바닥에서를 0으로 넣어 주세요.',
+        );
+      if (right <= feature.leftMm || bottom <= feature.topMm)
+        issue('invalid-size', undefined, '벽 구조 폭과 높이가 계산 가능한 양수 범위여야 해요.');
+    }
     if (issues.length === before) {
       const value = resolveValid(room, feature);
       if (value.worldBounds.min.some((lower, axis) => value.worldBounds.max[axis] <= lower))

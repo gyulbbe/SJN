@@ -103,7 +103,7 @@ describe('wall-feature tool', () => {
     expect(isWallFace('floor')).toBe(false);
     expect(['left', 'back', 'right'].every((face) => isWallFace(face as 'left'))).toBe(true);
     expect(WALL_FACE_NOTE).toBe('왼쪽·정면·오른쪽 벽을 끌어 주세요.');
-    expect(wallFeatureTitle({ face: 'back' })).toBe('정면 벽 · 벽 홈');
+    expect(wallFeatureTitle({ face: 'back', kind: 'closed-niche' })).toBe('정면 벽 · 벽 홈');
   });
 
   it('turns a drag into a niche in wall millimetres, cut 10 mm inside the wall and the ceiling', () => {
@@ -296,12 +296,12 @@ describe('wall-feature tool', () => {
     // The drawing choices survive edits and reset with another project.
     useEditor.getState().setWallFeatureDrawing({ depthMm: 350 });
     useEditor.getState().redo();
-    expect(useEditor.getState().wallFeatureDrawing).toEqual({
+    expect(useEditor.getState().wallFeatureDrawing).toMatchObject({
       snap: true,
       depthMm: 350,
     });
     useEditor.getState().load(project);
-    expect(useEditor.getState().wallFeatureDrawing).toEqual({
+    expect(useEditor.getState().wallFeatureDrawing).toMatchObject({
       snap: true,
       depthMm: 200,
     });

@@ -2,7 +2,9 @@ import { authenticatedApp, type AuthenticatedApp } from './helpers/authenticated
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { seedTestTiles } from '../tests/helpers/catalog-fixtures.mjs';
-import { editorAction, savedProject, storedProject } from '../tests/helpers/editor-actions';
+import { editorAction, savedProject, selectSurface, storedProject } from '../tests/helpers/editor-actions';
+import { downloadedArtifact } from './helpers/downloaded-artifact';
+import { roomSurfaceAreaM2 } from '../src/lib/room-surface-areas';
 import { getActiveDesign } from '../src/lib/designs';
 import type { ProjectDocument } from '../src/lib/types';
 import { WALL_FEATURE_3D_NOTICE } from '../src/lib/wall-feature-editing';
@@ -31,8 +33,14 @@ const note = (page: Page) => page.getByTestId('wall-feature-note');
 const notice = (page: Page) => page.getByTestId('wall-feature-3d-notice');
 const stage = (page: Page) => page.getByTestId('room-editor-canvas');
 const depth = (page: Page) => card(page).getByLabel('깊이 (mm)', { exact: true });
+const topOf = (feature: WallFeatureV1, heightMm: number) =>
+  feature.kind === 'ledge' ? heightMm - feature.bottomMm - feature.heightMm : feature.topMm;
 const bottomOf = (feature: WallFeatureV1, heightMm: number) =>
-  feature.kind === 'floor-alcove' ? heightMm : feature.topMm + feature.heightMm;
+  feature.kind === 'ledge'
+    ? heightMm - feature.bottomMm
+    : feature.kind === 'floor-alcove'
+      ? heightMm
+      : feature.topMm + feature.heightMm;
 
 async function shot(page: Page, name: string, info: TestInfo) {
   await mkdir(SHOTS, { recursive: true });
@@ -130,13 +138,16 @@ async function backWallPixels(page: Page, feature: WallFeatureV1, heightMm: numb
   const bottom = bottomOf(feature, heightMm);
   return (leftMm: number, topMm: number) => {
     const s = (leftMm - feature.leftMm) / feature.widthMm,
-      t = (topMm - feature.topMm) / (bottom - feature.topMm);
+      t = (topMm - topOf(feature, heightMm)) / (bottom - topOf(feature, heightMm));
     const w = g * s + h * t + 1;
     return [(a * s + b * t + x0) / w, (d * s + e * t + y0) / w] as const;
   };
 }
 const middle = (feature: WallFeatureV1, heightMm: number) =>
-  [feature.leftMm + feature.widthMm / 2, (feature.topMm + bottomOf(feature, heightMm)) / 2] as const;
+  [
+    feature.leftMm + feature.widthMm / 2,
+    (topOf(feature, heightMm) + bottomOf(feature, heightMm)) / 2,
+  ] as const;
 
 test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태·겹침·Esc, 3D 고르기·숫자·이동·삭제, 되돌리기', async ({
   page,
@@ -197,7 +208,7 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   expect(niche).toMatchObject({ kind: 'closed-niche', face: 'back', depthMm: 350, source: 'user' });
   // Kept off the corners and the ceiling (snapping itself is covered by the unit test).
   expect(niche.leftMm).toBeGreaterThanOrEqual(10);
-  expect(niche.topMm).toBeGreaterThanOrEqual(10);
+  expect(topOf(niche, H)).toBeGreaterThanOrEqual(10);
 
   // The first feature turns the editor to 3D; the tool stays on and the feature stays selected.
   await ready(page, true);
@@ -232,7 +243,7 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   const alcove = features(saved).find((feature) => feature.kind === 'floor-alcove')!;
   expect(alcove).toMatchObject({ widthMm: 600, depthMm: 350 });
   expect(Math.abs(alcove.leftMm - 1500)).toBeLessThan(60);
-  expect(Math.abs(alcove.topMm - 950)).toBeLessThan(60);
+  expect(Math.abs(topOf(alcove, H) - 950)).toBeLessThan(60);
   expect(Object.hasOwn(alcove, 'heightMm')).toBe(false);
   await ready(page, true);
   at = await backWallPixels(page, alcove, H);
@@ -240,7 +251,7 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   // 3. A drag that overlaps the niche turns red and makes nothing, with the reason.
   await page.getByTestId('wall-feature-snap').click();
   saves = requests.saves();
-  await page.mouse.move(...at(120, Math.max(40, niche.topMm - 120)));
+  await page.mouse.move(...at(120, Math.max(40, topOf(niche, H) - 120)));
   await page.mouse.down();
   await page.mouse.move(...at(...middle(niche, H)), { steps: 10 });
   await expect(page.getByTestId('wall-feature-draw')).toHaveAttribute('data-warn', 'true');
@@ -288,7 +299,7 @@ test('2D에서 끌어 첫 벽 홈 → 깊이·Enter → 3D, 클릭 기본 형태
   expect(requests.saves() - saves).toBe(1);
   const moved = features(saved).find((feature) => feature.id === niche.id)!;
   expect(moved.leftMm - niche.leftMm).toBeGreaterThan(150);
-  expect(moved.topMm - niche.topMm).toBeGreaterThan(50);
+  expect(topOf(moved, H) - topOf(niche, H)).toBeGreaterThan(50);
   expect({ ...moved, leftMm: 0, topMm: 0 }).toEqual({ ...niche, leftMm: 0, topMm: 0 });
   niche = moved;
   await ready(page, true);
@@ -405,6 +416,136 @@ test('Before(공통 Before) 편집에서 그린 벽 구조는 Before에만 들�
   await shot(page, 'before-editing', info);
 });
 
+test('젠다이: 도구줄에서 고르고 끌어 바닥형을 만들면 3D로 튀어나오고, 고르기·이동·공중형·모서리·삭제·되돌리기, 면적, 둘러보기·다운로드', async ({
+  page,
+}, info) => {
+  app = await authenticatedApp(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const initial = await start(page);
+  const requests = watchRequests(page);
+  const ledgeShape = page.getByTestId('wall-feature-shape-ledge');
+  const nicheShape = page.getByTestId('wall-feature-shape-niche');
+
+  // The choice is on the toolbar, a niche by default, only while the tool is on.
+  await expect(ledgeShape).toHaveCount(0);
+  await tool(page).click();
+  await expect(nicheShape).toHaveAttribute('aria-pressed', 'true');
+  await ledgeShape.click();
+  await expect(ledgeShape).toHaveAttribute('aria-pressed', 'true');
+  await expect(notice(page)).toContainText('튀어나온');
+  await page.getByTestId('wall-feature-snap').click();
+
+  // A drag past the wall's foot stands it on the floor; nothing is asked of the server meanwhile.
+  const wall = await backWall(page, initial);
+  const mark = requests.count();
+  await page.mouse.move(wall.x + wall.width * 0.25, wall.y + wall.height * 0.62);
+  await page.mouse.down();
+  await page.mouse.move(wall.x + wall.width * 0.75, wall.y + wall.height * 1.1, { steps: 12 });
+  await page.mouse.up();
+  await expect(card(page)).toBeVisible();
+  await expect(card(page)).toContainText('정면 벽 · 젠다이');
+  await expect(depth(page)).toHaveValue('150');
+  await expect(card(page).getByLabel('바닥에서 (mm)', { exact: true })).toHaveValue('0');
+  await page.keyboard.type('120');
+  expect(requests.projectSince(mark)).toEqual([]);
+  let saves = requests.saves();
+  await page.keyboard.press('Enter');
+  let saved = await savedProject(page, initial.editRevision);
+  expect(requests.saves() - saves, '적용 1번에 저장 1').toBe(1);
+  let [ledge] = features(saved);
+  expect(ledge).toMatchObject({ kind: 'ledge', face: 'back', bottomMm: 0, depthMm: 120, source: 'user' });
+
+  // It turns the editor to 3D and stands out: the outline lies on its front, wider than its mouth.
+  await ready(page, true);
+  await expect(tool(page)).toHaveAttribute('aria-pressed', 'true');
+  await expect(ledgeShape).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('wall-feature-selected')).toBeVisible();
+  await shot(page, 'ledge-3d', info);
+
+  // Picked by its front, typed into: the depth changes in one save.
+  const centre = async () => {
+    const box = (await page.getByTestId('wall-feature-selected').boundingBox())!;
+    return [box.x + box.width / 2, box.y + box.height / 2] as const;
+  };
+  await page.mouse.click(...(await centre()));
+  await expect(card(page)).toBeVisible();
+  await depth(page).fill('200');
+  saves = requests.saves();
+  await card(page).getByRole('button', { name: '적용', exact: true }).click();
+  saved = await savedProject(page, saved.editRevision);
+  expect(requests.saves() - saves).toBe(1);
+  [ledge] = features(saved);
+  expect(ledge).toMatchObject({ kind: 'ledge', depthMm: 200, bottomMm: 0 });
+  await ready(page, true);
+
+  // Moved by dragging: sideways only on the floor, one save when let go, none while dragging.
+  const before = await page.getByTestId('wall-feature-selected').boundingBox();
+  const [x, y] = await centre();
+  const moveMark = requests.count();
+  saves = requests.saves();
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 60, y + 40, { steps: 8 });
+  expect(requests.projectSince(moveMark)).toEqual([]);
+  await page.mouse.up();
+  saved = await savedProject(page, saved.editRevision);
+  expect(requests.saves() - saves).toBe(1);
+  const [moved] = features(saved);
+  expect(moved.leftMm).toBeGreaterThan(ledge.leftMm + 50);
+  expect(moved).toMatchObject({ bottomMm: 0, heightMm: ledge.kind === 'ledge' ? ledge.heightMm : 0 });
+  expect(before).not.toBeNull();
+  await ready(page, true);
+
+  // Hung from the card: 바닥에서 above 0; the wall to its corner with 왼쪽 끝에서 0.
+  await page.mouse.click(...(await centre()));
+  await expect(card(page)).toBeVisible();
+  await card(page).getByLabel('왼쪽 끝에서 (mm)', { exact: true }).fill('0');
+  await card(page).getByLabel('바닥에서 (mm)', { exact: true }).fill('500');
+  await card(page).getByRole('button', { name: '적용', exact: true }).click();
+  saved = await savedProject(page, saved.editRevision);
+  expect(features(saved)[0]).toMatchObject({ kind: 'ledge', leftMm: 0, bottomMm: 500 });
+  await ready(page, true);
+  await shot(page, 'ledge-hung-corner', info);
+
+  // Tile area: what the card's numbers say, as the panel reads it for the back wall.
+  await page.getByRole('button', { name: '선택 / 이동', exact: true }).click();
+  const scene = active(saved).scene;
+  const back = scene.surfaces.find((s) => s.roomFace === 'back' && !s.region)!;
+  await selectSurface(page, back);
+  const areaText = roomSurfaceAreaM2(scene, back.id)!.toLocaleString('ko-KR');
+  await expect(page.getByText('시공 면적 ' + areaText)).toBeVisible();
+  expect(roomSurfaceAreaM2(scene, back.id)).toBeGreaterThan(5.76);
+
+  // The history walks it back to the floor and forth again.
+  await page.keyboard.press('Control+z');
+  saved = await savedProject(page, saved.editRevision);
+  expect(features(saved)[0]).toMatchObject({ kind: 'ledge', bottomMm: 0 });
+  await page.keyboard.press('Control+y');
+  saved = await savedProject(page, saved.editRevision);
+  expect(features(saved)[0]).toMatchObject({ kind: 'ledge', bottomMm: 500 });
+
+  // It stays after a reload, and the viewer and the download draw it without an error.
+  await page.reload();
+  await ready(page, true);
+  expect(features(await storedProject(page))[0]).toMatchObject({ kind: 'ledge', leftMm: 0, bottomMm: 500 });
+  await (await editorAction(page, '공간 둘러보기')).click();
+  const viewer = page.getByRole('dialog', { name: '공간 둘러보기', exact: true });
+  await expect(page.getByTestId('room-view-viewport')).toHaveAttribute('aria-busy', 'false', {
+    timeout: 45000,
+  });
+  await expect(viewer.getByRole('alert')).toHaveCount(0);
+  await shot(page, 'ledge-viewer', info);
+  await viewer.getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const download = page.waitForEvent('download', { timeout: 120000 });
+  await page.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
+  await mkdir(SHOTS, { recursive: true });
+  await downloadedArtifact(await download, `${SHOTS}/ledge-download.png`);
+  expect(errors).toEqual([]);
+});
+
 test.describe('게스트 휴대폰', () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 375, height: 812 } });
   test('375px: 손가락으로 끌어 아래 시트 카드로 적용, 새로고침 뒤에도 남고 가로로 넘치지 않는다', async ({
@@ -470,5 +611,40 @@ test.describe('게스트 휴대폰', () => {
     await page.reload();
     await ready(page, true);
     expect(getActiveDesign(await draft())!.scene.wallFeatures).toEqual([made]);
+  });
+  test('375px: 젠다이를 눌러 놓고 카드로 적용하면 남고 도구줄이 넘치지 않는다', async ({ page }, info) => {
+    app = await authenticatedApp(page, { signedIn: false });
+    const draftKey = 'sjn:guest-draft:v1';
+    const draft = async (): Promise<ProjectDocument> =>
+      page.evaluate((key) => JSON.parse(sessionStorage.getItem(key)!).document, draftKey);
+    await page.goto('/');
+    await page.getByRole('button', { name: '새 프로젝트', exact: true }).click();
+    await page
+      .getByRole('dialog', { name: '공간 크기 설정' })
+      .getByRole('button', { name: '공간 만들기', exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/try$/);
+    await ready(page, false);
+    await tool(page).click();
+    await page.getByTestId('wall-feature-shape-ledge').click();
+    const right = await page
+      .locator('.workspace-toolbar button')
+      .evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().right));
+    expect(Math.max(...right)).toBeLessThanOrEqual(375);
+    const wall = await backWall(page, await draft());
+    await page.touchscreen.tap(wall.x + wall.width * 0.5, wall.y + wall.height * 0.5);
+    await expect(card(page)).toBeVisible();
+    await expect(depth(page)).toHaveValue('150');
+    await card(page).getByRole('button', { name: '적용', exact: true }).tap();
+    await expect.poll(async () => getActiveDesign(await draft())!.scene.wallFeatures?.length ?? 0).toBe(1);
+    expect(getActiveDesign(await draft())!.scene.wallFeatures![0]).toMatchObject({
+      kind: 'ledge',
+      face: 'back',
+      bottomMm: 0,
+      depthMm: 150,
+    });
+    await ready(page, true);
+    await shot(page, 'guest-375-ledge', info);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
   });
 });

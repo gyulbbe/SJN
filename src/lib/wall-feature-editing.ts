@@ -17,10 +17,11 @@ import {
  */
 export const WALL_FEATURE_EDGE_MM = 10;
 export const WALL_FEATURE_DEFAULT_DEPTH_MM = 200;
+export const WALL_LEDGE_DEFAULT_DEPTH_MM = 150;
 export const WALL_FACE_NOTE = '왼쪽·정면·오른쪽 벽을 끌어 주세요.';
 export const WALL_FEATURE_SIZE_NOTE = `가로·세로 ${REGION_MIN_MM}mm보다 크게 끌어 주세요.`;
 export const WALL_FEATURE_3D_NOTICE =
-  '벽 구조가 하나라도 있으면 편집 화면은 항상 3D로 표시돼요. 2D 합성은 평평한 벽과 바닥에 타일을 입히는 방식이라, 벽이 파인 깊이를 그리지 못하기 때문이에요.';
+  '벽 구조가 하나라도 있으면 편집 화면은 항상 3D로 표시돼요. 2D 합성은 평평한 벽과 바닥에 타일을 입히는 방식이라, 벽이 파이거나 튀어나온 깊이를 그리지 못하기 때문이에요.';
 
 /** Why the wall-feature tool cannot be used now, or null. */
 export function wallFeatureToolIssue(input: {
@@ -45,32 +46,47 @@ export function wallFeatureDrawIssue(scene: Pick<Scene, 'wallFeatures'>): string
 }
 
 export const isWallFace = (face: RoomFace): face is WallFeatureFace => face !== 'floor';
-/** One thing on screen, 벽 홈; stored as `floor-alcove` when it reaches the floor (바닥에서 0). */
-export const wallFeatureTitle = (feature: Pick<WallFeatureV1, 'face'>) =>
-  `${ROOM_FACE_NAMES[feature.face]} · 벽 홈`;
+/** On screen a 벽 홈 (stored as `floor-alcove` when it reaches the floor, 바닥에서 0) or a 젠다이. */
+export const wallFeatureTitle = (feature: Pick<WallFeatureV1, 'face' | 'kind'>) =>
+  `${ROOM_FACE_NAMES[feature.face]} · ${feature.kind === 'ledge' ? '젠다이' : '벽 홈'}`;
 
 const within = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 
-function build(face: WallFeatureFace, rect: SurfaceRegion, depthMm: number, toFloor = false): WallFeatureV1 {
+function build(
+  face: WallFeatureFace,
+  rect: SurfaceRegion,
+  depthMm: number,
+  toFloor = false,
+  ledgeOfRoomHeight?: number,
+): WallFeatureV1 {
   const base = {
     version: 1 as const,
     id: crypto.randomUUID(),
     source: 'user' as const,
     face,
     leftMm: rect.leftMm,
-    topMm: rect.topMm,
     widthMm: rect.widthMm,
     depthMm,
   };
+  if (ledgeOfRoomHeight !== undefined)
+    return {
+      ...base,
+      kind: 'ledge',
+      bottomMm: toFloor ? 0 : ledgeOfRoomHeight - rect.topMm - rect.heightMm,
+      heightMm: toFloor ? ledgeOfRoomHeight - rect.topMm : rect.heightMm,
+    };
   return toFloor
-    ? { ...base, kind: 'floor-alcove' }
-    : { ...base, kind: 'closed-niche', heightMm: rect.heightMm };
+    ? { ...base, topMm: rect.topMm, kind: 'floor-alcove' }
+    : { ...base, topMm: rect.topMm, kind: 'closed-niche', heightMm: rect.heightMm };
 }
 
+export type WallFeatureShape = 'niche' | 'ledge';
 export type WallFeatureDraw = {
   depthMm: number;
   snap: boolean;
   materials: Record<string, MaterialVersion>;
+  /** What is drawn; a niche when absent. */
+  shape?: WallFeatureShape;
 };
 export type DrawnWallFeature = { feature: WallFeatureV1; issue?: never } | { feature?: never; issue: string };
 
@@ -87,20 +103,40 @@ export function featureFromDrag(
   draw: WallFeatureDraw,
 ): DrawnWallFeature {
   const size = roomFaceSizeMm(scene.room!, face);
+  const ledge = draw.shape === 'ledge';
   const cut = (value: number, extent: number) =>
     within(Math.round(value * extent), WALL_FEATURE_EDGE_MM, extent - WALL_FEATURE_EDGE_MM);
-  const left = cut(Math.min(from.u, to.u), size.width),
-    right = cut(Math.max(from.u, to.u), size.width),
+  // A ledge reaches its wall's ends: a drag that gets close to one goes all the way.
+  const across = (value: number, extent: number) => {
+    const mm = Math.round(value * extent);
+    if (!ledge) return cut(value, extent);
+    return mm <= WALL_FEATURE_EDGE_MM ? 0 : mm >= extent - WALL_FEATURE_EDGE_MM ? extent : mm;
+  };
+  const left = across(Math.min(from.u, to.u), size.width),
+    right = across(Math.max(from.u, to.u), size.width),
     top = cut(Math.min(from.v, to.v), size.height),
     toFloor = Math.max(from.v, to.v) * size.height >= size.height - WALL_FEATURE_EDGE_MM,
     bottom = toFloor ? size.height : cut(Math.max(from.v, to.v), size.height);
   if (right - left < REGION_MIN_MM || bottom - top < REGION_MIN_MM) return { issue: WALL_FEATURE_SIZE_NOTE };
   let rect: SurfaceRegion = { leftMm: left, topMm: top, widthMm: right - left, heightMm: bottom - top };
-  if (draw.snap)
-    rect = snapRegion(rect, size, regionSnapBase(scene, face, rect, draw.materials), {
-      inset: WALL_FEATURE_EDGE_MM,
-    });
-  return { feature: build(face, rect, draw.depthMm, toFloor) };
+  if (draw.snap) {
+    const base = regionSnapBase(scene, face, rect, draw.materials);
+    if (ledge) {
+      // Its sides may take the wall's ends; its top keeps below the ceiling.
+      const snapped = snapRegion(rect, size, base);
+      const topMm = Math.max(WALL_FEATURE_EDGE_MM, snapped.topMm);
+      rect = { ...snapped, topMm, heightMm: snapped.topMm + snapped.heightMm - topMm };
+    } else rect = snapRegion(rect, size, base, { inset: WALL_FEATURE_EDGE_MM });
+  }
+  return {
+    feature: build(
+      face,
+      rect,
+      draw.depthMm,
+      toFloor || (ledge && rect.topMm + rect.heightMm >= size.height - WALL_FEATURE_EDGE_MM),
+      ledge ? size.height : undefined,
+    ),
+  };
 }
 
 /**
@@ -111,9 +147,22 @@ export function featureFromClick(
   room: RoomDimensions,
   face: WallFeatureFace,
   at: FacePoint,
-  draw: Pick<WallFeatureDraw, 'depthMm'>,
+  draw: Pick<WallFeatureDraw, 'depthMm' | 'shape'>,
 ): WallFeatureV1 {
   const size = roomFaceSizeMm(room, face);
+  if (draw.shape === 'ledge') {
+    // A ledge stands on the floor: width min(1200, wall/2), height min(900, room height/2).
+    const widthMm = Math.min(1200, Math.round(size.width / 2)),
+      heightMm = Math.min(900, Math.round(size.height / 2));
+    const leftMm = within(Math.round(at.u * size.width - widthMm / 2), 0, size.width - widthMm);
+    return build(
+      face,
+      { leftMm, topMm: size.height - heightMm, widthMm, heightMm },
+      draw.depthMm,
+      true,
+      size.height,
+    );
+  }
   const width = Math.min(600, Math.round(size.width / 3)),
     height = Math.min(500, Math.round(size.height / 3));
   const leftMm = within(
@@ -140,6 +189,16 @@ export function movedFeature(
   dv: number,
 ): WallFeatureV1 {
   const size = roomFaceSizeMm(room, feature.face);
+  if (feature.kind === 'ledge') {
+    const leftMm = within(feature.leftMm + Math.round(du * size.width), 0, size.width - feature.widthMm);
+    if (feature.bottomMm === 0) return { ...feature, leftMm };
+    const bottomMm = within(
+      feature.bottomMm - Math.round(dv * size.height),
+      WALL_FEATURE_EDGE_MM,
+      size.height - WALL_FEATURE_EDGE_MM - feature.heightMm,
+    );
+    return { ...feature, leftMm, bottomMm };
+  }
   const leftMm = within(
     feature.leftMm + Math.round(du * size.width),
     WALL_FEATURE_EDGE_MM,
@@ -184,11 +243,17 @@ export function removeWallFeature(scene: Scene, id: string): void {
 /** The feature's opening as its wall's UV (top=0), for an outline. */
 export function featureUv(feature: WallFeatureV1, room: RoomDimensions): RegionBounds {
   const size = roomFaceSizeMm(room, feature.face);
-  const bottom = feature.kind === 'floor-alcove' ? size.height : feature.topMm + feature.heightMm;
+  const top = feature.kind === 'ledge' ? size.height - feature.bottomMm - feature.heightMm : feature.topMm;
+  const bottom =
+    feature.kind === 'ledge'
+      ? size.height - feature.bottomMm
+      : feature.kind === 'floor-alcove'
+        ? size.height
+        : feature.topMm + feature.heightMm;
   return {
     left: feature.leftMm / size.width,
     right: (feature.leftMm + feature.widthMm) / size.width,
-    top: feature.topMm / size.height,
+    top: top / size.height,
     bottom: bottom / size.height,
   };
 }
@@ -205,6 +270,14 @@ export type WallFeatureFields = {
   depthMm: number;
 };
 export function featureFields(feature: WallFeatureV1, room: RoomDimensions): WallFeatureFields {
+  if (feature.kind === 'ledge')
+    return {
+      leftMm: feature.leftMm,
+      bottomMm: feature.bottomMm,
+      widthMm: feature.widthMm,
+      heightMm: feature.heightMm,
+      depthMm: feature.depthMm,
+    };
   const alcove = feature.kind === 'floor-alcove';
   const heightMm = alcove ? room.heightMm - feature.topMm : feature.heightMm;
   return {
@@ -228,9 +301,12 @@ export function withFields(
     leftMm: fields.leftMm,
     widthMm: fields.widthMm,
     depthMm: fields.depthMm,
-    topMm: room.heightMm - fields.bottomMm - fields.heightMm,
   };
+  // A ledge stays a ledge; 바닥에서 0 stands it on the floor.
+  if (feature.kind === 'ledge')
+    return { ...base, kind: 'ledge', bottomMm: fields.bottomMm, heightMm: fields.heightMm };
+  const topMm = room.heightMm - fields.bottomMm - fields.heightMm;
   return fields.bottomMm === 0
-    ? { ...base, kind: 'floor-alcove' }
-    : { ...base, kind: 'closed-niche', heightMm: fields.heightMm };
+    ? { ...base, topMm, kind: 'floor-alcove' }
+    : { ...base, topMm, kind: 'closed-niche', heightMm: fields.heightMm };
 }

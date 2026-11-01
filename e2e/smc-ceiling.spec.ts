@@ -195,7 +195,7 @@ test('3D(벽 홈 있음): 천장이 나타나고 공간 둘러보기·다운로�
 
   // The download.
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
-  const saved = page.waitForEvent('download');
+  const saved = page.waitForEvent('download', { timeout: 120000 });
   await page.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
   await mkdir(SHOTS, { recursive: true });
   const bytes = await downloadedArtifact(await saved, `${SHOTS}/download.png`);

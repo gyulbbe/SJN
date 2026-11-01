@@ -37,7 +37,7 @@ import {
 } from '../types';
 import { roomFacePoint, validateRoomDimensions } from '../room-geometry';
 import type { RoomFace } from '../room-types';
-import type { WallFeatureFace } from '../wall-features';
+import { resolveWallFeature, type WallFeatureFace } from '../wall-features';
 import { fitOutput } from '../render/math';
 import {
   createInteriorEnvironment,
@@ -436,6 +436,12 @@ export class RoomViewerRenderer {
       )
         contacts.push(box);
     }
+    // A ledge on the floor meets it the same way.
+    for (const feature of scene.wallFeatures ?? [])
+      if (feature.kind === 'ledge' && feature.bottomMm === 0) {
+        const { min, max } = resolveWallFeature(room, feature).worldBounds;
+        contacts.push(new Box3(new Vector3(...min), new Vector3(...max)));
+      }
     surfaces.setContacts(contacts);
     this.lighting.bindTree(world);
     bindRoomShadows(world);
@@ -1637,7 +1643,7 @@ export class RoomViewerRenderer {
    * Where a face point is in the last After frame (0–1, y down), for drawing a region's outline
    * over the canvas; null when the face is not shown from this camera.
    */
-  faceToFrame(face: RoomFace, u: number, v: number): { x: number; y: number } | null {
+  faceToFrame(face: RoomFace, u: number, v: number, outMm = 0): { x: number; y: number } | null {
     this.assertOpen();
     const frame = this.lastFrame,
       room = this.snapshot?.scene.room;
@@ -1651,7 +1657,12 @@ export class RoomViewerRenderer {
       this.prepared.structureBounds,
     );
     if (!viewerFaceIsVisible(room, face, camera.getWorldPosition(new Vector3()))) return null;
-    const p = roomFacePoint(room, face, u, v).project(camera);
+    // `outMm` before a wall: the front of a ledge.
+    const inward =
+      face === 'back' ? [0, 0, 1] : face === 'left' ? [1, 0, 0] : face === 'right' ? [-1, 0, 0] : [0, 1, 0];
+    const p = roomFacePoint(room, face, u, v)
+      .addScaledVector(new Vector3(inward[0], inward[1], inward[2]), outMm)
+      .project(camera);
     if (![p.x, p.y, p.z].every(Number.isFinite) || p.z < -1 || p.z > 1) return null;
     return {
       x: (rect.x + ((p.x + 1) / 2) * rect.width) / frame.width,

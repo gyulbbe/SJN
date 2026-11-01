@@ -1,7 +1,13 @@
 import type { Scene, Surface } from './types';
 import { cellLeft, cellRight, partitionRoomFaces, type FaceCell } from './room-face-partition';
 import { roomDefinitionSchema } from './room-validation';
-import { resolveWallFeature, validateWallFeatures, type ResolvedWallFeature } from './wall-features';
+import {
+  ledgeEndWall,
+  ledgeFootprints,
+  resolveWallFeature,
+  validateWallFeatures,
+  type ResolvedWallFeature,
+} from './wall-features';
 import type { RoomDefinition } from './room-types';
 
 export type RoomSurfaceArea = { areaM2: number | null; issue?: string };
@@ -25,6 +31,35 @@ const hasAdditionalMask = (surface: Surface) =>
  * floor to the floor cell along the wall's foot. A whole-width cell keeps the original arithmetic.
  */
 function cellAreaMm2(room: RoomDefinition, cell: FaceCell, features: readonly ResolvedWallFeature[]): number {
+  return grossCellAreaMm2(room, cell, features) - coveredByLedgesMm2(room, cell, features);
+}
+
+/** What a ledge standing on this floor, or with its end against this wall, hides from the tiler. */
+function coveredByLedgesMm2(
+  room: RoomDefinition,
+  cell: FaceCell,
+  features: readonly ResolvedWallFeature[],
+): number {
+  const faceArea =
+    cell.face === 'floor'
+      ? room.widthMm * room.depthMm
+      : (cell.face === 'back' ? room.widthMm : room.depthMm) * room.heightMm;
+  let area = 0;
+  for (const feature of features)
+    for (const part of ledgeFootprints(room, feature)) {
+      if (part.face !== cell.face) continue;
+      const width = Math.min(cellRight(cell), part.right) - Math.max(cellLeft(cell), part.left),
+        height = Math.min(cell.to, part.to) - Math.max(cell.from, part.from);
+      if (width > 0 && height > 0) area += width * height * faceArea;
+    }
+  return area;
+}
+
+function grossCellAreaMm2(
+  room: RoomDefinition,
+  cell: FaceCell,
+  features: readonly ResolvedWallFeature[],
+): number {
   const { face, from, to } = cell,
     left = cellLeft(cell),
     right = cellRight(cell);
@@ -66,13 +101,24 @@ function cellAreaMm2(room: RoomDefinition, cell: FaceCell, features: readonly Re
     const openingArea = width * overlapHeight;
     const rearArea = width * overlapHeight;
     // Each side reveal belongs to the cell just inside its edge.
+    // A ledge's end flat against another wall is not tiled.
+    const tiledEnd = (end: 'left' | 'right') =>
+      !(
+        feature.protrudes &&
+        (end === 'left' ? opening.left === 0 : opening.right === 1) &&
+        ledgeEndWall(feature.face, end)
+      );
     const reveals =
-      Number(left <= opening.left && opening.left < right) +
-      Number(left < opening.right && opening.right <= right);
+      Number(left <= opening.left && opening.left < right && tiledEnd('left')) +
+      Number(left < opening.right && opening.right <= right && tiledEnd('right'));
     area += -openingArea + rearArea + reveals * overlapHeight * feature.depthMm;
     // Exact band boundary ownership points into the opening, as in geometry.
     if (from <= opening.top && opening.top < to) area += width * feature.depthMm;
-    if (feature.kind === 'closed-niche' && from < opening.bottom && opening.bottom <= to)
+    if (
+      (feature.kind === 'closed-niche' || (feature.protrudes && opening.bottom < 1)) &&
+      from < opening.bottom &&
+      opening.bottom <= to
+    )
       area += width * feature.depthMm;
   }
   return area;

@@ -54,6 +54,17 @@ export function viewerSurfacePatches(scene: Scene): {
   };
 }
 
+/**
+ * A straight-on view hardly shows a ledge's depth, and the room's one light casts its shadow back
+ * under it, so its faces take a fixed shade of the wall's tile. The top stays as the light has it.
+ */
+const LEDGE_SHADE: Partial<Record<WallFeaturePiece['role'], number>> = {
+  front: 0.86,
+  'reveal-left': 0.72,
+  'reveal-right': 0.72,
+  'reveal-bottom': 0.6,
+};
+
 export function viewerFaceIsVisible(room: RoomDefinition, face: RoomFace, cameraPosition: Vector3): boolean {
   // The near outer shell is hidden from outside. Installed objects are not children of it.
   const epsilon = Math.max(room.widthMm, room.heightMm, room.depthMm) * 1e-7;
@@ -427,8 +438,21 @@ export async function buildViewerSurfaces(
       }
       const material = surfaceMaterial(room, patch, contacts, product, atlas);
       ownedMaterials.add(material);
+      // The ledge's faces read apart from the wall behind them, whose tile and light they share.
+      const shaded = new Map<number, MeshStandardMaterial>();
+      const ledgeMaterial = (shade: number) => {
+        let value = shaded.get(shade);
+        if (!value) {
+          value = surfaceMaterial(room, patch, contacts, product, atlas);
+          value.color.multiplyScalar(shade);
+          ownedMaterials.add(value);
+          shaded.set(shade, value);
+        }
+        return value;
+      };
       const add = (geometry: BufferGeometry, piece?: WallFeaturePiece) => {
-        const mesh = new Mesh(geometry, material);
+        const shade = piece?.protrudes ? LEDGE_SHADE[piece.role] : undefined;
+        const mesh = new Mesh(geometry, shade ? ledgeMaterial(shade) : material);
         mesh.name = piece
           ? 'wall-feature:' + (piece.featureId ?? patch.face) + ':' + piece.role
           : 'room-face:' +
@@ -441,7 +465,7 @@ export async function buildViewerSurfaces(
             row.to;
         if (patch.surface) mesh.userData.surfaceId = patch.surface.id;
         mesh.receiveShadow = true;
-        mesh.castShadow = false;
+        mesh.castShadow = !!piece?.protrudes;
         group.add(mesh);
         meshes.push({ face: piece?.ownerFace ?? patch.face, mesh, piece });
       };
@@ -483,7 +507,13 @@ export async function buildViewerSurfaces(
       const position = camera.getWorldPosition(new Vector3());
       for (const entry of meshes) {
         const piece = entry.piece;
-        if (!piece || piece.role === 'base-wall')
+        if (piece?.protrudes)
+          // It stands before its wall, and a hidden wall takes it along; an end flat on another wall
+          // would fight that wall's tiles, so it shows only once that wall is out of the way.
+          entry.mesh.visible =
+            viewerFaceIsVisible(room, entry.face, position) &&
+            !(piece.againstFace && viewerFaceIsVisible(room, piece.againstFace, position));
+        else if (!piece || piece.role === 'base-wall')
           entry.mesh.visible = viewerFaceIsVisible(room, entry.face, position);
         else if (piece.role === 'floor-extension')
           entry.mesh.visible = viewerFaceIsVisible(room, 'floor', position);
