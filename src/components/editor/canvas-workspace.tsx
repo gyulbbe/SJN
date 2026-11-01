@@ -88,7 +88,7 @@ export default function CanvasWorkspace({
 }: Props) {
   const repositories = useRepositories();
   const st = useEditor(),
-    { writable, guest } = useEditingCapabilities();
+    { writable, guest, layoutStudio } = useEditingCapabilities();
   const scene = st.draft || (st.project ? getEditingScene(st.project, st.editing) : undefined);
   const beforeScene = st.editing === 'after' ? st.project?.shared.comparison?.before : undefined;
   const lighting = st.project ? projectPhotoLight(st.project) : undefined;
@@ -487,20 +487,24 @@ export default function CanvasWorkspace({
         <span className="tool-label shrink-0">도구</span>
         {toolButton('select', '선택 / 이동', MousePointer2)}
         {toolButton('pan', '화면 이동', Hand)}
-        <button
-          title={regionIssue ?? '부분 타일: 벽이나 바닥을 끌어 네모 영역을 만들어요'}
-          aria-label="부분 타일"
-          aria-pressed={st.tool === 'region'}
-          data-testid="region-tool"
-          disabled={!!regionIssue}
-          className={`icon-btn ${st.tool === 'region' ? 'active' : ''}`}
-          onClick={() => st.setTool('region')}
-        >
-          <SquareDashed size={17} />
-        </button>
-        <WallFeatureToolButton tool={wallTool} compact />
-        <WallFeatureToolOptions tool={wallTool} compact />
-        <CeilingOptions compact />
+        {!layoutStudio && (
+          <>
+            <button
+              title={regionIssue ?? '부분 타일: 벽이나 바닥을 끌어 네모 영역을 만들어요'}
+              aria-label="부분 타일"
+              aria-pressed={st.tool === 'region'}
+              data-testid="region-tool"
+              disabled={!!regionIssue}
+              className={`icon-btn ${st.tool === 'region' ? 'active' : ''}`}
+              onClick={() => st.setTool('region')}
+            >
+              <SquareDashed size={17} />
+            </button>
+            <WallFeatureToolButton tool={wallTool} compact />
+            <WallFeatureToolOptions tool={wallTool} compact />
+            <CeilingOptions compact />
+          </>
+        )}
         {st.tool === 'region' && (
           <button
             title="경계를 바탕 타일 줄눈에 맞춤"

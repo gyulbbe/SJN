@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { publicPlacementSchema } from './catalog/placement-contract';
+import { publicPlacementSchema, type PublicPlacement } from './catalog/placement-contract';
 import { roomFaceSchema } from './room-validation';
 
 /**
@@ -91,3 +91,5 @@ export type ManagedLayout = {
   products: string[];
   missing: number;
 };
+/** An administrator's list, with what is needed to open a layout (a hidden one too). */
+export type ManagedLayouts = { layouts: ManagedLayout[]; placements: PublicPlacement[] };

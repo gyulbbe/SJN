@@ -6,7 +6,6 @@ import { useAccess } from '../app-provider';
 import { deleteMaterialKind, loadCatalog, saveCatalog } from '@/lib/catalog/client';
 import { optionKinds, optionLabels, type CatalogData, type OptionKind } from '@/lib/catalog/contract';
 import { categoryLabels, listedCategories, type MaterialCategory } from '@/lib/types';
-import FixtureLayoutsAdmin from './fixture-layouts-admin';
 import styles from './catalog.module.css';
 const empty = () => ({
   id: undefined as string | undefined,
@@ -303,7 +302,6 @@ export default function CatalogAdmin() {
           </tbody>
         </table>
       </div>
-      <FixtureLayoutsAdmin userId={userId} />
     </main>
   );
 }

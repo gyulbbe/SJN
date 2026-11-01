@@ -227,9 +227,9 @@ describe('관리', { timeout: 120000 }, () => {
     const change = { id, revision: 1, name: '새 이름', sortOrder: 3, active: true };
     expect((await manage('update', change)).status).toBe(200);
     expect((await manage('update', change)).status).toBe(409);
-    expect((await manage('save', { id, revision: 1, items: [item(shared.materialId)], room })).status).toBe(
-      409,
-    );
+    expect(
+      (await manage('save', { id, name: 'x', revision: 1, items: [item(shared.materialId)], room })).status,
+    ).toBe(409);
     expect((await manage('remove', { id, revision: 1 })).status).toBe(409);
     const after = (await managed())[0]!;
     expect(after).toMatchObject({ name: '새 이름', sortOrder: 3, revision: 2 });
@@ -237,13 +237,14 @@ describe('관리', { timeout: 120000 }, () => {
       (
         await manage('save', {
           id,
+          name: '고친 이름',
           revision: 2,
           items: [item(shared.materialId, { u: 0.7 })],
           room: { ...room, widthMm: 3000 },
         })
       ).status,
     ).toBe(200);
-    expect((await managed())[0]).toMatchObject({ revision: 3, room: { widthMm: 3000 } });
+    expect((await managed())[0]).toMatchObject({ name: '고친 이름', revision: 3, room: { widthMm: 3000 } });
     expect((await managed())[0]!.items[0]!.u).toBe(0.7);
     expect((await manage('remove', { id, revision: 3 })).status).toBe(200);
     expect(await managed()).toEqual([]);
@@ -307,9 +308,9 @@ describe('관리', { timeout: 120000 }, () => {
       expect(response.status).toBe(400);
     }
     const id = await created('덮어쓰기 시험', [item(shared.materialId)]);
-    expect((await manage('save', { id, revision: 1, items: [item(personal.materialId)], room })).status).toBe(
-      400,
-    );
+    expect(
+      (await manage('save', { id, name: 'x', revision: 1, items: [item(personal.materialId)], room })).status,
+    ).toBe(400);
     expect((await managed())[0]!.items[0]!.materialId).toBe(shared.materialId);
   });
   it('30개까지만 만든다', async () => {
@@ -367,6 +368,9 @@ describe('공개 목록', { timeout: 120000 }, () => {
     expect(list.layouts[0]!.items.map((entry) => entry.materialId)).toEqual([stays.materialId]);
     expect(list.placements.map((placement) => placement.materialId)).toEqual([stays.materialId]);
     const row = (await managed()).find((layout) => layout.name === '둘')!;
+    // What a hidden layout's editor needs comes with the list; the gone product's does not.
+    const list2 = (await (await manage('list')).json()) as { placements: { materialId: string }[] };
+    expect(list2.placements.map((placement) => placement.materialId)).toEqual([stays.materialId]);
     expect(row).toMatchObject({ products: ['남는 변기'], missing: 1 });
     // A new version of the material is what a press now places: the layout holds the material's id.
     const updated = await call('materials', {
@@ -496,6 +500,7 @@ describe('비용 (d1-query-budget)', { timeout: 300000 }, () => {
     });
     const saved = await run('save', {
       id: made.value.id,
+      name: '쓰기',
       revision: 1,
       items: [item(shared.materialId, { u: 0.6 })],
       room,

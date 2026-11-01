@@ -63,7 +63,7 @@ export default function RoomCanvasWorkspace({
   onRegionCreated?: (surface: Surface) => void;
 }) {
   const st = useEditor(),
-    { writable } = useEditingCapabilities();
+    { writable, layoutStudio } = useEditingCapabilities();
   const scene = st.draft ?? (st.project ? getEditingScene(st.project, st.editing) : undefined);
   const context = st.project ? projectDesignPreviewRoomContext(st.project) : undefined;
   const before = st.editing === 'before' ? scene : context?.beforeScene;
@@ -591,19 +591,23 @@ export default function RoomCanvasWorkspace({
         >
           화면 이동
         </button>
-        <button
-          className={'btn small ' + (st.tool === 'region' ? 'active' : '')}
-          aria-pressed={st.tool === 'region'}
-          data-testid="region-tool"
-          title={regionIssue ?? '벽이나 바닥을 끌어 네모 영역을 만들어요'}
-          disabled={!!regionIssue}
-          onClick={() => st.setTool('region')}
-        >
-          부분 타일
-        </button>
-        <WallFeatureToolButton tool={wallTool} compact={false} />
-        <WallFeatureToolOptions tool={wallTool} compact={false} />
-        <CeilingOptions compact={false} />
+        {!layoutStudio && (
+          <>
+            <button
+              className={'btn small ' + (st.tool === 'region' ? 'active' : '')}
+              aria-pressed={st.tool === 'region'}
+              data-testid="region-tool"
+              title={regionIssue ?? '벽이나 바닥을 끌어 네모 영역을 만들어요'}
+              disabled={!!regionIssue}
+              onClick={() => st.setTool('region')}
+            >
+              부분 타일
+            </button>
+            <WallFeatureToolButton tool={wallTool} compact={false} />
+            <WallFeatureToolOptions tool={wallTool} compact={false} />
+            <CeilingOptions compact={false} />
+          </>
+        )}
         {st.tool === 'region' && (
           <button
             className={'btn small ' + (regionSnap ? 'active' : '')}

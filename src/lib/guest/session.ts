@@ -442,11 +442,7 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
         const data = await loadPublicLayouts(deps.fetch);
         if (read()?.document.id !== draft.document.id) throw new Error('체험 공간이 바뀌었어요.');
         // Known here, their images can be read and a draft using them saved, with no further request.
-        currentPlacements ??= new Map();
-        for (const placement of data.placements) {
-          placements.set(placement.versionId, placement);
-          currentPlacements.set(placement.materialId, placement);
-        }
+        rememberPlacements(data.placements);
         return data;
       },
       async getVersion(id) {
@@ -682,7 +678,16 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
       pendingPromotion = undefined;
     }
   }
+  /** Public placements read elsewhere (a layout being opened): no further request for them. */
+  function rememberPlacements(list: readonly PublicPlacement[]) {
+    currentPlacements ??= new Map();
+    for (const placement of list) {
+      placements.set(placement.versionId, placement);
+      currentPlacements.set(placement.materialId, placement);
+    }
+  }
   return {
+    rememberPlacements,
     createGuestDraft: create,
     openGuestSession: open,
     readGuestDraft: read,
@@ -698,6 +703,23 @@ const manager = createGuestSessionManager({
   fetch: (...args) => fetch(...args),
   currentUserId: getRepositoryUserId,
 });
+/**
+ * The 기본 배치 editor's own working room: the guest engine (public materials, no project in D1) kept in
+ * memory, apart from a guest's draft. A reload starts over.
+ */
+export function createLayoutStudioSession() {
+  const values = new Map<string, string>();
+  return createGuestSessionManager({
+    storage: () => ({
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => void values.set(key, value),
+      removeItem: (key) => void values.delete(key),
+    }),
+    render: renderRoomBackground,
+    fetch: (...args) => fetch(...args),
+    currentUserId: getRepositoryUserId,
+  });
+}
 export const {
   createGuestDraft,
   openGuestSession,

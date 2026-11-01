@@ -7,6 +7,9 @@ export default function AdminLinks({ className }: { className?: string }) {
   if (!admin) return null;
   return (
     <>
+      <Link className={className} href="/admin/layouts">
+        기본 배치
+      </Link>
       <Link className={className} href="/admin/users">
         회원 관리
       </Link>

@@ -3,7 +3,7 @@ import { getPlacementViewIndex, getPreferredProductViewIndex } from '@/lib/mater
 import { readProductDirection, viewDirection } from '@/lib/product-direction';
 import { findFreeSlot, slotBox, slotObstacles, type FreeSlot } from '@/lib/room-slot';
 import { freeWallSlot } from '@/lib/room-wall-contact';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -104,18 +104,11 @@ import type { RoomDefinition, RoomFace } from '@/lib/room-types';
 import { renderRoomBackground } from '@/lib/room-background';
 import { projectWallFeatureResizeError, roomResetWarnings } from '@/lib/room-editing';
 import { createPlacedFixture, createRoomPlacement, projectRoomFixture } from '@/lib/room-fixtures';
-import {
-  keptByLayout,
-  layoutBlockedReason,
-  layoutItemsFromScene,
-  layoutNotes,
-  layoutView,
-  placeLayout,
-  type PreparedItem,
-} from '@/lib/fixture-layouts';
+import { keptByLayout, layoutBlockedReason, layoutNotes, placeLayout } from '@/lib/fixture-layouts';
+import { prepareLayoutItems } from '@/lib/fixture-layouts-client';
 import type { PublicLayout } from '@/lib/fixture-layout-contract';
 import type { PublicPlacement } from '@/lib/catalog/placement-contract';
-import { FixtureLayoutsPanel, RegisterLayoutDialog, useFixtureLayouts } from './fixture-layouts-panel';
+import { FixtureLayoutsPanel, useFixtureLayouts } from './fixture-layouts-panel';
 import { homography, transformPoint } from '@/lib/render/math';
 import { detectSurfaces } from '@/lib/render/auto-surfaces';
 import type { RoomSegmentation } from '@/lib/segmentation';
@@ -124,7 +117,14 @@ import './editor-studio.css';
 const pendingProjectSaves = new Map<string, Promise<boolean>>();
 const drawerCardId = (card: MaterialCard) => card.materialId;
 export type AdminEditorContext = { actorUserId: string; owner: { id: string; name: string; email: string } };
-type EditorProps = { id: string; adminContext?: AdminEditorContext; guestContext?: GuestEditorContext };
+/** The 기본 배치 editor (src/components/admin/layout-studio.tsx): its own bar and way back. */
+export type LayoutStudioContext = { bar: ReactNode; onBack: () => void };
+type EditorProps = {
+  id: string;
+  adminContext?: AdminEditorContext;
+  guestContext?: GuestEditorContext;
+  layoutStudio?: LayoutStudioContext;
+};
 export default function Editor(props: EditorProps) {
   const repositories = useRepositories();
   const access = useAccess();
@@ -134,9 +134,10 @@ export default function Editor(props: EditorProps) {
     () => ({
       writable: guest || access.writable,
       guest,
+      layoutStudio: !!props.layoutStudio,
       requestLogin: (feature: string) => requestLogin?.(feature),
     }),
-    [guest, access.writable, requestLogin],
+    [guest, access.writable, requestLogin, props.layoutStudio],
   );
   return (
     <EditingCapabilitiesProvider value={capabilities}>
@@ -144,7 +145,8 @@ export default function Editor(props: EditorProps) {
     </EditingCapabilitiesProvider>
   );
 }
-function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
+function EditorWorkspace({ id, adminContext, guestContext, layoutStudio }: EditorProps) {
+  const studio = !!layoutStudio;
   const repositories = useRepositories();
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -179,25 +181,25 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
   const requestLogin = guestContext?.requestLogin;
   const requireLogin = useCallback(
     (feature: string) => {
-      if (!isGuest) return false;
+      if (!isGuest || studio) return false;
       requestLogin?.(feature);
       return true;
     },
-    [isGuest, requestLogin],
+    [isGuest, studio, requestLogin],
   );
   const catalogAdmin = useSharedCatalogAdmin();
   const canManageCatalog = catalogAdmin && !adminContext && !isGuest;
   // For now only administrators get the 위생도기 tab (src/lib/fixture-access.ts says how to open it).
-  const canPlaceFixtures = catalogAdmin || fixturesOpenForTests();
+  // The 기본 배치 editor is behind AdminGuard; its working room has no account to ask about.
+  const canPlaceFixtures = catalogAdmin || studio || fixturesOpenForTests();
   // Each used material's current version (the usage panel's latest prices); the drawer pages its own list.
   const [latest, setLatest] = useState<MaterialEntry[]>([]),
     [materials, setMaterials] = useState<Record<string, MaterialVersion>>({}),
     [error, setError] = useState(''),
-    [tab, setTab] = useState<'wall' | 'floor' | 'fixtures'>('floor'),
+    [tab, setTab] = useState<'wall' | 'floor' | 'fixtures'>(studio ? 'fixtures' : 'floor'),
     // The 기본 배치 tab shows in place of the drawer, whose tab and list stay as they were (no request).
     [layoutsOpen, setLayoutsOpen] = useState(false),
     [placingLayout, setPlacingLayout] = useState(''),
-    [registering, setRegistering] = useState(false),
     // The 위생도기 tab's kind chip; kept while the editor is open.
     [fixtureKind, setFixtureKind] = useState<'all' | MaterialKind>('all'),
     [search, setSearch] = useState(''),
@@ -371,11 +373,11 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     const selected =
       current.project &&
       getEditingScene(current.project, current.editing).surfaces.find((s) => s.id === st.selection);
-    if (selected) {
+    if (selected && !studio) {
       setTab(selected.kind);
       setLayoutsOpen(false);
     }
-  }, [st.selection, id, st.editing]);
+  }, [st.selection, id, st.editing, studio]);
   const pendingKind = st.pendingRegion?.kind;
   useEffect(() => {
     if (pendingKind) {
@@ -867,12 +869,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
     before: st.editing === 'before',
     hasRoom: !!scene?.room,
   });
-  const layoutRegisterReason =
-    st.editing === 'before' || !scene?.room
-      ? 'After 시안의 공간에서 등록할 수 있어요.'
-      : !scene.fixtures.length
-        ? '먼저 위생도기 탭에서 제품을 놓아 주세요.'
-        : '';
   async function leave(path: string) {
     if (!flushMaterialUsageInputs()) return;
     useEditor.getState().commit();
@@ -1272,50 +1268,19 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       );
     };
     try {
-      const byMaterial = new Map(placements.map((placement) => [placement.materialId, placement]));
-      const versionIds = [
-        ...new Set(layout.items.flatMap((item) => byMaterial.get(item.materialId)?.versionId ?? [])),
-      ];
-      const unread = versionIds.filter((versionId) => !materialsRef.current[versionId]);
-      const batch = unread.length
-        ? await repositories.materials.getVersions(unread, { withCurrent: true })
-        : { versions: [], current: [] };
+      const reading = await prepareLayoutItems(layout, placements, materialsRef.current, repositories);
       if (stale()) return;
-      const read = Object.fromEntries(batch.versions.map((version) => [version.id, version]));
-      const known = { ...materialsRef.current, ...read };
-      const otherPhoto: { name: string; missing: string; used: string }[] = [];
-      let missing = layout.missing;
-      const chosen = layout.items.flatMap((item) => {
-        const placement = byMaterial.get(item.materialId);
-        const material = placement && known[placement.versionId];
-        const choice = material && layoutView(material, item);
-        const view = choice && material.views[choice.index];
-        if (!material || !choice || !view) {
-          missing++;
-          return [];
-        }
-        if (choice.missing)
-          otherPhoto.push({ name: material.name, missing: choice.missing, used: view.direction });
-        return [{ item, material, viewIndex: choice.index, view }];
-      });
-      const prepared: PreparedItem[] = await Promise.all(
-        chosen.map(async ({ item, material, viewIndex, view }) => {
-          const asset = await repositories.assets.get(view.assetId);
-          const { imageAspect, contentBounds } = await createRoomPlacement(material, asset, item.face);
-          return { item, material, viewIndex, imageAspect, contentBounds };
-        }),
-      );
-      if (stale()) return;
+      const { prepared, read, otherPhoto, missing, materials: known, current: latestVersions } = reading;
       // The store must know the new materials before the change, or a product against a wall is not
       // drawn there until the next change (room-editing.ts reprojectFixture).
       materialsRef.current = known;
       setMaterials((previous) => ({ ...previous, ...read }));
-      if (batch.current.length)
+      if (latestVersions.length)
         setLatest((previous) => [
           ...previous.filter(
-            (entry) => !batch.current.some((item) => item.material.id === entry.material.id),
+            (entry) => !latestVersions.some((item) => item.material.id === entry.material.id),
           ),
-          ...batch.current,
+          ...latestVersions,
         ]);
       useEditor.getState().initializeUsage(known);
       let placed: ReturnType<typeof placeLayout> | undefined;
@@ -1809,43 +1774,53 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
       <header className="editor-top">
         <button
           className="icon-btn"
-          aria-label="프로젝트 목록으로"
-          onClick={() => leave(adminContext ? '/admin/projects' : '/')}
+          aria-label={studio ? '기본 배치 목록으로' : '프로젝트 목록으로'}
+          onClick={() => {
+            if (layoutStudio) layoutStudio.onBack();
+            else void leave(adminContext ? '/admin/projects' : '/');
+          }}
         >
           <ArrowLeft size={18} />
         </button>
         <button
           className="editor-brand"
           style={{ background: 'none', borderTop: 0, borderLeft: 0, borderBottom: 0 }}
-          onClick={() => leave('/')}
+          onClick={() => {
+            if (layoutStudio) layoutStudio.onBack();
+            else void leave('/');
+          }}
         >
           <span className="brand-mark">
             <Layers size={19} />
           </span>
           <span>공간미리</span>
         </button>
-        <div className="top-project">
-          <input
-            className="editor-title"
-            aria-label="프로젝트명"
-            value={st.project.name}
-            disabled={!writable}
-            onChange={(e) => st.renamed(e.target.value)}
-          />
-          <span className="save-state" data-testid="save-status">
-            {status}
-          </span>
-          {scope && recoveryStatus && (
-            <span className="save-state" data-testid="recovery-status">
-              {recoveryStatus}
+        {layoutStudio ? (
+          layoutStudio.bar
+        ) : (
+          <div className="top-project">
+            <input
+              className="editor-title"
+              aria-label="프로젝트명"
+              value={st.project.name}
+              disabled={!writable}
+              onChange={(e) => st.renamed(e.target.value)}
+            />
+            <span className="save-state" data-testid="save-status">
+              {status}
             </span>
-          )}
-          {hasSaveError && !error && !st.error && (
-            <button className="text-button" onClick={() => void saveWithThumbnail()}>
-              저장 다시 시도
-            </button>
-          )}
-        </div>
+            {scope && recoveryStatus && (
+              <span className="save-state" data-testid="recovery-status">
+                {recoveryStatus}
+              </span>
+            )}
+            {hasSaveError && !error && !st.error && (
+              <button className="text-button" onClick={() => void saveWithThumbnail()}>
+                저장 다시 시도
+              </button>
+            )}
+          </div>
+        )}
         <div className="top-actions">
           <div className="editor-action-group editor-history" role="group" aria-label="실행 취소와 다시 실행">
             <div className="row undo-redo">
@@ -1885,188 +1860,203 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
               </button>
             </div>
           </div>
-          <div className="editor-action-group editor-view-actions" role="group" aria-label="공간 비교 보기">
-            <div className="segmented">
-              <button
-                disabled={!!st.draft || !!detectionStatus}
-                className={st.mode === 'before' ? 'active' : ''}
-                aria-pressed={st.mode === 'before'}
-                onClick={() => viewComparison('before')}
-              >
-                Before
-              </button>
-              <button
-                disabled={!!st.draft || !!detectionStatus}
-                className={st.mode === 'after' && st.editing === 'after' ? 'active' : ''}
-                aria-pressed={st.mode === 'after' && st.editing === 'after'}
-                onClick={() => viewComparison('after')}
-              >
-                After
-              </button>
-            </div>
-            <button
-              className={`icon-btn ${st.mode === 'split' ? 'active' : ''}`}
-              disabled={!!st.draft || !!detectionStatus}
-              aria-pressed={st.mode === 'split'}
-              title="드래그 비교"
-              aria-label="드래그 비교"
-              onClick={() => viewComparison(st.mode === 'split' ? 'after' : 'split')}
-            >
-              <Columns2 size={17} />
+          {studio ? (
+            <button className="btn room-open-button" aria-label="공간 크기" onClick={() => setRoomOpen(true)}>
+              <Ruler size={16} />
+              <span>공간 크기</span>
             </button>
-          </div>
-          <div
-            className="editor-more"
-            ref={moreRef}
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape' && moreOpen) {
-                event.preventDefault();
-                event.stopPropagation();
-                setMoreOpen(false);
-                moreButton.current?.focus();
-              }
-            }}
-          >
-            <button
-              ref={moreButton}
-              className="btn editor-more-toggle"
-              aria-expanded={moreOpen}
-              aria-controls={moreId}
-              onClick={() => setMoreOpen((value) => !value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'ArrowDown') return;
-                event.preventDefault();
-                setMoreOpen(true);
-                requestAnimationFrame(() => {
-                  moreRef.current
-                    ?.querySelector<HTMLButtonElement>('.editor-secondary-actions button:not(:disabled)')
-                    ?.focus();
-                });
-              }}
-            >
-              <MoreHorizontal size={18} aria-hidden="true" />
-              더보기
-            </button>
-            <div
-              id={moreId}
-              className="editor-action-group editor-secondary-actions"
-              data-open={moreOpen}
-              role="group"
-              aria-label="공간 및 저장 작업"
-              onClick={(event) => {
-                if ((event.target as HTMLElement).closest('button:not(:disabled)') && moreOpen) {
-                  moreButton.current?.focus();
-                  setMoreOpen(false);
-                }
-              }}
-            >
-              <button
-                className="btn room-open-button"
-                aria-label="공간 둘러보기"
-                title={isGuest ? '로그인 필요' : undefined}
-                disabled={!!detectionStatus || !activeDesign}
-                onClick={() => {
-                  if (requireLogin('공간 둘러보기') || !prepareDesignAction()) return;
-                  setRoomViewerOpen(true);
-                }}
+          ) : (
+            <>
+              <div
+                className="editor-action-group editor-view-actions"
+                role="group"
+                aria-label="공간 비교 보기"
               >
-                <Layers size={16} />
-                공간 둘러보기
-                {isGuest && <LoginRequiredIcon />}
-              </button>
-              <button
-                className="btn ai-button"
-                title={isGuest ? '로그인 필요' : undefined}
-                onClick={() => {
-                  if (!requireLogin('사진 AI 기능')) setAi(true);
-                }}
-              >
-                <Sparkles size={15} />
-                AI 고화질 보정<span className="badge">연결 필요</span>
-                {isGuest && <LoginRequiredIcon />}
-              </button>
-              <button
-                className="icon-btn"
-                title={isGuest ? '로그인 필요' : '지금 저장'}
-                style={isGuest ? { position: 'relative' } : undefined}
-                aria-label="지금 저장"
-                disabled={!writable || savingPreview}
-                onClick={() => void saveWithThumbnail()}
-              >
-                <Save size={17} />
-                {isGuest && <LoginRequiredIcon badge />}
-              </button>
-              {scene.room && (
+                <div className="segmented">
+                  <button
+                    disabled={!!st.draft || !!detectionStatus}
+                    className={st.mode === 'before' ? 'active' : ''}
+                    aria-pressed={st.mode === 'before'}
+                    onClick={() => viewComparison('before')}
+                  >
+                    Before
+                  </button>
+                  <button
+                    disabled={!!st.draft || !!detectionStatus}
+                    className={st.mode === 'after' && st.editing === 'after' ? 'active' : ''}
+                    aria-pressed={st.mode === 'after' && st.editing === 'after'}
+                    onClick={() => viewComparison('after')}
+                  >
+                    After
+                  </button>
+                </div>
                 <button
-                  className="btn room-open-button"
-                  aria-label="공간 크기"
-                  title={isGuest ? '로그인 필요' : '공간 크기'}
-                  disabled={!writable || !!st.draft || !!detectionStatus}
-                  onClick={() => {
-                    if (!requireLogin('공간 크기')) setRoomOpen(true);
+                  className={`icon-btn ${st.mode === 'split' ? 'active' : ''}`}
+                  disabled={!!st.draft || !!detectionStatus}
+                  aria-pressed={st.mode === 'split'}
+                  title="드래그 비교"
+                  aria-label="드래그 비교"
+                  onClick={() => viewComparison(st.mode === 'split' ? 'after' : 'split')}
+                >
+                  <Columns2 size={17} />
+                </button>
+              </div>
+              <div
+                className="editor-more"
+                ref={moreRef}
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) setMoreOpen(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape' && moreOpen) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setMoreOpen(false);
+                    moreButton.current?.focus();
+                  }
+                }}
+              >
+                <button
+                  ref={moreButton}
+                  className="btn editor-more-toggle"
+                  aria-expanded={moreOpen}
+                  aria-controls={moreId}
+                  onClick={() => setMoreOpen((value) => !value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ArrowDown') return;
+                    event.preventDefault();
+                    setMoreOpen(true);
+                    requestAnimationFrame(() => {
+                      moreRef.current
+                        ?.querySelector<HTMLButtonElement>('.editor-secondary-actions button:not(:disabled)')
+                        ?.focus();
+                    });
                   }}
                 >
-                  <Ruler size={16} />
-                  <span>공간 크기</span>
-                  {isGuest && <LoginRequiredIcon />}
+                  <MoreHorizontal size={18} aria-hidden="true" />
+                  더보기
                 </button>
-              )}
-              <button
-                className="btn primary"
-                aria-label="내보내기"
-                title={isGuest ? '로그인 필요' : undefined}
-                disabled={
-                  comparisonOpen || !activeDesign || exporting || st.editing === 'before' || !!st.draft
-                }
-                onClick={() => {
-                  if (!requireLogin('이미지 출력')) setExportModal(true);
-                }}
-              >
-                <Download size={15} />
-                <span className="export-label">내보내기</span>
-                {isGuest && <LoginRequiredIcon />}
-              </button>
-              <button className="icon-btn" title="사용 도움말" onClick={() => setHelp(true)}>
-                <HelpCircle size={17} />
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-      <div className="design-toolbar">
-        <div className="row">
-          <strong data-testid="active-design-name">{activeDesign?.name ?? '시안이 없어요'}</strong>
-          <span className="muted">
-            시안 {st.project.designs.length}/{MAX_DESIGNS}
-          </span>
-          <button
-            className="btn small"
-            onClick={() => {
-              if (!prepareDesignAction()) return;
-              setDesignsOpen(true);
-            }}
-          >
-            시안 관리
-          </button>
-        </div>
-        <div className="row">
-          <span className="muted">
-            비교 선택 {st.project.comparisonDesignIds.length}/{MAX_COMPARISON_DESIGNS}
-          </span>
-          <button className="btn small" onClick={openDesignComparison}>
-            <Columns2 size={15} />
-            {hasCompared && !comparisonOpen ? '시안 비교로 돌아가기' : '시안 비교'}
-          </button>
-          {!adminContext && st.project.shared.legacyHistory && (
-            <button className="text-button" disabled={!!adminContext} onClick={() => setLegacyOpen(true)}>
-              이전 편집 기록
-            </button>
+                <div
+                  id={moreId}
+                  className="editor-action-group editor-secondary-actions"
+                  data-open={moreOpen}
+                  role="group"
+                  aria-label="공간 및 저장 작업"
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest('button:not(:disabled)') && moreOpen) {
+                      moreButton.current?.focus();
+                      setMoreOpen(false);
+                    }
+                  }}
+                >
+                  <button
+                    className="btn room-open-button"
+                    aria-label="공간 둘러보기"
+                    title={isGuest ? '로그인 필요' : undefined}
+                    disabled={!!detectionStatus || !activeDesign}
+                    onClick={() => {
+                      if (requireLogin('공간 둘러보기') || !prepareDesignAction()) return;
+                      setRoomViewerOpen(true);
+                    }}
+                  >
+                    <Layers size={16} />
+                    공간 둘러보기
+                    {isGuest && <LoginRequiredIcon />}
+                  </button>
+                  <button
+                    className="btn ai-button"
+                    title={isGuest ? '로그인 필요' : undefined}
+                    onClick={() => {
+                      if (!requireLogin('사진 AI 기능')) setAi(true);
+                    }}
+                  >
+                    <Sparkles size={15} />
+                    AI 고화질 보정<span className="badge">연결 필요</span>
+                    {isGuest && <LoginRequiredIcon />}
+                  </button>
+                  <button
+                    className="icon-btn"
+                    title={isGuest ? '로그인 필요' : '지금 저장'}
+                    style={isGuest ? { position: 'relative' } : undefined}
+                    aria-label="지금 저장"
+                    disabled={!writable || savingPreview}
+                    onClick={() => void saveWithThumbnail()}
+                  >
+                    <Save size={17} />
+                    {isGuest && <LoginRequiredIcon badge />}
+                  </button>
+                  {scene.room && (
+                    <button
+                      className="btn room-open-button"
+                      aria-label="공간 크기"
+                      title={isGuest ? '로그인 필요' : '공간 크기'}
+                      disabled={!writable || !!st.draft || !!detectionStatus}
+                      onClick={() => {
+                        if (!requireLogin('공간 크기')) setRoomOpen(true);
+                      }}
+                    >
+                      <Ruler size={16} />
+                      <span>공간 크기</span>
+                      {isGuest && <LoginRequiredIcon />}
+                    </button>
+                  )}
+                  <button
+                    className="btn primary"
+                    aria-label="내보내기"
+                    title={isGuest ? '로그인 필요' : undefined}
+                    disabled={
+                      comparisonOpen || !activeDesign || exporting || st.editing === 'before' || !!st.draft
+                    }
+                    onClick={() => {
+                      if (!requireLogin('이미지 출력')) setExportModal(true);
+                    }}
+                  >
+                    <Download size={15} />
+                    <span className="export-label">내보내기</span>
+                    {isGuest && <LoginRequiredIcon />}
+                  </button>
+                  <button className="icon-btn" title="사용 도움말" onClick={() => setHelp(true)}>
+                    <HelpCircle size={17} />
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </div>
-      </div>
+      </header>
+      {!studio && (
+        <div className="design-toolbar">
+          <div className="row">
+            <strong data-testid="active-design-name">{activeDesign?.name ?? '시안이 없어요'}</strong>
+            <span className="muted">
+              시안 {st.project.designs.length}/{MAX_DESIGNS}
+            </span>
+            <button
+              className="btn small"
+              onClick={() => {
+                if (!prepareDesignAction()) return;
+                setDesignsOpen(true);
+              }}
+            >
+              시안 관리
+            </button>
+          </div>
+          <div className="row">
+            <span className="muted">
+              비교 선택 {st.project.comparisonDesignIds.length}/{MAX_COMPARISON_DESIGNS}
+            </span>
+            <button className="btn small" onClick={openDesignComparison}>
+              <Columns2 size={15} />
+              {hasCompared && !comparisonOpen ? '시안 비교로 돌아가기' : '시안 비교'}
+            </button>
+            {!adminContext && st.project.shared.legacyHistory && (
+              <button className="text-button" disabled={!!adminContext} onClick={() => setLegacyOpen(true)}>
+                이전 편집 기록
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {scope && recoveryArchives.length > 0 && (
         <details style={{ padding: '4px 16px' }}>
           <summary>보관된 복구본 {recoveryArchives.length}개</summary>
@@ -2260,65 +2250,67 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                   )}
                 </div>
               </div>
-              <div className="catalog-tabs">
-                <button
-                  className={!layoutsOpen && tab === 'wall' ? 'active' : ''}
-                  aria-pressed={!layoutsOpen && tab === 'wall'}
-                  onClick={() => {
-                    setLayoutsOpen(false);
-                    setTab('wall');
-                    st.select(null);
-                    st.setTool('select');
-                    applyRequest.current++;
-                    setDetectionStatus('');
-                  }}
-                >
-                  벽 타일
-                </button>
-                <button
-                  className={!layoutsOpen && tab === 'floor' ? 'active' : ''}
-                  aria-pressed={!layoutsOpen && tab === 'floor'}
-                  onClick={() => {
-                    setLayoutsOpen(false);
-                    setTab('floor');
-                    st.select(null);
-                    st.setTool('select');
-                    applyRequest.current++;
-                    setDetectionStatus('');
-                  }}
-                >
-                  바닥 타일
-                </button>
-                {!adminContext && (
+              {!studio && (
+                <div className="catalog-tabs">
                   <button
-                    className={layoutsOpen ? 'active' : ''}
-                    aria-pressed={layoutsOpen}
+                    className={!layoutsOpen && tab === 'wall' ? 'active' : ''}
+                    aria-pressed={!layoutsOpen && tab === 'wall'}
                     onClick={() => {
-                      setLayoutsOpen(true);
+                      setLayoutsOpen(false);
+                      setTab('wall');
                       st.select(null);
                       st.setTool('select');
                       applyRequest.current++;
                       setDetectionStatus('');
                     }}
                   >
-                    기본 배치
+                    벽 타일
                   </button>
-                )}
-                {canPlaceFixtures && (
                   <button
-                    className={!layoutsOpen && tab === 'fixtures' ? 'active' : ''}
-                    aria-pressed={!layoutsOpen && tab === 'fixtures'}
+                    className={!layoutsOpen && tab === 'floor' ? 'active' : ''}
+                    aria-pressed={!layoutsOpen && tab === 'floor'}
                     onClick={() => {
                       setLayoutsOpen(false);
-                      setTab('fixtures');
+                      setTab('floor');
+                      st.select(null);
+                      st.setTool('select');
                       applyRequest.current++;
                       setDetectionStatus('');
                     }}
                   >
-                    위생도기
+                    바닥 타일
                   </button>
-                )}
-              </div>
+                  {!adminContext && (
+                    <button
+                      className={layoutsOpen ? 'active' : ''}
+                      aria-pressed={layoutsOpen}
+                      onClick={() => {
+                        setLayoutsOpen(true);
+                        st.select(null);
+                        st.setTool('select');
+                        applyRequest.current++;
+                        setDetectionStatus('');
+                      }}
+                    >
+                      기본 배치
+                    </button>
+                  )}
+                  {canPlaceFixtures && (
+                    <button
+                      className={!layoutsOpen && tab === 'fixtures' ? 'active' : ''}
+                      aria-pressed={!layoutsOpen && tab === 'fixtures'}
+                      onClick={() => {
+                        setLayoutsOpen(false);
+                        setTab('fixtures');
+                        applyRequest.current++;
+                        setDetectionStatus('');
+                      }}
+                    >
+                      위생도기
+                    </button>
+                  )}
+                </div>
+              )}
               {/* The kinds take the place of the old placing tip: two rows of cards stay in view. */}
               {!layoutsOpen && tab === 'fixtures' && (
                 <FixtureKindChips
@@ -2337,8 +2329,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                   busyId={placingLayout}
                   onPick={(layout, placements) => void applyLayout(layout, placements)}
                   onRetry={() => void layouts.reload()}
-                  onRegister={canManageCatalog ? () => setRegistering(true) : undefined}
-                  registerReason={layoutRegisterReason}
                 />
               )}
               {/* One row in a wide panel (the drawer), two rows in the narrow desktop panel. */}
@@ -2475,17 +2465,23 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
                   }
                 />
               </div>
-              <div className="catalog-footer">
-                {canManageCatalog && (
-                  <button className="btn" disabled={!writable} onClick={() => setForm(true)}>
-                    <Plus size={14} />내 자재 등록하기
+              {!studio && (
+                <div className="catalog-footer">
+                  {canManageCatalog && (
+                    <button className="btn" disabled={!writable} onClick={() => setForm(true)}>
+                      <Plus size={14} />내 자재 등록하기
+                    </button>
+                  )}
+                  <button
+                    className="text-button"
+                    style={{ fontSize: 11 }}
+                    onClick={() => leave('/materials')}
+                  >
+                    자재 라이브러리
+                    <ExternalLink size={12} />
                   </button>
-                )}
-                <button className="text-button" style={{ fontSize: 11 }} onClick={() => leave('/materials')}>
-                  자재 라이브러리
-                  <ExternalLink size={12} />
-                </button>
-              </div>
+                </div>
+              )}
             </aside>
           )}
           {roomContext ? (
@@ -2640,22 +2636,6 @@ function EditorWorkspace({ id, adminContext, guestContext }: EditorProps) {
             <X size={15} />
           </button>
         </div>
-      )}
-      {registering && canManageCatalog && scene.room && (
-        <RegisterLayoutDialog
-          registered={layoutItemsFromScene(scene, materials)}
-          room={{
-            widthMm: scene.room.widthMm,
-            depthMm: scene.room.depthMm,
-            heightMm: scene.room.heightMm,
-          }}
-          userId={userId}
-          onClose={() => setRegistering(false)}
-          onSaved={() => {
-            setRegistering(false);
-            void layouts.reload();
-          }}
-        />
       )}
       {form && canManageCatalog && (
         <div className="modal" role="dialog" aria-modal="true" aria-label="신규 자재 등록">

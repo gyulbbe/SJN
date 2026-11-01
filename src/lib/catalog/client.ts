@@ -1,4 +1,9 @@
-import { publicLayoutsSchema, type ManagedLayout, type PublicLayouts } from '../fixture-layout-contract';
+import {
+  publicLayoutsSchema,
+  type ManagedLayout,
+  type ManagedLayouts,
+  type PublicLayouts,
+} from '../fixture-layout-contract';
 import type { CatalogData } from './contract';
 
 /** Registered catalog values always come from the authenticated D1 API. */
@@ -72,14 +77,14 @@ async function manageLayouts<T>(operation: string, input: unknown, userId?: stri
     );
   return result as T;
 }
-export const loadManagedLayouts = async (userId?: string) =>
-  (await manageLayouts<{ layouts: ManagedLayout[] }>('list', undefined, userId)).layouts;
+export const loadManagedLayouts = (userId?: string) =>
+  manageLayouts<ManagedLayouts>('list', undefined, userId);
 export const createManagedLayout = (
   input: Pick<ManagedLayout, 'name' | 'sortOrder' | 'active' | 'items' | 'room'>,
   userId?: string,
-) => manageLayouts('create', input, userId);
+) => manageLayouts<{ id: string }>('create', input, userId);
 export const overwriteManagedLayout = (
-  input: Pick<ManagedLayout, 'id' | 'revision' | 'items' | 'room'>,
+  input: Pick<ManagedLayout, 'id' | 'revision' | 'name' | 'items' | 'room'>,
   userId?: string,
 ) => manageLayouts('save', input, userId);
 export const updateManagedLayout = (

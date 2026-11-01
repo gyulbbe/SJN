@@ -12,7 +12,7 @@ import {
   publicLayoutsSchema,
   type LayoutItem,
   type LayoutRoom,
-  type ManagedLayout,
+  type ManagedLayouts,
 } from '@/lib/fixture-layout-contract';
 import type { PublicPlacement } from './placement-contract';
 import { currentPublic, placementsOf } from './public';
@@ -116,7 +116,9 @@ const createInput = z
     room: layoutRoomSchema,
   })
   .strict();
-const overwriteInput = reference.extend({ items: layoutItemsSchema, room: layoutRoomSchema }).strict();
+const overwriteInput = reference
+  .extend({ name: layoutNameSchema, items: layoutItemsSchema, room: layoutRoomSchema })
+  .strict();
 const updateInput = reference
   .extend({ name: layoutNameSchema, sortOrder: layoutOrderSchema, active: z.boolean() })
   .strict();
@@ -178,7 +180,8 @@ export async function manageFixtureLayouts(ctx: Context, body: Record<string, un
         input.revision,
         sql(
           ctx,
-          'UPDATE d1_fixture_layouts SET items_json=?,room_json=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?',
+          'UPDATE d1_fixture_layouts SET name=?,items_json=?,room_json=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?',
+          input.name,
           JSON.stringify(input.items),
           JSON.stringify(input.room),
           stamp(),
@@ -218,7 +221,7 @@ export async function manageFixtureLayouts(ctx: Context, body: Record<string, un
       throw invalid('지원하지 않는 기본 배치 작업이에요.');
   }
 }
-async function listManaged(ctx: Context): Promise<{ layouts: ManagedLayout[] }> {
+async function listManaged(ctx: Context): Promise<ManagedLayouts> {
   const stored = await readLayouts(ctx.env.DB, false);
   const placements = await placeable(ctx.env, stored);
   return {
@@ -236,5 +239,6 @@ async function listManaged(ctx: Context): Promise<{ layouts: ManagedLayout[] }> 
         missing: layout.items.length - products.length,
       };
     }),
+    placements: [...placements.values()],
   };
 }

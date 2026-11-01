@@ -7,6 +7,8 @@ export type GuestEditorContext = { requestLogin: (feature: string) => void };
 export type EditingCapabilities = {
   writable: boolean;
   guest: boolean;
+  /** The 기본 배치 editor: products only, so the tools for what a layout does not hold are hidden. */
+  layoutStudio?: boolean;
   requestLogin: (feature: string) => void;
 };
 

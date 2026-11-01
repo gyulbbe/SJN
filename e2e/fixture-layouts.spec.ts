@@ -216,7 +216,9 @@ async function withProducts(page: Page, count: number) {
   return savedProject(page);
 }
 
-test('관리자: 놓은 제품을 등록하고, 덮어쓰고, 관리 화면에서 순서·숨김·삭제한다', async ({ page }) => {
+test('관리자: 새 탭에서 방을 정해 제품을 놓고 저장, 다시 열어 고치고, 순서·숨김·삭제한다', async ({
+  page,
+}) => {
   app = await authenticatedApp(page);
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -237,104 +239,264 @@ test('관리자: 놓은 제품을 등록하고, 덮어쓰고, 관리 화면에�
     depthMm: 300,
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await openRoom(page);
-  await tab(page, '기본 배치').click();
-  // Nothing placed yet: nothing to register.
-  await expect(page.getByTestId('register-layout')).toBeDisabled();
-  await expect(panel(page).getByText('아직 준비된 기본 배치가 없어요.')).toBeVisible();
-
-  await tab(page, '위생도기').click();
-  let count = 0;
-  for (const name of ['등록 변기', '등록 세면대']) {
+  const requests = watch(page);
+  const rows = async () =>
+    (
+      await app!.env.DB.prepare(
+        'SELECT name,revision,active,items_json,room_json FROM d1_fixture_layouts ORDER BY name',
+      ).all<{ name: string; revision: number; active: number; items_json: string; room_json: string }>()
+    ).results;
+  const canvasReady = async () => {
+    await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+    await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  };
+  const productCount = () => page.getByText(/제품 \d+개/).first();
+  const place = async (name: string, count: number) => {
     await panel(page).locator('button.material-tile').filter({ hasText: name }).click();
-    await withProducts(page, ++count);
-  }
-  const placed = sceneOf(await savedProject(page));
+    await expect(productCount()).toContainText(`제품 ${count}개`, { timeout: 30000 });
+  };
 
-  await tab(page, '기본 배치').click();
-  await page.getByTestId('register-layout').click();
-  const dialog = page.getByRole('dialog', { name: '기본 배치로 등록' });
-  await expect(dialog.getByText('제품 2개')).toBeVisible();
-  await dialog.getByLabel('기본 배치 이름').fill('변기와 세면대');
-  await shot(page, 'register-dialog');
-  await dialog.getByRole('button', { name: '저장', exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  await expect(cards(page).first()).toContainText('1번 · 변기와 세면대');
-  await expect(cards(page).first().getByTestId('layout-plan').locator('rect')).toHaveCount(2);
-  await shot(page, 'cards-admin');
+  // The tab is on the main menu; opening it reads the list once.
+  await page.goto('/');
+  await page.getByRole('link', { name: '기본 배치', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/admin\/layouts$/);
+  const admin = page.getByTestId('fixture-layouts-admin');
+  await expect(admin.getByText('아직 등록한 기본 배치가 없어요.')).toBeVisible();
 
-  const rows = () =>
-    app!.env.DB.prepare('SELECT name,revision,active,items_json FROM d1_fixture_layouts ORDER BY name').all<{
-      name: string;
-      revision: number;
-      active: number;
-      items_json: string;
-    }>();
-  const first = (await rows()).results[0]!;
-  const items = JSON.parse(first.items_json) as LayoutItem[];
-  expect(items.map((entry) => [entry.face, entry.u, entry.v])).toEqual(
-    placed.fixtures.map((fixture) => [
-      fixture.roomPlacement!.face,
-      fixture.roomPlacement!.u,
-      fixture.roomPlacement!.v,
-    ]),
-  );
-  expect(items[0]!.againstWall).toBe(true);
+  // A new layout asks for its room, then the project editor's canvas, products only.
+  await admin.getByRole('link', { name: '새 배치', exact: true }).click();
+  const size = page.getByRole('dialog', { name: '공간 크기 설정' });
+  await size.getByLabel('가로 (m)', { exact: true }).fill('3');
+  await shot(page, 'studio-new-room');
+  await size.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await canvasReady();
+  await expect(page.getByTestId('layout-studio')).toBeVisible();
+  for (const name of ['벽 타일', '바닥 타일', '기본 배치']) await expect(tab(page, name)).toHaveCount(0);
+  for (const name of ['공간 둘러보기', '내보내기', '시안 관리'])
+    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+  await expect(page.getByTestId('region-tool')).toHaveCount(0);
+  await expect(page.getByTestId('wall-feature-tool')).toHaveCount(0);
+  await expect(page.getByTestId('layout-save-status')).toContainText('제품을 놓고');
+
+  requests.reset();
+  await place('등록 변기', 1);
+  await place('등록 세면대', 2);
+  await expect(page.getByTestId('layout-save-status')).toHaveText('저장하지 않은 변경이 있어요');
+  // A name is needed.
+  await page.getByTestId('layout-save').click();
+  await expect(page.getByRole('alert').filter({ hasText: '이름을 입력해 주세요.' })).toBeVisible();
+  expect(await rows()).toEqual([]);
+
+  await page.getByLabel('기본 배치 이름', { exact: true }).fill('변기와 세면대');
+  await shot(page, 'studio');
+  requests.reset();
+  await page.getByTestId('layout-save').click();
+  await expect(page.getByTestId('layout-save-status')).toHaveText('저장됨 · 이용자에게 보여요');
+  expect(requests.count('/api/d1/fixture-layouts')).toBe(1);
+  await expect(page).toHaveURL(/\/admin\/layouts\/studio\?id=/);
+  const first = (await rows())[0]!;
+  const registered = JSON.parse(first.items_json) as LayoutItem[];
+  expect(registered).toHaveLength(2);
+  expect(JSON.parse(first.room_json).widthMm).toBe(3000);
+  expect(registered[0]!.face).toBe('floor');
+  expect(registered[0]!.againstWall).toBe(true);
+  // A wall product starts on the first wall, as in a project; the inspector moves it.
+  expect(registered[1]!.face).toBe('left');
   expect(first.items_json).not.toContain('occlusion');
   expect(first.items_json).not.toContain('versionId');
 
-  // Overwriting asks once, and takes what is placed now.
-  await tab(page, '위생도기').click();
-  await panel(page).locator('button.material-tile').filter({ hasText: '등록 비데' }).click();
-  await withProducts(page, 3);
-  await tab(page, '기본 배치').click();
-  await page.getByTestId('register-layout').click();
-  await expect(dialog.getByRole('option', { name: '덮어쓰기: 변기와 세면대' })).toBeAttached();
-  await dialog.getByLabel('등록할 곳').selectOption({ label: '덮어쓰기: 변기와 세면대' });
-  await expect(dialog.getByLabel('기본 배치 이름')).toHaveCount(0);
+  // Saved means public, at once, for everyone.
+  const open = async () =>
+    page.evaluate(
+      async () => (await (await fetch('/api/catalog/layouts')).json()) as { layouts: { name: string }[] },
+    );
+  expect((await open()).layouts.map((layout) => layout.name)).toEqual(['변기와 세면대']);
+  // No project was made, and a guest's draft is untouched.
+  const saves = await app.env.DB.prepare('SELECT count(*) AS n FROM d1_projects').first<{ n: number }>();
+  expect(saves?.n).toBe(0);
+  expect(requests.count('project-save')).toBe(0);
+  expect(await page.evaluate(() => sessionStorage.getItem('sjn:guest-draft:v1'))).toBeNull();
+
+  // Leaving with a change asks; staying keeps it.
+  await place('등록 비데', 3);
   let asked = '';
   page.once('dialog', (confirm) => {
     asked = confirm.message();
-    void confirm.accept();
+    void confirm.dismiss();
   });
-  await dialog.getByRole('button', { name: '저장', exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  expect(asked).toContain('덮어쓸까요');
-  await expect.poll(async () => (await rows()).results[0]!.revision).toBe(2);
-  expect(JSON.parse((await rows()).results[0]!.items_json)).toHaveLength(3);
-  // A second layout, for the numbers.
-  await page.getByTestId('register-layout').click();
-  await dialog.getByLabel('기본 배치 이름').fill('둘째 배치');
-  await dialog.getByRole('button', { name: '저장', exact: true }).click();
-  await expect(cards(page)).toHaveCount(2);
-  await saved(page);
+  await page.getByRole('button', { name: '기본 배치 목록으로', exact: true }).click();
+  await expect.poll(() => asked).toContain('저장하지 않고 나갈까요');
+  await expect(page.getByTestId('layout-studio')).toBeVisible();
 
-  await page.goto('/admin/catalog');
-  const admin = page.getByTestId('fixture-layouts-admin');
+  await page.getByTestId('layout-save').click();
+  await expect(page.getByTestId('layout-save-status')).toHaveText('저장됨 · 이용자에게 보여요');
+  await expect.poll(async () => (await rows())[0]!.revision).toBe(2);
+  const beforeDrag = JSON.parse((await rows())[0]!.items_json) as LayoutItem[];
+
+  // Dragging asks the server nothing, and what is dragged is what is saved.
+  const selected = await page.evaluate(() => {
+    const entities = document.querySelectorAll('[data-testid="editor-canvas"] [data-entity]');
+    const box = entities[entities.length - 1]!.getBoundingClientRect();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  });
+  const atDrag = requests.all().length;
+  await page.getByRole('button', { name: '선택 / 이동', exact: true }).click();
+  await page.mouse.move(selected.x, selected.y);
+  await page.mouse.down();
+  await page.mouse.move(selected.x + 60, selected.y + 20, { steps: 6 });
+  await page.mouse.up();
+  expect(
+    requests
+      .all()
+      .slice(atDrag)
+      .filter((path) => path !== '/api/d1/role'),
+  ).toEqual([]);
+  await expect(page.getByTestId('layout-save-status')).toHaveText('저장하지 않은 변경이 있어요');
+  await page.getByTestId('layout-save').click();
+  await expect(page.getByTestId('layout-save-status')).toHaveText('저장됨 · 이용자에게 보여요');
+  await expect.poll(async () => (await rows())[0]!.revision).toBe(3);
+  const third = JSON.parse((await rows())[0]!.items_json) as LayoutItem[];
+  expect(third).toHaveLength(3);
+  expect(JSON.stringify(third)).not.toBe(JSON.stringify(beforeDrag));
+
+  // The list: its number, products and plan. Opening it again puts everything back where it was.
+  await page.getByRole('button', { name: '기본 배치 목록으로', exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/layouts$/);
   const managed = admin.getByTestId('managed-layout');
+  await expect(managed).toHaveCount(1);
+  await expect(managed.first()).toContainText('1번');
+  await expect(managed.first()).toContainText('등록 변기 · 등록 세면대 · 등록 비데');
+  await expect(managed.first().getByTestId('layout-plan').locator('rect')).toHaveCount(3);
+  await shot(page, 'manage');
+  await managed.first().getByRole('link', { name: '변기와 세면대 열기', exact: true }).click();
+  await canvasReady();
+  await expect(productCount()).toContainText('제품 3개', { timeout: 30000 });
+  await expect(page.getByLabel('기본 배치 이름', { exact: true })).toHaveValue('변기와 세면대');
+  await expect(page.getByTestId('layout-save-status')).toHaveText('저장됨 · 이용자에게 보여요');
+  await shot(page, 'studio-reopened');
+  // Saved again unchanged: the same places.
+  await page.getByLabel('기본 배치 이름', { exact: true }).fill('고친 배치');
+  await page.getByTestId('layout-save').click();
+  await expect.poll(async () => (await rows())[0]!.name).toBe('고친 배치');
+  const places = (list: LayoutItem[]) => list.map((entry) => [entry.face, entry.u, entry.v, entry.direction]);
+  expect(places(JSON.parse((await rows())[0]!.items_json))).toEqual(places(third));
+
+  // The room can change: the products follow it.
+  await page.getByRole('button', { name: '공간 크기', exact: true }).click();
+  await size.getByLabel('가로 (m)', { exact: true }).fill('2');
+  await size.getByRole('button', { name: '크기 적용', exact: true }).click();
+  await expect(size).toHaveCount(0, { timeout: 45000 });
+  await canvasReady();
+  await page.getByTestId('layout-save').click();
+  await expect.poll(async () => JSON.parse((await rows())[0]!.room_json).widthMm).toBe(2000);
+  await expect(page.locator('.editor-error')).toHaveCount(0);
+  await page.getByRole('button', { name: '기본 배치 목록으로', exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/layouts$/);
+
+  // A second one with an order: the order puts this one first; hiding gives up the number.
+  await seedLayout(app, '둘째 배치', 5, registered, JSON.parse(first.room_json));
+  await page.reload();
   await expect(managed).toHaveCount(2);
   await expect(managed.first().getByLabel('둘째 배치 이름')).toBeVisible();
   await expect(managed.first()).toContainText('1번');
-  await expect(managed.nth(1)).toContainText('등록 변기 · 등록 세면대 · 등록 비데');
-  await shot(page, 'manage');
-  // The order puts it first; a hidden one gives up its number.
-  await admin.getByLabel('변기와 세면대 표시 순서').fill('0');
-  await admin.getByLabel('변기와 세면대 표시 순서').blur();
-  await expect(managed.first().getByLabel('변기와 세면대 이름')).toBeVisible();
-  await expect(managed.first()).toContainText('1번');
+  await admin.getByLabel('고친 배치 표시 순서').fill('0');
+  await admin.getByLabel('고친 배치 표시 순서').blur();
+  await expect(managed.first().getByLabel('고친 배치 이름')).toBeVisible();
   await managed.first().getByRole('button', { name: '사용 중 · 숨기기', exact: true }).click();
   await expect(managed.nth(0).getByRole('button', { name: '숨김 · 사용하기', exact: true })).toBeVisible();
   await expect(managed.nth(1)).toContainText('1번');
-  const open = await page.evaluate(
-    async () => (await (await fetch('/api/catalog/layouts')).json()) as { layouts: { name: string }[] },
-  );
-  expect(open.layouts.map((layout) => layout.name)).toEqual(['둘째 배치']);
+  expect((await open()).layouts.map((layout) => layout.name)).toEqual(['둘째 배치']);
+  // A hidden one still opens and stays hidden when saved.
+  await managed.nth(0).getByRole('link', { name: '고친 배치 열기', exact: true }).click();
+  await canvasReady();
+  await page.getByLabel('기본 배치 이름', { exact: true }).fill('숨긴 채 고침');
+  await page.getByTestId('layout-save').click();
+  await expect
+    .poll(async () => (await rows()).map((row) => [row.name, row.active]))
+    .toContainEqual(['숨긴 채 고침', 0]);
+  await page.getByRole('button', { name: '기본 배치 목록으로', exact: true }).click();
+  await expect(managed).toHaveCount(2);
   // Deleting asks; the row goes.
   page.once('dialog', (confirm) => void confirm.accept());
   await managed.nth(1).getByRole('button', { name: '삭제', exact: true }).click();
   await expect(managed).toHaveCount(1);
-  expect((await rows()).results.map((row) => row.name)).toEqual(['변기와 세면대']);
+  expect((await rows()).map((row) => row.name)).toEqual(['숨긴 채 고침']);
+
+  // The table has moved, and the project editor has no registering any more.
+  await page.goto('/admin/catalog');
+  await expect(page.getByRole('heading', { name: '자재 분류 관리' })).toBeVisible();
+  await expect(page.getByTestId('fixture-layouts-admin')).toHaveCount(0);
+  await openRoom(page);
+  await tab(page, '기본 배치').click();
+  await expect(panel(page).getByTestId('fixture-layouts-panel')).toBeVisible();
+  await expect(page.getByText('기본 배치로 등록')).toHaveCount(0);
   expect(errors).toEqual([]);
+});
+
+test('전용 화면: 벽을 먼저 누르면 벽 제품이 그 벽에 놓이고, 패널은 위생도기 그대로다', async ({ page }) => {
+  app = await authenticatedApp(page);
+  await seedMaterial(app, {
+    name: '정면 세면대',
+    category: 'basin',
+    installation: 'wall',
+    widthMm: 500,
+    heightMm: 300,
+    depthMm: 400,
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/admin/layouts/studio');
+  await page
+    .getByRole('dialog', { name: '공간 크기 설정' })
+    .getByRole('button', { name: '공간 만들기', exact: true })
+    .click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  const box = (await page.getByTestId('editor-canvas').boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.42);
+  // Still the product list: a surface picked here does not turn the panel to tiles.
+  const tile = panel(page).locator('button.material-tile').filter({ hasText: '정면 세면대' });
+  await expect(tile).toBeVisible();
+  await tile.click();
+  await expect(page.getByText('제품 1개', { exact: false }).first()).toBeVisible({ timeout: 30000 });
+  await page.getByLabel('기본 배치 이름', { exact: true }).fill('정면 벽');
+  await page.getByTestId('layout-save').click();
+  await expect(page.getByTestId('layout-save-status')).toHaveText('저장됨 · 이용자에게 보여요');
+  const row = await app.env.DB.prepare('SELECT items_json FROM d1_fixture_layouts').first<{
+    items_json: string;
+  }>();
+  expect((JSON.parse(row!.items_json) as LayoutItem[])[0]!.face).toBe('back');
+});
+
+test('일반 회원·게스트: 메뉴가 없고 주소로 들어와도 막힌다', async ({ page }) => {
+  app = await authenticatedApp(page, { admin: false });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
+  await expect(page.getByRole('link', { name: '기본 배치', exact: true })).toHaveCount(0);
+  for (const path of ['/admin/layouts', '/admin/layouts/studio']) {
+    await page.goto(path);
+    await expect(page.getByRole('heading', { name: '관리자 전용' })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId('layout-studio')).toHaveCount(0);
+  }
+  // The server refuses too, whatever the screen does.
+  const answer = await page.evaluate(
+    async () =>
+      (
+        await fetch('/api/d1/fixture-layouts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operation: 'list' }),
+        })
+      ).status,
+  );
+  expect(answer).toBe(403);
+  await app.dispose();
+  app = await authenticatedApp(page, { signedIn: false });
+  // Not signed in, the address goes to signing in.
+  await page.goto('/admin/layouts');
+  await expect(page.getByRole('heading', { name: '로그인 / 회원가입' })).toBeVisible({ timeout: 30000 });
+  await expect(page.getByTestId('fixture-layouts-admin')).toHaveCount(0);
 });
 
 test('일반 회원: 타일을 고르고 1번을 누르면 제품이 놓이고, 되돌리기 한 번, 저장 한 번, 요청은 정해진 만큼', async ({
