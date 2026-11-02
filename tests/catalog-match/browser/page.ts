@@ -232,7 +232,7 @@ export async function openEmbedder(spec: ModelSpec, ep: 'webgpu' | 'wasm', threa
  * Trims a plain border (white or flat margin around a tile photo): rows/columns from each edge whose
  * colour stays within a few levels of the corner colour, at most 15% a side.
  */
-export function trimMargins(bitmap: ImageBitmap): HTMLCanvasElement {
+export function trimMargins(bitmap: ImageBitmap | HTMLCanvasElement): HTMLCanvasElement {
   const probe = canvasOf(bitmap.width, bitmap.height);
   const context = probe.getContext('2d', { willReadFrequently: true })!;
   context.drawImage(bitmap, 0, 0);

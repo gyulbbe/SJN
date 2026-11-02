@@ -6,8 +6,11 @@
  * back wall's tile (walls) or any floor-usable tile chosen for the photo (floor).
  *
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/r6-scenes.ts --combos combos.json [--split fifteen,corpus-dev]
- *   combos.json: [{ "name": "A", "tiles": "<photo-top12 key>" | "gemma" | "clef-flash", "products": "<r4-products method>" | "gemma",
- *                   "position": "face-above" | "moge" | "gemma" | "baseline" }]
+ *   combos.json: [{ "name": "A", "tiles": "<photo-top12 key>", "tilesAi"?: "gemma" | "clef-flash",
+ *                   "products": "<r4-products method>", "productsAi"?: "gemma" | "clef-flash",
+ *                   "position": "face-above" | "moge" | "gemma" | "baseline", "noMatch"?: "colour" }]
+ *   An AI pick that is "none" (or missing) falls back to the model-free first place; a product is left
+ *   out only by the colour rule (Gemma names a strong body colour: blue, green, yellow, pink, other).
  * Output: test-results/catalog-match/r6-scenes/<combo>/<photo>.jpg, results.json
  */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -22,7 +25,16 @@ const arg = (name: string, fallback: string) => {
   const at = process.argv.indexOf(`--${name}`);
   return at < 0 ? fallback : process.argv[at + 1];
 };
-type Combo = { name: string; tiles: string; products: string; position: string; tilesDir?: string };
+type Combo = {
+  name: string;
+  tiles: string;
+  tilesAi?: string;
+  products: string;
+  productsAi?: string;
+  position: string;
+  noMatch?: 'colour';
+  tilesDir?: string;
+};
 const combos = readJson<Combo[]>(resolve(arg('combos', join(out, 'r6-scenes', 'combos.json'))));
 const splits = arg('split', 'fifteen,corpus-dev').split(',');
 const target = join(out, 'r6-scenes');
@@ -88,6 +100,12 @@ const r2 = readJson<Record<string, Record<string, { id: string; wall: Wall; u: n
   join(out, 'r2-position', 'guesses.json'),
 );
 const PRODUCT = new Set(['toilet', 'basin', 'vanity', 'bath']);
+const STRONG = new Set(['blue', 'green', 'yellow', 'pink', 'other']);
+/** The colour rule: Gemma named the product body a colour no public product has. */
+function strongColour(query: string) {
+  const a = answers.find((x) => x.part === 'colour' && x.key === query && x.model === 'gemma');
+  return !!a && STRONG.has(String(gemmaJson(a.result)?.colour));
+}
 const thirdU: Record<string, number> = { left: 1 / 6, middle: 0.5, right: 5 / 6 };
 const draft = readJson<{ photos: Record<string, { id: string; kind: string }[]> }>(
   join(out, 'truth', 'fifteen-draft.json'),
@@ -125,12 +143,10 @@ try {
       const chosen: Partial<Record<string, string>> = {};
       for (const face of ['back', 'left', 'right', 'floor']) {
         const key = `${photo.id}:${face}`;
-        const top = Object.entries(tileTop[key] ?? {}).find(([k]) => k === combo.tiles)?.[1];
-        let id: string | undefined;
-        if (combo.tiles === 'gemma' || combo.tiles === 'clef-flash') id = pick('tiles', key, combo.tiles);
-        else id = top?.[0];
-        if (id && id !== 'none') chosen[face] = id;
-        else if (id === 'none' && tileTop[key]) chosen[face] = Object.values(tileTop[key])[0]?.[0];
+        const first = tileTop[key]?.[combo.tiles]?.[0];
+        const ai = combo.tilesAi ? pick('tiles', key, combo.tilesAi) : undefined;
+        const id = ai && ai !== 'none' ? ai : first;
+        if (id) chosen[face] = id;
       }
       const wallTile = chosen.back ?? chosen.left ?? chosen.right;
       const tiles: Record<string, { placement: PublicPlacement; path: string }> = {};
@@ -163,11 +179,15 @@ try {
       const products: ScenePage.SceneSpec['products'] = [];
       let noMatch = 0;
       items.forEach((item, i) => {
+        const first = productTop[item.query]?.[combo.products]?.[0]?.id;
+        const ai = combo.productsAi ? pick('products', item.query, combo.productsAi) : undefined;
         const id =
-          combo.products === 'gemma'
-            ? pick('products', item.query, 'gemma')
-            : productTop[item.query]?.[combo.products]?.[0]?.id;
-        if (!id || id === 'none') {
+          combo.noMatch === 'colour' && strongColour(item.query)
+            ? undefined
+            : ai && ai !== 'none'
+              ? ai
+              : first;
+        if (!id) {
           noMatch++;
           return;
         }

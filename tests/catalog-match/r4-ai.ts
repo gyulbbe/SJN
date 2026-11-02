@@ -19,7 +19,7 @@
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/r4-ai.ts --part tiles [--dry] [--limit N]
  *          [--tiles r1-tiles-q8 --tile-method "clean.rect.raw|..."] [--product-method dinov2.pooled.box]
  */
-import { appendFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ACCOUNT_DAILY, BUDGET, callAi, spent, StopRun } from './ai';
 import { out, readJson } from './data';
@@ -255,12 +255,12 @@ function asks(): Ask[] {
         part: 'synth',
         photo: faceId.split(':')[0],
         key: faceId,
-        candidates: synthTop[faceId].top[tileMethod],
+        candidates: synthTop[faceId].top[tileMethod.split('|').pop()!],
         answer: synthTop[faceId].answer,
         draw: {
           kind: 'tile' as const,
           crop: join(out, 'crops', 'synth', `${faceId.replace(':', '-')}.jpg`),
-          tiles: synthTop[faceId].top[tileMethod].map(tileRef),
+          tiles: synthTop[faceId].top[tileMethod.split('|').pop()!].map(tileRef),
         },
       }));
     }
@@ -288,10 +288,22 @@ function asks(): Ask[] {
   }
 }
 
-const list = LIMIT ? asks().slice(0, LIMIT) : asks();
-const callsPer = (model: string) => (PART === 'boxes' && model === 'moondream' ? 3 : 1);
 const models =
   PART === 'boxes' ? ['gemma', 'moondream'] : PART === 'split' || PART === 'colour' ? ['gemma'] : MODELS;
+/** Asks already answered by every model of this part (a stopped run goes on where it stopped). */
+const answered = new Set(
+  existsSync(answersFile)
+    ? readFileSync(answersFile, 'utf8')
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { part: string; key: string; model: string })
+        .filter((a) => a.part === PART)
+        .map((a) => `${a.key}|${a.model}`)
+    : [],
+);
+const pending = asks().filter((ask) => !models.every((m) => answered.has(`${ask.key}|${m}`)));
+const list = LIMIT ? pending.slice(0, LIMIT) : pending;
+const callsPer = (model: string) => (PART === 'boxes' && model === 'moondream' ? 3 : 1);
 const expected = list.length * models.reduce((sum, m) => sum + callsPer(m) * COST[m], 0);
 const left = Math.min(BUDGET * 0.9 - spent(), ACCOUNT_DAILY);
 console.log(
@@ -318,7 +330,9 @@ try {
           const left = await canvasFrom(draw.crop);
           const tiles: HTMLCanvasElement[] = [];
           for (const t of draw.tiles)
-            tiles.push(CM.repeatTile(CM.trimMargins(await CM.loadBitmap(t.path)), t, windowMm, 352));
+            tiles.push(
+              CM.repeatTile(CM.trimMargins(CM.shrink(await CM.loadBitmap(t.path), 512)), t, windowMm, 352),
+            );
           if (!draw.split) return [CM.dataUrlOf(CM.board(left, tiles))];
           // Three boards of four, numbered 1–4, 5–8, 9–12.
           return [0, 1, 2].map((part) =>
