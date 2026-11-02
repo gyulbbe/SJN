@@ -1,0 +1,8 @@
+{
+  // A local Worker for the catalog-match trial only (see worker.ts). It is not the app.
+  "name": "sjn-catalog-match-temp",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "ai": { "binding": "AI", "remote": true },
+}
