@@ -6,15 +6,32 @@
  * For the photos (no answer) it keeps each method's first 12, for the AI boards and the people.
  *
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/r1-tiles.ts
- * Output: test-results/catalog-match/r1-tiles/{summary.json,ranks-*.json}
+ *          [--tag q8 --models dinov2-small-q8,siglip2-b16-q8 --catalog catalog-q8 --synth queries-synth-q8 --photos queries-photos-q8]
+ * Output: test-results/catalog-match/r1-tiles[-tag]/{summary.json,photo-top12.json,timing-node.json}
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { cosineRow, loadCatalog, loadQueries, out, readJson, type Classic, type Matrix } from './data';
+import {
+  cosineRow,
+  loadCatalog,
+  loadQueries,
+  out,
+  readJson,
+  readMatrix,
+  type Classic,
+  type Matrix,
+} from './data';
 import { patternNeighbours, rankOf, topN } from './score';
 import { colourDistance, deltaE2000, sizeDistance, textureDistance } from './tile-features';
 
-const target = join(out, 'r1-tiles');
+const arg = (name: string, fallback: string) => {
+  const at = process.argv.indexOf(`--${name}`);
+  return at < 0 ? fallback : process.argv[at + 1];
+};
+const TAG = arg('tag', '');
+const target = join(out, TAG ? `r1-tiles-${TAG}` : 'r1-tiles');
+/** Where the catalog embeddings are (the model-free numbers always come from features/catalog). */
+const CATALOG_MATRICES = join(out, 'features', arg('catalog', 'catalog'));
 mkdirSync(target, { recursive: true });
 const catalog = loadCatalog();
 const groups = readJson<{ pairs: [string, string][] }>(join(out, 'features', 'catalog', 'groups.json'));
@@ -34,7 +51,7 @@ type Method = {
   distance: (r: number, i: number) => number;
 };
 type QuerySet = ReturnType<typeof loadQueries>;
-const MODELS = ['dinov2-small-q4f16', 'clip-b32-q4f16', 'siglip2-b16-q4f16'];
+const MODELS = arg('models', 'dinov2-small-q4f16,clip-b32-q4f16,siglip2-b16-q4f16').split(',');
 function modelMethods(q: QuerySet): Method[] {
   const methods: Method[] = [];
   for (const model of MODELS)
@@ -43,7 +60,10 @@ function modelMethods(q: QuerySet): Method[] {
         ['full', 'single'],
         ['window', 'repeat'],
       ]) {
-        const cat = catalog.matrix(`${model}.${cKind}.${output}`);
+        const cat = readMatrix(
+          join(CATALOG_MATRICES, `${model}.${cKind}.${output}.f32`),
+          catalog.tiles.length,
+        );
         const query = q.matrix(`${model}.${qKind}.${output}`);
         if (!cat || !query) continue;
         methods.push({
@@ -147,7 +167,7 @@ const rowsWhere = (q: QuerySet, variant: string, split?: string) =>
     )
     .map(([, r]) => r);
 
-const synth = loadQueries(join(out, 'features', 'queries-synth'));
+const synth = loadQueries(join(out, 'features', arg('synth', 'queries-synth')));
 const variants = [...new Set(synth.rows.map((row) => row.variant))];
 const summary: Record<string, unknown> = {
   catalogTakenAt: catalog.takenAt,
@@ -299,8 +319,17 @@ for (const split of ['dev', 'report']) {
   for (const [name, s] of Object.entries(report[split] as Record<string, never>)) console.log(line(name, s));
 }
 
+// The synthetic development faces' first 12 with their answer, for AI boards that can be scored.
+const synthTop: Record<string, { answer: string; top: Record<string, string[]> }> = {};
+for (const m of withFusion(synth))
+  for (const { face, ranked } of rankAll(synth, m, rowsWhere(synth, chosenVariant, 'dev'))) {
+    synthTop[face.id] ??= { answer: face.materialId!, top: {} };
+    synthTop[face.id].top[m.name] = ranked.slice(0, 12);
+  }
+writeFileSync(join(target, 'synth-top12.json'), JSON.stringify(synthTop));
+
 // 5. The photos: each method's first 12 on the chosen variant (and on the plain whole face).
-const photos = loadQueries(join(out, 'features', 'queries-photos'));
+const photos = loadQueries(join(out, 'features', arg('photos', 'queries-photos')));
 const photoTop: Record<string, Record<string, string[]>> = {};
 for (const variant of [chosenVariant, 'auto.rect.raw'])
   for (const m of withFusion(photos)) {

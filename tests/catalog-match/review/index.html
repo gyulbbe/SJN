@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>자재 찾기 평가</title>
+    <style>
+      :root {
+        --bg: #f6f5f2;
+        --panel: #ffffff;
+        --ink: #1d1d1b;
+        --muted: #6b6a66;
+        --line: #d8d6d0;
+        --accent: #2f6fdb;
+        --good: #2e8b57;
+        --mid: #c08a1e;
+        --bad: #c0392b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1b1b1a;
+          --panel: #262624;
+          --ink: #f0efeb;
+          --muted: #a8a6a0;
+          --line: #3a3936;
+          --accent: #6c9cf0;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font:
+          15px/1.5 system-ui,
+          sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        padding: 10px 16px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+      header .bar {
+        flex: 1;
+        height: 8px;
+        background: var(--line);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      header .bar i {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.3fr);
+        gap: 16px;
+        padding: 16px;
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px;
+      }
+      canvas.photo {
+        width: 100%;
+        height: auto;
+        border-radius: 6px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        border: 2px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+        background: var(--panel);
+      }
+      .card.focus {
+        border-color: var(--accent);
+      }
+      .card canvas,
+      .card img {
+        width: 100%;
+        aspect-ratio: 1;
+        object-fit: contain;
+        background: #fff;
+        border-radius: 4px;
+      }
+      .choices {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+        flex-wrap: wrap;
+      }
+      button {
+        font: inherit;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.on {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      h2 {
+        margin: 0 0 8px;
+        font-size: 17px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 6px 0;
+      }
+      .done {
+        padding: 40px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>자재 찾기 평가</strong>
+      <span id="section" class="hint"></span>
+      <div class="bar"><i id="progress" style="width: 0"></i></div>
+      <span id="count" class="hint"></span>
+    </header>
+    <main id="main"></main>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const fileUrl = (path) => `/file?path=${encodeURIComponent(path)}`;
+      const LABEL = { position: '위치 정답 확인', tile: '타일', product: '제품', overall: '전체 점수' };
+      let items = [],
+        done = new Set(),
+        at = 0;
+
+      async function load() {
+        const data = await (await fetch('/items.json')).json();
+        items = data.sections.flatMap((s) => s.items.map((item) => ({ ...item, section: s.kind })));
+        const text = await (await fetch('/ratings.jsonl')).text();
+        for (const line of text.split('\n').filter(Boolean)) {
+          const r = JSON.parse(line);
+          if (r.complete) done.add(r.item);
+        }
+        at = items.findIndex((item) => !done.has(item.id));
+        show();
+      }
+      async function rate(row) {
+        await fetch('/rate', { method: 'POST', body: JSON.stringify(row) });
+      }
+      function image(path) {
+        return new Promise((ok, fail) => {
+          const i = new Image();
+          i.onload = () => ok(i);
+          i.onerror = fail;
+          i.src = fileUrl(path);
+        });
+      }
+      async function photoCanvas(item) {
+        const img = await image(item.photo);
+        const c = document.createElement('canvas');
+        c.className = 'photo';
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const g = c.getContext('2d');
+        g.drawImage(img, 0, 0);
+        g.lineWidth = Math.max(3, c.width / 150);
+        g.strokeStyle = '#ff2d55';
+        if (item.quad) {
+          g.beginPath();
+          item.quad.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, p.x * c.width, p.y * c.height));
+          g.closePath();
+          g.stroke();
+        }
+        for (const [i, b] of (item.boxes ?? []).entries()) {
+          g.strokeRect(
+            b.left * c.width,
+            b.top * c.height,
+            (b.right - b.left) * c.width,
+            (b.bottom - b.top) * c.height,
+          );
+          if (item.boxes.length > 1 || item.section === 'position') {
+            g.font = `bold ${Math.max(18, c.width / 18)}px sans-serif`;
+            g.fillStyle = '#ff2d55';
+            g.fillText(String(i + 1), b.left * c.width + 6, b.top * c.height + Math.max(18, c.width / 18));
+          }
+        }
+        return c;
+      }
+      /** A tile drawn repeated with its joints over the same 900 mm square, like every method saw it. */
+      async function tileCanvas(t) {
+        const img = await image(t.path);
+        const px = 360,
+          c = document.createElement('canvas');
+        c.width = c.height = px;
+        const g = c.getContext('2d'),
+          s = px / 900;
+        g.fillStyle = t.groutColor;
+        g.fillRect(0, 0, px, px);
+        for (let y = 0; y < px; y += (t.heightMm + t.groutMm) * s)
+          for (let x = 0; x < px; x += (t.widthMm + t.groutMm) * s)
+            g.drawImage(img, x, y, t.widthMm * s, t.heightMm * s);
+        return c;
+      }
+      function header(item) {
+        $('section').textContent = LABEL[item.section];
+        const n = items.filter((i) => done.has(i.id)).length;
+        $('count').textContent = `${n} / ${items.length}`;
+        $('progress').style.width = `${(100 * n) / items.length}%`;
+      }
+      async function finish(item) {
+        await rate({ section: item.section, item: item.id, complete: true });
+        done.add(item.id);
+        at = items.findIndex((i) => !done.has(i.id));
+        show();
+      }
+      async function show() {
+        const main = $('main');
+        main.innerHTML = '';
+        if (at < 0) {
+          main.innerHTML =
+            '<div class="panel done"><h2>끝났어요. 고맙습니다.</h2><p class="hint">창을 닫아도 돼요. 누른 값은 모두 저장됐어요.</p></div>';
+          header(items[0]);
+          $('count').textContent = `${items.length} / ${items.length}`;
+          $('progress').style.width = '100%';
+          return;
+        }
+        const item = items[at];
+        header(item);
+        const left = document.createElement('div');
+        left.className = 'panel';
+        left.innerHTML = `<h2>${item.title}</h2><p class="hint">${item.note ?? ''}</p>`;
+        left.append(await photoCanvas(item));
+        const right = document.createElement('div');
+        right.className = 'panel';
+        main.append(left, right);
+        if (item.section === 'position') return showPosition(item, right);
+        if (item.section === 'overall')
+          return showScores(item, right, 5, ['1 많이 다름', '2', '3', '4', '5 아주 비슷함']);
+        return showScores(item, right, 3, ['1 비슷함', '2 그럭저럭', '3 아님']);
+      }
+      async function showScores(item, right, levels, names) {
+        right.innerHTML = `<h2>${item.section === 'overall' ? '사진과 얼마나 비슷한 방인가요?' : '사진 속 것과 비슷한가요?'}</h2>
+    <p class="hint">숫자 키(${names.map((n) => n.split(' ')[0]).join('·')})로 고르면 다음 후보로 넘어가요.${item.section === 'overall' ? '' : ' 0: 맞는 게 없어 보임'}</p>`;
+        if (item.section !== 'overall') {
+          const none = document.createElement('button');
+          none.textContent = '0 맞는 게 없어 보임';
+          none.onclick = () => {
+            rate({ section: item.section, item: item.id, none: true });
+            none.classList.add('on');
+          };
+          right.append(none);
+        }
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+        right.append(grid);
+        const cards = [];
+        for (const [i, c] of item.candidates.entries()) {
+          const card = document.createElement('div');
+          card.className = 'card';
+          const pic = c.tile ? await tileCanvas(c.tile) : await image(c.path);
+          card.append(pic);
+          const row = document.createElement('div');
+          row.className = 'choices';
+          names.forEach((name, v) => {
+            const b = document.createElement('button');
+            b.textContent = name;
+            b.onclick = () => choose(i, v + 1);
+            row.append(b);
+          });
+          card.append(row);
+          grid.append(card);
+          cards.push({ card, row, value: 0 });
+        }
+        let focus = 0;
+        const draw = () => cards.forEach((c, i) => c.card.classList.toggle('focus', i === focus));
+        async function choose(i, value) {
+          cards[i].value = value;
+          [...cards[i].row.children].forEach((b, k) => b.classList.toggle('on', k === value - 1));
+          await rate({ section: item.section, item: item.id, candidate: item.candidates[i].key, value });
+          focus = cards.findIndex((c) => !c.value);
+          draw();
+          if (focus < 0) finish(item);
+        }
+        draw();
+        window.onkeydown = (e) => {
+          const v = Number(e.key);
+          if (e.key === '0' && item.section !== 'overall') {
+            rate({ section: item.section, item: item.id, none: true });
+            right.querySelector('button').classList.add('on');
+            return;
+          }
+          if (v >= 1 && v <= levels && focus >= 0) choose(focus, v);
+        };
+      }
+      function showPosition(item, right) {
+        right.innerHTML =
+          '<h2>제품마다 설치된 벽과 그 벽 위의 자리를 확인해 주세요</h2><p class="hint">처음 값은 초안이에요. 맞으면 그대로 두고, 틀리면 눌러서 고친 뒤 Enter(또는 확인)를 누르세요. 뒤 벽은 사진이 정면으로 보는 벽이에요. 자리는 사진에서 그 벽을 볼 때의 왼쪽·가운데·오른쪽이에요.</p>';
+        const values = item.products.map((p) => ({ wall: p.wall ?? 'unknown', third: p.third ?? 'middle' }));
+        item.products.forEach((p, i) => {
+          const box = document.createElement('div');
+          box.className = 'panel';
+          box.style.margin = '8px 0';
+          box.innerHTML = `<strong>${i + 1}. ${p.label}</strong>`;
+          for (const [key, options] of [
+            [
+              'wall',
+              [
+                ['back', '뒤 벽'],
+                ['left', '왼쪽 벽'],
+                ['right', '오른쪽 벽'],
+                ['unknown', '모름'],
+              ],
+            ],
+            [
+              'third',
+              [
+                ['left', '왼쪽'],
+                ['middle', '가운데'],
+                ['right', '오른쪽'],
+              ],
+            ],
+          ]) {
+            const row = document.createElement('div');
+            row.className = 'row';
+            row.append(
+              Object.assign(document.createElement('span'), {
+                className: 'hint',
+                textContent: key === 'wall' ? '벽' : '자리',
+              }),
+            );
+            for (const [value, name] of options) {
+              const b = document.createElement('button');
+              b.textContent = name;
+              b.classList.toggle('on', values[i][key] === value);
+              b.onclick = () => {
+                values[i][key] = value;
+                [...row.querySelectorAll('button')].forEach((x) => x.classList.toggle('on', x === b));
+              };
+              row.append(b);
+            }
+            box.append(row);
+          }
+          right.append(box);
+        });
+        const ok = document.createElement('button');
+        ok.textContent = '확인 (Enter)';
+        ok.className = 'on';
+        const save = async () => {
+          await rate({
+            section: 'position',
+            item: item.id,
+            products: item.products.map((p, i) => ({ id: p.id, ...values[i] })),
+          });
+          finish(item);
+        };
+        ok.onclick = save;
+        right.append(ok);
+        window.onkeydown = (e) => {
+          if (e.key === 'Enter') save();
+        };
+      }
+      load();
+    </script>
+  </body>
+</html>

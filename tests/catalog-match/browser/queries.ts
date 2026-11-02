@@ -24,6 +24,8 @@ const arg = (name: string, fallback: string) => {
 const set = arg('set', 'synth');
 const ep = arg('ep', 'webgpu') as 'webgpu' | 'wasm';
 const limit = Number(arg('limit', '0'));
+/** WASM threads for this offline precompute (needs isolation); its timings are not the app's. */
+const threads = Number(arg('threads', '1'));
 const outDir = arg('out', `features/queries-${set}`);
 const FILES: Record<string, string> = {
   'dinov2-small:q8': 'onnx/model_quantized.onnx',
@@ -159,6 +161,7 @@ await mkdir(target, { recursive: true });
 const harness = await openHarness({
   pageEntry: resolve('tests/catalog-match/browser/page.ts'),
   gpu: ep === 'webgpu',
+  isolated: threads > 1,
 });
 const variants: { key: string; region: 'auto' | 'clean'; rectify: boolean; delight: boolean }[] = [];
 for (const region of ['auto', 'clean'] as const)
@@ -179,6 +182,7 @@ const vectors: Record<string, number[][]> = {};
 const log: Record<string, unknown> = {
   set,
   ep,
+  threads,
   models,
   startedAt: new Date().toISOString(),
   faces: chosen.length,
@@ -192,13 +196,13 @@ try {
       const CM = (window as unknown as { CM: typeof Page }).CM;
       const w = window as unknown as { embedders: Record<string, Page.Embedder> };
       w.embedders = {};
-      for (const { name, key, path, ep } of list)
-        w.embedders[name] = await CM.openEmbedder({ ...CM.MODEL_SPECS[key], path }, ep);
+      for (const { name, key, path, ep, threads } of list)
+        w.embedders[name] = await CM.openEmbedder({ ...CM.MODEL_SPECS[key], path }, ep, threads);
       return Object.fromEntries(Object.entries(w.embedders).map(([name, e]) => [name, e.info]));
     },
     models.map((model) => {
       const [key] = model.split(':');
-      return { name: model, key, path: modelPath(key, FILES[model]) as string, ep };
+      return { name: model, key, path: modelPath(key, FILES[model]) as string, ep, threads };
     }),
   );
   const timing: number[] = [];

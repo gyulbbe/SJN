@@ -49,6 +49,8 @@ export async function openHarness(options: {
   pageEntry: string;
   gpu?: boolean;
   cpuThrottle?: number;
+  /** Cross-origin isolation, so ONNX Runtime may use WASM threads (offline precompute only). */
+  isolated?: boolean;
 }): Promise<Harness> {
   const bundle = await build({
     entryPoints: [options.pageEntry],
@@ -63,6 +65,10 @@ export async function openHarness(options: {
   const script = bundle.outputFiles[0].text;
   const server = createServer(async (request, response) => {
     try {
+      if (options.isolated) {
+        response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+      }
       const url = new URL(request.url ?? '/', 'http://127.0.0.1');
       if (request.method === 'POST' && url.pathname === '/out') {
         const target = resolve(OUT as string, url.searchParams.get('path') ?? '');

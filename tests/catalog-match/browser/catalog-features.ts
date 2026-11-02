@@ -20,6 +20,8 @@ const arg = (name: string, fallback: string) => {
 };
 const ep = arg('ep', 'webgpu') as 'webgpu' | 'wasm';
 const limit = Number(arg('limit', '0'));
+/** WASM threads for this offline precompute (needs isolation); its timings are not the app's. */
+const threads = Number(arg('threads', '1'));
 const outDir = arg('out', 'features/catalog');
 const FILES: Record<string, string> = {
   'dinov2-small:q8': 'onnx/model_quantized.onnx',
@@ -72,11 +74,13 @@ await writeFile(join(target, 'ids.json'), JSON.stringify(tiles.map((t) => t.id))
 const harness = await openHarness({
   pageEntry: resolve('tests/catalog-match/browser/page.ts'),
   gpu: ep === 'webgpu',
+  isolated: threads > 1,
 });
 const log: Record<string, unknown> = {
   takenAt: catalog.takenAt,
   tiles: tiles.length,
   ep,
+  threads,
   startedAt: new Date().toISOString(),
 };
 try {
@@ -118,19 +122,19 @@ try {
     const [key, precision] = model.split(':');
     const path = modelPath(key, FILES[model]) as string;
     const info = await page.evaluate(
-      async ({ key, path, ep }) => {
+      async ({ key, path, ep, threads }) => {
         const CM = (window as unknown as { CM: typeof Page }).CM;
         const w = window as unknown as {
           embedder: Page.Embedder;
           rows: Record<string, number[][]>;
           times: number[];
         };
-        w.embedder = await CM.openEmbedder({ ...CM.MODEL_SPECS[key], path }, ep);
+        w.embedder = await CM.openEmbedder({ ...CM.MODEL_SPECS[key], path }, ep, threads);
         w.rows = {};
         w.times = [];
         return w.embedder.info;
       },
-      { key, path, ep },
+      { key, path, ep, threads },
     );
     const started = Date.now();
     for (let i = 0; i < tiles.length; i += 50) {

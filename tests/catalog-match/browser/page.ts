@@ -48,7 +48,8 @@ export function pixels(canvas: HTMLCanvasElement) {
 }
 
 // ---------- ONNX Runtime ----------
-export async function loadOrt(): Promise<void> {
+/** `threads` > 1 only takes on a cross-origin isolated page (the offline precompute); the app's page is not. */
+export async function loadOrt(threads = 1): Promise<void> {
   if ((window as { ort?: unknown }).ort) return;
   await new Promise<void>((done, fail) => {
     const script = document.createElement('script');
@@ -58,7 +59,7 @@ export async function loadOrt(): Promise<void> {
     document.head.append(script);
   });
   window.ort.env.wasm.wasmPaths = `${location.origin}/ort/`;
-  window.ort.env.wasm.numThreads = 1;
+  window.ort.env.wasm.numThreads = crossOriginIsolated ? threads : 1;
   window.ort.env.logLevel = 'error';
 }
 export async function gpuAdapter() {
@@ -178,8 +179,8 @@ const normalise = (v: Float32Array) => {
   n = Math.sqrt(n) || 1;
   return v.map((x) => x / n);
 };
-export async function openEmbedder(spec: ModelSpec, ep: 'webgpu' | 'wasm'): Promise<Embedder> {
-  await loadOrt();
+export async function openEmbedder(spec: ModelSpec, ep: 'webgpu' | 'wasm', threads = 1): Promise<Embedder> {
+  await loadOrt(threads);
   const started = performance.now();
   const response = await fetch(fileUrl(spec.path));
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -536,7 +537,11 @@ function fit(
  * The photo's piece on the left ("PHOTO"), up to 12 numbered candidates on the right (4 × 3). Tiles are
  * drawn repeated over the same 900 mm square; products as their front photo on white.
  */
-export function board(left: HTMLCanvasElement, candidates: HTMLCanvasElement[]): HTMLCanvasElement {
+export function board(
+  left: HTMLCanvasElement,
+  candidates: HTMLCanvasElement[],
+  offset = 0,
+): HTMLCanvasElement {
   const canvas = canvasOf(BOARD_W, BOARD_H);
   const context = canvas.getContext('2d')!;
   context.fillStyle = '#d9d9d9';
@@ -554,7 +559,7 @@ export function board(left: HTMLCanvasElement, candidates: HTMLCanvasElement[]):
     context.fillStyle = '#ffffff';
     context.fillRect(x, y + 52, cell, cell);
     fit(context, candidate, x, y + 52, cell, cell);
-    label(context, String(i + 1), x, y);
+    label(context, String(offset + i + 1), x, y);
   });
   return canvas;
 }

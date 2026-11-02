@@ -163,6 +163,50 @@
   - 남긴 판·질문 모델은 Gemma와 Clef-flash다. Moondream은 상자 찾기(다른 문제)의 후보로 남긴다. 사진 1장 3종류에 약 61뉴런이다.
 - 라운드 3 장부 합계는 843뉴런이다. 그중 실패한 Moondream 4회와 Llama 1회는 추정값(80·40)으로 셌다. Cloudflare 응답 기준 실제는 약 520이다.
 
+### 라운드 4 — AI 본 시험
+
+- 모델: Gemma와 Clef-flash, 상자는 Gemma와 Moondream이다. 기본 계정을 썼다.
+- 위치와 제품 판은 개발 24장에서 주석 상자를 썼다. 찾기와 따로 재기 위해서다. 15장은 저장된 Gemma 상자를 썼다.
+
+**상자 찾기**(개발 24장, 주석의 변기·세면대·욕조 35개, IoU ≥ 0.5, 종류도 맞아야 적중)
+
+| 방법 | 적중 | 놓침 | 헛것(거울·유리 속) | 사진 1장 뉴런 |
+| --- | --- | --- | --- | --- |
+| Gemma(새 질문 1회, `bbox_2d`) | **26** | 9 | 15 (2) | 약 6 |
+| Moondream detect(변기·세면대·욕조 3회) | 23 | 12 | 34 (3) | 약 61 |
+| 저장된 DeepLab(2026-09-13) | 18 | 17 | 263 (1) | 0 |
+
+- 1등은 Gemma다. Moondream은 더 비싸고 덜 맞는다. 같은 상자를 다른 종류로 한 번 더 찾기도 한다(pc-04 변기 → 욕조).
+
+**위치**(벽 = 같은 벽 비율, 3칸 = 벽 위 3칸 일치. 15장은 초안 기준이라 참고)
+
+| 방법 | 개발 24장 벽 | 15장 벽 | 15장 3칸 | 사진 1장 뉴런 |
+| --- | --- | --- | --- | --- |
+| Gemma(번호 상자 사진, 벽+3칸) | **70%** | 63% | 79% | 약 4 |
+| Clef-flash(같은 질문, choice) | 48% | 74% | 67% | 약 3 |
+| 제품 위의 면(AI 없음, 라운드 2) | 67% | 59% | 78% | 0 |
+| MoGe 벽면(라운드 2) | 56% | 52% | 42% | 0 |
+| 기준선(모두 뒤 벽) | 48% | 52% | 89% | 0 |
+| Gemma, 단 면·MoGe가 함께 다르면 그쪽 | 70% | 63% | 79% | 약 4 |
+
+- 개발 24장은 Gemma와 "제품 위의 면"이 근소하게 앞선다(27개 중 1개 차이).
+- 결합 규칙(면과 MoGe가 함께 반대하면 바꾸기)은 바뀐 것이 없었다.
+- 15장 결과는 사용자 확인 뒤 다시 센다.
+
+**제품 "맞는 게 없음"**(판에서 "0 = 없음"을 고른 비율)
+
+| 방법 | 흰 변기 21 | 세면대 28 | 욕조 12 | 맞지 않는 2개(청록 변기·노란 세면대) |
+| --- | --- | --- | --- | --- |
+| Gemma 판 | 7 (33%) | 22 | 11 | 2/2 |
+| Clef-flash 판 | 6 (29%) | 11 | 6 | 2/2 |
+| 색 거르기(AI 없음, 가운데 색 ΔE > 10) | 12 (57%) | 11 | 9 | 2/2 |
+| 색 거르기(ΔE > 20) | 5 (24%) | 5 | 1 | 0/2 |
+| Gemma 몸체 색 질문, 강한 색(파랑·초록·노랑·분홍·기타)만 "없음" | **0 (0%)** | 0 | 0 | 1/2 (청록 → blue, 노랑 → beige) |
+
+- 탈락 기준(흰 변기를 잘못 거른 비율 20% 초과)으로 Gemma 판, Clef-flash 판, 색 거르기 10·20은 탈락이다.
+- 남는 것은 "Gemma 몸체 색 질문"(사진 1장의 제품당 약 3뉴런) 하나다. 다만 노란 세면대를 베이지로 불러 놓쳤고, 맞지 않는 예가 2개뿐이라 근거가 약하다.
+- 세면대·욕조의 "없음"은 틀렸다고 단정할 수 없다. 공개 욕조는 시험용 1개뿐이고 하부장 세면대는 없다.
+
 ## 6. 추천 조합
 
 (진행 전)
@@ -173,7 +217,79 @@
 
 ## 8. 다시 돌리기
 
-(진행 전)
+작업 폴더(워크트리)에서 실행한다. 결과는 본 폴더의 `test-results/catalog-match/`에 쌓인다(`CATALOG_MATCH_ROOT`로 바꿀 수 있음).
+
+```bash
+node tests/catalog-match/snapshot.mjs
+```
+
+```bash
+node tests/catalog-match/models.mjs
+```
+
+```bash
+node tests/catalog-match/photos.mjs
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/catalog-features.ts --models dinov2-small:q4f16,clip-b32:q4f16,siglip2-b16:q4f16
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/catalog-features.ts --ep wasm --threads 8 --models dinov2-small:q8,siglip2-b16:q8 --classic 0 --out features/catalog-q8
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/groups.ts
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/synth.ts --count 100
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/queries.ts --set synth
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/queries.ts --set photos
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r1-tiles.ts
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r2-position.ts
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/products.ts
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r4-products-local.ts
+```
+
+AI 라운드는 임시 Worker를 먼저 띄운다(기본 계정, 호출마다 장부·예산 확인).
+
+```bash
+npx wrangler dev --config tests/catalog-match/ai-worker/wrangler.jsonc --ip 127.0.0.1 --port 8799
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r3-ai-check.ts
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r4-ai.ts --part boxes
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r4-score.ts
+```
+
+공개 개발 24장의 MoGe는 본 폴더(`C:\dev\SJN`)에서 앱의 시험 도구로 만들었다(`MOGE_TEST_CASES`에 24장 id, `MOGE_TEST_OUTPUT=test-results/catalog-match/moge-corpus`, `node tests/run-browser-test.mjs tests/moge-browser-corpus.ts`).
 
 ## 9. 한계
 

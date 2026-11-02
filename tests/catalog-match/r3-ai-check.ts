@@ -13,6 +13,17 @@
 import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { callAi, spent, StopRun } from './ai';
+import {
+  choiceSchema,
+  clefChoices,
+  clefInput,
+  gemmaInput,
+  llamaInput,
+  POSITION_TEXT,
+  positionSchema,
+  PRODUCT_TEXT,
+  TILE_TEXT,
+} from './questions';
 import { out, readJson } from './data';
 import { SNAPSHOT } from './paths.mjs';
 import { openHarness } from './browser/harness';
@@ -130,86 +141,6 @@ const jobs: Job[] = PHOTOS.map((id) => {
     position: { path: photo.path, boxes: products.map((c) => c.box), kinds: products.map((c) => c.kind) },
   };
 });
-
-// ---------- the questions (the same words for every photo) ----------
-const TILE_TEXT =
-  'The left panel labelled PHOTO is a tiled wall or floor cut out of a bathroom photo and straightened. The 12 numbered squares on the right are catalogue tiles, each drawn repeated with its joints over the same 900 mm square. Which number is the same tile as in the photo, judging colour, pattern, veining and finish (the photo may be darker or tinted by its light)? Answer 0 if none of them is close.';
-const PRODUCT_TEXT =
-  'The left panel labelled PHOTO is a bathroom product cut out of a photo. The numbered pictures on the right are catalogue products of the same kind, each shown from the front on white. Which number is the most similar product, judging overall shape, outline, tank or bowl shape, base and colour? Answer 0 if none of them is close (for example a clearly different colour or form).';
-const POSITION_TEXT =
-  'This bathroom photo has numbered red boxes around products. For each box, say which wall of the room the product is installed against or stands in front of — back (the wall the camera faces), left or right — and where along that wall it is as the photo shows the wall: left, middle or right third.';
-const gemmaInput = (text: string, image: string, schema: object) => ({
-  messages: [
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text },
-        { type: 'image_url', image_url: { url: image } },
-      ],
-    },
-  ],
-  stream: false,
-  temperature: 0,
-  max_completion_tokens: 400,
-  chat_template_kwargs: { enable_thinking: false },
-  response_format: { type: 'json_schema', json_schema: { name: 'answer', strict: true, schema } },
-});
-const choiceSchema = (max: number) => ({
-  type: 'object',
-  properties: {
-    choice: { type: 'integer', minimum: 0, maximum: max },
-    confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
-  },
-  required: ['choice', 'confidence'],
-  additionalProperties: false,
-});
-const positionSchema = (n: number) => ({
-  type: 'object',
-  properties: {
-    items: {
-      type: 'array',
-      minItems: n,
-      maxItems: n,
-      items: {
-        type: 'object',
-        properties: {
-          box: { type: 'integer', minimum: 1, maximum: n },
-          wall: { type: 'string', enum: ['back', 'left', 'right'] },
-          third: { type: 'string', enum: ['left', 'middle', 'right'] },
-        },
-        required: ['box', 'wall', 'third'],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ['items'],
-  additionalProperties: false,
-});
-/** Llama 3.2 Vision: the same words and image, JSON asked for in the text (no schema option). */
-const llamaInput = (text: string, image: string) => ({
-  messages: [
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text },
-        { type: 'image_url', image_url: { url: image } },
-      ],
-    },
-  ],
-  temperature: 0,
-  max_tokens: 400,
-});
-const clefInput = (model: string, text: string, image: string, questions: Record<string, unknown>) => ({
-  model,
-  state: text,
-  questions,
-  images: [image],
-});
-const clefChoices = (count: number) =>
-  Object.fromEntries([
-    ...Array.from({ length: count }, (_, i) => [String(i + 1), `candidate number ${i + 1}`]),
-    ['none', 'none of them is close'],
-  ]);
 
 // ---------- run ----------
 const harness = await openHarness({ pageEntry: resolve('tests/catalog-match/browser/page.ts'), gpu: true });
