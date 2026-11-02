@@ -13,8 +13,13 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cosineRow, out, readJson, readMatrix } from './data';
 
+const arg = (name: string, fallback: string) => {
+  const at = process.argv.indexOf(`--${name}`);
+  return at < 0 ? fallback : process.argv[at + 1];
+};
 const dir = join(out, 'features', 'products');
-const target = join(out, 'r4-products');
+const TAG = arg('tag', '');
+const target = join(out, TAG ? `r4-products-${TAG}` : 'r4-products');
 mkdirSync(target, { recursive: true });
 type View = { id: string; category: string; direction: string; path: string };
 type Query = { id: string; photo: string; split: string; kind: string };
@@ -23,7 +28,7 @@ const queries = readJson<Query[]>(join(dir, 'queries.json'));
 const products = [...new Set(views.map((v) => v.id))];
 const categoryOf = new Map(views.map((v) => [v.id, v.category]));
 const methods: { name: string; catalog: string; query: string }[] = [];
-for (const model of ['dinov2-small-q4f16', 'clip-b32-q4f16', 'siglip2-b16-q4f16'])
+for (const model of arg('models', 'dinov2-small-q4f16,clip-b32-q4f16,siglip2-b16-q4f16').split(','))
   for (const output of ['pooled', 'patchmean'])
     for (const variant of ['box', 'cutout'])
       methods.push({

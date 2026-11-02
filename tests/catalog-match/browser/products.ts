@@ -22,8 +22,14 @@ const FILES: Record<string, string> = {
   'dinov2-small:q4f16': 'onnx/model_q4f16.onnx',
   'clip-b32:q4f16': 'onnx/vision_model_q4f16.onnx',
   'siglip2-b16:q4f16': 'onnx/vision_model_q4f16.onnx',
+  // The files a deployment would use (the same values on WebGPU and WASM).
+  'dinov2-small:q8': 'onnx/model_quantized.onnx',
+  'siglip2-b16:q8': 'onnx/vision_model_quantized.onnx',
 };
 const models = arg('models', 'dinov2-small:q4f16,clip-b32:q4f16,siglip2-b16:q4f16').split(',');
+const ep = arg('ep', 'webgpu') as 'webgpu' | 'wasm';
+/** WASM threads for this offline precompute (needs isolation); its timings are not the app's. */
+const threads = Number(arg('threads', '1'));
 const BIREFNET = join(ROOT as string, 'tmp', 'background-model', 'model_fp16.onnx');
 const PRODUCT = new Set(['toilet', 'basin', 'vanity', 'bath']);
 type Box = { left: number; top: number; right: number; bottom: number };
@@ -72,7 +78,12 @@ const queries = index.photos
   );
 const target = join(OUT as string, 'features', 'products');
 await mkdir(target, { recursive: true });
-const harness = await openHarness({ pageEntry: resolve('tests/catalog-match/browser/page.ts'), gpu: true });
+// The GPU stays on for BiRefNet; the embeddings use `ep`.
+const harness = await openHarness({
+  pageEntry: resolve('tests/catalog-match/browser/page.ts'),
+  gpu: true,
+  isolated: threads > 1,
+});
 const log: Record<string, unknown> = {
   startedAt: new Date().toISOString(),
   catalogViews: catalogViews.length,
@@ -85,14 +96,16 @@ try {
       const CM = (window as unknown as { CM: typeof Page }).CM;
       const w = window as unknown as { embedders: Record<string, Page.Embedder> };
       w.embedders = {};
-      for (const { name, key, path } of list)
-        w.embedders[name] = await CM.openEmbedder({ ...CM.MODEL_SPECS[key], path }, 'webgpu');
+      for (const { name, key, path, ep, threads } of list)
+        w.embedders[name] = await CM.openEmbedder({ ...CM.MODEL_SPECS[key], path }, ep, threads);
       return Object.keys(w.embedders);
     },
     models.map((model) => ({
       name: model,
       key: model.split(':')[0],
       path: modelPath(model.split(':')[0], FILES[model]) as string,
+      ep,
+      threads,
     })),
   );
   const embedAll = async (items: { kind: 'catalog' | 'query'; path: string; box?: Box; save?: string }[]) =>
