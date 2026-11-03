@@ -494,6 +494,52 @@
   - 점검 132
 - 제품 고르기(DINOv2 상자 1등)는 정답이 없어 돌리지 않았다. 제품 잘라내기만 색 질문에 썼다.
 
+### DINOv2 크기 비교 — small·base·large(q8, AI 없음, 사용자 평가 완료)
+
+- 세 모델 모두 onnx-community의 q8 파일이고, 같은 전처리(짧은 변 256, 가운데 224)를 쓴다.
+  - base: revision `31ef06cac16d`, 768차원
+  - large: revision `4b3550c593d5`, 1024차원
+- 모든 값은 이 PC의 WASM 8스레드로 계산했다. 모델마다 r1-tiles가 합성 개발 절반에서 정했다.
+  - 모델 출력: small·base는 patch 평균 반복, large는 CLS 반복
+  - 섞기 비율은 셋 다 0.5, 수치 가중치는 같다.
+- 기준선 small을 다시 돌린 결과(DINOv2만)는 기존 라운드 1 q8과 같았다. 150면의 섞기 1등과 제품 63개의 1등이 모두 일치했다.
+- 사람 평가는 라운드 5의 30면·제품 28개다.
+  - 세 모델 1등 중 아직 평가하지 않은 109개(타일 71, 제품 38)를 모델을 가리고 섞어 사용자가 평가했다.
+  - 이미 평가한 후보는 그 값을 다시 썼다.
+- 결과 자료: `models-compare/summary.json`, `r1-tiles-m-<크기>/`, `r4-products-m-<크기>/`, `r8-lowspec-<크기>/`, `review-models/ratings.jsonl`
+
+| 항목 | small | base | large |
+| --- | --- | --- | --- |
+| 30면 섞기 1등 "비슷함" / 그럭저럭 / 아님 | 10 / 1 / 19 | 12 / 5 / 13 | 14 / 3 / 13 |
+| 30면 DINOv2 단독 1등 "비슷함"(참고) | 12 | 8 | 15 |
+| 제품 28개 상자 1등 "비슷함" / 그럭저럭 / 아님 | 13 / 0 / 15 | 11 / 1 / 16 | 10 / 1 / 17 |
+| 합성 같은 무늬 상위 1·5·20, 섞기(개발 / 보고) | 21·35·45 / 19·33·47 | 18·29·41 / 17·29·38 | 15·25·37 / 23·34·42 |
+| 합성 같은 무늬 상위 1·5·20, 단독(개발 / 보고) | 19·29·38 / 13·27·40 | 8·18·31 / 8·18·29 | 8·18·26 / 10·23·32 |
+| 제품 종류 맞힘(종류 거르기 없이, 상자) | 78% | 44% | 75% |
+| 1등이 small과 같음(타일 150면 / 제품 63개) | — | 29 / 21 | 30 / 19 |
+| 사진 조각 1장(이 PC, WASM 8스레드) | 0.08초 | 0.22초 | 0.61초 |
+| 사진 1장, WASM 1스레드 / CPU 4배 감속 | 1.6초 / 10.3초 | 4.6초 / 30.7초 | 14.8초 / 76.3초 |
+| 모델 처음 열기(CPU 4배 감속) | 2.2초 | 2.9초 | 5.2초 |
+| 새로 받는 양: 모델 + 타일 값 + 제품 값 | 24.4 + 3.1 + 0.3 = 27.9MB | 91 + 6.2 + 0.6 = 97.8MB | 311.6 + 8.3 + 0.8 = 320.7MB |
+
+| 기준(3절) | base | large |
+| --- | --- | --- |
+| 사람: 타일 +3 이상이고 제품이 줄지 않음, 또는 제품 +3 이상이고 타일이 줄지 않음 | 타일 +2, 제품 −2 → 탈락 | 타일 +4, 제품 −3 → 탈락 |
+| 합성 보고 같은 무늬 상위 5가 small(33) 이상 | 29 → 탈락 | 34 → 통과 |
+| 받는 양 150MB 이하 | 97.8MB → 통과 | 320.7MB → 탈락 |
+| 느린 PC 사진 1장 2분 이내 | 30.7초 → 통과 | 76.3초 → 통과 |
+
+- **결론:** base와 large 모두 기준을 넘지 못했다. 추천은 small 그대로다.
+- **large:** 타일은 사람 평가에서 4면 더 "비슷함"이었고, 단독 1등은 15/30이었다. 하지만 제품은 3개 줄었다.
+  - 합성 개발 절반에서는 셋 중 가장 낮았다(상위 5가 25).
+  - 받는 양이 기준의 2배를 넘는다.
+  - 30면에서 4면 차이는 표본이 작아 한두 면으로 바뀔 수 있다.
+- **base:** 합성·제품 종류·제품 사람 평가가 모두 small보다 낮았다.
+  - 제품 값끼리 평균 코사인 유사도가 0.77이다(small 0.48, large 0.40). 서로 너무 비슷해 구별이 약하다.
+  - q8 압축에서 정확도를 많이 잃은 것으로 보인다. 압축하지 않은 base는 받지 않아 확인하지 않았다.
+- **1등이 크게 다르다:** 크기를 바꾸면 타일 1등의 80%, 제품 1등의 약 70%가 바뀐다. 그런데 사람 "비슷함" 수는 몇 개만 움직였다. 어느 모델이든 1등이 맞을 확률이 비슷하게 낮다는 뜻이다.
+- **시간:** small의 느린 PC 시간(10.3초)이 라운드 8(7.7초)보다 길다. 이번에는 사용자가 평가 화면을 연 채로 쟀다.
+
 ## 6. 추천 조합
 
 **확정**(사람 평가와 라운드 9 뒤, 최종 평가 12장 전): 조합 A + 면 점검(③) + 점검에 따른 매칭(④)
@@ -519,6 +565,7 @@
 - 같은 벽과 ③의 "주석 상자 안 조각 잡기"는 개발보다 낮았다. 조합은 바꾸지 않았다.
 - GPU 없는 PC(CPU 4배 감속, 1스레드)에서 이 시험이 더하는 브라우저 부분은 사진 1장 약 7.7초 + 처음 한 번 3초다(라운드 8). 기존 DeepLab 단계는 별도로 약 2분으로 추정된다.
 - 수치상 1등은 정했지만 절대 수준은 낮다. 합성 같은 무늬 상위 5가 35%다. 실제 사진에서 "비슷함"이 얼마나 나오는지는 사람 평가로 판단한다.
+- DINOv2를 base나 large로 키워도 기준을 넘지 못했다(5절 "DINOv2 크기 비교"). small q8을 그대로 쓴다.
 
 ## 7. 비용과 요청
 
@@ -549,7 +596,8 @@
   - 점검 132
 - **장부 누적:** 1,018회, 7,534뉴런(예산 15,000의 50%). 2026-11-03 UTC 하루는 1,284뉴런이다.
 
-- **브라우저 모델 다운로드:** 시험용으로 388MB를 받았다. 추천 조합이 이용자에게 새로 받게 하는 양은 DINOv2 q8 24.4MB다.
+- **브라우저 모델 다운로드:** 시험용으로 791MB를 받았다. 크기 비교의 DINOv2-base·large q8 403MB가 포함된다. 추천 조합이 이용자에게 새로 받게 하는 양은 DINOv2 q8 24.4MB다.
+- **크기 비교(AI 없음, 0뉴런):** base·large 값 계산에 이 PC로 약 1시간 20분 걸렸다. large 타일 2,023개만 42분이다.
 - **시간(개발 PC, RTX 4070 Ti, WebGPU):**
   - 사진 1면의 조각·특징: q4f16 약 0.13초, q8 WASM 8스레드 약 0.45초
   - 카탈로그 비교: 면당 1~2ms(섞기 40ms)
@@ -705,6 +753,60 @@ node tests/run-browser-test.mjs tests/catalog-match/r9-match.ts --split heldout
 node tests/run-browser-test.mjs tests/catalog-match/r7-score.ts
 ```
 
+DINOv2 크기 비교다. `<크기>`는 base, large를 넣고, 받기는 `models.mjs`가 한다.
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/catalog-features.ts --ep wasm --threads 8 --models dinov2-<크기>:q8 --classic 0 --out features/catalog-<크기>-q8
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/queries.ts --set synth --ep wasm --threads 8 --models dinov2-<크기>:q8 --variants clean.rect.raw --crops models-tmp --out features/queries-synth-<크기>-q8
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/queries.ts --set photos --ep wasm --threads 8 --models dinov2-<크기>:q8 --variants clean.rect.raw --crops models-tmp --out features/queries-photos-<크기>-q8
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/products.ts --models dinov2-<크기>:q8 --ep wasm --threads 8 --out products-<크기> --crops models-tmp
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r1-tiles.ts --tag m-<크기> --models dinov2-<크기>-q8 --catalog catalog-<크기>-q8 --synth queries-synth-<크기>-q8 --photos queries-photos-<크기>-q8
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r4-products-local.ts --tag m-<크기> --models dinov2-<크기>-q8 --dir products-<크기>
+```
+
+기준선 small은 기존 값 파일로 순위만 다시 매긴다.
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r1-tiles.ts --tag m-small --models dinov2-small-q8 --catalog catalog-q8 --synth queries-synth-q8 --photos queries-photos-q8
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r4-products-local.ts --tag m-small --models dinov2-small-q8 --dir products
+```
+
+`--model`에는 dinov2-small, dinov2-base, dinov2-large를 넣는다. 다른 작업이 없을 때 하나씩 돌린다.
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r8-lowspec.ts --model dinov2-<크기>
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/review/build-models.ts
+```
+
+```bash
+node tests/catalog-match/review/server.mjs --dir review-models --port 8792
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/models-score.ts
+```
+
 공개 개발 24장의 MoGe는 본 폴더(`C:\dev\SJN`)에서 앱의 시험 도구로 만들었다(`MOGE_TEST_CASES`에 24장 id, `MOGE_TEST_OUTPUT=test-results/catalog-match/moge-corpus`, `node tests/run-browser-test.mjs tests/moge-browser-corpus.ts`).
 
 ## 9. 한계
@@ -725,6 +827,8 @@ node tests/run-browser-test.mjs tests/catalog-match/r7-score.ts
 - 지금 조각의 절반(60개 중 31개)에 타일이 아닌 것이 일부 들어 있다(사용자 표시). 대부분 타일이면 그대로 쓰지만, 무늬 수치가 흐려질 수 있다. ②로 줄이려 했으나 조각이 좁아지는 문제로 붙이지 않았다.
 - 개발 24장에서 Gemma가 90조각 중 31조각을 "칠한 벽"이라고 했다. 최종 12장에서는 45조각 중 16조각이다. 주석에 벽 재질이 없어 맞는지 확인하지 못했다.
 - 최종 12장은 자동 채점만 했다. 타일·제품을 고른 결과가 사람 눈에 비슷한지는 재지 않았다. 같은 벽은 벽이 정해진 제품이 15개뿐이다.
+- DINOv2 크기 비교는 운영과 같은 q8만 비교했다. base가 낮은 것이 모델 크기 때문인지 q8 압축 때문인지는 가리지 못했다. fp16·fp32는 받지 않았다.
+- 크기 비교의 사람 평가는 30면·제품 28개이고, 모델 차이는 2~4개였다. 같은 사용자가 이전 라운드와 이번에 나눠 평가해서, 평가 시점에 따라 기준이 조금 다를 수 있다.
 
 ## 10. 구현으로 옮길 때
 
