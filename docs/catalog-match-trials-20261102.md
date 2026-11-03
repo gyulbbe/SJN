@@ -75,7 +75,7 @@
 - **사진:** `photos/index.json`.
   - 15장: 원본 SHA-256이 manifest와 일치하는지 확인한 뒤 결과 폴더에 복사했다.
   - 공개 개발 24장: `node tests/reconstruction-corpus.mjs --verify`로 36장 모두 통과했다.
-  - 최종 평가 12장은 id만 적고 열지 않았다.
+  - 최종 평가 12장은 라운드 7 전까지 id만 적고 열지 않았다(라운드 7에서 `--heldout`으로 열었다).
 - **15장 정답지 초안:** `truth/fifteen-draft.json`.
   - 평가표의 글만 읽고 이 시험을 진행한 AI가 썼다(사진은 열지 않음). 제품 종류·형태, 설치 벽, 벽 위 3칸, 맞는 공개 제품이 없는 경우(청록 변기 pc-04, 노란 세면대 remote-02)를 담았다.
   - 사람 평가에서 사용자가 확인한다. 그전까지 15장 위치 점수는 참고만 한다.
@@ -452,6 +452,41 @@
 
 라운드 7(최종 12장)에서는 사람 표시 없이 주석 상자로만 ③을 다시 확인한다.
 
+### 라운드 7 — 최종 평가 12장(1회, 자동 채점)
+
+- 조합은 A + ③ + ④이고, 1회만 돌렸다. 조정은 하지 않았다.
+- 12장의 자료는 이때 처음 열었다(`photos.mjs --heldout`). 다른 39장의 목록 내용은 그대로임을 확인했다.
+- 타일 섞기 설정(깨끗한 사각형·수치 가중치·DINOv2 patch 평균 반복·섞기 0.5)은 라운드 1 q8과 같다.
+- 결과 자료: `r7-final/`(`answers.jsonl`, `summary.json`), `r9-inspect/answers-heldout.jsonl`, `r9-inspect/report-heldout.json`
+
+| 항목 | 최종 12장 | 개발 24장(참고) |
+| --- | --- | --- |
+| 제품 찾기(Gemma 상자, IoU 0.5) | 17/21(81%), 놓침 4, 남는 상자 8 | 26/35(74%), 놓침 9, 남는 상자 15 |
+| 같은 벽(Gemma 위치 질문, 벽이 정해진 제품) | 9/15(60%) | 19/27(70%) |
+| 색 거르기로 빠진 변기 | 0/7 | 0/21(15장 포함) |
+| ③ 형식 오류 / 사진당 뉴런 | 0/12 / 11.0 | 0/39 / 11.1 |
+| ③ 주석 상자 안에 절반 넘게 든 조각을 타일 아님으로 잡음 | 9/17(53%) | 15/22(68%) |
+| ③ 상자 밖 조각을 타일 아님이라고 함 | 7/11 | 17/30 |
+| ③ 타일 아님 / 더러움 | 27/45 / 0 | 53/90 / 0 |
+| ④ 그대로 / 대체 / 보류 / 색만 | 17 / 10 / 18 / 0 | 36 / 12 / 42 / 0 |
+| 확신 높음 | 17/45(38%) | 35/90(39%) |
+| 사진당 뉴런(장부) | 27.1 | 약 26(추정) |
+
+- **제품 찾기**는 개발보다 조금 높았다.
+- **같은 벽**은 10점 낮았다. 벽이 정해진 제품이 15개뿐이라 한두 개로 크게 움직인다.
+- **변기:** 흰 변기를 잘못 거른 경우는 없었다.
+- **색 거르기로 빠진 그 밖의 제품:** 욕조 1(분홍), 세면대 1(분홍)이다. 주석에 색이 없어 맞게 거른 것인지는 알 수 없다. 세면대는 갈색 2, 베이지 1로도 답했지만, 강한 색이 아니어서 거르지 않았다.
+- **③ 점검:** 주석 상자 안 조각을 잡은 비율이 개발보다 낮았다(53% 대 68%).
+  - Gemma는 45조각 중 16조각을 "칠한 벽"이라고 했다.
+  - 공개 사진 36장 전체에서 "칠한 벽" 답이 많다. 주석에 벽 재질이 없어 맞는지 확인할 수 없다.
+- **④ 처리:** 처리 비율과 확신 분포는 개발 24장과 비슷했다. 바뀐 타일은 10면이다. 타일 정답이 없어 좋아졌는지는 잴 수 없다.
+- **비용:** 12장에 56회, 325뉴런, 실패 0이다.
+  - 상자 83
+  - 위치 47(제품이 있는 11장)
+  - 색 63(21개)
+  - 점검 132
+- 제품 고르기(DINOv2 상자 1등)는 정답이 없어 돌리지 않았다. 제품 잘라내기만 색 질문에 썼다.
+
 ## 6. 추천 조합
 
 **확정**(사람 평가와 라운드 9 뒤, 최종 평가 12장 전): 조합 A + 면 점검(③) + 점검에 따른 매칭(④)
@@ -469,6 +504,12 @@
 - 위 넷째 줄까지가 장면 A다. 면 점검을 더해 사진 1장 약 26뉴런이고, 새 다운로드는 24.4MB다. 조건(100뉴런, 150MB) 안이다.
 - 면마다 고른 타일과 함께 확신·보인 것·상태·이유 한 줄을 낸다(라운드 9의 ⑤). 확신이 낮은 면은 화면에서 "다시 골라 주세요"처럼 알릴 수 있다.
 - ② 가리는 것 빼기(DeepLab 픽셀 라벨)는 쓸 조각이 없어지는 면이 많아 붙이지 않았다.
+- 최종 12장(라운드 7)에서 측정한 값:
+  - 제품 찾기 81%, 같은 벽 60%
+  - 흰 변기 오판 0
+  - ③ 형식 오류 0
+  - 사진당 27.1뉴런
+- 같은 벽과 ③의 "주석 상자 안 조각 잡기"는 개발보다 낮았다. 조합은 바꾸지 않았다.
 - GPU 없는 PC(CPU 4배 감속, 1스레드)에서 이 시험이 더하는 브라우저 부분은 사진 1장 약 7.7초 + 처음 한 번 3초다(라운드 8). 기존 DeepLab 단계는 별도로 약 2분으로 추정된다.
 - 수치상 1등은 정했지만 절대 수준은 낮다. 합성 같은 무늬 상위 5가 35%다. 실제 사진에서 "비슷함"이 얼마나 나오는지는 사람 평가로 판단한다.
 
@@ -494,7 +535,12 @@
   - Gemma 상자(15장): 15회, 100
   - 점검(② 조각, 기록용): 39회, 427
   - 점검(지금 조각): 39회, 432
-- **장부 누적:** 962회, 7,209뉴런(예산 15,000의 48%)
+- **AI(라운드 7, 2026-11-03 UTC):** 56회, 325뉴런. 실패는 없었다.
+  - 상자 83
+  - 위치 47
+  - 색 63
+  - 점검 132
+- **장부 누적:** 1,018회, 7,534뉴런(예산 15,000의 50%). 2026-11-03 UTC 하루는 1,284뉴런이다.
 
 - **브라우저 모델 다운로드:** 시험용으로 388MB를 받았다. 추천 조합이 이용자에게 새로 받게 하는 양은 DINOv2 q8 24.4MB다.
 - **시간(개발 PC, RTX 4070 Ti, WebGPU):**
@@ -610,6 +656,48 @@ node tests/catalog-match/review/server.mjs --dir review-r9 --port 8791
 node tests/run-browser-test.mjs tests/catalog-match/r9-score.ts
 ```
 
+라운드 7(최종 12장, 1회)은 다음 순서다. AI 단계는 임시 Worker가 필요하다.
+
+```bash
+node tests/catalog-match/photos.mjs --heldout
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/queries.ts --set photos --split heldout --ep wasm --threads 8 --models dinov2-small:q8 --variants clean.rect.raw --out features/queries-heldout-q8 --crops heldout
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r1-tiles.ts --tag heldout-q8 --models dinov2-small-q8,siglip2-b16-q8 --catalog catalog-q8 --synth queries-synth-q8 --photos queries-heldout-q8
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/browser/products.ts --split heldout --out products-heldout --models dinov2-small:q8 --ep wasm --threads 8
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r4-ai.ts --part boxes --split heldout --round r7
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r4-ai.ts --part position --split heldout --round r7 --models gemma
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r4-ai.ts --part colour --split heldout --round r7
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r9-inspect.ts --pieces now --split heldout
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r9-match.ts --split heldout
+```
+
+```bash
+node tests/run-browser-test.mjs tests/catalog-match/r7-score.ts
+```
+
 공개 개발 24장의 MoGe는 본 폴더(`C:\dev\SJN`)에서 앱의 시험 도구로 만들었다(`MOGE_TEST_CASES`에 24장 id, `MOGE_TEST_OUTPUT=test-results/catalog-match/moge-corpus`, `node tests/run-browser-test.mjs tests/moge-browser-corpus.ts`).
 
 ## 9. 한계
@@ -628,7 +716,8 @@ node tests/run-browser-test.mjs tests/catalog-match/r9-score.ts
 - Llama 3.2 Vision은 약관 동의(`agree`)를 요구해 시험하지 못했다.
 - 라운드 9의 표본이 작다. "대부분 다른 것" 4조각, 사용자가 더럽다고 한 면 7개, ④로 바뀌어 평가한 면 5개다. 특히 "때·얼룩 조금"은 4면 모두 놓쳤다.
 - 지금 조각의 절반(60개 중 31개)에 타일이 아닌 것이 일부 들어 있다(사용자 표시). 대부분 타일이면 그대로 쓰지만, 무늬 수치가 흐려질 수 있다. ②로 줄이려 했으나 조각이 좁아지는 문제로 붙이지 않았다.
-- 개발 24장에서 Gemma가 90조각 중 31조각을 "칠한 벽"이라고 했다. 주석에 벽 재질이 없어 맞는지 확인하지 못했다.
+- 개발 24장에서 Gemma가 90조각 중 31조각을 "칠한 벽"이라고 했다. 최종 12장에서는 45조각 중 16조각이다. 주석에 벽 재질이 없어 맞는지 확인하지 못했다.
+- 최종 12장은 자동 채점만 했다. 타일·제품을 고른 결과가 사람 눈에 비슷한지는 재지 않았다. 같은 벽은 벽이 정해진 제품이 15개뿐이다.
 
 ## 10. 구현으로 옮길 때
 
