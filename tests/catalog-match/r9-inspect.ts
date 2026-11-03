@@ -7,8 +7,10 @@
  * skipped, so a stopped run goes on where it stopped.
  *
  * Needs the temporary Worker (see ai-worker/worker.ts).
- * Usage: node tests/run-browser-test.mjs tests/catalog-match/r9-inspect.ts [--limit N] [--dry]
- * Output: test-results/catalog-match/r9-inspect/{answers.jsonl,boards/}
+ * `--pieces now` asks the same about today's pieces (round 1's clean part), for the case without ②.
+ *
+ * Usage: node tests/run-browser-test.mjs tests/catalog-match/r9-inspect.ts [--pieces r9|now] [--limit N] [--dry]
+ * Output: test-results/catalog-match/r9-inspect/{answers.jsonl,answers-now.jsonl,boards/}
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -25,12 +27,14 @@ const arg = (name: string, fallback: string) => {
 };
 const DRY = process.argv.includes('--dry');
 const LIMIT = Number(arg('limit', '0'));
+const PIECES = arg('pieces', 'r9');
+if (!['r9', 'now'].includes(PIECES)) throw new Error('--pieces r9|now');
 const MODEL = '@cf/google/gemma-4-26b-a4b-it';
 /** Two images (about 370 input tokens each) and four pieces of JSON: a little over round 4's 6. */
 const COST = 10;
 const target = join(out, 'r9-inspect');
 mkdirSync(join(target, 'boards'), { recursive: true });
-const answersFile = join(target, 'answers.jsonl');
+const answersFile = join(target, PIECES === 'r9' ? 'answers.jsonl' : 'answers-now.jsonl');
 
 type Face = {
   id: string;
@@ -40,7 +44,9 @@ type Face = {
   face: string;
   regions: { clean?: { quad: Quad } };
 };
-const faces = readJson<Face[]>(join(out, 'features', 'queries-photos-r9', 'faces.json'));
+const faces = readJson<Face[]>(
+  join(out, 'features', PIECES === 'r9' ? 'queries-photos-r9' : 'queries-photos-q8', 'faces.json'),
+);
 const photos = [...new Set(faces.map((f) => f.photo))].map((photo) => {
   const own = faces.filter((f) => f.photo === photo && f.regions.clean);
   return {
@@ -48,7 +54,9 @@ const photos = [...new Set(faces.map((f) => f.photo))].map((photo) => {
     path: own[0]?.path,
     faces: own.map((f) => f.face),
     quads: own.map((f) => f.regions.clean!.quad),
-    crops: own.map((f) => join(out, 'crops', 'r9', `${f.id.replace(':', '-')}.jpg`)),
+    crops: own.map((f) =>
+      join(out, 'crops', PIECES === 'r9' ? 'r9' : 'photos', `${f.id.replace(':', '-')}.jpg`),
+    ),
   };
 });
 const answered = new Set(
@@ -92,7 +100,7 @@ try {
     );
     images.forEach((url, i) =>
       writeFileSync(
-        join(target, 'boards', `${p.photo}-${i + 1}.jpg`),
+        join(target, 'boards', `${PIECES}-${p.photo}-${i + 1}.jpg`),
         Buffer.from(url.split(',')[1], 'base64'),
       ),
     );
@@ -100,7 +108,7 @@ try {
     try {
       const { result, neurons, ms } = await callAi({
         round: 'r9',
-        task: 'inspect',
+        task: PIECES === 'r9' ? 'inspect' : 'inspect-now',
         photo: p.photo,
         model: MODEL,
         input: {

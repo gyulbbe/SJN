@@ -2,7 +2,9 @@
 // items built by build.ts, the images they point at (results folder and the public corpus inputs
 // only) and the ratings, appended to ratings.jsonl as each key is pressed. Nothing leaves the PC.
 //
-//   node tests/catalog-match/review/server.mjs [--port 8790]
+//   node tests/catalog-match/review/server.mjs [--port 8790] [--dir review-r9]
+//
+// `--dir` serves another set of items and ratings in the results folder (round 9: review-r9).
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, relative, resolve } from 'node:path';
@@ -11,7 +13,10 @@ import { CORPUS_INPUTS, OUT } from '../paths.mjs';
 
 const port = Number(process.argv[process.argv.indexOf('--port') + 1] || 8790) || 8790;
 const here = fileURLToPath(new URL('.', import.meta.url));
-const REVIEW = join(OUT, 'review');
+const dirAt = process.argv.indexOf('--dir');
+const dir = dirAt < 0 ? 'review' : process.argv[dirAt + 1];
+if (!/^review(-[a-z0-9]+)?$/.test(dir)) throw new Error('--dir review or review-<name>');
+const REVIEW = join(OUT, dir);
 const RATINGS = join(REVIEW, 'ratings.jsonl');
 const ROOTS = [resolve(OUT), resolve(CORPUS_INPUTS)];
 const TYPES = {

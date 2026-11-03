@@ -156,7 +156,13 @@
     <script>
       const $ = (id) => document.getElementById(id);
       const fileUrl = (path) => `/file?path=${encodeURIComponent(path)}`;
-      const LABEL = { position: '위치 정답 확인', tile: '타일', product: '제품', overall: '전체 점수' };
+      const LABEL = {
+        position: '위치 정답 확인',
+        tile: '타일',
+        product: '제품',
+        overall: '전체 점수',
+        inspect: '조각 표시',
+      };
       let items = [],
         done = new Set(),
         at = 0;
@@ -262,6 +268,7 @@
         right.className = 'panel';
         main.append(left, right);
         if (item.section === 'position') return showPosition(item, right);
+        if (item.section === 'inspect') return showInspect(item, right);
         if (item.section === 'overall')
           return showScores(item, right, 5, ['1 많이 다름', '2', '3', '4', '5 아주 비슷함']);
         return showScores(item, right, 3, ['1 비슷함', '2 그럭저럭', '3 아님']);
@@ -383,6 +390,106 @@
         };
         ok.onclick = save;
         right.append(ok);
+        window.onkeydown = (e) => {
+          if (e.key === 'Enter') save();
+        };
+      }
+      /** Round 9: what the piece in the red outline shows (the truth for Gemma's check). */
+      async function showInspect(item, right) {
+        right.innerHTML =
+          '<h2>빨간 선 안(아래 조각)에 무엇이 보이나요?</h2><p class="hint">조각은 빨간 선 안을 곧게 편 거예요. 다 고르고 Enter(또는 확인)를 누르세요.</p>';
+        const crop = await image(item.crop);
+        crop.style.cssText = 'max-width:100%;max-height:260px;border-radius:6px;display:block;margin:6px 0';
+        right.append(crop);
+        const value = { only: '', others: [], state: '', pattern: '' };
+        const QUESTIONS = [
+          [
+            'only',
+            '타일만인가요?',
+            false,
+            [
+              ['tile-only', '타일만'],
+              ['some-other', '일부 다른 것'],
+              ['mostly-other', '대부분 다른 것'],
+            ],
+          ],
+          [
+            'others',
+            '다른 것이 있으면(여러 개)',
+            true,
+            [
+              ['door', '문'],
+              ['shower-curtain', '샤워 커튼'],
+              ['glass', '유리 칸막이'],
+              ['mirror', '거울'],
+              ['window', '창'],
+              ['cabinet', '수납장·선반'],
+              ['other', '기타'],
+            ],
+          ],
+          [
+            'state',
+            '타일 상태',
+            false,
+            [
+              ['clean', '깨끗함'],
+              ['slightly-dirty', '때·얼룩 조금'],
+              ['very-dirty', '때·얼룩 많음'],
+              ['unknown', '모름'],
+            ],
+          ],
+          [
+            'pattern',
+            '타일 무늬',
+            false,
+            [
+              ['plain', '단색'],
+              ['patterned', '무늬 있음'],
+            ],
+          ],
+        ];
+        for (const [key, title, multi, options] of QUESTIONS) {
+          const row = document.createElement('div');
+          row.className = 'row';
+          row.append(
+            Object.assign(document.createElement('span'), { className: 'hint', textContent: title }),
+          );
+          for (const [v, name] of options) {
+            const b = document.createElement('button');
+            b.textContent = name;
+            b.onclick = () => {
+              if (multi) {
+                value[key] = value[key].includes(v) ? value[key].filter((x) => x !== v) : [...value[key], v];
+                b.classList.toggle('on', value[key].includes(v));
+              } else {
+                value[key] = v;
+                [...row.querySelectorAll('button')].forEach((x) => x.classList.toggle('on', x === b));
+              }
+            };
+            row.append(b);
+          }
+          right.append(row);
+        }
+        const message = Object.assign(document.createElement('p'), { className: 'hint' });
+        const ok = document.createElement('button');
+        ok.textContent = '확인 (Enter)';
+        ok.className = 'on';
+        const save = async () => {
+          if (
+            !value.only ||
+            !value.state ||
+            !value.pattern ||
+            (value.only !== 'tile-only' && !value.others.length)
+          ) {
+            message.textContent =
+              '타일만인지, 상태, 무늬를 골라 주세요. 다른 것이 있으면 무엇인지도 골라 주세요.';
+            return;
+          }
+          await rate({ section: 'inspect', item: item.id, ...value });
+          finish(item);
+        };
+        ok.onclick = save;
+        right.append(ok, message);
         window.onkeydown = (e) => {
           if (e.key === 'Enter') save();
         };
