@@ -24,6 +24,21 @@ export const MODEL_FILES = [
     ],
     original: 'facebook/dinov2-small',
   },
+  // The size comparison (2026-11-03): the int8 file only, the one a deployment would use (WASM).
+  {
+    key: 'dinov2-base',
+    repo: 'onnx-community/dinov2-base',
+    revision: '31ef06cac16d5d301c5930d147002a058c85a5e4',
+    files: ['onnx/model_quantized.onnx', 'preprocessor_config.json'],
+    original: 'facebook/dinov2-base',
+  },
+  {
+    key: 'dinov2-large',
+    repo: 'onnx-community/dinov2-large',
+    revision: '4b3550c593d51ac1a870d48d411f35eff4eaf353',
+    files: ['onnx/model_quantized.onnx', 'preprocessor_config.json'],
+    original: 'facebook/dinov2-large',
+  },
   {
     key: 'clip-b32',
     repo: 'Xenova/clip-vit-base-patch32',

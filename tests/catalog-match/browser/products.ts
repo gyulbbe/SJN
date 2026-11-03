@@ -6,6 +6,7 @@
  *
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/browser/products.ts [--models ...]
  *          [--split heldout --out products-heldout]   (round 7: the held-out photos, the annotation's boxes)
+ *          [--crops models-tmp]   (where the cut-outs go: crops/<crops>, products by default)
  * Output: test-results/catalog-match/features/<out: products>/
  */
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
@@ -25,11 +26,14 @@ const FILES: Record<string, string> = {
   'siglip2-b16:q4f16': 'onnx/vision_model_q4f16.onnx',
   // The files a deployment would use (the same values on WebGPU and WASM).
   'dinov2-small:q8': 'onnx/model_quantized.onnx',
+  'dinov2-base:q8': 'onnx/model_quantized.onnx',
+  'dinov2-large:q8': 'onnx/model_quantized.onnx',
   'siglip2-b16:q8': 'onnx/vision_model_quantized.onnx',
 };
 const models = arg('models', 'dinov2-small:q4f16,clip-b32:q4f16,siglip2-b16:q4f16').split(',');
 const ep = arg('ep', 'webgpu') as 'webgpu' | 'wasm';
 const splits = arg('split', 'fifteen,corpus-dev').split(',');
+const CROPS = arg('crops', 'products');
 /** WASM threads for this offline precompute (needs isolation); its timings are not the app's. */
 const threads = Number(arg('threads', '1'));
 const BIREFNET = join(ROOT as string, 'tmp', 'background-model', 'model_fp16.onnx');
@@ -159,7 +163,7 @@ try {
         kind: 'query' as const,
         path: q.path,
         box: q.box,
-        save: `crops/products/${q.id.replace(/[:]/g, '-')}.jpg`,
+        save: `crops/${CROPS}/${q.id.replace(/[:]/g, '-')}.jpg`,
       })),
     ),
   );

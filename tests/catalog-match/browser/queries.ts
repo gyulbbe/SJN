@@ -35,6 +35,8 @@ const threads = Number(arg('threads', '1'));
 const outDir = arg('out', `features/queries-${set}`);
 const FILES: Record<string, string> = {
   'dinov2-small:q8': 'onnx/model_quantized.onnx',
+  'dinov2-base:q8': 'onnx/model_quantized.onnx',
+  'dinov2-large:q8': 'onnx/model_quantized.onnx',
   'dinov2-small:q4f16': 'onnx/model_q4f16.onnx',
   'clip-b32:q8': 'onnx/vision_model_quantized.onnx',
   'clip-b32:q4f16': 'onnx/vision_model_q4f16.onnx',

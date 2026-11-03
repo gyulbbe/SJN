@@ -6,7 +6,7 @@
  * whose colour is far from every candidate's). Keeps each method's first 12 of the right kind for the
  * AI boards and the people.
  *
- * Usage: node tests/run-browser-test.mjs tests/catalog-match/r4-products-local.ts
+ * Usage: node tests/run-browser-test.mjs tests/catalog-match/r4-products-local.ts [--tag t --models ... --dir products]
  * Output: test-results/catalog-match/r4-products/{summary.json,top12.json}
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -17,7 +17,7 @@ const arg = (name: string, fallback: string) => {
   const at = process.argv.indexOf(`--${name}`);
   return at < 0 ? fallback : process.argv[at + 1];
 };
-const dir = join(out, 'features', 'products');
+const dir = join(out, 'features', arg('dir', 'products'));
 const TAG = arg('tag', '');
 const target = join(out, TAG ? `r4-products-${TAG}` : 'r4-products');
 mkdirSync(target, { recursive: true });

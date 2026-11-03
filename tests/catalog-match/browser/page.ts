@@ -95,6 +95,24 @@ export const MODEL_SPECS: Record<string, Omit<ModelSpec, 'path'>> = {
     mean: [0.485, 0.456, 0.406],
     std: [0.229, 0.224, 0.225],
   },
+  // The same preprocessing as small (their preprocessor_config.json, 2026-11-03).
+  'dinov2-base': {
+    key: 'dinov2-base',
+    mode: 'shortest-crop',
+    resize: 256,
+    size: 224,
+    mean: [0.485, 0.456, 0.406],
+    std: [0.229, 0.224, 0.225],
+  },
+  // The same preprocessing as small (their preprocessor_config.json, 2026-11-03).
+  'dinov2-large': {
+    key: 'dinov2-large',
+    mode: 'shortest-crop',
+    resize: 256,
+    size: 224,
+    mean: [0.485, 0.456, 0.406],
+    std: [0.229, 0.224, 0.225],
+  },
   'clip-b32': {
     key: 'clip-b32',
     mode: 'shortest-crop',

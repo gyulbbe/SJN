@@ -8,7 +8,9 @@
  * download is not in the times) and the catalogue features are parsed once (also timed).
  *
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/r8-lowspec.ts [--photos pc-01,...]
- * Output: test-results/catalog-match/r8-lowspec/summary.json
+ *          [--model dinov2-small|dinov2-base|dinov2-large]   (the size comparison: that model's q8 file
+ *          and its own tile and product features)
+ * Output: test-results/catalog-match/r8-lowspec/summary.json (r8-lowspec-<size>/ with --model)
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -22,7 +24,12 @@ const arg = (name: string, fallback: string) => {
   return at < 0 ? fallback : process.argv[at + 1];
 };
 const PHOTOS = arg('photos', 'pc-01,pc-02,remote-02,additional-05,additional-09').split(',');
-const target = join(out, 'r8-lowspec');
+const MODEL = arg('model', '');
+if (MODEL && !['dinov2-small', 'dinov2-base', 'dinov2-large'].includes(MODEL))
+  throw new Error('--model dinov2-small|dinov2-base|dinov2-large');
+const KEY = MODEL || 'dinov2-small';
+const SIZE = KEY.replace('dinov2-', '');
+const target = join(out, MODEL ? `r8-lowspec-${SIZE}` : 'r8-lowspec');
 mkdirSync(target, { recursive: true });
 type Box = { left: number; top: number; right: number; bottom: number };
 type Quad = { x: number; y: number }[];
@@ -59,10 +66,26 @@ const usage = new Map(
     join(out, 'snapshot', 'catalog.json'),
   ).placements.map((p) => [p.materialId, p.usage]),
 );
-const tileMatrix = readFileSync(join(out, 'features', 'catalog-q8', 'dinov2-small-q8.repeat.patchmean.f32'));
-const productMatrix = readFileSync(
-  join(out, 'features', 'products', 'catalog.dinov2-small-q4f16.white.pooled.f32'),
+const tileMatrix = readFileSync(
+  join(
+    out,
+    'features',
+    SIZE === 'small' ? 'catalog-q8' : `catalog-${SIZE}-q8`,
+    `${KEY}-q8.repeat.patchmean.f32`,
+  ),
 );
+const productMatrix = readFileSync(
+  MODEL
+    ? join(
+        out,
+        'features',
+        SIZE === 'small' ? 'products' : `products-${SIZE}`,
+        `catalog.${KEY}-q8.white.pooled.f32`,
+      )
+    : join(out, 'features', 'products', 'catalog.dinov2-small-q4f16.white.pooled.f32'),
+);
+/** 384 (small), 768 (base), 1024 (large). */
+const dims = tileMatrix.length / 4 / ids.length;
 const files = {
   classicBytes: Buffer.byteLength(classicText),
   tileMatrixBytes: tileMatrix.length,
@@ -73,7 +96,7 @@ const conditions = [
   { name: 'wasm-1thread', gpu: false, ep: 'wasm' as const, throttle: 1 },
   { name: 'wasm-1thread-cpu4x', gpu: false, ep: 'wasm' as const, throttle: 4 },
 ];
-const results: Record<string, unknown> = { photos: PHOTOS, files };
+const results: Record<string, unknown> = { model: KEY, dims, photos: PHOTOS, files };
 for (const condition of conditions) {
   const harness = await openHarness({
     pageEntry: resolve('tests/catalog-match/browser/page.ts'),
@@ -82,7 +105,7 @@ for (const condition of conditions) {
   });
   try {
     const run = await harness.page.evaluate(
-      async ({ jobs, classicText, ids, usage, tile, product, modelPath, ep }) => {
+      async ({ jobs, classicText, ids, usage, tile, product, modelPath, key, dims, ep }) => {
         const CM = (window as unknown as { CM: typeof Page }).CM;
         const t0 = performance.now();
         const classic = JSON.parse(classicText) as {
@@ -93,9 +116,8 @@ for (const condition of conditions) {
         const products = new Float32Array(Uint8Array.from(atob(product), (c) => c.charCodeAt(0)).buffer);
         const parseMs = performance.now() - t0;
         const t1 = performance.now();
-        const embedder = await CM.openEmbedder({ ...CM.MODEL_SPECS['dinov2-small'], path: modelPath }, ep, 1);
+        const embedder = await CM.openEmbedder({ ...CM.MODEL_SPECS[key], path: modelPath }, ep, 1);
         const modelMs = performance.now() - t1;
-        const dims = 384;
         const cos = (m: Float32Array, i: number, v: Float32Array) => {
           let d = 0;
           for (let k = 0; k < dims; k++) d += m[i * dims + k] * v[k];
@@ -172,7 +194,9 @@ for (const condition of conditions) {
         usage: ids.map((id) => usage.get(id) ?? 'both'),
         tile: tileMatrix.toString('base64'),
         product: productMatrix.toString('base64'),
-        modelPath: modelPath('dinov2-small', 'onnx/model_quantized.onnx'),
+        modelPath: modelPath(KEY, 'onnx/model_quantized.onnx'),
+        key: KEY,
+        dims,
         ep: condition.ep,
       },
     );
