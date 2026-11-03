@@ -10,6 +10,7 @@
  *          [--variants clean.rect.raw,...]
  *          [--gemma-boxes --labels labels --crops r9]   (round 9, ② 가리는 것 빼기: the clean part also
  *          avoids round 4's Gemma boxes and every pixel DeepLab does not call this face's wall or floor)
+ *          [--split heldout --crops heldout]   (round 7: the twelve held-out photos only)
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -47,6 +48,7 @@ const WINDOW_MM = 900;
 const GEMMA_BOXES = process.argv.includes('--gemma-boxes');
 const LABELS = arg('labels', '');
 const CROPS = arg('crops', '');
+const SPLITS = arg('split', 'fifteen,corpus-dev').split(',');
 /** Round 4's Gemma box answers (`part: boxes`), every kind, per photo. */
 const gemmaBoxes = new Map<string, Box[]>();
 if (GEMMA_BOXES)
@@ -138,7 +140,7 @@ if (set === 'synth') {
 } else {
   const index = JSON.parse(await readFile(join(OUT as string, 'photos', 'index.json'), 'utf8'));
   for (const p of index.photos) {
-    if (p.locked || p.split === 'heldout') continue;
+    if (p.locked || !SPLITS.includes(p.split)) continue;
     // Products, mirrors, glass, doors and windows all hide the tile.
     const blockers: Box[] = [
       ...p.candidates.map((c: { box: Box }) => c.box),

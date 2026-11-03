@@ -7,8 +7,8 @@
  *   keep   the fused first, low confidence
  * and the sentence that says why. No AI call.
  *
- * Usage: node tests/run-browser-test.mjs tests/catalog-match/r9-match.ts
- * Output: test-results/catalog-match/r9-inspect/report.json
+ * Usage: node tests/run-browser-test.mjs tests/catalog-match/r9-match.ts [--split heldout]
+ * Output: test-results/catalog-match/r9-inspect/report.json (report-heldout.json: round 7)
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,6 +19,9 @@ import { colourDistance, colourFeatures, type Quad } from './tile-features';
 
 const FUSED = 'clean.rect.raw|fused(classic+dinov2.patchmean.repeat)';
 const target = join(out, 'r9-inspect');
+const HELDOUT =
+  process.argv.includes('--split') && process.argv[process.argv.indexOf('--split') + 1] === 'heldout';
+const CROPS = HELDOUT ? 'heldout' : 'photos';
 type Piece = {
   id: string;
   photo: string;
@@ -26,11 +29,13 @@ type Piece = {
   face: Face;
   regions: { clean?: { quad: Quad; mm: { widthMm: number; heightMm: number } } };
 };
-const pieces = readJson<Piece[]>(join(out, 'features', 'queries-photos-q8', 'faces.json'));
-const photoTop = readJson<Record<string, Record<string, string[]>>>(
-  join(out, 'r1-tiles-q8', 'photo-top12.json'),
+const pieces = readJson<Piece[]>(
+  join(out, 'features', HELDOUT ? 'queries-heldout-q8' : 'queries-photos-q8', 'faces.json'),
 );
-const answers = readFileSync(join(target, 'answers-now.jsonl'), 'utf8')
+const photoTop = readJson<Record<string, Record<string, string[]>>>(
+  join(out, HELDOUT ? 'r1-tiles-heldout-q8' : 'r1-tiles-q8', 'photo-top12.json'),
+);
+const answers = readFileSync(join(target, HELDOUT ? 'answers-heldout.jsonl' : 'answers-now.jsonl'), 'utf8')
   .split(/\r?\n/)
   .filter(Boolean)
   .map((l) => JSON.parse(l) as { photo: string; faces: Face[]; result: unknown });
@@ -47,7 +52,7 @@ const catalog = loadCatalog();
 /** Colour only: the piece's lighter pixels against every tile allowed on this face. */
 async function colourFirst(piece: Piece): Promise<string> {
   const { data, info } = await sharp(
-    readFileSync(join(out, 'crops', 'photos', `${piece.id.replace(':', '-')}.jpg`)),
+    readFileSync(join(out, 'crops', CROPS, `${piece.id.replace(':', '-')}.jpg`)),
   )
     .resize(256, 256, { fit: 'inside' })
     .ensureAlpha()
@@ -90,7 +95,7 @@ for (const photo of [...new Set(pieces.map((p) => p.photo))]) {
 const count = (key: string) =>
   faces.reduce<Record<string, number>>((t, f) => ((t[String(f[key])] = (t[String(f[key])] ?? 0) + 1), t), {});
 writeFileSync(
-  join(target, 'report.json'),
+  join(target, HELDOUT ? 'report-heldout.json' : 'report.json'),
   JSON.stringify({ builtAt: new Date().toISOString(), method: FUSED, faces }, null, 1),
 );
 console.log({

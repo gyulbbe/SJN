@@ -8,9 +8,10 @@
  *
  * Needs the temporary Worker (see ai-worker/worker.ts).
  * `--pieces now` asks the same about today's pieces (round 1's clean part), for the case without ②.
+ * `--split heldout` (round 7) asks it about the held-out photos' pieces (today's way, as adopted).
  *
- * Usage: node tests/run-browser-test.mjs tests/catalog-match/r9-inspect.ts [--pieces r9|now] [--limit N] [--dry]
- * Output: test-results/catalog-match/r9-inspect/{answers.jsonl,answers-now.jsonl,boards/}
+ * Usage: node tests/run-browser-test.mjs tests/catalog-match/r9-inspect.ts [--pieces r9|now] [--split heldout] [--limit N] [--dry]
+ * Output: test-results/catalog-match/r9-inspect/{answers.jsonl,answers-now.jsonl,answers-heldout.jsonl,boards/}
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -29,12 +30,18 @@ const DRY = process.argv.includes('--dry');
 const LIMIT = Number(arg('limit', '0'));
 const PIECES = arg('pieces', 'r9');
 if (!['r9', 'now'].includes(PIECES)) throw new Error('--pieces r9|now');
+const HELDOUT = arg('split', '') === 'heldout';
+if (HELDOUT && PIECES !== 'now') throw new Error('--split heldout needs --pieces now');
+const NAME = HELDOUT ? 'heldout' : PIECES;
 const MODEL = '@cf/google/gemma-4-26b-a4b-it';
 /** Two images (about 370 input tokens each) and four pieces of JSON: a little over round 4's 6. */
 const COST = 10;
 const target = join(out, 'r9-inspect');
 mkdirSync(join(target, 'boards'), { recursive: true });
-const answersFile = join(target, PIECES === 'r9' ? 'answers.jsonl' : 'answers-now.jsonl');
+const answersFile = join(
+  target,
+  { r9: 'answers.jsonl', now: 'answers-now.jsonl', heldout: 'answers-heldout.jsonl' }[NAME]!,
+);
 
 type Face = {
   id: string;
@@ -45,7 +52,12 @@ type Face = {
   regions: { clean?: { quad: Quad } };
 };
 const faces = readJson<Face[]>(
-  join(out, 'features', PIECES === 'r9' ? 'queries-photos-r9' : 'queries-photos-q8', 'faces.json'),
+  join(
+    out,
+    'features',
+    { r9: 'queries-photos-r9', now: 'queries-photos-q8', heldout: 'queries-heldout-q8' }[NAME]!,
+    'faces.json',
+  ),
 );
 const photos = [...new Set(faces.map((f) => f.photo))].map((photo) => {
   const own = faces.filter((f) => f.photo === photo && f.regions.clean);
@@ -55,7 +67,12 @@ const photos = [...new Set(faces.map((f) => f.photo))].map((photo) => {
     faces: own.map((f) => f.face),
     quads: own.map((f) => f.regions.clean!.quad),
     crops: own.map((f) =>
-      join(out, 'crops', PIECES === 'r9' ? 'r9' : 'photos', `${f.id.replace(':', '-')}.jpg`),
+      join(
+        out,
+        'crops',
+        { r9: 'r9', now: 'photos', heldout: 'heldout' }[NAME]!,
+        `${f.id.replace(':', '-')}.jpg`,
+      ),
     ),
   };
 });
@@ -100,15 +117,15 @@ try {
     );
     images.forEach((url, i) =>
       writeFileSync(
-        join(target, 'boards', `${PIECES}-${p.photo}-${i + 1}.jpg`),
+        join(target, 'boards', `${NAME}-${p.photo}-${i + 1}.jpg`),
         Buffer.from(url.split(',')[1], 'base64'),
       ),
     );
     if (DRY) continue;
     try {
       const { result, neurons, ms } = await callAi({
-        round: 'r9',
-        task: PIECES === 'r9' ? 'inspect' : 'inspect-now',
+        round: HELDOUT ? 'r7' : 'r9',
+        task: { r9: 'inspect', now: 'inspect-now', heldout: 'inspect-heldout' }[NAME]!,
         photo: p.photo,
         model: MODEL,
         input: {

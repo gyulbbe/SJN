@@ -19,6 +19,8 @@
  * Needs the temporary Worker (see ai-worker/worker.ts).
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/r4-ai.ts --part tiles [--dry] [--limit N]
  *          [--split corpus-dev|fifteen --round r4|r9]
+ *          [--split heldout --round r7]   (round 7: boxes, position and colour on the held-out photos,
+ *          the annotation's product boxes as for the development photos; answers in r7-final/)
  *          [--tiles r1-tiles-q8 --tile-method "clean.rect.raw|..."] [--product-method dinov2.pooled.box]
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -60,6 +62,9 @@ const DRY = process.argv.includes('--dry');
 const LIMIT = Number(arg('limit', '0'));
 const BOX_SPLIT = arg('split', 'corpus-dev');
 const ROUND = arg('round', 'r4');
+const HELDOUT = BOX_SPLIT === 'heldout';
+if (HELDOUT && !['boxes', 'position', 'colour'].includes(PART))
+  throw new Error('--split heldout: boxes, position or colour');
 const TILES_DIR = join(out, arg('tiles', 'r1-tiles-q8'));
 const TILE_METHOD = arg('tile-method', '');
 const PRODUCT_METHOD = arg('product-method', 'dinov2.pooled.box');
@@ -71,7 +76,7 @@ const MODEL_ID: Record<string, string> = {
 };
 /** Round 3's measured cost per call (neurons), a little up; the ledger checks each call too. */
 const COST: Record<string, number> = { gemma: 6, 'clef-flash': 6, moondream: 22 };
-const target = join(out, 'r4-ai');
+const target = join(out, HELDOUT ? 'r7-final' : 'r4-ai');
 mkdirSync(join(target, 'boards'), { recursive: true });
 const answersFile = join(target, 'answers.jsonl');
 
@@ -85,7 +90,9 @@ type Photo = {
   truth?: { id: string; kind: string; box: Box }[];
 };
 const index = readJson<{ photos: Photo[] }>(join(out, 'photos', 'index.json'));
-const photos = index.photos.filter((p) => !p.locked && p.split !== 'heldout');
+const photos = index.photos.filter(
+  (p) => !p.locked && (HELDOUT ? p.split === 'heldout' : p.split !== 'heldout'),
+);
 const snapshot = readJson<{
   placements: {
     materialId: string;
@@ -118,9 +125,9 @@ const productRef = (id: string) => {
 };
 const PRODUCT = new Set(['toilet', 'basin', 'vanity', 'bath']);
 const kindOf = (kind: string) => (kind === 'vanity' ? 'basin' : kind);
-/** The products whose place is asked: the saved Gemma boxes (fifteen), the annotation's (development). */
+/** The products whose place is asked: the saved Gemma boxes (fifteen), the annotation's (development, held-out). */
 const productBoxes = (photo: Photo) =>
-  photo.split === 'corpus-dev'
+  photo.split !== 'fifteen'
     ? (photo.truth ?? [])
         .filter((t) => PRODUCT.has(t.kind))
         .map((t) => ({ id: t.id, kind: kindOf(t.kind), box: t.box }))
@@ -193,9 +200,10 @@ function asks(): Ask[] {
   const faces = Object.entries(photoTop)
     .filter(([, methods]) => methods[tileMethod])
     .map(([faceId, methods]) => [faceId, methods[tileMethod]] as const);
+  // The held-out products have no ranked boards: only their colour is asked.
   const products = readJson<{ id: string; kind: string }[]>(
-    join(out, 'features', 'products', 'queries.json'),
-  ).filter((q) => productTop[q.id]?.[PRODUCT_METHOD]?.length);
+    join(out, 'features', HELDOUT ? 'products-heldout' : 'products', 'queries.json'),
+  ).filter((q) => HELDOUT || productTop[q.id]?.[PRODUCT_METHOD]?.length);
   const productTopIds = (id: string) => productTop[id][PRODUCT_METHOD].map((x) => x.id);
   switch (PART) {
     case 'tiles':

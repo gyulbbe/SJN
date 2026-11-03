@@ -5,7 +5,8 @@
  * the box through the app's background-removal model (BiRefNet) onto white — with the same embeddings.
  *
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/browser/products.ts [--models ...]
- * Output: test-results/catalog-match/features/products/
+ *          [--split heldout --out products-heldout]   (round 7: the held-out photos, the annotation's boxes)
+ * Output: test-results/catalog-match/features/<out: products>/
  */
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -28,6 +29,7 @@ const FILES: Record<string, string> = {
 };
 const models = arg('models', 'dinov2-small:q4f16,clip-b32:q4f16,siglip2-b16:q4f16').split(',');
 const ep = arg('ep', 'webgpu') as 'webgpu' | 'wasm';
+const splits = arg('split', 'fifteen,corpus-dev').split(',');
 /** WASM threads for this offline precompute (needs isolation); its timings are not the app's. */
 const threads = Number(arg('threads', '1'));
 const BIREFNET = join(ROOT as string, 'tmp', 'background-model', 'model_fp16.onnx');
@@ -63,9 +65,9 @@ const index = JSON.parse(await readFile(join(OUT as string, 'photos', 'index.jso
   }[];
 };
 const queries = index.photos
-  .filter((p) => !p.locked && p.split !== 'heldout')
+  .filter((p) => !p.locked && splits.includes(p.split))
   .flatMap((p) =>
-    (p.split === 'corpus-dev' ? (p.truth ?? []) : p.candidates.map((c, i) => ({ ...c, id: c.id ?? `c${i}` })))
+    (p.split !== 'fifteen' ? (p.truth ?? []) : p.candidates.map((c, i) => ({ ...c, id: c.id ?? `c${i}` })))
       .filter((x) => PRODUCT.has(x.kind))
       .map((x) => ({
         id: `${p.id}:${x.id}`,
@@ -76,7 +78,7 @@ const queries = index.photos
         path: p.path,
       })),
   );
-const target = join(OUT as string, 'features', 'products');
+const target = join(OUT as string, 'features', arg('out', 'products'));
 await mkdir(target, { recursive: true });
 // The GPU stays on for BiRefNet; the embeddings use `ep`.
 const harness = await openHarness({
