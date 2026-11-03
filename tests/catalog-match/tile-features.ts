@@ -306,12 +306,13 @@ export type UvRect = { u0: number; v0: number; u1: number; v1: number };
 /**
  * The largest rectangle (in the face's u-v square) that stays inside the photo frame and clear of
  * the given image boxes (products, mirrors, doors), on a `grid`×`grid` lattice. Area is measured in
- * face u-v (so in mm up to the face's size), not in pixels.
+ * face u-v (so in mm up to the face's size), not in pixels. `isBlocked` adds a per-point test on the
+ * image (round 9: a pixel the segmentation does not call this face's wall or floor).
  */
 export function cleanRectangle(
   quad: Quad,
   blockers: Box[],
-  options: { grid?: number; frameMargin?: number } = {},
+  options: { grid?: number; frameMargin?: number; isBlocked?: (p: Point) => boolean } = {},
 ): UvRect | undefined {
   const grid = options.grid ?? 24,
     margin = options.frameMargin ?? 0.01;
@@ -332,6 +333,7 @@ export function cleanRectangle(
         if (!(p.x >= margin && p.x <= 1 - margin && p.y >= margin && p.y <= 1 - margin)) ok = false;
         else if (blockers.some((b) => p.x > b.left && p.x < b.right && p.y > b.top && p.y < b.bottom))
           ok = false;
+        else if (options.isBlocked?.(p)) ok = false;
         if (!ok) break;
       }
       free.push(ok);

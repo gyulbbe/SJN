@@ -2,7 +2,8 @@
  * Round 4: the main AI run (photos go to Cloudflare) with the two models kept in round 3 (Gemma,
  * Clef-flash) and Moondream for boxes. Parts, each run on its own:
  *
- *   boxes     development photos: Gemma finds products (bbox_2d), Moondream detects toilet/sink/bathtub
+ *   boxes     development photos: Gemma finds products (bbox_2d), Moondream detects toilet/sink/bathtub;
+ *             with --split fifteen (round 9, ② 가리는 것 빼기) Gemma alone on the fifteen
  *   tiles     every face of the fifteen and the development photos: 12-candidate board, plus the
  *             tile's colour and finish names (method 10)
  *   split     the fifteen's faces as three boards of four in one Gemma request
@@ -17,6 +18,7 @@
  *
  * Needs the temporary Worker (see ai-worker/worker.ts).
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/r4-ai.ts --part tiles [--dry] [--limit N]
+ *          [--split corpus-dev|fifteen --round r4|r9]
  *          [--tiles r1-tiles-q8 --tile-method "clean.rect.raw|..."] [--product-method dinov2.pooled.box]
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -56,6 +58,8 @@ const arg = (name: string, fallback: string) => {
 const PART = arg('part', '');
 const DRY = process.argv.includes('--dry');
 const LIMIT = Number(arg('limit', '0'));
+const BOX_SPLIT = arg('split', 'corpus-dev');
+const ROUND = arg('round', 'r4');
 const TILES_DIR = join(out, arg('tiles', 'r1-tiles-q8'));
 const TILE_METHOD = arg('tile-method', '');
 const PRODUCT_METHOD = arg('product-method', 'dinov2.pooled.box');
@@ -276,7 +280,7 @@ function asks(): Ask[] {
       }));
     case 'boxes':
       return photos
-        .filter((p) => p.split === 'corpus-dev')
+        .filter((p) => p.split === BOX_SPLIT)
         .map((p) => ({
           part: 'boxes',
           photo: p.id,
@@ -289,7 +293,13 @@ function asks(): Ask[] {
 }
 
 const models =
-  PART === 'boxes' ? ['gemma', 'moondream'] : PART === 'split' || PART === 'colour' ? ['gemma'] : MODELS;
+  PART === 'boxes'
+    ? BOX_SPLIT === 'corpus-dev'
+      ? ['gemma', 'moondream']
+      : ['gemma']
+    : PART === 'split' || PART === 'colour'
+      ? ['gemma']
+      : MODELS;
 /** Asks already answered by every model of this part (a stopped run goes on where it stopped). */
 const answered = new Set(
   existsSync(answersFile)
@@ -368,7 +378,7 @@ try {
     const send = async (model: string, task: string, input: unknown) => {
       try {
         const { result, neurons, ms } = await callAi({
-          round: 'r4',
+          round: ROUND,
           task,
           photo: ask.photo,
           model: MODEL_ID[model],

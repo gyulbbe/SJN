@@ -2,6 +2,8 @@
  * The questions of the catalog-match trial's AI rounds: the same words for every photo, no answer and no
  * answer-sheet text in them, and the request shape of each model (Gemma, Llama, Clef).
  */
+import { CONFIDENCE, CONTENTS, MARKS, STATES, VISIBLE } from './inspect';
+
 export const TILE_TEXT =
   'The left panel labelled PHOTO is a tiled wall or floor cut out of a bathroom photo and straightened. The 12 numbered squares on the right are catalogue tiles, each drawn repeated with its joints over the same 900 mm square. Which number is the same tile as in the photo, judging colour, pattern, veining and finish (the photo may be darker or tinted by its light)? Answer 0 if none of them is close.';
 export const PRODUCT_TEXT =
@@ -223,3 +225,31 @@ export const productColourSchema = {
   required: ['colour'],
   additionalProperties: false,
 };
+/** Round 9 (③ 조각 점검): what each face's piece shows and in what state, one call a photo. */
+export const INSPECT_TEXT =
+  'Image 1 is a bathroom photo with numbered red outlines on its walls and floor. Image 2 shows, under the same numbers, each outlined part cut out and straightened: the piece that will be used to recognise the tile of that wall or floor. For each numbered piece say: content — what mainly fills the piece (tile, door, shower_curtain, glass_partition, mirror, window, cabinet_or_shelf, painted_wall, other); tile_visible — how much of the piece is tile surface (all, most, half, little, none); state — the condition of the tile (clean, slightly_dirty, very_dirty, wet_or_reflective, unknown); marks — what the marks or variation on the tile are (none, tile_design for a printed pattern, veining or texture, dirt_or_stain, mould, water_or_reflection, mixed); confidence — high, medium or low.';
+export const inspectSchema = (count: number) => ({
+  type: 'object',
+  properties: {
+    pieces: {
+      type: 'array',
+      minItems: count,
+      maxItems: count,
+      items: {
+        type: 'object',
+        properties: {
+          number: { type: 'integer', minimum: 1, maximum: count },
+          content: { type: 'string', enum: [...CONTENTS] },
+          tile_visible: { type: 'string', enum: [...VISIBLE] },
+          state: { type: 'string', enum: [...STATES] },
+          marks: { type: 'string', enum: [...MARKS] },
+          confidence: { type: 'string', enum: [...CONFIDENCE] },
+        },
+        required: ['number', 'content', 'tile_visible', 'state', 'marks', 'confidence'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['pieces'],
+  additionalProperties: false,
+});

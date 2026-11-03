@@ -8,12 +8,17 @@
  * Usage: node tests/run-browser-test.mjs tests/catalog-match/browser/queries.ts --set synth|photos
  *          [--ep webgpu|wasm] [--models dinov2-small:q4f16,clip-b32:q4f16,siglip2-b16:q4f16] [--limit N]
  *          [--variants clean.rect.raw,...]
+ *          [--gemma-boxes --labels labels --crops r9]   (round 9, ② 가리는 것 빼기: the clean part also
+ *          avoids round 4's Gemma boxes and every pixel DeepLab does not call this face's wall or floor)
  */
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { OUT } from '../paths.mjs';
 import { modelPath } from '../models.mjs';
-import { cleanRectangle, subQuad, type Box, type Quad } from '../tile-features';
+import { labelBlocked } from '../inspect';
+import { gemmaBox } from '../score';
+import { cleanRectangle, subQuad, type Box, type Quad, type UvRect } from '../tile-features';
 import { openHarness } from './harness';
 import type * as Page from './page';
 
@@ -39,6 +44,28 @@ const models = arg('models', 'dinov2-small:q4f16,clip-b32:q4f16,siglip2-b16:q4f1
   .split(',')
   .filter(Boolean);
 const WINDOW_MM = 900;
+const GEMMA_BOXES = process.argv.includes('--gemma-boxes');
+const LABELS = arg('labels', '');
+const CROPS = arg('crops', '');
+/** Round 4's Gemma box answers (`part: boxes`), every kind, per photo. */
+const gemmaBoxes = new Map<string, Box[]>();
+if (GEMMA_BOXES)
+  for (const line of readFileSync(join(OUT as string, 'r4-ai', 'answers.jsonl'), 'utf8').split(/\r?\n/)) {
+    if (!line) continue;
+    const a = JSON.parse(line) as { part: string; model: string; photo: string; result: unknown };
+    if (a.part !== 'boxes' || a.model !== 'gemma') continue;
+    try {
+      const content = (a.result as { choices: { message: { content: string } }[] }).choices[0].message
+        .content;
+      const items = (JSON.parse(content) as { items: { bbox_2d: number[] }[] }).items;
+      gemmaBoxes.set(
+        a.photo,
+        items.map((i) => gemmaBox(i.bbox_2d)),
+      );
+    } catch {
+      gemmaBoxes.set(a.photo, []);
+    }
+  }
 
 type Face = 'back' | 'left' | 'right' | 'floor';
 export type QueryFace = {
@@ -52,7 +79,9 @@ export type QueryFace = {
   materialId?: string;
   /** The earlier analysis's own tile estimate for this face (photos only). */
   observed?: unknown;
-  regions: Partial<Record<'auto' | 'clean', { quad: Quad; mm: { widthMm: number; heightMm: number } }>>;
+  regions: Partial<
+    Record<'auto' | 'clean', { quad: Quad; mm: { widthMm: number; heightMm: number }; uv?: UvRect }>
+  >;
   /** For the light estimate: the photo's faces and products. */
   review: {
     planes: { quad: Quad; tile: { color: string } }[];
@@ -111,7 +140,21 @@ if (set === 'synth') {
   for (const p of index.photos) {
     if (p.locked || p.split === 'heldout') continue;
     // Products, mirrors, glass, doors and windows all hide the tile.
-    const blockers: Box[] = p.candidates.map((c: { box: Box }) => c.box);
+    const blockers: Box[] = [
+      ...p.candidates.map((c: { box: Box }) => c.box),
+      ...(gemmaBoxes.get(p.id) ?? []),
+    ];
+    if (GEMMA_BOXES && !gemmaBoxes.has(p.id)) throw new Error(`${p.id}: no Gemma box answer`);
+    let labels: { data: Uint8Array; width: number; height: number } | undefined;
+    if (LABELS) {
+      const file = join(OUT as string, LABELS, `${p.id}.u8`);
+      if (!existsSync(file)) throw new Error(`${p.id}: no labels`);
+      const sizes = JSON.parse(readFileSync(join(OUT as string, LABELS, 'index.json'), 'utf8')) as Record<
+        string,
+        { width: number; height: number }
+      >;
+      labels = { data: readFileSync(file), width: sizes[p.id].width, height: sizes[p.id].height };
+    }
     const review = {
       planes: p.planes.map((plane: { quad: Quad; tile: { color?: string } | null }) => ({
         quad: plane.quad,
@@ -127,7 +170,9 @@ if (set === 'synth') {
       ),
     };
     for (const plane of p.planes as { face: Face; quad: Quad; tile: unknown }[]) {
-      const clean = cleanRectangle(plane.quad, blockers);
+      const clean = cleanRectangle(plane.quad, blockers, {
+        isBlocked: labels && labelBlocked(labels, plane.face),
+      });
       faces.push({
         id: `${p.id}:${plane.face}`,
         set: 'photos',
@@ -143,6 +188,7 @@ if (set === 'synth') {
                 clean: {
                   quad: subQuad(plane.quad, clean),
                   mm: scaled(p.room, plane.face, [clean.u0, clean.v0, clean.u1, clean.v1]),
+                  uv: clean,
                 },
               }
             : {}),
@@ -208,7 +254,7 @@ try {
   const timing: number[] = [];
   for (const face of chosen) {
     const result = await page.evaluate(
-      async ({ face, variants, windowMm, saveCrop }) => {
+      async ({ face, variants, windowMm, saveCrop, cropDir }) => {
         const CM = (window as unknown as { CM: typeof Page }).CM;
         const w = window as unknown as {
           embedders: Record<string, Page.Embedder>;
@@ -273,7 +319,7 @@ try {
           }
           if (saveCrop && variant.region === 'clean' && variant.rectify && !variant.delight)
             await CM.save(
-              `crops/${face.set}/${face.id.replace(':', '-')}.jpg`,
+              `crops/${cropDir}/${face.id.replace(':', '-')}.jpg`,
               await CM.canvasBlob(crop, 'image/jpeg', 0.9),
             );
           const vectors: Record<string, number[]> = {};
@@ -299,7 +345,7 @@ try {
         bitmap.close();
         return out;
       },
-      { face, variants, windowMm: WINDOW_MM, saveCrop: true },
+      { face, variants, windowMm: WINDOW_MM, saveCrop: true, cropDir: CROPS || face.set },
     );
     for (const r of result) {
       rows.push({ query: face.id, variant: r.variant, mm: r.mm });

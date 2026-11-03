@@ -22,6 +22,14 @@ import {
   textureFeatures,
   type Quad,
 } from './catalog-match/tile-features';
+import {
+  brightMask,
+  decide,
+  labelBlocked,
+  overlapShare,
+  rectIou,
+  type Inspection,
+} from './catalog-match/inspect';
 
 describe('catalog-match scoring', () => {
   it('counts top-N hits from ranks', () => {
@@ -165,5 +173,68 @@ describe('catalog-match tile features', () => {
     expect(rect.u0).toBe(0);
     expect(rect.u1).toBeCloseTo(0.5);
     expect(rect.v1 - rect.v0).toBeCloseTo(1);
+  });
+});
+
+describe('catalog-match round 9 checks', () => {
+  const unit: Quad = [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0, y: 1 },
+  ];
+  it('keeps the clean rectangle off pixels that are not this face', () => {
+    // 2 × 2 labels: wall, floor / wall, door (15).
+    const labels = { data: [1, 4, 1, 15], width: 2, height: 2 };
+    const wall = labelBlocked(labels, 'back');
+    expect(wall({ x: 0.25, y: 0.25 })).toBe(false);
+    expect(wall({ x: 0.75, y: 0.75 })).toBe(true);
+    expect(labelBlocked(labels, 'floor')({ x: 0.75, y: 0.25 })).toBe(false);
+    const rect = cleanRectangle(unit, [], { grid: 10, frameMargin: 0, isBlocked: wall })!;
+    expect(rect.u1).toBeLessThanOrEqual(0.5);
+    expect(rect.v1 - rect.v0).toBeCloseTo(1);
+  });
+  it('measures how much of a piece is inside boxes, and the overlap of two pieces', () => {
+    expect(overlapShare(unit, [{ left: 0, top: 0, right: 0.5, bottom: 1 }])).toBeCloseTo(0.5);
+    expect(overlapShare(unit, [])).toBe(0);
+    expect(rectIou({ u0: 0, v0: 0, u1: 1, v1: 1 }, { u0: 0, v0: 0, u1: 0.5, v1: 1 })).toBeCloseTo(0.5);
+  });
+  it('takes the colour of a piece from its lighter pixels', () => {
+    // Ten pixels, lightness rising: the mask keeps the 60–95% part.
+    const data = Array.from({ length: 10 }, (_, i) => [i * 25, i * 25, i * 25, 255]).flat();
+    const mask = brightMask({ data, width: 10, height: 1 });
+    expect(Array.from(mask)).toEqual([0, 0, 0, 0, 0, 1, 1, 1, 1, 0]);
+  });
+  it('decides how each face is matched from the check', () => {
+    const check = (over: Partial<Inspection>): Inspection => ({
+      content: 'tile',
+      tile_visible: 'all',
+      state: 'clean',
+      marks: 'tile_design',
+      confidence: 'high',
+      ...over,
+    });
+    const result = decide([
+      { face: 'back', usable: true, inspection: check({}) },
+      { face: 'left', usable: true, inspection: check({ content: 'door', tile_visible: 'little' }) },
+      { face: 'right', usable: false, inspection: check({ tile_visible: 'most', confidence: 'medium' }) },
+      { face: 'floor', usable: true, inspection: check({ marks: 'dirt_or_stain' }) },
+    ]);
+    expect(result.map((d) => [d.face, d.mode, d.from, d.confidence])).toEqual([
+      ['back', 'own', undefined, 'high'],
+      ['left', 'borrow', 'back', 'low'],
+      ['right', 'borrow', 'back', 'low'],
+      ['floor', 'colour', undefined, 'medium'],
+    ]);
+    expect(result[1].reason).toContain('주로 문이 보임');
+    // A floor that is not tile keeps its own pick; a wall with no good wall to borrow from too.
+    const alone = decide([
+      { face: 'back', usable: true, inspection: check({ content: 'glass_partition' }) },
+      { face: 'floor', usable: true, inspection: check({ content: 'other' }) },
+      { face: 'left', usable: true },
+    ]);
+    expect(alone.map((d) => d.mode)).toEqual(['keep', 'keep', 'own']);
+    expect(alone[0].reason).toContain('유리 칸막이가');
+    expect(alone[2].confidence).toBe('medium');
   });
 });

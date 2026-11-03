@@ -590,5 +590,50 @@ export function markedPhoto(
   });
   return canvas;
 }
+/** Round 9: the photo (at most 1024 px) with each face's piece outlined in red and numbered. */
+export function outlinedPhoto(bitmap: ImageBitmap, quads: Quad[]) {
+  const scale = Math.min(1, 1024 / Math.max(bitmap.width, bitmap.height));
+  const canvas = canvasOf(bitmap.width * scale, bitmap.height * scale);
+  const context = canvas.getContext('2d')!;
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  quads.forEach((quad, i) => {
+    context.strokeStyle = '#ff0000';
+    context.lineWidth = Math.max(3, canvas.width / 200);
+    context.beginPath();
+    quad.forEach((p, k) =>
+      (k ? context.lineTo : context.moveTo).call(context, p.x * canvas.width, p.y * canvas.height),
+    );
+    context.closePath();
+    context.stroke();
+    const cx = quad.reduce((s, p) => s + p.x, 0) / 4,
+      cy = quad.reduce((s, p) => s + p.y, 0) / 4;
+    label(
+      context,
+      String(i + 1),
+      Math.min(canvas.width - 40, Math.max(0, cx * canvas.width - 20)),
+      Math.min(canvas.height - 50, Math.max(0, cy * canvas.height - 22)),
+    );
+  });
+  return canvas;
+}
+/** Round 9: the pieces side by side on grey, each under its number (2 × 2 for four). */
+export function piecesBoard(pieces: HTMLCanvasElement[]): HTMLCanvasElement {
+  const canvas = canvasOf(BOARD_W, BOARD_H);
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = '#d9d9d9';
+  context.fillRect(0, 0, BOARD_W, BOARD_H);
+  context.imageSmoothingQuality = 'high';
+  const columns = pieces.length > 2 ? 2 : pieces.length,
+    rows = Math.ceil(pieces.length / columns);
+  const w = BOARD_W / columns,
+    h = BOARD_H / rows;
+  pieces.forEach((piece, i) => {
+    const x = (i % columns) * w,
+      y = Math.floor(i / columns) * h;
+    fit(context, piece, x + 70, y + 8, w - 80, h - 16);
+    label(context, String(i + 1), x + 8, y + 8);
+  });
+  return canvas;
+}
 export const dataUrlOf = (canvas: HTMLCanvasElement, quality = 0.88) =>
   canvas.toDataURL('image/jpeg', quality);
