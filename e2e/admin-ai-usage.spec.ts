@@ -27,6 +27,16 @@ const summary: AiUsageSummary = {
     neurons: i === 4 ? 12000 : i === 6 ? 4001.4 : 800,
     requests: 10,
   })),
+  database: {
+    rowsWritten: 72500,
+    rowsRead: 466738,
+    freeWrites: 100000,
+    freeReads: 5000000,
+    remainingWrites: 27500,
+    remainingReads: 4533262,
+    writeQueries: 1200,
+    readQueries: 9000,
+  },
 };
 
 async function noOverflow(page: Page) {
@@ -50,6 +60,16 @@ test('관리자는 오늘 남은 무료 뉴런·모델별 사용·최근 7일을
     '40',
   );
   await expect(today).toContainText('36회');
+  const database = page.getByRole('region', { name: '오늘 DB 사용량' });
+  await expect(database).toContainText('72,500 / 100,000행 · 남은 양 27,500행');
+  await expect(database.getByRole('progressbar', { name: '오늘 DB 쓰기 비율' })).toHaveAttribute(
+    'aria-valuenow',
+    '73',
+  );
+  await expect(database.getByRole('progressbar', { name: '오늘 DB 읽기 비율' })).toHaveAttribute(
+    'aria-valuenow',
+    '9',
+  );
   const models = page.getByRole('region', { name: '모델별 사용' }).getByRole('listitem');
   await expect(models).toHaveCount(2);
   await expect(models.first()).toContainText('AI 현장 사진 · FLUX.2 klein 4B');

@@ -9,12 +9,15 @@ const gemma = '@cf/google/gemma-4-26b-a4b-it';
 const flux = '@cf/black-forest-labs/flux-2-klein-4b';
 
 type Group = { count: number; sum: { totalNeurons: number }; dimensions: Record<string, string> };
-const answer = (groups: Group[]) =>
+const answer = (groups: (Group | D1Group)[]) =>
   Response.json({ data: { viewer: { accounts: [{ groups }] } }, errors: null });
+type D1Group = { sum: Record<string, number> };
+let d1: D1Group[] | Response = [];
 function fetcher(today: Group[], history: Group[] | Response) {
   return vi.fn(async (_url: string, init: RequestInit) => {
     const { query } = JSON.parse(String(init.body)) as { query: string };
     if (query.includes('SjnAiUsageToday')) return answer(today);
+    if (query.includes('SjnD1UsageToday')) return d1 instanceof Response ? d1 : answer(d1);
     return history instanceof Response ? history : answer(history);
   });
 }
@@ -111,5 +114,45 @@ describe('readAiUsage', () => {
     const failure = readAiUsage(env, now, fetch);
     await expect(failure).rejects.toMatchObject({ status });
     await expect(failure).rejects.toThrow(text);
+  });
+
+  it('adds today’s D1 rows of the whole account (written, read, what is left) from the same analytics', async () => {
+    d1 = [
+      { sum: { rowsRead: 400000, rowsWritten: 70000, readQueries: 8000, writeQueries: 1100 } },
+      { sum: { rowsRead: 66738, rowsWritten: 2500, readQueries: 1000, writeQueries: 100 } },
+    ];
+    const fetch = fetcher([], []);
+    const usage = await readAiUsage(env, now, fetch);
+    expect(usage.database).toEqual({
+      rowsWritten: 72500,
+      rowsRead: 466738,
+      freeWrites: 100000,
+      freeReads: 5000000,
+      remainingWrites: 27500,
+      remainingReads: 4533262,
+      writeQueries: 1200,
+      readQueries: 9000,
+    });
+    // One UTC day, by date (D1 analytics are kept per day).
+    const sent = fetch.mock.calls.map(([, init]) => JSON.parse(String(init.body)));
+    const asked = sent.find((body) => body.query.includes('SjnD1UsageToday'));
+    expect(asked.variables).toMatchObject({ from: '2026-09-25', to: '2026-09-25' });
+    expect(asked.query).toContain('d1AnalyticsAdaptiveGroups');
+    d1 = [{ sum: { rowsRead: 6000000, rowsWritten: 130499, readQueries: 1, writeQueries: 1 } }];
+    const over = await readAiUsage(env, now, fetcher([], []));
+    expect(over.database).toMatchObject({ remainingWrites: 0, remainingReads: 0 });
+  });
+
+  it('keeps the AI figures when the D1 part fails, and says why', async () => {
+    d1 = Response.json({ data: null, errors: [{ message: 'unknown field d1AnalyticsAdaptiveGroups' }] });
+    const usage = await readAiUsage(
+      env,
+      now,
+      fetcher([{ count: 1, sum: { totalNeurons: 12 }, dimensions: { modelId: gemma } }], []),
+    );
+    expect(usage.usedNeurons).toBe(12);
+    expect(usage.database).toBeNull();
+    expect(usage.databaseError).toContain('d1AnalyticsAdaptiveGroups');
+    d1 = [];
   });
 });

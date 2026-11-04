@@ -135,6 +135,66 @@ export default function AdminAiUsage() {
             )}
           </section>
 
+          <section
+            aria-label="오늘 DB 사용량"
+            className="mt-6 rounded-[var(--radius)] border border-[color:var(--line)] bg-[color:var(--paper)] p-6 shadow-[var(--shadow-sm)]"
+          >
+            <p className="text-sm font-semibold text-[color:var(--muted)]">오늘 DB 사용량</p>
+            {usage.database ? (
+              <>
+                {(
+                  [
+                    [
+                      '쓰기',
+                      usage.database.rowsWritten,
+                      usage.database.freeWrites,
+                      usage.database.remainingWrites,
+                    ],
+                    [
+                      '읽기',
+                      usage.database.rowsRead,
+                      usage.database.freeReads,
+                      usage.database.remainingReads,
+                    ],
+                  ] as const
+                ).map(([label, used, free, left]) => {
+                  const ratio = Math.min(1, used / free);
+                  return (
+                    <div key={label} className="mt-4">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                        <span className="font-semibold">DB {label}</span>
+                        <span className="tabular-nums">
+                          {neurons(used)} / {neurons(free)}행 · 남은 양 {neurons(left)}행
+                        </span>
+                      </div>
+                      <div
+                        className="mt-2 h-3 overflow-hidden rounded-full bg-[color:var(--surface-soft)]"
+                        role="progressbar"
+                        aria-label={`오늘 DB ${label} 비율`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(ratio * 100)}
+                      >
+                        <div
+                          className={`h-full ${ratio >= 0.9 ? 'bg-[color:var(--danger)]' : ratio >= 0.7 ? 'bg-amber-500' : 'bg-[color:var(--accent)]'}`}
+                          style={{ width: `${ratio * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+                <p className="mt-4 text-xs leading-relaxed text-[color:var(--muted)]">
+                  계정의 모든 DB를 합친 값이에요. 쓰기가 무료 한도(하루 10만 행)에 닿으면 초기화(한국 오전
+                  9시) 전까지 모든 이용자의 저장이 막혀요. 공용 자재 저장 1번은 약 60행을 써요.
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-[color:var(--muted)]">
+                DB 사용량을 읽지 못했어요{usage.databaseError ? `: ${usage.databaseError}` : '.'}
+              </p>
+            )}
+          </section>
+
           <section aria-label="모델별 사용" className="mt-8">
             <h2 className="mb-3 text-lg font-semibold">오늘 모델별 사용</h2>
             {usage.models.length ? (

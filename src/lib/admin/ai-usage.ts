@@ -1,16 +1,29 @@
 import {
+  DAILY_FREE_D1_READS,
+  DAILY_FREE_D1_WRITES,
   DAILY_FREE_NEURONS,
   NEURON_USD_PER_THOUSAND,
   type AiUsageDay,
   type AiUsageModel,
   type AiUsageSummary,
+  type D1UsageSummary,
 } from './ai-usage-contract';
 
 const ENDPOINT = 'https://api.cloudflare.com/client/v4/graphql';
 const DAY_MS = 86_400_000;
 const HISTORY_DAYS = 7;
 
-type Group = { count?: unknown; sum?: { totalNeurons?: unknown }; dimensions?: Record<string, unknown> };
+type Group = {
+  count?: unknown;
+  sum?: {
+    totalNeurons?: unknown;
+    rowsRead?: unknown;
+    rowsWritten?: unknown;
+    readQueries?: unknown;
+    writeQueries?: unknown;
+  };
+  dimensions?: Record<string, unknown>;
+};
 type Fetcher = (input: string, init: RequestInit) => Promise<Response>;
 
 function usageError(message: string, status = 503): Error {
@@ -33,14 +46,22 @@ const HISTORY_QUERY = `query SjnAiUsageHistory($account: string!, $from: Time!, 
     }
   } }
 }`;
+// The account's D1 rows today, every database together (the free allowance is per account).
+const D1_QUERY = `query SjnD1UsageToday($account: string!, $from: Date!, $to: Date!) {
+  viewer { accounts(filter: { accountTag: $account }) {
+    groups: d1AnalyticsAdaptiveGroups(limit: 1000, filter: { date_geq: $from, date_leq: $to }) {
+      sum { rowsRead rowsWritten readQueries writeQueries }
+    }
+  } }
+}`;
 
 async function query(
   fetcher: Fetcher,
   account: string,
   token: string,
   document: string,
-  from: Date,
-  to: Date,
+  from: Date | string,
+  to: Date | string,
 ): Promise<Group[]> {
   let response: Response;
   try {
@@ -49,7 +70,11 @@ async function query(
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         query: document,
-        variables: { account, from: from.toISOString(), to: to.toISOString() },
+        variables: {
+          account,
+          from: typeof from === 'string' ? from : from.toISOString(),
+          to: typeof to === 'string' ? to : to.toISOString(),
+        },
       }),
       signal: AbortSignal.timeout(10_000),
     });
@@ -100,9 +125,13 @@ export async function readAiUsage(
   if (!/^[0-9a-f]{32}$/i.test(account)) throw usageError('CLOUDFLARE_ACCOUNT_ID 형식이 올바르지 않아요.');
   const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const historyStart = new Date(dayStart.getTime() - (HISTORY_DAYS - 1) * DAY_MS);
-  const [today, history] = await Promise.all([
+  const date = dayStart.toISOString().slice(0, 10);
+  const [today, history, d1] = await Promise.all([
     query(fetcher, account, token, TODAY_QUERY, dayStart, now),
     query(fetcher, account, token, HISTORY_QUERY, historyStart, now).catch(() => null),
+    query(fetcher, account, token, D1_QUERY, date, date).catch((error: unknown) =>
+      error instanceof Error ? error : new Error(String(error)),
+    ),
   ]);
 
   const models = new Map<string, AiUsageModel>();
@@ -136,6 +165,23 @@ export async function readAiUsage(
     Object.assign(days[days.length - 1], { neurons: usedNeurons, requests });
   }
 
+  let database: D1UsageSummary | null = null;
+  if (!(d1 instanceof Error)) {
+    const total = (key: 'rowsRead' | 'rowsWritten' | 'readQueries' | 'writeQueries') =>
+      d1.reduce((sum, group) => sum + amount(group.sum?.[key]), 0);
+    const rowsWritten = total('rowsWritten'),
+      rowsRead = total('rowsRead');
+    database = {
+      rowsWritten,
+      rowsRead,
+      freeWrites: DAILY_FREE_D1_WRITES,
+      freeReads: DAILY_FREE_D1_READS,
+      remainingWrites: Math.max(0, DAILY_FREE_D1_WRITES - rowsWritten),
+      remainingReads: Math.max(0, DAILY_FREE_D1_READS - rowsRead),
+      writeQueries: total('writeQueries'),
+      readQueries: total('readQueries'),
+    };
+  }
   const overageNeurons = Math.max(0, usedNeurons - DAILY_FREE_NEURONS);
   return {
     checkedAt: now.toISOString(),
@@ -149,5 +195,7 @@ export async function readAiUsage(
     overageUsd: (overageNeurons / 1000) * NEURON_USD_PER_THOUSAND,
     models: modelList,
     days,
+    database,
+    ...(d1 instanceof Error ? { databaseError: d1.message } : {}),
   };
 }
