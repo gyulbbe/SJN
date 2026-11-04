@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>사진화 평가</title>
+    <style>
+      :root {
+        --bg: #f4f3ef;
+        --ink: #1d1d1b;
+        --muted: #6b6a64;
+        --line: #d6d4cc;
+        --accent: #1f5f8b;
+        --on: #1f5f8b;
+        --paper: #ffffff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font:
+          15px/1.5 system-ui,
+          'Apple SD Gothic Neo',
+          'Malgun Gothic',
+          sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+      header {
+        display: flex;
+        gap: 16px;
+        align-items: baseline;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--paper);
+      }
+      header b {
+        font-size: 16px;
+      }
+      header span {
+        color: var(--muted);
+      }
+      main {
+        padding: 12px 16px 24px;
+      }
+      .pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      figure {
+        margin: 0;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      figure img {
+        display: block;
+        width: 100%;
+        height: auto;
+        cursor: zoom-in;
+      }
+      figcaption {
+        padding: 4px 8px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .ask {
+        margin-top: 12px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 12px 14px;
+      }
+      .ask h2 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      .keys {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .keys button {
+        font: inherit;
+        padding: 6px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--paper);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .keys button.on {
+        border-color: var(--on);
+        background: var(--on);
+        color: #fff;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 8px;
+      }
+      .zoom {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.85);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9;
+      }
+      .zoom img {
+        max-width: 98vw;
+        max-height: 98vh;
+      }
+      @media (max-width: 760px) {
+        .pair {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header><b>사진화 평가</b><span id="progress"></span><span id="saved"></span></header>
+    <main id="main">불러오는 중…</main>
+    <div class="zoom" id="zoom"><img alt="" /></div>
+    <script>
+      const STEPS = [
+        {
+          field: 'realism',
+          title: '오른쪽이 실제 현장 사진처럼 보이나요?',
+          keys: ['1 전혀 아님', '2 별로', '3 보통', '4 꽤 그럼', '5 실제 사진 같음'],
+        },
+        {
+          field: 'design',
+          title: '왼쪽 내 설계(타일·제품·배치)와 같나요?',
+          keys: ['1 많이 다름', '2 꽤 다름', '3 조금 다름', '4 거의 같음', '5 같음'],
+        },
+        {
+          field: 'problems',
+          title: '문제가 있으면 모두 고르고 Enter (없으면 바로 Enter)',
+          keys: [
+            '1 제품 바뀜·사라짐',
+            '2 없던 물건 추가',
+            '3 타일 색·무늬 바뀜',
+            '4 구도 바뀜',
+            '5 이상한 일그러짐',
+          ],
+          multi: true,
+        },
+      ];
+      let items = [],
+        answers = {},
+        index = 0,
+        step = 0,
+        picked = new Set();
+      const main = document.getElementById('main');
+      const file = (path) => `/file?path=${encodeURIComponent(path)}`;
+      async function save(item, field, value) {
+        (answers[item] ??= {})[field] = value;
+        await fetch('/rate', { method: 'POST', body: JSON.stringify({ item, field, value }) });
+        document.getElementById('saved').textContent = '저장됨';
+      }
+      function firstOpen() {
+        const i = items.findIndex((it) => !answers[it.id] || answers[it.id].problems === undefined);
+        return i < 0 ? items.length : i;
+      }
+      function render() {
+        document.getElementById('progress').textContent =
+          `${Math.min(index + 1, items.length)} / ${items.length}`;
+        if (index >= items.length) {
+          main.innerHTML =
+            '<div class="ask"><h2>끝났어요. 고맙습니다!</h2><p>창을 닫아도 돼요. 대화창에 "끝났어"라고 알려 주세요.</p></div>';
+          return;
+        }
+        const it = items[index];
+        const s = STEPS[step];
+        const a = answers[it.id] ?? {};
+        main.innerHTML = `
+          <div class="pair">
+            <figure><img src="${file(it.left)}" alt="내 설계 3D"><figcaption>왼쪽: 내 설계(3D 렌더)</figcaption></figure>
+            <figure><img src="${file(it.right)}" alt="결과"><figcaption>오른쪽: 결과 (방법 이름은 가렸어요)</figcaption></figure>
+          </div>
+          <div class="ask">
+            <h2>${step + 1}/3 · ${s.title}</h2>
+            <div class="keys">${s.keys
+              .map(
+                (k, i) =>
+                  `<button data-k="${i + 1}" class="${s.multi ? (picked.has(i + 1) ? 'on' : '') : a[s.field] === i + 1 ? 'on' : ''}">${k}</button>`,
+              )
+              .join('')}${s.multi ? '<button data-k="enter">Enter · 다음</button>' : ''}</div>
+            <div class="hint">숫자 키로 고르세요. ← 이전 항목으로. 그림을 누르면 크게 보여요.</div>
+          </div>`;
+        main
+          .querySelectorAll('.keys button')
+          .forEach((b) => b.addEventListener('click', () => press(b.dataset.k)));
+        main.querySelectorAll('figure img').forEach((img) =>
+          img.addEventListener('click', () => {
+            const z = document.getElementById('zoom');
+            z.querySelector('img').src = img.src;
+            z.style.display = 'flex';
+          }),
+        );
+      }
+      async function press(key) {
+        const it = items[index];
+        if (!it) return;
+        const s = STEPS[step];
+        if (s.multi) {
+          if (key === 'enter') {
+            await save(it.id, 'problems', [...picked].sort());
+            picked = new Set();
+            step = 0;
+            index++;
+          } else {
+            const n = Number(key);
+            if (n >= 1 && n <= 5) picked.has(n) ? picked.delete(n) : picked.add(n);
+          }
+        } else {
+          const n = Number(key);
+          if (!(n >= 1 && n <= 5)) return;
+          await save(it.id, s.field, n);
+          step++;
+          if (step === 2) picked = new Set(answers[it.id]?.problems ?? []);
+        }
+        render();
+      }
+      document
+        .getElementById('zoom')
+        .addEventListener('click', (e) => (e.currentTarget.style.display = 'none'));
+      document.addEventListener('keydown', (e) => {
+        if (document.getElementById('zoom').style.display === 'flex') {
+          document.getElementById('zoom').style.display = 'none';
+          return;
+        }
+        if (e.key === 'ArrowLeft' && (index > 0 || step > 0)) {
+          if (step > 0) step = 0;
+          else index--;
+          picked = new Set();
+          render();
+          return;
+        }
+        if (e.key === 'Enter') return press('enter');
+        if (/^[1-5]$/.test(e.key)) press(e.key);
+      });
+      (async () => {
+        items = (await (await fetch('/items.json')).json()).items;
+        const rows = (await (await fetch('/ratings.jsonl')).text())
+          .split('\n')
+          .filter(Boolean)
+          .map((l) => JSON.parse(l));
+        for (const r of rows) (answers[r.item] ??= {})[r.field] = r.value;
+        index = firstOpen();
+        render();
+      })();
+    </script>
+  </body>
+</html>

@@ -49,7 +49,7 @@ async function answer(file: string, layout: { width: number; height: number }): 
 
 for (const method of readdirSync(RESULTS as string)) {
   if (only && !only.includes(method)) continue;
-  if (method === 'refine' || method === 'none' || method.startsWith('sd-')) continue;
+  if (method === 'refine' || method === 'none') continue;
   const folder = join(RESULTS as string, method);
   for (const file of readdirSync(folder).filter((f) => /^[a-z]+-\d+\.png$/.test(f))) {
     const [scene, seed] = file.replace('.png', '').split('-');
