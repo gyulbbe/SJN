@@ -130,11 +130,16 @@
 - **고친 것**
   - `tests/d1-material-list-sync.test.ts`: updated_at은 현재 버전만 자재와 같게 확인한다.
   - `tests/d1-material-paging-equivalence.test.ts`: 준비 시간 제한을 30초로 했다. main에서도 약 9초로 기본 10초에 가까웠고, 0014가 더해져 넘었다.
-- **통과:** 위 두 시험과 다음 시험들이 통과했다.
-  - d1-storage, d1-catalog, d1-material-kinds, d1-material-order, d1-list-images, admin-projects
-  - d1-material-list-sync, d1-material-paging-equivalence, d1-visibility-equivalence, d1-fixture-layouts, d1-material-paging-cost
+- **통과:** D1 시험 전부를 한 파일씩 차례로 돌렸다(`--fileParallelism=false`, 약 24분). 19개 파일, 183개 시험이 통과했다.
+  - 위 두 시험, d1-storage, d1-catalog, d1-material-kinds, d1-material-order, d1-list-images, d1-route, d1-images, d1-auth, d1-admin-users
+  - d1-material-list-sync, d1-material-paging-equivalence, d1-material-paging-cost, d1-visibility-equivalence, d1-fixture-layouts, d1-reconstruction-diagnostics
+  - admin-projects, admin-ai-usage
   - typecheck, lint
 - **건너뜀:** `tests/d1-read-cost.test.ts`는 `SJN_D1_COST=1`일 때만 돈다.
+- **전체를 한꺼번에 돌리면:** 이 PC에서는 무거운 D1 시험이 동시에 돌면서 "fetch failed"·503으로 몇 개가 떨어진다.
+  - main도 같다. 무거운 시험이 제시간에 준비되도록 `--hookTimeout=60000`을 주면, main에서도 4개 파일 7개 시험이 같은 식으로 떨어진다.
+  - 그래서 D1 시험은 차례로 돌린 결과를 기준으로 삼았다.
+  - 워크트리에는 재구성 기준 그림이 없어 6개가 ENOENT로 떨어진다. 이 작업과 무관하다.
 
 ## 7. 원격 적용 (사용자가 정함)
 
@@ -179,4 +184,10 @@ SJN_D1_WRITE_TILES=1000 npx vitest run tests/d1-write-cost.test.ts
 
 ```bash
 npx playwright test e2e/admin-ai-usage.spec.ts
+```
+
+D1 시험 전부를 차례로(약 24분):
+
+```bash
+npx vitest run tests/d1-*.test.ts tests/admin-projects.test.ts tests/admin-ai-usage.test.ts --fileParallelism=false
 ```
