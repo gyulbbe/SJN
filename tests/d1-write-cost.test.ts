@@ -93,7 +93,13 @@ const post = (path: string, body: unknown, key?: string) =>
     headers: { 'Content-Type': 'application/json', ...(key ? { 'X-Idempotency-Key': key } : {}) },
     body: JSON.stringify(body),
   });
-async function upload(actor: D1Actor, kind: string, bindings: D1Bindings, projectId?: string, sourceAssetId?: string) {
+async function upload(
+  actor: D1Actor,
+  kind: string,
+  bindings: D1Bindings,
+  projectId?: string,
+  sourceAssetId?: string,
+) {
   const id = crypto.randomUUID(),
     form = new FormData();
   form.set(
@@ -152,7 +158,13 @@ async function tileInput(assetId: string, name: string): Promise<MaterialInput> 
   };
 }
 
-type Cost = { status: number; queries: number; rowsRead: number; rowsWritten: number; records: D1QueryRecord[] };
+type Cost = {
+  status: number;
+  queries: number;
+  rowsRead: number;
+  rowsWritten: number;
+  records: D1QueryRecord[];
+};
 /** One request on a metered D1: its queries and billed rows, statement by statement. */
 async function metered(run: (bindings: D1Bindings) => Promise<Response>): Promise<Cost & { body: unknown }> {
   const meter = meterD1(env.DB);
@@ -164,8 +176,10 @@ async function metered(run: (bindings: D1Bindings) => Promise<Response>): Promis
 const material = (actor: D1Actor, body: unknown, key: string, resource: D1Resource = 'materials') =>
   metered((bindings) => handleD1Request(resource, post('/api/d1/' + resource, body, key), bindings, actor));
 
-const results: Record<string, Omit<Cost, 'records'> & { statements: { sql: string; read: number; written: number }[] }> =
-  {};
+const results: Record<
+  string,
+  Omit<Cost, 'records'> & { statements: { sql: string; read: number; written: number }[] }
+> = {};
 function keep(name: string, cost: Cost) {
   results[name] = {
     status: cost.status,
@@ -180,7 +194,8 @@ function keep(name: string, cost: Cost) {
 function report(name: string) {
   const r = results[name];
   console.log(`\n${name}: queries ${r.queries}, read ${r.rowsRead}, written ${r.rowsWritten}`);
-  for (const s of r.statements) console.log(`  w ${String(s.written).padStart(3)} r ${String(s.read).padStart(4)}  ${s.sql}`);
+  for (const s of r.statements)
+    console.log(`  w ${String(s.written).padStart(3)} r ${String(s.read).padStart(4)}  ${s.sql}`);
 }
 
 describe('rows one material save writes', () => {
@@ -243,10 +258,22 @@ describe('rows one material save writes', () => {
         color: { ...DEFAULT_COLOR },
       },
     });
-    const made = await handleD1Request('projects', post('/api/d1/projects', { operation: 'create', document }), env, owner);
+    const made = await handleD1Request(
+      'projects',
+      post('/api/d1/projects', { operation: 'create', document }),
+      env,
+      owner,
+    );
     expect(made.status, await made.clone().text()).toBe(200);
     const projectId = ((await made.json()) as ProjectDocument).id;
-    expect((await adminProjects({ env, actor: admin }, new Request('https://sjn.test/api/admin/projects?id=' + projectId))).status).toBe(200);
+    expect(
+      (
+        await adminProjects(
+          { env, actor: admin },
+          new Request('https://sjn.test/api/admin/projects?id=' + projectId),
+        )
+      ).status,
+    ).toBe(200);
     const generated = await upload(admin, 'product', env, projectId, source);
     const model: MaterialInput = {
       name: '설비',

@@ -100,7 +100,8 @@ beforeAll(async () => {
   db = (await mf.getD1Database('DB')) as unknown as D1DatabaseLike;
   await applyD1Migrations(db, allD1Migrations);
   env = { DB: db, ASSET_BUCKET: { get: async () => null } } as unknown as D1Bindings;
-});
+  // Starting Miniflare and applying every migration takes about 10 s (0014 made it pass the default).
+}, 30_000);
 afterAll(async () => mf?.dispose());
 
 const insert = (table: string, columns: string[], rows: unknown[][]) =>

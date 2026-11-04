@@ -39,7 +39,9 @@ export async function readKinds(db: D1DatabaseLike): Promise<MaterialKindRow[]> 
 async function readKind(db: D1DatabaseLike, code: string): Promise<MaterialKindRow[]> {
   try {
     const row = await db
-      .prepare('SELECT code,name,display_order AS displayOrder,active,builtin FROM d1_material_kinds WHERE code=?')
+      .prepare(
+        'SELECT code,name,display_order AS displayOrder,active,builtin FROM d1_material_kinds WHERE code=?',
+      )
       .bind(code)
       .first<Omit<MaterialKindRow, 'active' | 'builtin'> & { active: number; builtin: number }>();
     return row ? [{ ...row, active: !!row.active, builtin: !!row.builtin }] : [];
