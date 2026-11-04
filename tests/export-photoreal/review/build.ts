@@ -51,6 +51,23 @@ if (set === 'r2') {
       result(method, scene, 424242);
     render(scene);
   }
+} else if (set === 'r5') {
+  const dev = ['white', 'charcoal', 'pattern', 'partial', 'structure', 'smc', 'photos', 'narrow'];
+  for (const scene of dev) {
+    for (const seed of [424242, 777001]) result('current', scene, seed);
+    for (const method of ['light', 'local', 'upscale', 'empty', 'placeholders', 'refine'])
+      result(method, scene, 424242);
+    render(scene);
+  }
+  // The renderer probe: its own small room, the single WebGL frame beside the path-traced one.
+  const probe = join(OUT as string, 'render-probe');
+  for (const name of ['webgl', 'path'])
+    entries.push({
+      method: `probe-${name}`,
+      scene: 'probe',
+      left: rel(join(probe, 'webgl.png')),
+      right: rel(join(probe, `${name}.png`)),
+    });
 } else throw new Error(`unknown set ${set}`);
 
 // A fixed order (seeded), so a re-build gives the same screen.
