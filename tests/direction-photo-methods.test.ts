@@ -13,7 +13,6 @@ import { PRODUCTS, productsFor, productById } from './direction-photo-methods/pr
 import { B2_NOUNS, jobFor } from './direction-photo-methods/methods';
 import { createTrialShape, shapeExtent } from './direction-photo-methods/shapes';
 import { budgetCheck, endsRun, fluxCost, type Row } from './direction-photo-methods/budget';
-// @ts-expect-error a plain .mjs helper without types
 import { iou, outline } from './direction-photo-real/measure.mjs';
 
 const REFS = ['refs/1.png', 'refs/2.png'];
