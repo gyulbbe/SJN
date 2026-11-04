@@ -35,6 +35,20 @@ export async function readKinds(db: D1DatabaseLike): Promise<MaterialKindRow[]> 
     throw error;
   }
 }
+/** One kind's row (by its code, the primary key), for checkMaterialKind; none when there is none. */
+async function readKind(db: D1DatabaseLike, code: string): Promise<MaterialKindRow[]> {
+  try {
+    const row = await db
+      .prepare('SELECT code,name,display_order AS displayOrder,active,builtin FROM d1_material_kinds WHERE code=?')
+      .bind(code)
+      .first<Omit<MaterialKindRow, 'active' | 'builtin'> & { active: number; builtin: number }>();
+    return row ? [{ ...row, active: !!row.active, builtin: !!row.builtin }] : [];
+  } catch (error) {
+    if (/no such table/i.test(error instanceof Error ? error.message : String(error)))
+      return defaultKindRows().filter((row) => row.code === code);
+    throw error;
+  }
+}
 /** 표시 순서 first (0 first), then the ones without one; by name within (migration 0011). */
 const displayOrder = ' ORDER BY display_order IS NULL,display_order,normalized_name';
 export async function readCatalog(db: D1DatabaseLike, includeInactive = false): Promise<CatalogData> {
@@ -226,13 +240,43 @@ export async function resolveCatalogInput(ctx: Context, input: MaterialInput) {
     [input.brand, input.color, input.finish, input.composition, input.subcategoryName].some(Boolean)
   )
     throw invalid('색상·브랜드·재질·마감은 등록된 목록에서 선택해 주세요.');
-  const data = await readCatalog(ctx.env.DB);
+  // Only what this save chose: its active options, its subcategory and its kind (a save read the
+  // whole catalogue before 2026-11-04, about 120 rows; docs/d1-write-cost-results-20261104.md).
+  const db = ctx.env.DB;
+  const chosen = [
+    ...new Set([
+      ...(catalog.brandId ? [catalog.brandId] : []),
+      ...catalog.colorIds,
+      ...catalog.compositionIds,
+      ...catalog.finishIds,
+    ]),
+  ];
+  const [options, subcategory, kinds] = await Promise.all([
+    chosen.length
+      ? db
+          .prepare(
+            'SELECT o.id,o.kind,o.name FROM json_each(?) q CROSS JOIN d1_catalog_options o WHERE o.id=q.value AND o.active=1',
+          )
+          .bind(JSON.stringify(chosen))
+          .all<{ id: string; kind: OptionKind; name: string }>()
+          .then((rows) => rows.results)
+      : [],
+    catalog.subcategoryId
+      ? db
+          .prepare(
+            'SELECT id,category_code AS category,name FROM d1_material_subcategories WHERE id=? AND active=1',
+          )
+          .bind(catalog.subcategoryId)
+          .first<{ id: string; category: string; name: string }>()
+      : null,
+    readKind(db, input.category),
+  ]);
   const selected: { id: string; kind: OptionKind }[] = [];
   function names(kind: OptionKind, ids: string[]) {
     if (new Set(ids).size !== ids.length) throw invalid('중복된 선택 항목이에요.');
     return ids
       .map((id) => {
-        const row = data.options.find((item) => item.id === id && item.kind === kind);
+        const row = options.find((item) => item.id === id && item.kind === kind);
         if (!row) throw invalid('삭제되거나 비활성화된 항목을 다시 선택해 주세요.');
         selected.push({ id, kind });
         return row.name;
@@ -245,14 +289,12 @@ export async function resolveCatalogInput(ctx: Context, input: MaterialInput) {
   input.finish = names('finish', catalog.finishIds);
   input.subcategoryName = '';
   if (catalog.subcategoryId) {
-    const sub = data.subcategories.find(
-      (item) => item.id === catalog.subcategoryId && item.category === input.category,
-    );
-    if (!sub) throw invalid('이 제품 종류에 사용할 수 없는 하위 카테고리예요.');
-    input.subcategoryName = sub.name;
+    if (!subcategory || subcategory.category !== input.category)
+      throw invalid('이 제품 종류에 사용할 수 없는 하위 카테고리예요.');
+    input.subcategoryName = subcategory.name;
   }
   input.catalog = catalog;
-  return { selected, catalog, kinds: data.kinds ?? defaultKindRows() };
+  return { selected, catalog, kinds };
 }
 export function catalogStatements(
   ctx: Context,

@@ -453,12 +453,17 @@ export type ListedRow = {
   active: number;
   version: number;
 };
-/** The summary and payload of the given versions, in the given order. */
+/**
+ * The summary and payload of the given versions, in the given order. updated_at is the material's: an
+ * older version's summary row keeps the time it was last current (0014), so for one of those it comes
+ * from d1_materials (a current one's row has it).
+ */
 export async function rowsFor(db: D1DatabaseLike, ids: string[]): Promise<ListedRow[]> {
   if (!ids.length) return [];
   const rows = await db
     .prepare(
-      `SELECT l.updated_at,l.material_id,l.version_id,l.owner_id,l.scope,l.active,l.version,v.payload_json
+      `SELECT CASE WHEN l.is_current THEN l.updated_at ELSE (SELECT m.updated_at FROM d1_materials m WHERE m.id=l.material_id) END AS updated_at,
+         l.material_id,l.version_id,l.owner_id,l.scope,l.active,l.version,v.payload_json
        FROM json_each(?) j CROSS JOIN d1_material_list l CROSS JOIN d1_material_versions v
        WHERE l.version_id=j.value AND v.id=j.value`,
     )

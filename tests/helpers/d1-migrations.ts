@@ -51,4 +51,5 @@ export const allD1Migrations = [
   '0011_brand_order.sql',
   '0012_material_kinds.sql',
   '0013_fixture_layouts.sql',
+  '0014_write_cost.sql',
 ];

@@ -23,11 +23,8 @@ export function adminAssertion(
 ): D1Statement {
   return sql(
     ctx,
-    'INSERT INTO d1_admin_checks(id,' +
-      kind +
-      '_ok) SELECT ?,CASE WHEN (' +
-      expression +
-      ') THEN 1 ELSE 0 END',
+    // Written only when it fails, as d1_checks (database.ts assertion).
+    'INSERT INTO d1_admin_checks(id,' + kind + '_ok) SELECT ?,0 WHERE NOT coalesce((' + expression + '),0)',
     crypto.randomUUID(),
     ...values,
   );

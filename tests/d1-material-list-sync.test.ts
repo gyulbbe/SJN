@@ -294,7 +294,9 @@ describe('material list summary (0009–0011)', () => {
       expect(row.owner_id).toBe(row.m_owner);
       expect(row.scope).toBe(row.m_scope);
       expect(row.active).toBe(row.m_active);
-      expect(row.updated_at).toBe(row.m_updated);
+      // 0014: the current version has the material's time; an older one keeps the time it was last current.
+      if (row.is_current) expect(row.updated_at).toBe(row.m_updated);
+      else expect(String(row.updated_at) <= String(row.m_updated)).toBe(true);
       expect(row.is_current).toBe(Number(row.m_current === row.version_id));
       const material = { scope: row.m_scope as 'shared' | 'personal' };
       const listed = !isBuiltInExampleMaterial({ material, version });

@@ -46,10 +46,15 @@ export type ListImagePage = {
   total?: number;
 };
 const BACKFILL_PAGE = 48;
-type BackfillCursor = { a: 0 | 1; u?: string; m?: string };
+/**
+ * `c`, `m`: the last card's registration time and material. A cursor from before 2026-11-04 carries
+ * the last update time (`u`) instead: it starts its part again (the backfill only lists).
+ */
+type BackfillCursor = { a: 0 | 1; c?: string; m?: string; u?: string };
 const cursorSchema = z
   .object({
     a: z.union([z.literal(0), z.literal(1)]),
+    c: z.string().max(100).optional(),
     u: z.string().max(100).optional(),
     m: z.string().max(100).optional(),
   })
@@ -64,21 +69,22 @@ function decode(text: string): BackfillCursor {
   }
 }
 /**
- * The administrator's backfill walks shared current materials newest first (active ones, then
- * deactivated ones) through the 0009 summary, a page at a time; reads follow the page.
+ * The administrator's backfill walks shared current materials newest registered first (active ones,
+ * then deactivated ones) through the summary's d1_list_all_new (0010), a page at a time; reads follow
+ * the page. (It walked them by last update through d1_list_recent until 0014 dropped that index.)
  */
 export async function listImagePage(db: D1DatabaseLike, cursorText?: string): Promise<ListImagePage> {
   const cursor = cursorText ? decode(cursorText) : ({ a: 1 } as BackfillCursor);
-  const after = cursor.u && cursor.m ? ' AND (l.updated_at,l.material_id)<(?,?)' : '';
+  const after = cursor.c && cursor.m ? ' AND (l.created_at,l.material_id)<(?,?)' : '';
   const rows = await db
     .prepare(
-      `SELECT l.material_id,l.updated_at,v.payload_json FROM d1_material_list l INDEXED BY d1_list_recent
+      `SELECT l.material_id,l.created_at,v.payload_json FROM d1_material_list l INDEXED BY d1_list_all_new
        CROSS JOIN d1_material_versions v
        WHERE l.active=? AND l.is_current=1 AND l.scope='shared'${after} AND v.id=l.version_id
-       ORDER BY l.updated_at DESC,l.material_id DESC LIMIT ?`,
+       ORDER BY l.created_at DESC,l.material_id DESC LIMIT ?`,
     )
-    .bind(cursor.a, ...(after ? [cursor.u, cursor.m] : []), BACKFILL_PAGE + 1)
-    .all<{ material_id: string; updated_at: string; payload_json: string }>();
+    .bind(cursor.a, ...(after ? [cursor.c, cursor.m] : []), BACKFILL_PAGE + 1)
+    .all<{ material_id: string; created_at: string; payload_json: string }>();
   const page = rows.results.slice(0, BACKFILL_PAGE);
   const cards = page.flatMap((row) => {
     const version = readMaterialViews(JSON.parse(row.payload_json) as MaterialVersion);
@@ -92,7 +98,7 @@ export async function listImagePage(db: D1DatabaseLike, cursorText?: string): Pr
   const last = page.at(-1);
   const nextCursor =
     rows.results.length > BACKFILL_PAGE && last
-      ? encode({ a: cursor.a, u: last.updated_at, m: last.material_id })
+      ? encode({ a: cursor.a, c: last.created_at, m: last.material_id })
       : cursor.a === 1
         ? encode({ a: 0 })
         : null;

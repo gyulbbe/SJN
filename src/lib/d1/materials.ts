@@ -165,6 +165,7 @@ const adminPublic = (row: {
  * What an administrator project's full list added to the public catalogue, from the project's and this
  * administrator's references (the cost follows them): current versions that are not public, and for a
  * material whose current version the scope cannot read, one older referenced version (the highest).
+ * updated_at is the material's (an older version's summary row keeps the time it was last current, 0014).
  */
 async function adminProjectEntries(ctx: Context) {
   const project = ctx.adminProject!;
@@ -172,7 +173,8 @@ async function adminProjectEntries(ctx: Context) {
     ctx,
     `WITH proj(version_id) AS (SELECT version_id FROM d1_project_versions WHERE project_id=?
        UNION SELECT version_id FROM d1_admin_project_versions WHERE project_id=? AND actor_id=?)
-     SELECT l.version_id,l.material_id,l.version,l.is_current,l.scope,l.active,l.class,l.code,l.updated_at,
+     SELECT l.version_id,l.material_id,l.version,l.is_current,l.scope,l.active,l.class,l.code,
+       CASE WHEN l.is_current THEN l.updated_at ELSE (SELECT m.updated_at FROM d1_materials m WHERE m.id=l.material_id) END AS updated_at,
        c.version_id AS current_id,c.scope AS current_scope,c.active AS current_active,c.class AS current_class,
        EXISTS(SELECT 1 FROM proj q WHERE q.version_id=c.version_id) AS current_in_project
      FROM proj p CROSS JOIN d1_material_list l

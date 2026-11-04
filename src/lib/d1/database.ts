@@ -139,7 +139,11 @@ export function referenceJson(ids: string[]): string {
     throw invalid('연결된 자료가 너무 많아요. 프로젝트를 나눠 주세요.');
   return text;
 }
-/** Batch assertion: named CHECK constraints distinguish conflicts from forbidden references. */
+/**
+ * Batch assertion: named CHECK constraints distinguish conflicts from forbidden references. A check
+ * writes its row only when it fails (the row breaks its constraint and ends the batch): one that holds
+ * writes nothing (each row was 2 written rows, a TEXT key and its index, before 2026-11-04).
+ */
 export function assertion(
   ctx: Context,
   kind: 'conflict' | 'reference',
@@ -148,7 +152,7 @@ export function assertion(
 ): D1Statement {
   return sql(
     ctx,
-    `INSERT INTO d1_checks(id,${kind}_ok) SELECT ?,CASE WHEN (${expression}) THEN 1 ELSE 0 END`,
+    `INSERT INTO d1_checks(id,${kind}_ok) SELECT ?,0 WHERE NOT coalesce((${expression}),0)`,
     crypto.randomUUID(),
     ...values,
   );
