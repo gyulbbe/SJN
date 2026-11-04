@@ -315,6 +315,7 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 입력: `node tests/run-browser-test.mjs tests/flux-material-color-payload.ts --gpu`
   - 오프라인 평가: `node tests/run-browser-test.mjs tests/flux-color-offline.ts`
   - e2e는 모의 결과로 보정 표시·원본 색 전환·경고·다운로드 이름·390px·구도 변경 안내를 확인한다.
+- 2026-11-04 사진화 방법 시험(4B 변형 5가지, SD 4모델, 실험 A·B·C, 뒤처리, WebGPU 경로 추적; 장부 6,644뉴런, 사람 평가 86장): 지금 방식 유지가 추천이다([결과](export-photoreal-trials-20261104.md)).
 - 실제 원격 모델 호출 및 화질 비교는 자동 검증에 포함하지 않는다. 2026-09-25 비교(위 표)의 결과 이미지·프롬프트는 `test-results/flux-compare-20260925/`에 로컬로만 남겼다(git 제외).
 - 2026-09-24 사용자 승인으로 실제 호출 2회(4B, 496×336 합성 이미지, 로컬 임시 Worker에서 운영 `AI` 바인딩)로 원인을 확인했다. 게이트웨이 포함 요청은 위 스트림 오류로 즉시 실패했고, 게이트웨이 없이 같은 요청은 200과 992×672 JPEG(base64 JSON)를 반환했다.
 

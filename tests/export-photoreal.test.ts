@@ -64,9 +64,10 @@ describe('export-photoreal ledger', () => {
   });
   it('refuses past the day share, and counts only that UTC day', () => {
     const today = Array.from({ length: 54 }, () => row(110));
-    expect(budgetCheck(today, { at, model: 'x', cost: 110 }).ok).toBe(false);
+    const limits = { budget: 100_000, daily: 6_000 };
+    expect(budgetCheck(today, { at, model: 'x', cost: 110 }, new Set(), limits).ok).toBe(false);
     const yesterday = today.map((r) => ({ ...r, at: '2026-11-03T23:59:00.000Z' }));
-    expect(budgetCheck(yesterday, { at, model: 'x', cost: 110 }).ok).toBe(true);
+    expect(budgetCheck(yesterday, { at, model: 'x', cost: 110 }, new Set(), limits).ok).toBe(true);
   });
   it('refuses a second call of an unpriced image model until its cost is confirmed', () => {
     const sdxl = '@cf/stabilityai/stable-diffusion-xl-base-1.0';

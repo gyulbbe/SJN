@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { resultBase } from '../io';
-import { OUT, SCENES } from '../paths.mjs';
+import { HOLDOUT, OUT, SCENES } from '../paths.mjs';
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -68,6 +68,19 @@ if (set === 'r2') {
       left: rel(join(probe, 'webgl.png')),
       right: rel(join(probe, `${name}.png`)),
     });
+} else if (set === 'r6') {
+  // The two held-out scenes, opened only now: the chosen method (the current one) and the no-AI render;
+  // with them the one experiment C of round 3 that ran a day later (SMC ceiling).
+  for (const scene of ['large', 'side']) {
+    const left = rel(join(HOLDOUT as string, scene, 'capture.png'));
+    for (const seed of [424242, 777001]) {
+      const base = resultBase('current', scene, seed);
+      if (existsSync(`${base}.app.png`))
+        entries.push({ method: 'current', scene, seed, left, right: rel(`${base}.app.png`) });
+    }
+    entries.push({ method: 'none', scene, left, right: rel(join(HOLDOUT as string, scene, 'render32.png')) });
+  }
+  result('refine', 'smc', 424242);
 } else throw new Error(`unknown set ${set}`);
 
 // A fixed order (seeded), so a re-build gives the same screen.

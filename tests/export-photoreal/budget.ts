@@ -6,9 +6,13 @@
 
 /** 1,000 neurons cost $0.011. */
 export const USD_PER_NEURON = 0.011 / 1000;
-/** The user's budget for this trial (2026-11-04) and the trial's share of one UTC day. */
+/**
+ * The user's budget for this trial (2026-11-04) and the trial's share of one UTC day: 6,000 at first,
+ * raised to 9,000 the same day ("뉴런은 문제 없어. 계정 2개가 이어져 있기 때문에": production uses the
+ * extra account first), still under the signed-in account's free 10,000 a day.
+ */
 export const BUDGET = 10_000;
-export const DAILY = 6_000;
+export const DAILY = 9_000;
 /** The tool refuses before a call would pass this share of the budget. */
 export const BUDGET_SHARE = 0.9;
 
