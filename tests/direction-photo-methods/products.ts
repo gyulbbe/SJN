@@ -34,7 +34,7 @@ export type Product = {
   b2?: B2Shape;
   /** The input photos (paths from the main checkout's test-results), the first the main one. */
   photos: string[];
-  /** The photos need the screen's background removal (a backdrop, or not pure white). */
+  /** The photos go through the screen's background removal (BiRefNet), as the app does for every photo. */
   cutout: boolean;
   /** The directions the app makes for it (planDirections; right only when not mirrored). */
   views: DirectionPhotoView[];
@@ -66,7 +66,8 @@ const basin = (
   spec: { category: 'basin', form, installation: floor ? 'floor' : 'wall', sizeMm },
   b2,
   photos: [`direction-photo-methods/user-photos/basin/${file}`],
-  cutout: file.endsWith('.png'),
+  // The screen cuts every photo with BiRefNet before preparing it (direction-photo-generator.tsx).
+  cutout: true,
   views: ['front', 'left', ...(symmetric ? [] : (['right'] as const)), ...(floor ? (['back'] as const) : [])],
   // The user's photos show the front and the side on the picture's right: the product's left.
   near: 'left',
@@ -403,7 +404,7 @@ export const PRODUCTS: Product[] = [
     set: 'dev',
     spec: { category: 'bath', form: 'oval-freestanding', installation: 'floor', sizeMm: [1700, 560, 750] },
     photos: ['product-representation/real/input/61-bathtub-3q-white.png'],
-    cutout: false,
+    cutout: true,
     views: ['front', 'left', 'right', 'back'],
   },
 ];
