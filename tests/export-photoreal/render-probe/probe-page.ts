@@ -151,7 +151,7 @@ export async function adapter() {
   const gpu = (navigator as unknown as { gpu?: GPU }).gpu;
   const a = await gpu?.requestAdapter({ powerPreference: 'high-performance' });
   if (!a) return { available: false };
-  const info = a.info;
+  const info = (a as unknown as { info: Record<string, string> }).info;
   return {
     available: true,
     vendor: info.vendor,
@@ -221,7 +221,7 @@ export async function screenSpace(wallUrl: string, floorUrl: string, frames = 48
     post.render();
     await frame();
   }
-  await renderer.backend.device?.queue.onSubmittedWorkDone?.();
+  await (renderer.backend as unknown as { device?: GPUDevice }).device?.queue.onSubmittedWorkDone();
   const out = {
     png: png(canvas),
     ms: Math.round(performance.now() - started),
