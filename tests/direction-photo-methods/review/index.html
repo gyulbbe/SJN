@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>방향 사진 평가</title>
+    <style>
+      :root { --bg: #f4f4f2; --card: #fff; --ink: #222; --muted: #666; --pick: #1f6feb; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1b; --card: #262626; --ink: #eee; --muted: #aaa; --pick: #58a6ff; } }
+      body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+      header { position: sticky; top: 0; background: var(--bg); padding: 10px 16px; border-bottom: 1px solid #8884; }
+      main { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; }
+      figure { margin: 0; background: var(--card); padding: 8px; border-radius: 8px; border: 3px solid transparent; }
+      figure.on { border-color: var(--pick); }
+      figure img { width: 480px; max-width: calc(100vw - 56px); height: auto; aspect-ratio: 1; object-fit: contain; background: #fff; display: block; }
+      figcaption { font-weight: 700; margin-top: 4px; }
+      .marks { color: var(--muted); font-weight: 400; margin-left: 8px; }
+      kbd { border: 1px solid #8886; border-radius: 4px; padding: 0 4px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div id="where">불러오는 중…</div>
+      <div class="marks"><kbd>1</kbd> 옆/맞음 <kbd>2</kbd> 살짝 <kbd>3</kbd> 사선/틀림 · <kbd>y</kbd>/<kbd>n</kbd> 같은 제품 · <kbd>u</kbd>/<kbd>x</kbd> 그대로 등록 · <kbd>b</kbd> 배경 <kbd>o</kbd> 없던 물건 <kbd>c</kbd> 색 <kbd>k</kbd> 다른 종류 · <kbd>←</kbd><kbd>→</kbd> 후보 · <kbd>Enter</kbd> 다음 화면</div>
+    </header>
+    <main id="board"></main>
+    <script>
+      const LABEL = { dir: { 1: '옆·맞음', 2: '살짝', 3: '사선·틀림' }, same: { y: '같음', n: '다름' }, usable: { u: '등록 가능', x: '불가' } };
+      let screens = [], at = 0, pick = 0, marks = {};
+      const save = (row) => fetch('/rate', { method: 'POST', body: JSON.stringify(row) });
+      async function start() {
+        screens = await (await fetch('/screens.json')).json();
+        const rows = (await (await fetch('/ratings.jsonl')).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+        for (const r of rows) {
+          const m = ((marks[r.screen] ??= {})[r.letter] ??= {});
+          if (r.field === 'problem') (m.problem ??= new Set()).has(r.value) ? m.problem.delete(r.value) : m.problem.add(r.value);
+          else if (r.field) m[r.field] = r.value;
+        }
+        const done = new Set(rows.filter((r) => r.done).map((r) => r.screen));
+        at = Math.max(0, screens.findIndex((s) => !done.has(s.screen)));
+        draw();
+      }
+      function draw() {
+        const s = screens[at];
+        if (!s) { document.getElementById('where').textContent = '모두 끝났어요.'; document.getElementById('board').innerHTML = ''; return; }
+        document.getElementById('where').textContent = `${at + 1} / ${screens.length} · ${s.product} · ${s.view}`;
+        const board = document.getElementById('board');
+        board.innerHTML = '';
+        const photo = document.createElement('figure');
+        photo.innerHTML = `<img src="/image?screen=${encodeURIComponent(s.screen)}&letter=photo" alt="입력 사진"><figcaption>입력 사진</figcaption>`;
+        board.append(photo);
+        s.letters.forEach((letter, i) => {
+          const m = marks[s.screen]?.[letter] ?? {};
+          const figure = document.createElement('figure');
+          if (i === pick) figure.className = 'on';
+          const text = [LABEL.dir[m.dir], LABEL.same[m.same], LABEL.usable[m.usable], ...(m.problem ?? [])].filter(Boolean).join(' · ');
+          figure.innerHTML = `<img src="/image?screen=${encodeURIComponent(s.screen)}&letter=${letter}" alt="후보 ${letter}"><figcaption>${letter}<span class="marks">${text}</span></figcaption>`;
+          figure.onclick = () => { pick = i; draw(); };
+          board.append(figure);
+        });
+      }
+      addEventListener('keydown', (e) => {
+        const s = screens[at];
+        if (!s) return;
+        const letter = s.letters[pick];
+        const set = (field, value) => {
+          const m = ((marks[s.screen] ??= {})[letter] ??= {});
+          if (field === 'problem') (m.problem ??= new Set()).has(value) ? m.problem.delete(value) : m.problem.add(value);
+          else m[field] = value;
+          save({ screen: s.screen, letter, field, value });
+          draw();
+        };
+        if ('123'.includes(e.key)) set('dir', e.key);
+        else if ('yn'.includes(e.key)) set('same', e.key);
+        else if ('ux'.includes(e.key)) set('usable', e.key);
+        else if ('bock'.includes(e.key)) set('problem', e.key);
+        else if (e.key === 'ArrowRight') { pick = Math.min(s.letters.length - 1, pick + 1); draw(); }
+        else if (e.key === 'ArrowLeft') { pick = Math.max(0, pick - 1); draw(); }
+        else if (e.key === 'Enter') { save({ screen: s.screen, done: true }); at++; pick = 0; draw(); scrollTo(0, 0); }
+      });
+      start();
+    </script>
+  </body>
+</html>
