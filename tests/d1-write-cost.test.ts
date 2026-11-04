@@ -10,7 +10,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import sharp from 'sharp';
-import { allD1Migrations, applyD1Migrations } from './helpers/d1-migrations';
+import { readFile } from 'node:fs/promises';
+import { allD1Migrations, applyD1Migrations, migrationStatements } from './helpers/d1-migrations';
 import { meterD1, type D1QueryRecord } from './helpers/d1-meter';
 import { handleD1Request } from '../src/lib/d1';
 import { adminProjectAssets, adminProjectMaterials, adminProjects } from '../src/lib/admin/projects';
@@ -27,7 +28,7 @@ import type { D1Actor, D1Bindings, D1DatabaseLike, D1Resource } from '../src/lib
 
 let mf: Miniflare, env: D1Bindings, png: Uint8Array<ArrayBuffer>;
 const now = '2026-11-04T00:00:00.000Z';
-const TILES = 200;
+const TILES = Number(process.env.SJN_D1_WRITE_TILES ?? 200);
 
 beforeAll(async () => {
   mf = new Miniflare(
@@ -35,7 +36,7 @@ beforeAll(async () => {
       modules: true,
       script: 'export default {fetch(){return new Response("isolated")}};',
       compatibilityDate: '2026-09-07',
-      d1Databases: { DB: 'write-cost-test' },
+      d1Databases: { DB: 'write-cost-test', MIGRATE: 'write-cost-migrate' },
       r2Buckets: ['ASSET_BUCKET'],
     }),
   );
@@ -360,4 +361,21 @@ describe('rows one material save writes', () => {
       expect(lines.join(' ')).not.toMatch(/TEMP B-TREE/);
     }
   });
+
+  it('0014 writes almost nothing on a database with materials (applied after the code deploys)', async () => {
+    const db = (await mf.getD1Database('MIGRATE')) as unknown as D1DatabaseLike;
+    await applyD1Migrations(
+      db,
+      allD1Migrations.filter((name) => name !== '0014_write_cost.sql'),
+    );
+    await seed(db);
+    const meter = meterD1(db);
+    for (const statement of migrationStatements(await readFile('migrations/d1/0014_write_cost.sql', 'utf8')))
+      await meter.db.prepare(statement).run();
+    const summary = meter.summary();
+    console.log(
+      `0014 on ${TILES} materials: ${summary.queries} statements, read ${summary.rowsRead}, written ${summary.rowsWritten}`,
+    );
+    expect(summary.rowsWritten).toBeLessThanOrEqual(5);
+  }, 60_000);
 });
