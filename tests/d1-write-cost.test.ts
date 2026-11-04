@@ -304,8 +304,60 @@ describe('rows one material save writes', () => {
     expect(project.status, JSON.stringify(project.body)).toBe(200);
     keep('관리자 프로젝트 새 모형', project);
 
-    for (const name of Object.keys(results)) report(name);
     await mkdir('test-results', { recursive: true });
     await writeFile('test-results/d1-write-cost.json', JSON.stringify(results, null, 1));
+    // The budgets of docs/d1-write-cost-results-20261104.md (an edit wrote 107, 127 and 202 rows with
+    // 1, 5 and 20 versions before 0014). A failure prints what each statement read and wrote.
+    const edits = [1, 5, 20].map((n) => results[`수정 저장 (저장 전 버전 ${n}개)`]);
+    try {
+      for (const edit of edits) {
+        expect(edit.rowsWritten).toBeLessThanOrEqual(60);
+        expect(edit.rowsWritten).toBe(edits[0].rowsWritten);
+        expect(edit.queries).toBe(edits[0].queries);
+        // Reads follow this material's versions a little (the trigger finds its current one), not the catalogue.
+        expect(edit.rowsRead).toBeLessThanOrEqual(250);
+      }
+      expect(results['새 공용 타일'].rowsWritten).toBeLessThanOrEqual(60);
+      expect(results['관리자 프로젝트 새 모형'].rowsWritten).toBeLessThanOrEqual(25);
+    } catch (error) {
+      for (const name of Object.keys(results)) report(name);
+      throw error;
+    }
   }, 120000);
+
+  it('reads the chosen catalogue values and the backfill page through their keys (no SCAN)', async () => {
+    const plan = async (sql: string, ...values: unknown[]) =>
+      (
+        await env.DB.prepare('EXPLAIN QUERY PLAN ' + sql)
+          .bind(...values)
+          .all<{ detail: string }>()
+      ).results.map((row) => row.detail);
+    const growing = /\bSCAN (l|o|m|v|f|d1_\w+)\b/;
+    for (const [sql, values] of [
+      [
+        'SELECT o.id,o.kind,o.name FROM json_each(?) q CROSS JOIN d1_catalog_options o WHERE o.id=q.value AND o.active=1',
+        ['["x"]'],
+      ],
+      [
+        `SELECT l.material_id,l.created_at,v.payload_json FROM d1_material_list l INDEXED BY d1_list_all_new
+         CROSS JOIN d1_material_versions v WHERE l.active=? AND l.is_current=1 AND l.scope='shared'
+         AND (l.created_at,l.material_id)<(?,?) AND v.id=l.version_id ORDER BY l.created_at DESC,l.material_id DESC LIMIT ?`,
+        [1, '2026-10-01', 'x', 49],
+      ],
+      // The version trigger's look for the material's other current version, and the material's time.
+      [
+        `SELECT f.facet FROM d1_material_list o CROSS JOIN d1_material_list_facets f
+         WHERE o.material_id=? AND o.is_current=1 AND o.version_id<>? AND f.version_id=o.version_id`,
+        ['m', 'v'],
+      ],
+      ['SELECT m.updated_at FROM d1_materials m WHERE m.id=?', ['m']],
+    ] as const) {
+      const lines = await plan(sql, ...values);
+      expect(
+        lines.filter((line) => growing.test(line)),
+        sql + '\n' + lines.join('\n'),
+      ).toEqual([]);
+      expect(lines.join(' ')).not.toMatch(/TEMP B-TREE/);
+    }
+  });
 });
