@@ -124,6 +124,79 @@
   - SD 두 모델은 비용을 확인할 수 없다(계정 집계 없음). 사람 평가도 지금 방식보다 낮아 3라운드에 올리지 않는다.
   - 사람 평가로는 AI 변환이 AI 없는 렌더보다 사실감이 2점 높았다(5.0 대 3.0).
 
+### 3라운드 — AI 본 시험(2026-11-04)
+
+- **돌린 것**
+  - 지금 방식: 개발 8장면 × seed 2(424242, 777001), 16장. 2라운드의 3장은 다시 썼다.
+  - 실험 A(빈 방)·B(회색 자리): 장면 4개(흰 타일·숯색·부분 타일·SMC 천장) × seed 424242
+  - 실험 C(제품별 다듬기): 같은 장면 중 3개. SMC 천장은 하루 한도(6,000) 때문에 다음 날로 미뤘다.
+- **C의 빈 방은 A의 결과를 다시 썼다:** 같은 요청(빈 방 입력·프롬프트·seed)이기 때문이다. 제품 요청은 장면마다 표준 모형 수만큼이다.
+- **호출 결과**
+  - FLUX 모두 200이다. 지금 방식은 중앙값 5.0초(최대 7.5), A·B는 6.5~6.7초, 제품 다듬기는 3.6초다.
+  - Gemma 확인 21회는 중앙값 1.9초다.
+- **C의 제품 판정(앱 규칙, 겹침 0.90):**
+  - 변기 3/3 다듬어짐(0.97), 세면대 3/3(0.95~0.96)
+  - 샤워 2/2는 3D 렌더로 남음(0.46·0.50, "모양이 3D 제품과 달라요")
+- **구도:** 21장 모두 정렬 0.4 이상(0.65~0.91)이라 배경 되돌리기·색 보정을 했다.
+- **Gemma 큰 추가 물건:** 지금 방식 16장 중 2장(부분 타일 777001 유리 칸막이, 벽 구조 424242 창문). A·B는 0장이다.
+
+### 4라운드 — 뒤처리(AI 없음)
+
+- ⓐ 빛만 AI, ⓑ 위치별 색 맞춤: 지금 방식 seed 424242 8장에 적용했다(`post-variants.ts`). 한 장에 1.8초·4.4초다.
+- ⓒ Swin2SR x2: 4장에 적용했다(992×672 → 1984×1344, WebGPU 18~30초).
+- ⓓ 자동 고르기: 사람 평가와 맞는 자동 점수가 Gemma뿐이라 Gemma(못 찾은 제품 + 큰 추가)로 seed 2장 중 하나를 골랐다.
+
+### 5라운드 — 사람 평가(2026-11-04, 57장, 사용자 완료)
+
+| 방법 | 장수 | 실제 사진 같음 | 내 설계와 같음 | 큰 문제(제품·추가·구도) |
+| --- | --- | --- | --- | --- |
+| **지금 방식** | 16 | **4.88** | 5.00 | 5(31%), 모두 "물건 추가" |
+| 실험 A 빈 방 | 4 | 2.25 | 5.00 | 0 |
+| 실험 B 회색 자리 | 4 | 2.00 | 5.00 | 0 |
+| 실험 C 제품별 다듬기 | 3 | 2.33 | 5.00 | 0 |
+| AI 없음(32장 + 사진 효과) | 8 | 2.38 | 5.00 | 0 |
+| ⓐ 빛만 AI | 8 | 4.50 | 5.00 | 0 |
+| ⓑ 위치별 색 | 8 | 5.00 | 4.88 | 1 |
+| ⓒ 확대 | 4 | 5.00 | 5.00 | 1 |
+| 렌더러 확인: WebGL 한 장 / 경로 추적 | 1 / 1 | 2 / 3 | – | – |
+
+- **같은 결과에 뒤처리 전후(seed 424242 같은 장면 대비)**
+  - ⓐ: 사실감 −0.50, 설계 ±0, 문제 표시 −2(실제 제품 사진 장면의 "물건 추가"가 사라짐, 대신 사실감 5→2). 탈락이다(+0.3 필요).
+  - ⓑ: 사실감 ±0, 설계 −0.13, 문제 표시 ±0. 탈락이다.
+  - ⓒ: 사실감 ±0, 설계 ±0. 탈락이다. 화면 크기 평가에서는 2배 확대의 차이가 보이지 않는다.
+  - ⓓ: Gemma 점수가 두 seed에서 다른 쌍은 8쌍 중 2쌍뿐이다. 고른 쪽이 사람 평가 합에서 높은 경우는 1쌍(50%)이라 탈락이다(60% 필요).
+  - 5라운드에서는 설계 점수가 모두 5여서, Gemma와 설계의 상관을 다시 잴 수 없었다.
+  - "물건 추가" 표시 5장과 Gemma 큰 추가는 2장만 겹친다.
+- **자동 점수:** CLIP 대 사실감 0.38(57장)이다. 기준 0.5에 못 미쳐 쓰지 않는다.
+- **추천 판정(3절 1~4)**
+  - 설계 조건(1)과 큰 문제 조건(2)은 A·B·C·ⓐ·ⓑ·ⓒ 모두 통과한다.
+  - 그중 사실감이 가장 높은 것은 ⓑ·ⓒ(5.0)이다. 지금 방식(4.88)보다 0.5 이상 높지 않다.
+  - 그래서 **지금 방식 유지**다. A·B·C는 설계는 같지만 사실감이 AI 없는 렌더와 비슷하다(2.0~2.33 대 2.38).
+- **천장 효과:** 사용자는 지금 방식 16장 중 14장에 사실감 5를 줬다. 1~5점으로는 지금 방식보다 나은 방법을 가를 여지가 거의 없었다. 지금 방식의 약점은 사실감이 아니라 없던 물건이 생기는 것(31%)이다.
+
+### 렌더러 가능성(AI 없음, 반나절)
+
+- **경로 추적: 다시 볼 만함**
+  - three-gpu-pathtracer에 `WebGPUPathTracer`가 생겼다(0.0.25, 2026-09-28; 0.0.28은 three ≥0.187 필요).
+  - 0.0.27을 임시 폴더(`tmp/export-photoreal/render-probe`, 앱과 분리)에 설치해 작은 방(도형 변기·세면대, 천장 패널 빛)을 그렸다.
+  - 이 PC(NVIDIA, lovelace 어댑터, 대체 어댑터 아님)에서 물체가 검게 나오지 않았다. 9월의 D3D11 문제는 WebGL 경로의 일이다.
+  - 60초에 13,008라운드(992×672)였다. 아직 입자가 거칠고, 노이즈 제거는 붙이지 않았다.
+  - 단색 환경 텍스처를 넣으면 WGSL 검증 오류(`unresolved value 'nodeUniform13_sampler'`)가 났다.
+  - 사람 평가는 경로 추적 3 대 WebGL 한 장 2다(1장씩).
+- **WebGPU 화면 효과(SSGI + TRAA): 판정 못 함**
+  - 이 PC에서 그려졌다(48프레임 0.5초).
+  - 다만 TRAA를 빼도 전체가 붉게 나왔다. 효과를 엮은 방식(MRT 합성)의 오류로 보이고, 정해 둔 시간 안에 고치지 못했다.
+- **다시 시작한다면:** 앱 렌더러의 실제 장면(타일 셰이더, `onBeforeCompile`)을 WebGPU 노드 재질로 옮기는 일이 먼저다. 사용자 기기의 WebGPU 지원 비율도 재야 한다.
+
+### 여기서 멈춤(2026-11-04 UTC, 라운드 경계)
+
+- 이날 장부 5,886뉴런으로 하루 몫(6,000)에 거의 닿았다.
+- 다음 날 남은 일
+  - SMC 천장의 실험 C(약 224)
+  - 6라운드 마지막 확인: 남긴 2장면 × seed 2 × 지금 방식, 약 440 + 확인 약 45
+  - 짧은 사람 평가
+- 고른 방법이 지금 방식이라 마지막 확인도 지금 방식만 돌린다. 마지막 확인 장면은 아직 열지 않았다.
+
 ## 7. 비용
 
 - 장부: `test-results/export-photoreal/ledger.jsonl`.
@@ -131,6 +204,13 @@
   - FLUX 17회: 2,010
   - SD 4회: 400. 가격을 몰라 1회 100으로 셌고, 실패 2회도 셌다.
   - Gemma 확인 19회: 210. 응답의 토큰으로 셌고, 회당 약 11.1이다
+- **3라운드(같은 날):** 3,266뉴런, 실패 0이다.
+  - 지금 방식 13회: 1,424
+  - A·B 8회: 876
+  - C 제품 8회: 772
+  - Gemma 21회: 192
+- **누적:** 5,886뉴런(예산 10,000, 도구 한도 9,000). 2026-11-04 UTC 하루 5,886이다.
+- 결과 1장 비용(추정): 지금 방식 약 110 + 확인 약 11, C는 빈 방 110 + 제품당 57~110이다.
 - 브라우저 모델 다운로드: CLIP 글 쪽 q8 64.5MB + tokenizer 2.2MB, Swin2SR x2 54.4MB. revision·SHA-256은 `tmp/export-photoreal/models/models.json`에 있다. CLIP 이미지 쪽은 catalog-match에서 받은 것을 다시 썼다.
 
 ## 8. 다시 돌리기
@@ -152,3 +232,84 @@ node tests/run-browser-test.mjs tests/export-photoreal/lab-check.ts --gpu
 ```bash
 npx vitest run tests/export-photoreal.test.ts
 ```
+
+AI를 부르는 단계는 임시 Worker를 먼저 띄운다(이 PC의 wrangler 로그인 계정, 실제 사용량이 든다).
+
+```bash
+npx wrangler dev --config tests/export-photoreal/ai-worker/wrangler.jsonc --ip 127.0.0.1 --port 8805
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/run.ts --round r2 --methods current,photo,short,tileref,inroom --scenes white,charcoal,photos --seeds 424242
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/run.ts --round r2 --methods large --scenes white,charcoal --seeds 424242
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/sd.ts
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/run.ts --round r3 --methods current --scenes white,charcoal,pattern,partial,structure,smc,photos,narrow --seeds 424242,777001
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/run.ts --round r3 --methods empty,placeholders --scenes white,charcoal,partial,smc --seeds 424242
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/post.ts --check --round r3
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/refine.ts --scenes white,charcoal,partial,smc
+```
+
+AI 없이 하는 측정과 뒤처리다.
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/products.ts --gpu
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/mask-check.ts
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/post-variants.ts --scenes white,charcoal,pattern,partial,structure,smc,photos,narrow --seeds 424242 --steps light,local
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/post-variants.ts --scenes white,charcoal,pattern,photos --seeds 424242 --steps upscale
+```
+
+렌더러 확인은 임시 폴더에 라이브러리를 먼저 설치한다(`tmp/export-photoreal/render-probe`에서 `npm install`, package.json은 three 0.185.1·three-gpu-pathtracer 0.0.27·three-mesh-bvh 0.9.16).
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/render-probe/probe.ts
+```
+
+평가 화면(127.0.0.1만)과 채점이다. `--set`은 r2, r5다.
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/review/build.ts --set r5
+```
+
+```bash
+node tests/export-photoreal/review/server.mjs --set r5 --port 8793
+```
+
+```bash
+node tests/run-browser-test.mjs tests/export-photoreal/review/score.ts --set r5
+```
+
+## 9. 한계
+
+- 표본이 작다. 지금 방식 16장, A·B 4장, C 3장, 뒤처리 4~8장이고 평가자는 한 명이다. 같은 입력·seed로 다시 불러도 결과가 다르다.
+- 사실감 점수가 거의 만점에 몰렸다(천장 효과). 지금 방식보다 조금 나은 방법은 이 척도로 가려지지 않는다.
+- 설계 점수도 대부분 5였다. 그래서 자동 점수와 설계의 상관은 2라운드 19장에서만 잴 수 있었다.
+- 계정 집계를 읽지 못해(2절) 뉴런은 장부 추정뿐이다. SD 두 모델의 실제 비용은 모른다.
+- 장면은 공개 자재로 만든 시험 장면이다. 사용자 프로젝트·사진 조명 맞춤 장면은 없다.
+- 렌더러 확인은 도형으로 만든 작은 방 하나다. 앱의 실제 장면이 아니다.
