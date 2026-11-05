@@ -11,7 +11,12 @@
 import { callNeurons } from '../../src/lib/direction-photo/plan';
 
 export const BUDGET = 25_000;
-export const DAILY = 9_000;
+/**
+ * A UTC day's share, estimated. 9,000 at first; on 2026-11-05 the account's free 10,000 ran out at
+ * about 5,959 estimated (real cost about 1.7 times callNeurons), so from 11-06 the share is 5,000
+ * (about 8,500 real), leaving the account some room for production's fallback.
+ */
+export const DAILY = 5_000;
 export const BUDGET_SHARE = 0.9;
 export const FLUX_4B = '@cf/black-forest-labs/flux-2-klein-4b';
 export const CLEF_FLASH = '@cf/cloudflare/clef-flash';

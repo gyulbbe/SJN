@@ -131,8 +131,10 @@ describe('budget', () => {
       { at, neurons: 4900, status: 200 },
       { at: '2026-11-04T23:00:00.000Z', neurons: 9000, status: 200 },
     ];
-    expect(budgetCheck(own, others, { at, cost: 90 })).toEqual({ ok: true });
-    expect(budgetCheck(own, others, { at, cost: 120 }).ok).toBe(false);
+    expect(budgetCheck(own, others, { at, cost: 90 }, { budget: 25_000, daily: 9_000 })).toEqual({ ok: true });
+    expect(budgetCheck(own, others, { at, cost: 120 }, { budget: 25_000, daily: 9_000 }).ok).toBe(false);
+    // The default share since 2026-11-06: 5,000 estimated.
+    expect(budgetCheck([{ at, neurons: 4950, status: 200 }], [], { at, cost: 60 }).ok).toBe(false);
   });
   it('refuses past 90% of the trial budget', () => {
     expect(
