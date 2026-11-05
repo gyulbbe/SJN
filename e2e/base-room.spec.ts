@@ -31,9 +31,18 @@ async function records<T>(page: Page, store: string): Promise<T[]> {
   if (store === 'materials') return snapshot.materials as T[];
   throw new Error('Unknown test store: ' + store);
 }
-async function savedProject(page: Page): Promise<ProjectDocument> {
+/**
+ * The stored project once the editor shows it saved. After an edit pass the revision read before it:
+ * '클라우드에 저장됨' is still on screen from the previous save, so the text alone can read too early.
+ */
+async function savedProject(page: Page, afterRevision?: number): Promise<ProjectDocument> {
+  const id = page.url().split('/').at(-1)!;
+  if (afterRevision !== undefined)
+    await expect
+      .poll(async () => (await app.project(id)).editRevision, { timeout: 30000 })
+      .toBeGreaterThan(afterRevision);
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
-  return app.project(page.url().split('/').at(-1)!);
+  return app.project(id);
 }
 async function editorReady(page: Page) {
   await expect(page).toHaveURL(/\/projects\/[\w-]+$/, { timeout: 30000 });
@@ -134,7 +143,7 @@ test('기본 공간은 업로드 없이 열리고 네 면에 즉시 타일을 �
   await editorReady(page);
   await page.getByRole('button', { name: '벽 타일', exact: true }).click();
   await materialButton(page, '차콜 스톤').click();
-  const walls = await savedProject(page);
+  const walls = await savedProject(page, original.editRevision);
   expect(getActiveDesign(walls)!.scene.surfaces.filter((surface) => surface.kind === 'wall')).toHaveLength(3);
   expect(
     getActiveDesign(walls)!
@@ -153,7 +162,7 @@ test('기본 공간은 업로드 없이 열리고 네 면에 즉시 타일을 �
     .toBeGreaterThan(30);
   await page.getByRole('button', { name: '바닥 타일', exact: true }).click();
   await materialButton(page, '라이트 스톤').click();
-  const allTiled = await savedProject(page);
+  const allTiled = await savedProject(page, walls.editRevision);
   expect(getActiveDesign(allTiled)!.scene.surfaces.every((surface) => !!surface.materialVersionId)).toBe(
     true,
   );
@@ -165,7 +174,7 @@ test('기본 공간은 업로드 없이 열리고 네 면에 즉시 타일을 �
 
   await page.getByRole('button', { name: '벽 타일', exact: true }).click();
   await materialButton(page, '클라우드 화이트').click();
-  const updated = await savedProject(page);
+  const updated = await savedProject(page, allTiled.editRevision);
   expect(
     getActiveDesign(updated)!
       .scene.surfaces.filter((surface) => surface.kind === 'wall')
