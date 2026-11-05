@@ -48,6 +48,15 @@ import { finishAppearance } from './finish';
 import { maskCanvas } from './mask';
 import { StandardModelRenderer, type StandardFixturePass } from './standard-model-render';
 import { labelsFromPixels } from '../room-viewer/region-mask';
+import {
+  drawTileCell,
+  TILE_ATLAS_SRGB,
+  TILE_SAMPLE_GLSL,
+  tileAtlasLayout,
+  tileAtlasTexture,
+  tileAtlasUniforms,
+  type TileAtlasLayout,
+} from './tile-atlas';
 
 export type AssetReader = (id: string) => Promise<AssetRecord>;
 /** Labels per pixel for the FLUX colour check (see ai-export/color). */
@@ -68,7 +77,7 @@ type TilePass = {
   surface: Surface;
   material: MaterialVersion;
   atlas: Texture;
-  columns: number;
+  layout: TileAtlasLayout;
   count: number;
   mask: Texture;
   inverse: Matrix3;
@@ -128,34 +137,34 @@ varying vec2 vUv;
 uniform sampler2D previousImage;uniform sampler2D atlas;uniform sampler2D areaMask;uniform sampler2D shadingImage;
 uniform mat3 inversePlane;uniform vec2 planeSize;uniform vec2 tileSize;uniform vec2 offset;
 uniform float angle;uniform float groutWidth;uniform vec3 groutColor;uniform float brick;
-uniform float seed;uniform float variantCount;uniform float atlasColumns;uniform float atlasPixels;
+uniform float seed;uniform float variantCount;uniform vec4 atlasLayout;uniform vec2 atlasLod;
 uniform float shading;uniform float meanLuminance;uniform vec4 adjustment;uniform float gloss;uniform float relief;
 ${colorFunctions}
+${TILE_SAMPLE_GLSL}
 void main(){
   vec4 background=texture2D(previousImage,vUv);
   float amount=texture2D(areaMask,vUv).a;
-  if(amount<.001){gl_FragColor=background;return;}
   vec2 photo=vec2(vUv.x,1.-vUv.y);
   vec3 projected=inversePlane*vec3(photo,1.);
-  if(abs(projected.z)<.0000001){gl_FragColor=background;return;}
   vec2 mm=projected.xy/projected.z*planeSize-offset;
   float c=cos(angle),s=sin(angle);
   mm=vec2(c*mm.x+s*mm.y,-s*mm.x+c*mm.y);
+  // Screen derivatives before any pixel returns, so neighbouring pixels still take part in them.
   vec2 aa=max(fwidth(mm),vec2(.001));
+  vec2 tileStep=max(tileSize,vec2(.001));
+  vec2 tileDx=dFdx(mm)/tileStep,tileDy=dFdy(mm)/tileStep;
+  if(amount<.001){gl_FragColor=background;return;}
+  if(abs(projected.z)<.0000001){gl_FragColor=background;return;}
   vec2 period=max(vec2(.001),tileSize+groutWidth);
   float row=floor(mm.y/period.y);
   mm.x-=brick*mod(row,2.)*period.x*.5;
   vec2 cell=floor(mm/period);
   vec2 inside=mod(mm,period);
-  vec2 tileUv=inside/max(tileSize,vec2(.001));
+  vec2 tileUv=inside/tileStep;
   float h=mod(mod(cell.x,251.)*17.+mod(cell.y,251.)*131.+mod(seed,251.)*23.,251.);
   float variant=floor(mod(h*73.+19.,251.)/251.*variantCount);
-  vec2 atlasCell=vec2(mod(variant,atlasColumns),floor(variant/atlasColumns));
-  // Half-texel insets prevent interpolation from leaking neighboring variants into seams.
-  float inset=.5/(atlasPixels/atlasColumns);
-  vec2 atlasUv=(atlasCell+clamp(tileUv,vec2(inset),vec2(1.-inset)))/atlasColumns;
-  atlasUv.y=1.-atlasUv.y;
-  vec3 tileColor=decodeSRGB(texture2D(atlas,atlasUv).rgb);
+  vec2 atlasCell=vec2(mod(variant,atlasLayout.x),floor(variant/atlasLayout.x));
+  vec3 tileColor=${TILE_ATLAS_SRGB ? '' : 'decodeSRGB'}(sjnTileTexel(atlas,tileUv,atlasCell,tileDx,tileDy,atlasLayout,atlasLod).rgb);
   // Integrate the physical seam over the pixel footprint on BOTH sides of the repeat.
   // This preserves subpixel grout coverage without periodically losing the leading edge.
   vec2 seamOffset=mod(inside-(tileSize+groutWidth*.5)+period*.5,period)-period*.5;
@@ -426,7 +435,10 @@ export class PhotoCompositor {
   private readonly textures = new Map<string, Texture>();
   private readonly masks = new Map<string, { key: string; texture: Texture }>();
   private readonly retiredMasks: Texture[] = [];
-  private readonly atlases = new Map<string, Promise<{ texture: Texture; columns: number; count: number }>>();
+  private readonly atlases = new Map<
+    string,
+    Promise<{ texture: Texture; layout: TileAtlasLayout; count: number }>
+  >();
   private readonly shadingCache = new Map<string, { key: string; promise: Promise<ShadingField> }>();
   private readonly luminanceCache = new Map<string, Promise<LuminanceImage>>();
   private snapshot?: RenderSnapshot;
@@ -563,24 +575,22 @@ export class PhotoCompositor {
     if (existing) return existing;
     const promise = (async () => {
       if (!ids.length || !ids[0]) throw new Error(`${material.name}: 렌더링용 타일 이미지가 없습니다.`);
-      const columns = Math.ceil(Math.sqrt(ids.length));
-      const cell = Math.max(
-        16,
-        Math.min(quality === 'export' ? 2048 : 512, Math.floor(this.maxOutputEdge / columns)),
-      );
+      const layout = tileAtlasLayout(ids.length, quality === 'export' ? 2048 : 512, this.maxOutputEdge);
+      if (layout.cell < 16) throw new Error(`${material.name}: 타일 무늬가 너무 많아 그래픽 한도를 넘습니다.`);
       // Comparison cards only need the atlas cell pixels, not retained full-size originals.
-      const images = await Promise.all(ids.map((id) => this.loadImage(id, compact ? cell : undefined)));
+      const images = await Promise.all(ids.map((id) => this.loadImage(id, compact ? layout.cell : undefined)));
       const canvas = document.createElement('canvas');
-      canvas.width = columns * cell;
-      canvas.height = columns * cell;
+      canvas.width = canvas.height = layout.size;
       const ctx = context2d(canvas);
       ctx.fillStyle = material.color || '#e5e0d7';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      images.forEach((source, i) =>
-        ctx.drawImage(source, (i % columns) * cell, Math.floor(i / columns) * cell, cell, cell),
-      );
+      images.forEach((source, i) => drawTileCell(ctx, layout, i, source));
       if (this.disposed) throw new Error('렌더러가 닫혔습니다.');
-      return { texture: canvasTexture(canvas), columns, count: images.length };
+      return {
+        texture: tileAtlasTexture(canvas, this.renderer.capabilities.getMaxAnisotropy()),
+        layout,
+        count: images.length,
+      };
     })();
     this.atlases.set(key, promise);
     try {
@@ -1033,7 +1043,7 @@ export class PhotoCompositor {
       surface,
       material,
       atlas,
-      columns,
+      layout,
       count,
       mask,
       inverse,
@@ -1041,6 +1051,7 @@ export class PhotoCompositor {
       referenceLuminance,
     } of tiles) {
       const shader = this.tileMaterial;
+      const sampling = tileAtlasUniforms(layout);
       const values: Record<string, unknown> = {
         previousImage: this.targets[index].texture,
         atlas,
@@ -1056,8 +1067,8 @@ export class PhotoCompositor {
         brick: surface.tile.pattern === 'brick' ? 1 : 0,
         seed: surface.tile.seed,
         variantCount: count,
-        atlasColumns: columns,
-        atlasPixels: (atlas.image as HTMLCanvasElement).width,
+        atlasLayout: new Vector4(...sampling.layout),
+        atlasLod: new Vector2(...sampling.lod),
         shading: Math.max(0, Math.min(1, surface.tile.shading)),
         meanLuminance: referenceLuminance,
         adjustment: colorVector(surface.color),

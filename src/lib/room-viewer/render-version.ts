@@ -1,2 +1,2 @@
 /** Output diagnostics only. A renderer fix does not invalidate expensive photo/model observations. */
-export const ROOM_VIEWER_RENDERER_REVISION = 'room-view-v11-wall-contact';
+export const ROOM_VIEWER_RENDERER_REVISION = 'room-view-v12-tile-mipmaps';

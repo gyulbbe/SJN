@@ -7,6 +7,7 @@ import { chromium } from '@playwright/test';
 import { build } from 'esbuild';
 import { mkdir, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import sharp from 'sharp';
 import { deltaE2000, type Rgb } from './helpers/delta-e';
 
 const label = process.argv[3] ?? 'baseline';
@@ -19,6 +20,8 @@ await mkdir(output, { recursive: true });
 type SceneResult = {
   name: string;
   images: Record<string, string>;
+  /** Face labels per pixel (0 none, n a tiled surface, 255 a fixture) for compare-render-regions.mjs. */
+  masks: Record<string, string>;
   samples: Record<string, { rendered: Rgb; reference: Rgb }>;
   viewerMs: number[];
   compositorMs: number[];
@@ -321,9 +324,15 @@ try {
       copy.getContext('2d')!.drawImage(source, x, y, copy.width, copy.height, 0, 0, copy.width, copy.height);
       return copy.toDataURL('image/png');
     };
+    const maskData = (data: Uint8Array) => {
+      let binary = '';
+      for (let i = 0; i < data.length; i += 0x8000) binary += String.fromCharCode(...data.subarray(i, i + 0x8000));
+      return btoa(binary);
+    };
     const out: SceneResult[] = [];
     for (const entry of scenes.filter((s) => !only.length || only.includes(s.name))) {
       const images: Record<string, string> = {};
+      const masks: Record<string, string> = {};
       const samples: SceneResult['samples'] = {};
       const snapshot = { scene: entry.scene, beforeScene: structuredClone(entry.scene), materials };
       const prepareStart = performance.now();
@@ -348,6 +357,7 @@ try {
         for (const [name, view] of views) {
           viewer.render(900, 600, view, 'after');
           images['viewer-' + name] = viewer.canvas.toDataURL('image/png');
+          masks['viewer-' + name] = maskData(viewer.regionMask(900, 600, view).data);
           if (name === 'front') {
             const data = pixels(viewer.canvas);
             for (const [region, rect] of Object.entries(entry.samples)) {
@@ -404,6 +414,9 @@ try {
         );
         images['compositor-detail'] = crop(exported, detail);
         exported.close();
+        let regions: { data: Uint8Array } | undefined;
+        await compositor.exportImage(snapshot, 1200, 800, 'image/png', false, (mask) => (regions = mask));
+        if (regions) masks.compositor = maskData(regions.data);
         const canvas = compositor.render(1200, 800, 'after');
         images.compositor = canvas.toDataURL('image/png');
         const data = pixels(canvas);
@@ -437,6 +450,7 @@ try {
       out.push({
         name: entry.name,
         images,
+        masks,
         samples,
         viewerMs,
         compositorMs,
@@ -452,6 +466,12 @@ try {
   for (const scene of results) {
     for (const [name, url] of Object.entries(scene.images))
       await writeFile(`${output}/${scene.name}-${name}.png`, Buffer.from(url.split(',')[1], 'base64'));
+    for (const [name, data] of Object.entries(scene.masks)) {
+      const { width, height } = await sharp(`${output}/${scene.name}-${name}.png`).metadata();
+      await sharp(Buffer.from(data, 'base64'), { raw: { width: width!, height: height!, channels: 1 } })
+        .png()
+        .toFile(`${output}/${scene.name}-${name}-mask.png`);
+    }
     const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
     summary[scene.name] = {
       deltaE2000: Object.fromEntries(

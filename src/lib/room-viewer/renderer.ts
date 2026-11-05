@@ -369,7 +369,11 @@ export class RoomViewerRenderer {
     this.post.add(this.postMesh);
     // Shared by every prepared scene of this context; Before and After see identical light.
     this.environment = createInteriorEnvironment(this.renderer);
-    this.tiles = new ViewerTileCache((id) => this.reader(id), this.maxOutputEdge);
+    this.tiles = new ViewerTileCache(
+      (id) => this.reader(id),
+      this.maxOutputEdge,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
     this.products = new ProductAssetCache((id) => this.reader(id));
   }
   /**

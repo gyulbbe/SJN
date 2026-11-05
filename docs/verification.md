@@ -2,6 +2,14 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-05 — 타일 텍스처 밉맵(2D·3D)
+
+- 무엇: 타일 아틀라스만 밉맵·sRGB 저장·이방성으로 읽는다. 단계는 이어지는 좌표의 미분으로 정하고(`textureGrad`), −0.25만큼 옮긴다. 무늬가 여러 장이면 칸 여백을 둔다. 렌더 버전은 `room-view-v12-tile-mipmaps`, `DESIGN_RENDER_REVISION`은 4다. 저장·DB·API는 그대로다.
+- 시험
+  - `tests/tile-mipmap-browser.ts`(SwiftShader·D3D11): 줄무늬 깨짐이 절반 이하로 줄었다. 이음매·4색 변형·무늬 없는 타일(ΔE ≤ 0.56)도 통과했다. 타일 밖 픽셀은 52장 모두 같다.
+  - `tests/compare-render-regions.mjs`로 render-realism을 비교했다. 마스크가 있는 30장의 타일 밖 픽셀이 같다.
+- 결과: [결과 문서](tile-mipmap-results-20261105.md) 5·9절. AI 호출 없음.
+
 ## 2026-11-01 — 기본 배치를 전용 탭으로 옮김
 
 - 무엇: `/admin/layouts`에서 편집창과 같은 화면으로 놓고 저장한다. 편집창의 등록 버튼을 뺐다. migration 없음.

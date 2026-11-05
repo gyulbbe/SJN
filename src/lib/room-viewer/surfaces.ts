@@ -1,15 +1,12 @@
 import {
   Box3,
   BufferGeometry,
-  CanvasTexture,
   Color,
   DoubleSide,
   Float32BufferAttribute,
   Group,
-  LinearFilter,
   Mesh,
   MeshStandardMaterial,
-  NoColorSpace,
   Vector2,
   Vector3,
   Vector4,
@@ -21,6 +18,15 @@ import { cellLeft, cellRight, partitionRoomFaces, type FaceCell } from '../room-
 import { surfaceTileOffset } from '../room-surface-regions';
 import { finishAppearance, MATTE_FINISH } from '../render/finish';
 import { CORNER_OCCLUSION_GLSL, TONE_MAPPING_GLSL } from '../render/realistic-lighting';
+import {
+  drawTileCell,
+  TILE_ATLAS_SRGB,
+  TILE_SAMPLE_GLSL,
+  tileAtlasLayout,
+  tileAtlasTexture,
+  tileAtlasUniforms,
+  type TileAtlasLayout,
+} from '../render/tile-atlas';
 import { buildWallFeaturePieces, type WallFeaturePiece } from './wall-feature-geometry';
 import type { RoomDefinition, RoomFace } from '../room-types';
 import {
@@ -104,13 +110,15 @@ export function viewerCellsGeometry(
   return geometry;
 }
 
-type Atlas = { texture: Texture; columns: number; count: number; pixels: number };
+type Atlas = { texture: Texture; layout: TileAtlasLayout; count: number };
 export class ViewerTileCache {
   private readonly atlases = new Map<string, Promise<Atlas>>();
   private disposed = false;
   constructor(
     private readonly reader: (id: string) => Promise<AssetRecord | undefined>,
     private readonly maxSize: number,
+    /** The renderer's anisotropic filtering limit (1 without the extension). */
+    private readonly maxAnisotropy = 1,
   ) {}
   async get(material: MaterialVersion): Promise<Atlas> {
     const ids = material.textureAssetIds.length
@@ -121,11 +129,10 @@ export class ViewerTileCache {
     let result = this.atlases.get(key);
     if (!result) {
       result = (async () => {
-        const columns = Math.ceil(Math.sqrt(ids.length));
-        const cell = Math.floor(Math.min(1024, this.maxSize / columns));
-        if (cell < 4) throw new Error('타일 무늬가 너무 많아 그래픽 한도를 넘습니다.');
+        const layout = tileAtlasLayout(ids.length, 1024, this.maxSize);
+        if (layout.cell < 4) throw new Error('타일 무늬가 너무 많아 그래픽 한도를 넘습니다.');
         const canvas = document.createElement('canvas');
-        canvas.width = canvas.height = cell * columns;
+        canvas.width = canvas.height = layout.size;
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('타일 이미지를 준비할 수 없습니다.');
         for (let i = 0; i < ids.length; i++) {
@@ -135,17 +142,13 @@ export class ViewerTileCache {
             throw new Error(`타일 이미지 자산을 찾을 수 없습니다: ${ids[i]}`);
           const bitmap = await createImageBitmap(asset.blob);
           try {
-            ctx.drawImage(bitmap, (i % columns) * cell, Math.floor(i / columns) * cell, cell, cell);
+            drawTileCell(ctx, layout, i, bitmap);
           } finally {
             bitmap.close();
           }
         }
         if (this.disposed) throw new Error('공간 둘러보기가 닫혔습니다.');
-        const texture = new CanvasTexture(canvas);
-        texture.colorSpace = NoColorSpace;
-        texture.minFilter = texture.magFilter = LinearFilter;
-        texture.generateMipmaps = false;
-        return { texture, columns, count: ids.length, pixels: canvas.width };
+        return { texture: tileAtlasTexture(canvas, this.maxAnisotropy), layout, count: ids.length };
       })();
       this.atlases.set(key, result);
     }
@@ -186,24 +189,24 @@ const tileSource = `
 varying vec2 sjnUv;
 uniform sampler2D sjnAtlas;uniform vec2 sjnPlane;uniform vec2 sjnTile;uniform vec2 sjnOffset;
 uniform float sjnAngle;uniform float sjnGrout;uniform vec3 sjnGroutColor;uniform float sjnBrick;
-uniform float sjnSeed;uniform float sjnCount;uniform float sjnColumns;uniform float sjnPixels;
+uniform float sjnSeed;uniform float sjnCount;uniform vec4 sjnLayout;uniform vec2 sjnLod;
 float sjnGroutAmount=0.;
 // Surface slope along the face's u/v millimetre axes: a small rounded tile edge beside the grout.
 vec2 sjnSlope=vec2(0.);
 vec3 sjnDecode(vec3 c){return mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),step(vec3(.04045),c));}
+${TILE_SAMPLE_GLSL}
 vec3 sjnTileColor(){
  vec2 mm=sjnUv*sjnPlane-sjnOffset;
  float c=cos(sjnAngle),s=sin(sjnAngle); mm=vec2(c*mm.x+s*mm.y,-s*mm.x+c*mm.y);
  vec2 aa=max(fwidth(mm),vec2(.001));vec2 period=max(vec2(.001),sjnTile+sjnGrout);
+ vec2 tileStep=max(sjnTile,vec2(.001));
+ vec2 tileDx=dFdx(mm)/tileStep,tileDy=dFdy(mm)/tileStep;
  float row=floor(mm.y/period.y);mm.x-=sjnBrick*mod(row,2.)*period.x*.5;
  vec2 cell=floor(mm/period),inside=mod(mm,period);
  float h=mod(mod(cell.x,251.)*17.+mod(cell.y,251.)*131.+mod(sjnSeed,251.)*23.,251.);
  float variant=floor(mod(h*73.+19.,251.)/251.*sjnCount);
- vec2 atlasCell=vec2(mod(variant,sjnColumns),floor(variant/sjnColumns));
- float inset=.5/(sjnPixels/sjnColumns);
- vec2 atlasUv=(atlasCell+clamp(inside/sjnTile,vec2(inset),vec2(1.-inset)))/sjnColumns;
- atlasUv.y=1.-atlasUv.y;
- vec3 color=sjnDecode(texture2D(sjnAtlas,atlasUv).rgb);
+ vec2 atlasCell=vec2(mod(variant,sjnLayout.x),floor(variant/sjnLayout.x));
+ vec3 color=${TILE_ATLAS_SRGB ? '' : 'sjnDecode'}(sjnTileTexel(sjnAtlas,inside/tileStep,atlasCell,tileDx,tileDy,sjnLayout,sjnLod).rgb);
  vec2 seam=mod(inside-(sjnTile+sjnGrout*.5)+period*.5,period)-period*.5;
  vec2 d=abs(seam);
  vec2 coverage=clamp((sjnGrout*.5-d+aa*.5)/aa,0.,1.)-clamp((-sjnGrout*.5-d+aa*.5)/aa,0.,1.);
@@ -315,6 +318,7 @@ function surfaceMaterial(
       );
     if (!product || !atlas || !surface) return;
     const tile = surface.tile;
+    const sampling = tileAtlasUniforms(atlas.layout);
     Object.assign(shader.uniforms, {
       sjnAtlas: { value: atlas.texture },
       sjnPlane: {
@@ -331,8 +335,8 @@ function surfaceMaterial(
       sjnBrick: { value: tile.pattern === 'brick' ? 1 : 0 },
       sjnSeed: { value: tile.seed },
       sjnCount: { value: atlas.count },
-      sjnColumns: { value: atlas.columns },
-      sjnPixels: { value: atlas.pixels },
+      sjnLayout: { value: new Vector4(...sampling.layout) },
+      sjnLod: { value: new Vector2(...sampling.lod) },
     });
     shader.vertexShader = 'varying vec2 sjnUv;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
@@ -353,7 +357,7 @@ function surfaceMaterial(
       )
       .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + reliefNormal);
   };
-  material.customProgramCacheKey = () => (atlas ? 'sjn-room-world-tile-v2' : 'sjn-room-world-neutral-v2');
+  material.customProgramCacheKey = () => (atlas ? 'sjn-room-world-tile-v3' : 'sjn-room-world-neutral-v2');
   return material;
 }
 
