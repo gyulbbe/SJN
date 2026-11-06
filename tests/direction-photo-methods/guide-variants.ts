@@ -143,6 +143,24 @@ export async function renderVariantGuides(
           ...modelOptions(input),
         })
       : createTrialShape(variant.shape, input.sizeMm);
+  try {
+    return await renderModelGuides(model, input.installation, directions, elevation);
+  } finally {
+    if (variant.model === 'b0') disposeTemplateModel(model);
+  }
+}
+
+/**
+ * Any model's guides, drawn as the app draws its guide (the same camera, light, grey, frame, size and
+ * a floor product's contact shadow). The sanitary-ware class guides (tests/sanitary-guides) use it too.
+ */
+export async function renderModelGuides(
+  model: Group,
+  installation: GuideInput['installation'],
+  directions: readonly ProductDirection[],
+  elevation = 10,
+): Promise<{ direction: ProductDirection; blob: Blob; width: number; height: number }[]> {
+  const input = { installation };
   matteGrey(model);
   const scene = new Scene();
   scene.add(model, new AmbientLight('#ffffff', 1.6));
@@ -215,7 +233,6 @@ export async function renderVariantGuides(
     }
     return guides;
   } finally {
-    if (variant.model === 'b0') disposeTemplateModel(model);
     renderer?.dispose();
     renderer?.forceContextLoss();
   }

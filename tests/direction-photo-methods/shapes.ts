@@ -19,10 +19,10 @@ import {
 } from 'three';
 import type { B2Shape } from './products';
 
-type Outline = (inset: number) => Shape | Path;
+export type Outline = (inset: number) => Shape | Path;
 
 /** A rounded rectangle in plan (x across, z front +), centred, as a three Shape (its y is −z). */
-function roundedRect(w: number, d: number, r: number, cx = 0, cz = 0, path: Shape | Path = new Shape()) {
+export function roundedRect(w: number, d: number, r: number, cx = 0, cz = 0, path: Shape | Path = new Shape()) {
   const x0 = cx - w / 2,
     x1 = cx + w / 2,
     y0 = -(cz + d / 2),
@@ -40,7 +40,7 @@ function roundedRect(w: number, d: number, r: number, cx = 0, cz = 0, path: Shap
   return path;
 }
 /** A D shape in plan: square at the back (the wall), a half circle at the front. */
-function dShape(w: number, d: number, inset: number, path: Shape | Path = new Shape()) {
+export function dShape(w: number, d: number, inset: number, path: Shape | Path = new Shape()) {
   const r = w / 2 - inset;
   const back = -(-d / 2 + inset); // three y of the back edge (z = −d/2)
   const centre = -(d / 2 - inset - r); // the half circle's centre (z = d/2 − inset − r)
@@ -54,14 +54,14 @@ function dShape(w: number, d: number, inset: number, path: Shape | Path = new Sh
 }
 
 /** A prism of a plan shape from y0 to y1 (holes kept). */
-function prism(shape: Shape, y0: number, y1: number, material: MeshStandardMaterial) {
+export function prism(shape: Shape, y0: number, y1: number, material: MeshStandardMaterial) {
   const geometry = new ExtrudeGeometry(shape, { depth: y1 - y0, bevelEnabled: false, curveSegments: 24 });
   geometry.rotateX(-Math.PI / 2);
   geometry.translate(0, y0, 0);
   return new Mesh(geometry, material);
 }
 /** A body whose plan outline goes from `bottom` to `top` (same point count), closed at both ends. */
-function loft(
+export function loft(
   bottom: [number, number][],
   top: [number, number][],
   y0: number,
@@ -94,18 +94,20 @@ function loft(
   return new Mesh(geometry, material);
 }
 /** Points along a rounded rectangle in plan (x, z), counter-clockwise from above. */
-function roundedRectPoints(w: number, d: number, r: number, cz = 0, perCorner = 6): [number, number][] {
+export function roundedRectPoints(w: number, d: number, r: number, cz = 0, perCorner = 6): [number, number][] {
+  // Each corner's arc bulges out of its corner: right side → front → left side → back (until
+  // 2026-11-06 the arcs turned inward, which folded the outline and drew slivers on lofted bodies).
   const k = Math.min(r, w / 2 - 0.5, d / 2 - 0.5);
   const corners: [number, number, number][] = [
     [w / 2 - k, cz + d / 2 - k, 0],
-    [w / 2 - k, cz - d / 2 + k, -Math.PI / 2],
-    [-w / 2 + k, cz - d / 2 + k, Math.PI],
     [-w / 2 + k, cz + d / 2 - k, Math.PI / 2],
+    [-w / 2 + k, cz - d / 2 + k, Math.PI],
+    [w / 2 - k, cz - d / 2 + k, (3 * Math.PI) / 2],
   ];
   const points: [number, number][] = [];
   for (const [x, z, start] of corners)
     for (let i = 0; i <= perCorner; i++) {
-      const a = start - (i / perCorner) * (Math.PI / 2);
+      const a = start + (i / perCorner) * (Math.PI / 2);
       points.push([x + k * Math.cos(a), z + k * Math.sin(a)]);
     }
   return points;
@@ -115,7 +117,7 @@ function roundedRectPoints(w: number, d: number, r: number, cz = 0, perCorner = 
  * An open basin: walls `wall` thick round a cavity `cavity` deep, from y0 to y1, and the solid body
  * below it. `outline(inset)` draws the plan at that inset (0 the outside).
  */
-function openBasin(
+export function openBasin(
   outline: Outline,
   y0: number,
   y1: number,
@@ -272,7 +274,14 @@ export function createTrialShape(shape: B2Shape, [w, h, d]: readonly [number, nu
       break;
     }
   }
-  // Fitted to the exact box, as createTemplateModel does, with the geometry baked in.
+  return fitToBox(group, [w, h, d]);
+}
+
+/**
+ * A group fitted to the exact box w × h × d, as createTemplateModel does (centred in x and z, standing
+ * on y = 0), with each mesh's transform baked into its geometry. Its meshes must be direct children.
+ */
+export function fitToBox(group: Group, [w, h, d]: readonly [number, number, number]): Group {
   const { min, max } = shapeExtent(group);
   const scale = [w / (max[0] - min[0]), h / (max[1] - min[1]), d / (max[2] - min[2])];
   for (const node of group.children) {
