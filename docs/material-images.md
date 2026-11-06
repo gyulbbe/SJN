@@ -108,7 +108,7 @@
 - 검증: 단위 `tests/direction-guide.test.ts`·`direction-photo-prompt.test.ts`·`direction-photo-plan.test.ts`·`direction-photo-server.test.ts`·`direction-photo-candidate-order.test.ts`, 실제 WebGL 가이드 검사 `node tests/run-browser-test.mjs tests/direction-guide-browser.ts`, e2e `e2e/direction-photo-ai.spec.ts`(모의 모델·배경 제거 대역, 방에 놓고 네 방향에서 각 방향 사진 확인, 변기 옆 후보 순서), 실제 호출 `tests/direction-photo-real/run.mjs`(화면 그대로)와 `variants.ts`(같은 seed로 앱 그대로 또는 기록된 실행 다시 보내기), 비교 시트 `compare.mjs`(`AI_VIEWS`로 방향 거르기), Gemma 사진 분석 시험 `analysis.ts`와 특징 문장 틀 `features.ts`(앱에는 없음, [결과](direction-photo-results-20261013.md) 5절)(모두 사용자 승인 때만). 2026-10-21부터 `run.mjs`·`variants.ts`는 `FLUX_ENGINE=local`이면 로컬 FLUX.2 klein 4B(`tests/direction-photo-real/local-flux/server.py`, 비용 없음, Cloudflare와 다르게 그림)로 보낸다. 옆모습 채점 시트·표 `side-grade.mjs`, 후보 순서 재현 `side-order.ts`가 있다([옆모습 결과](toilet-side-view-results-20261021.md)). 로컬 FLUX 진단 `local-flux/diag.py`, 로컬 VLM 옆모습 채점 `side-vlm.mjs`(일치도가 낮아 쓰지 않음), `variants.ts`의 넓은 거르기 스위치가 있다([넓게 찾기 결과](direction-photo-explore-results-20261021.md)).
 - 종류·방향별 방법 시험(2026-11-05~06, 앱 변경 없음, [결과](direction-photo-methods-results-20261105.md))
   - 세면대: 지금 가이드(밑이 좁아지는 벽걸이·받침대형, 수전 포함)는 운영 세면대 대부분과 종류가 달라 정면·옆 모두 쓸 만한 후보가 0이었다(0/7). 시험 도구의 새 형태 가이드로 정면이 4/7 제품 쓸 만해졌다(남겨 둔 제품 1/3). 옆과 뒤는 기준을 넘은 방법이 없다.
-  - 변기 가까운 쪽: 0° 옆 가이드(B4)가 3라운드 기준을 넘었다(제품 2/2, 지금 방식 0~1/2). 마지막 확인은 하지 않았다.
+  - 변기 가까운 쪽: 0° 옆 가이드(B4)는 개발에서 2/2였지만 남겨 둔 변기에서 0/2라 지금 방식 유지다. 원피스 틀이 낮은 탱크 제품(플로)도 높은 탱크로 그린다.
   - 욕조: 바꿀 근거가 없다(지금 방식 유지).
 
 ## 외부 AI용 프롬프트 복사 (2026-10-12)
