@@ -4,11 +4,14 @@
 import { d1 } from './lib.mjs';
 const [sourceId] = process.argv.slice(2);
 if (!sourceId) throw new Error('R1 project id needed');
-const list = (await d1('materials', { operation: 'list' })).json;
+// The four 정면만 materials, found by name in the paged list, then read whole.
 const twin = new Map();
-for (const row of list)
-  if (row.version.name.startsWith('정면만 '))
-    twin.set(row.version.name.replace('정면만 ', '평면 '), row.version);
+const page = (await d1('materials', { operation: 'page', query: { q: '정면만' } })).json;
+const named = page.items.filter((row) => row.name.startsWith('정면만 '));
+const versions = named.length
+  ? (await d1('materials', { operation: 'getVersions', ids: named.map((row) => row.versionId) })).json.versions
+  : [];
+for (const version of versions) twin.set(version.name.replace('정면만 ', '평면 '), version);
 if (twin.size !== 4) throw new Error('need the four 정면만 materials, found ' + twin.size);
 const copyId = crypto.randomUUID();
 const dup = await d1('projects', {

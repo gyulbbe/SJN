@@ -369,8 +369,8 @@ describe('D1/R2 storage in a real local Worker', () => {
     expect(
       (await (await call('materials', { operation: 'getVersion', id: first.id }, user)).json()).name,
     ).toBe(first.name);
-    const list = await (await call('materials', { operation: 'list' }, user)).json();
-    expect(list.some((row: { version: MaterialVersion }) => row.version.id === second.id)).toBe(true);
+    const list = await (await call('materials', { operation: 'page' }, user)).json();
+    expect(list.items.some((row: { versionId: string }) => row.versionId === second.id)).toBe(true);
   });
   it('no longer takes a new mesh, and keeps and reads a material saved with an older 360° view', async () => {
     const user = crypto.randomUUID(),
@@ -712,8 +712,8 @@ describe('shared material applied to a member project', () => {
     const immutablePayload = await env.DB.prepare('SELECT payload_json FROM d1_material_versions WHERE id=?')
       .bind(first.id)
       .first<string>('payload_json');
-    const available = await (await call('materials', { operation: 'list' }, member)).json();
-    expect(available.some((row: { version: MaterialVersion }) => row.version.id === first.id)).toBe(true);
+    const available = await (await call('materials', { operation: 'page' }, member)).json();
+    expect(available.items.some((row: { versionId: string }) => row.versionId === first.id)).toBe(true);
     expect(new Uint8Array(await (await assetGet(member, image.id, true)).arrayBuffer())).toEqual(png);
 
     const photo = await upload(member);

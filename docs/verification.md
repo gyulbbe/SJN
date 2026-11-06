@@ -2,6 +2,11 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-06 — 옛 자재 전체 목록 요청(`list`) 삭제
+
+- 무엇: 회원·관리자 프로젝트의 `materials({operation:'list'})`를 지웠다. 화면은 2026-10-22부터 쪽 목록(`page`)만 쓴다. 이제 `list`는 없는 작업으로 400을 받는다. 시험과 도구(`catalog-fixtures`, `make-r1b`)는 `page`·`getVersions`로 바꿨다.
+- 결과: vitest `admin-projects`·`d1-catalog`·`d1-storage`·`d1-material-paging-equivalence`·`d1-visibility-equivalence`, `SJN_D1_COST=1 d1-read-cost`, e2e `base-room` 통과.
+
 ## 2026-11-05 — 타일 텍스처 밉맵(2D·3D)
 
 - 무엇: 타일 아틀라스만 밉맵·sRGB 저장·이방성으로 읽는다. 단계는 이어지는 좌표의 미분으로 정하고(`textureGrad`), −0.25만큼 옮긴다. 무늬가 여러 장이면 칸 여백을 둔다. 렌더 버전은 `room-view-v12-tile-mipmaps`, `DESIGN_RENDER_REVISION`은 4다. 저장·DB·API는 그대로다.

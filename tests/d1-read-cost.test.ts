@@ -13,7 +13,6 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { applyD1Migrations, allD1Migrations } from './helpers/d1-migrations';
 import { legacyAssets, legacyVersions, LEGACY_PUBLICLY_DISPLAYED } from './helpers/d1-visibility-legacy';
 import { visibleAssetsQuery, visibleVersionsQuery, type Context } from '../src/lib/d1/database';
-import { materials } from '../src/lib/d1/materials';
 import { publicMaterials, publicPlacement, publiclyDisplayed } from '../src/lib/catalog/public';
 import type { D1Bindings, D1DatabaseLike, D1Statement } from '../src/lib/d1/types';
 
@@ -345,7 +344,8 @@ async function measure(db: D1DatabaseLike, scale: number) {
         : { rows: NaN, ms: NaN },
     now: await read(db, placementImagesSql(publiclyDisplayed), [every]),
   };
-  // Whole list routes for reference: the public list and member list are unchanged; the public
+  // Whole list routes for reference: the public list is unchanged (the member's whole list is gone,
+  // 2026-11-06; its pages are measured in tests/d1-material-paging-cost.test.ts); the public
   // placement list gains from the image check above.
   const placements = (env: D1Bindings) =>
     publicPlacement(env, new Request('https://sjn.test/api/catalog/placement'));
@@ -358,8 +358,6 @@ async function measure(db: D1DatabaseLike, scale: number) {
     publicMaterials(env, new Request('https://sjn.test/api/catalog/materials')),
   );
   results['L 공개 자재 목록 첫 쪽(라우트)'] = { old: publicList, now: publicList };
-  const memberList = await route(db, (env) => materials({ env, actor: member.actor }, { operation: 'list' }));
-  results['L 회원 자재 목록(변경 없음)'] = { old: memberList, now: memberList };
   const plan = async (condition: string) =>
     (
       await db

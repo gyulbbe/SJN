@@ -19,7 +19,14 @@ export async function seedTestTiles(page) {
       if (!response.ok) throw new Error(await response.text());
       return response.json();
     }
-    const existing = (await api('materials', { operation: 'list' })).map((row) => row.version);
+    // Every page of the picker list (materials' whole list is gone; 2026-11-06).
+    const existing = [];
+    for (let cursor; ; ) {
+      const page = await api('materials', { operation: 'page', ...(cursor ? { query: { cursor } } : {}) });
+      existing.push(...page.items);
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
     const catalog = await api('catalog', { operation: 'list' });
     let brand = catalog.options.find((row) => row.kind === 'brand' && row.name === '검증용 자재');
     if (!brand)

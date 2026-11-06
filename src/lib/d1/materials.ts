@@ -10,7 +10,6 @@ import { identifierSchema, materialInputSchema } from '../storage/validation';
 import { readMaterialViews } from '../product-direction';
 import type { AssetRecord, Material, MaterialInput, MaterialVersion } from '../types';
 import {
-  adminVisibleVersionsSet,
   assetAssertion,
   dataOwnerId,
   visibleAssetsQuery,
@@ -313,44 +312,11 @@ export async function materials(
 ): Promise<unknown> {
   if (
     ctx.adminProject &&
-    !['list', 'getVersion', 'create', 'page', 'getVersions', 'find'].includes(String(body.operation))
+    !['getVersion', 'create', 'page', 'getVersions', 'find'].includes(String(body.operation))
   )
     throw forbidden();
   if (ctx.adminProject && body.operation === 'create' && !projectResource) throw forbidden();
   switch (body.operation) {
-    // The whole list. No screen asks for it since the paged lists (2026-10-22); it answers tabs opened
-    // before that deploy and goes after 2026-11-05 (docs/material-paging-results-20261022.md).
-    case 'list': {
-      const visible = ctx.adminProject && adminVisibleVersionsSet(ctx.adminProject, ctx.actor.id);
-      const rows = visible
-        ? await sql(
-            ctx,
-            `${visible.cte} SELECT m.*,v.payload_json FROM d1_materials m JOIN d1_material_versions v ON v.material_id=m.id JOIN visible_versions p ON p.id=v.id ORDER BY (v.id=m.current_version_id) DESC,m.updated_at DESC`,
-            ...visible.values,
-          ).all<MaterialRow & { payload_json: string }>()
-        : await sql(
-            ctx,
-            `SELECT m.*,v.payload_json FROM d1_materials m JOIN d1_material_versions v ON v.id=m.current_version_id WHERE m.owner_id=? OR m.scope='shared' ORDER BY m.updated_at DESC`,
-            ctx.actor.id,
-          ).all<MaterialRow & { payload_json: string }>();
-      const result: { material: Material; version: MaterialVersion }[] = [];
-      for (const row of rows.results) {
-        if (ctx.adminProject && result.some((entry) => entry.material.id === row.id)) continue;
-        result.push({
-          material: {
-            id: row.id,
-            ownerId: row.owner_id,
-            currentVersionId: ctx.adminProject ? JSON.parse(row.payload_json).id : row.current_version_id,
-            active: !!row.active,
-            scope: row.scope,
-            updatedAt: row.updated_at,
-          },
-          // Older angle names are read as the current list's names; saving writes the strict list.
-          version: readMaterialViews(JSON.parse(row.payload_json) as MaterialVersion),
-        });
-      }
-      return result;
-    }
     case 'page': {
       const query = materialPageQuerySchema.parse(body.query ?? {});
       const request = pageRequestSchema.parse({ view: body.view, scope: body.scope, active: body.active });

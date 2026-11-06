@@ -342,8 +342,8 @@ describe('admin project edit scope on isolated D1/R2', () => {
         })
       ).status,
     ).toBe(400);
-    const visible = await (await resource(admin, document.id, { operation: 'list' })).json();
-    expect(visible.some((row: { version: MaterialVersion }) => row.version.id === version.id)).toBe(false);
+    const visible = await (await resource(admin, document.id, { operation: 'page' })).json();
+    expect(visible.items.some((row: { versionId: string }) => row.versionId === version.id)).toBe(false);
     const uploadPublic = await upload(admin);
     const publicResponse = await regular(admin, 'materials', {
       operation: 'create',
@@ -411,7 +411,7 @@ describe('admin project edit scope on isolated D1/R2', () => {
     await env.DB.prepare('DELETE FROM admin_roles WHERE user_id=?').bind(admin.id).run();
     expect((await call(admin, body, '', 'committed-replay')).status).toBe(403);
     expect((await asset(admin, document.id, source, true)).status).toBe(403);
-    expect((await resource(admin, document.id, { operation: 'list' })).status).toBe(403);
+    expect((await resource(admin, document.id, { operation: 'page' })).status).toBe(403);
     await env.DB.prepare('INSERT INTO admin_roles(user_id) VALUES(?)').bind(admin.id).run();
     await env.DB.prepare("UPDATE d1_user_management SET status='suspended' WHERE user_id=?")
       .bind(admin.id)

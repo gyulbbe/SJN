@@ -662,7 +662,7 @@ describe('material role isolation and public media', () => {
       (await call('materials', { operation: 'setActive', id: version.materialId, active: false }, member))
         .status,
     ).toBe(403);
-    expect((await call('materials', { operation: 'list' }, anonymous)).status).toBe(401);
+    expect((await call('materials', { operation: 'page' }, anonymous)).status).toBe(401);
   });
 
   it('keeps photo-extracted and reconstruction resources private and available to their owner', async () => {
@@ -703,10 +703,10 @@ describe('material role isolation and public media', () => {
       expect((await call('materials', { operation: 'getVersion', id: version.id }, other)).status).toBe(404);
       expect((await listPublic()).materials.some((row) => row.id === version.materialId)).toBe(false);
     }
-    const list = (await (await call('materials', { operation: 'list' }, other)).json()) as {
-      version: MaterialVersion;
-    }[];
-    expect(list.some((row) => row.version.id === extracted.id)).toBe(false);
+    const list = (await (await call('materials', { operation: 'page' }, other)).json()) as {
+      items: { versionId: string }[];
+    };
+    expect(list.items.some((row) => row.versionId === extracted.id)).toBe(false);
     await expect(image(derived.id)).rejects.toMatchObject({ status: 404 });
     expect((await call('project-materials', { operation: 'update', input }, member)).status).toBe(400);
     expect(
@@ -938,10 +938,6 @@ describe('anonymous placement projections', () => {
       { assetId: one.id, direction: '오른쪽', anchor: { x: 0.5, y: 1 } },
       { assetId: two.id, direction: '정면', anchor: { x: 0.5, y: 1 }, directionWas: '사선' },
     ];
-    const listed = (await (await call('materials', { operation: 'list' })).json()) as {
-      version: MaterialVersion;
-    }[];
-    expect(listed.find((row) => row.version.id === saved.id)!.version.views).toEqual(expected);
     const got = await call('materials', { operation: 'getVersion', id: saved.id });
     expect(((await got.json()) as MaterialVersion).views).toEqual(expected);
     // The public placement (a guest's copy) carries the readable names only.
