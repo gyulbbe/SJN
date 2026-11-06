@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { roundedRectPoints, shapeExtent } from './direction-photo-methods/shapes';
+import { buildDirectionPhotoPrompt } from '../src/lib/direction-photo/prompt';
+import { appSize, seriesOf } from './sanitary-guides/catalog';
 import { CLASSES, directionsOf } from './sanitary-guides/classes';
+import { ASYMMETRIC, NO_C0, promptFor, specOf, viewsOf } from './sanitary-guides/prompts';
 import { createSanitaryShape, SANITARY_SHAPES } from './sanitary-guides/shapes';
+import { LEDGER as METHODS_LEDGER } from './direction-photo-methods/paths.mjs';
+import { OTHER_LEDGERS } from './sanitary-guides/paths.mjs';
 
 describe('sanitary-ware guide classes', () => {
   it('puts each of the 200 collected products in exactly one class', () => {
@@ -42,5 +47,58 @@ describe('roundedRectPoints', () => {
       if (Math.abs(cross) > 1e-6) signs.add(Math.sign(cross));
     }
     expect([...signs]).toHaveLength(1);
+  });
+});
+
+describe('sanitary-ware AI direction-photo trial (2026-11-07)', () => {
+  it('makes the views the app makes: 111 in all, no toilet back, a right side only where the sides differ', () => {
+    let n = 0;
+    for (const c of CLASSES) {
+      const views = viewsOf(c);
+      n += views.length;
+      expect(views.slice(0, 2)).toEqual(['front', 'left']);
+      if (c.category === 'toilet') expect(views).toEqual(['front', 'left', 'right']);
+      else expect(views.includes('right')).toBe(ASYMMETRIC.has(c.id));
+      if (c.category !== 'toilet') expect(views.includes('back')).toBe(c.installation !== 'wall');
+    }
+    expect(n).toBe(111);
+  });
+
+  it('writes a prompt for every class and view: the app own text for C0 and an app-model class', () => {
+    for (const c of CLASSES)
+      for (const view of viewsOf(c)) {
+        const g = promptFor(c, view, 'G');
+        const app = buildDirectionPhotoPrompt(specOf(c, view), 1);
+        if (c.model.from === 'app') expect(g).toBe(app);
+        else expect(g).not.toBe(app);
+        if (NO_C0.has(c.id)) expect(() => promptFor(c, view, 'C0')).toThrow();
+        else expect(promptFor(c, view, 'C0')).toBe(app);
+        if (c.category === 'urinal') {
+          expect(g).not.toContain('washbasin');
+          expect(g).toContain('urinal');
+        }
+        if (c.id === 'T7' || c.id === 'T8') expect(g).not.toMatch(/the tank (is|faces)/);
+      }
+  });
+
+  it('reads catalogue sizes in the app order', () => {
+    expect(appSize('양변기', '690x395x580')).toEqual([395, 580, 690]);
+    expect(appSize('세면대', '500x400x150')).toEqual([500, 150, 400]);
+    expect(appSize('욕조', '1500x800x600')).toEqual([1500, 600, 800]);
+    expect(appSize('세면대', '420x175')).toEqual([420, 175, 420]);
+    expect(appSize('세면대', '420x140x17T')).toEqual([420, 140, 420]);
+    expect(appSize('세면대', '540X465X820')).toEqual([540, 820, 465]);
+    expect(appSize('세면대', '-')).toBeUndefined();
+  });
+
+  it('tells the series of a product', () => {
+    expect(seriesOf('HSL 302S (상)')).toBe(seriesOf('HSL 302V (하)'));
+    expect(seriesOf('HSL 602-1V')).toBe(seriesOf('HSL 602J'));
+    expect(seriesOf('그레타 2342 BK')).toBe(seriesOf('그레타 2360 WH'));
+    expect(seriesOf('뉴바네스 G63L (L)')).not.toBe(seriesOf('바네스 G62L (L)'));
+  });
+
+  it('counts the spend of the methods trial toward the day', () => {
+    expect(OTHER_LEDGERS).toContain(METHODS_LEDGER);
   });
 });

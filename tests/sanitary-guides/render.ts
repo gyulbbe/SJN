@@ -9,11 +9,12 @@
  * Run from the repository (an ASCII working directory: sharp crashes on relative paths under a Korean one).
  */
 import { build } from 'esbuild';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import sharp, { type OverlayOptions } from 'sharp';
+import { readCatalog } from './catalog';
 import { CLASSES, directionsOf, type SanitaryClass } from './classes';
 
 const [OUT, PHOTOS, only] = process.argv.slice(3);
@@ -21,47 +22,8 @@ if (!OUT || !PHOTOS) throw new Error('usage: render.ts <out dir> <photos dir> [c
 const classes = only ? CLASSES.filter((c) => only.split(',').includes(c.id)) : CLASSES;
 
 // ---------- the collection: product names and photos ----------
-const parseCsv = (line: string) => {
-  const out: string[] = [];
-  let cur = '',
-    quoted = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (quoted) {
-      if (ch === '"' && line[i + 1] === '"') {
-        cur += '"';
-        i++;
-      } else if (ch === '"') quoted = false;
-      else cur += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ',') {
-      out.push(cur);
-      cur = '';
-    } else cur += ch;
-  }
-  out.push(cur);
-  return out;
-};
-const [head, ...lines] = readFileSync(path.join(PHOTOS, '목록.csv'), 'utf8')
-  .replace(/^﻿/, '')
-  .split(/\r?\n/)
-  .filter(Boolean);
-const columns = parseCsv(head);
-const products = new Map(
-  lines.map((line) => {
-    const row = Object.fromEntries(parseCsv(line).map((v, i) => [columns[i], v]));
-    return [Number(row.product_cd), row];
-  }),
-);
-const walk = (dir: string): string[] =>
-  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)],
-  );
-const photoOf = new Map<number, string>();
-for (const file of walk(PHOTOS)) {
-  const m = path.basename(file).match(/\[(\d+)\]_1\.\w+$/);
-  if (m) photoOf.set(Number(m[1]), file);
-}
+const { rows: products, photos } = readCatalog(PHOTOS);
+const photoOf = new Map([...photos].map(([cd, files]) => [cd, files[0]]));
 const allMembers = CLASSES.flatMap((c) => c.members);
 const missing = [...products.keys()].filter((cd) => !allMembers.includes(cd));
 const twice = allMembers.filter((cd, i) => allMembers.indexOf(cd) !== i);

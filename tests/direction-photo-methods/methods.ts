@@ -74,7 +74,7 @@ export const B2_NOUNS: Record<B2Shape, string> = {
   cube: 'a wall-hung cube-shaped washbasin',
 };
 
-const once = (text: string, from: string, to: string) => {
+export const once = (text: string, from: string, to: string) => {
   if (text.split(from).length !== 2) throw new Error(`not found exactly once: ${from.slice(0, 80)}`);
   return text.replace(from, () => to);
 };

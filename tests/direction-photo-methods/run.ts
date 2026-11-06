@@ -21,6 +21,7 @@ import { LEDGER, OTHER_LEDGERS, OUT } from './paths.mjs';
 import { productById } from './products';
 import { jobFor, METHODS, type Job, type Method } from './methods';
 import { budgetCheck, endsRun, fluxCost, FLUX_4B, type Row } from './budget';
+import { sendFlux } from './flux-send';
 import type { DirectionPhotoView } from '../../src/lib/direction-photo/contract';
 
 const args = process.argv.slice(3);
@@ -105,47 +106,6 @@ async function pictures(job: Job) {
   return { image0, refs, width: meta.width!, height: meta.height! };
 }
 
-async function send(job: Job, p: { image0: Buffer; refs: Buffer[]; width: number; height: number }) {
-  const width = p.width * 2,
-    height = p.height * 2;
-  if (engine === 'local') {
-    const response = await fetch('http://127.0.0.1:8798', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'flux-2-klein-4b',
-        image: p.image0.toString('base64'),
-        refs: p.refs.map((r) => r.toString('base64')),
-        prompt: job.prompt,
-        width,
-        height,
-        seed: job.seed,
-      }),
-    });
-    const body = (await response.json()) as { image?: string; error?: string; meta?: { engine?: string } };
-    if (response.ok && body.meta?.engine !== 'local')
-      throw new Error('the local server did not say it is local');
-    return { status: response.status, image: body.image, error: body.error };
-  }
-  const form = new FormData();
-  form.set('model', MODEL);
-  form.set('input_image_0', new Blob([new Uint8Array(p.image0)], { type: 'image/png' }), 'guide.png');
-  p.refs.forEach((ref, i) =>
-    form.set(
-      `input_image_${i + 1}`,
-      new Blob([new Uint8Array(ref)], { type: 'image/png' }),
-      `photo-${i + 1}.png`,
-    ),
-  );
-  form.set('prompt', job.prompt);
-  form.set('width', String(width));
-  form.set('height', String(height));
-  form.set('seed', String(job.seed));
-  const response = await fetch('http://127.0.0.1:8806/flux', { method: 'POST', body: form });
-  const body = (await response.json()) as { image?: string; error?: string };
-  return { status: response.status, image: body.image, error: body.error };
-}
-
 // ---------- the jobs ----------
 const products = productList.split(',').map(productById);
 for (const p of products)
@@ -225,7 +185,7 @@ for (const method of methods) {
         let status = 0,
           error: string | undefined;
         try {
-          const answer = await send(job, p);
+          const answer = await sendFlux(engine, p, job.prompt, job.seed, MODEL);
           status = answer.status;
           error = answer.error;
           if (answer.image)
