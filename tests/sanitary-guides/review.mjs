@@ -100,9 +100,9 @@ if (command === 'sheets') {
       }
       rows.push({ id, view, photo: manifest[id][set].ref, guide: manifest[id][set].guides.G[view], list });
     }
-  const CELL = 300,
+  const CELL = Number(process.env.SHEET_CELL) || 300,
     LABEL = 120,
-    PER = 5;
+    PER = Number(process.env.SHEET_PER) || 5;
   const key = {};
   for (let p = 0; p * PER < rows.length; p++) {
     const page = rows.slice(p * PER, (p + 1) * PER);

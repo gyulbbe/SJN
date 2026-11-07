@@ -11,6 +11,7 @@ import {
   type DirectionPhotoView,
 } from './contract';
 import {
+  TOILET_SIDE_ELEVATION,
   toiletColorSentence,
   toiletFrontSentence,
   toiletHiddenParts,
@@ -140,6 +141,20 @@ function hiddenSentence(parts: string[]): string {
 /** Said for a bath whatever the view: the trial drew a drain on its outer wall (1 of 8). */
 const BATH_OUTSIDE = 'Draw no hole, drain or overflow on the outside of the tub.';
 
+/**
+ * A basin's side or back drawn flat, last, as a toilet's side is (the same side sentence): with the
+ * photos' angles said, a basin's sides came right in 42 of 52 answers against 9 of 52 and its back
+ * in 11 of 12 against 5 of 12 (2026-11-07, docs/sanitary-direction-photos-20261107.md). Not for a
+ * bath: its back did no better (8 of 10 against 10 of 10).
+ */
+export const BACK_ELEVATION =
+  'Draw it as an orthographic back elevation, like a product drawing: no perspective, no turn toward the camera, the outline exactly that of image 0.';
+function basinElevation({ category, direction }: DirectionPhotoSpec): string {
+  if (category !== 'basin') return '';
+  if (direction === 'left' || direction === 'right') return TOILET_SIDE_ELEVATION;
+  return direction === 'back' ? BACK_ELEVATION : '';
+}
+
 /** Each quick fix as the server says it, about the earlier candidate (`image`, e.g. "image 3"). */
 const FIX_SENTENCES: Record<DirectionPhotoFix, (image: string, Image: string) => string> = {
   straight: (_, Image) =>
@@ -211,8 +226,8 @@ export function buildDirectionPhotoPrompt(
     spec.category === 'toilet' ? toiletColorSentence(spec) : '',
     spec.photoAngles ? photoAngleSentence(spec.photoAngles, spec.direction) : '',
     `Turn image 0 into a photorealistic studio product photograph of that real ${noun}: pure white seamless background (#FFFFFF), soft even studio lighting, ${shadow}, no props, no floor texture, no text, no watermark.`,
-    // A toilet's side drawn flat, last (the 2026-10-21 trial's place).
-    spec.category === 'toilet' ? toiletSideSentence(spec) : '',
+    // A toilet's side drawn flat, last (the 2026-10-21 trial's place); a basin's side and back too.
+    spec.category === 'toilet' ? toiletSideSentence(spec) : basinElevation(spec),
     feedback ? feedbackSentence(feedback, photos + 1) : '',
   ]
     .filter(Boolean)

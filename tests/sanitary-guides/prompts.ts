@@ -34,11 +34,11 @@ import type { SanitaryShape } from './shapes';
  * a front from 10°, the top being as tall as the side). Neither helped (all 0 of 10), so G2L adds a
  * sentence instead (the user's "문장으로 한 번 더 시험"): the long length runs away from the camera.
  */
-export const TRIAL_METHODS = ['G', 'C0', 'G2', 'G2E0', 'G2E5', 'G2L'] as const;
+export const TRIAL_METHODS = ['G', 'C0', 'G2', 'G2E0', 'G2E5', 'G2L', 'C0G2'] as const;
 export type TrialMethod = (typeof TRIAL_METHODS)[number];
 /** The guide a method sends (prep/manifest.json `guides` key). */
 export const guideOf = (method: TrialMethod) =>
-  method === 'C0' ? 'C0' : method === 'G2E0' ? 'E0' : method === 'G2E5' ? 'E5' : 'G';
+  method === 'C0' || method === 'C0G2' ? 'C0' : method === 'G2E0' ? 'E0' : method === 'G2E5' ? 'E5' : 'G';
 
 export const KOREAN_VIEW: Record<DirectionPhotoView, '정면' | '왼쪽' | '오른쪽' | '뒤'> = {
   front: '정면',
@@ -311,7 +311,16 @@ export function promptFor(
     if (!from) throw new Error(`${c.id}: where its photo was taken from is not said`);
     const withAngle = once(g, STUDIO, `${photoAngleSentence([from], view)} ${STUDIO}`);
     const elevation = view === 'back' ? BACK_ELEVATION : view === 'front' ? '' : TOILET_SIDE_ELEVATION;
-    return elevation ? `${withAngle} ${elevation}` : withAngle;
+    // Since 2026-11-07 the app ends a basin's (and so a urinal's) side and back with it already.
+    return elevation && !withAngle.endsWith(elevation) ? `${withAngle} ${elevation}` : withAngle;
+  }
+  if (method === 'C0G2') {
+    // The app since 2026-11-07 on its own guide: a basin's photo angle as the person would say it.
+    if (NO_C0.has(c.id) || c.category !== 'basin') throw new Error(`${c.id}: C0G2 is for a basin`);
+    return buildDirectionPhotoPrompt(
+      { ...specOf(c, view, sizeMm), photoAngles: [PHOTO_FROM[c.id] ?? 'unknown'] },
+      1,
+    );
   }
   const spec = specOf(c, view, sizeMm);
   let text = buildDirectionPhotoPrompt(spec, 1);

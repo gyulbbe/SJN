@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BACK_ELEVATION,
   buildDirectionPhotoPrompt as buildPrompt,
   feedbackSentence,
   hiddenParts,
@@ -188,7 +189,7 @@ describe('direction photo prompt', () => {
 
   it('keeps the bath’s, the basin’s and the toilets’ texts word for word when nothing new is said', () => {
     // The texts before the toilet's own module (2026-10-18), byte for byte; a toilet's side has the
-    // 2026-10-21 sentence after them.
+    // 2026-10-21 sentence after them, and a basin's side the same sentence since 2026-11-07.
     expect(buildDirectionPhotoPrompt(spec(), 1)).toBe(
       'Image 0 is a plain grey 3D render of an oval freestanding bathtub with rounded ends. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the long side facing the room; its back is the long side placed along the wall. The view shows the long side of the tub. In this view the drain in the bottom of the tub is not visible; do not draw it. Draw no hole, drain or overflow on the outside of the tub. The real bathtub is about 1700 × 560 × 750 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Turn image 0 into a photorealistic studio product photograph of that real bathtub: pure white seamless background (#FFFFFF), soft even studio lighting, at most a very faint soft contact shadow directly under it, no props, no floor texture, no text, no watermark.',
     );
@@ -204,7 +205,8 @@ describe('direction photo prompt', () => {
         1,
       ),
     ).toBe(
-      'Image 0 is a plain grey 3D render of a wall-hung washbasin with a round bowl. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the side a person stands at; its back mounts to the wall. The view shows the washbasin from its left side: its front points to the left of the picture and its back, the wall side, is on the right. In this view the drain hole in the bowl is not visible; do not draw it. The real washbasin is about 500 × 180 × 420 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Turn image 0 into a photorealistic studio product photograph of that real washbasin: pure white seamless background (#FFFFFF), soft even studio lighting, no cast shadow, no props, no floor texture, no text, no watermark.',
+      'Image 0 is a plain grey 3D render of a wall-hung washbasin with a round bowl. It fixes the exact shape, outline, proportions, camera angle, size and position in the frame: keep all of these exactly as in image 0. Its front is the side a person stands at; its back mounts to the wall. The view shows the washbasin from its left side: its front points to the left of the picture and its back, the wall side, is on the right. In this view the drain hole in the bowl is not visible; do not draw it. The real washbasin is about 500 × 180 × 420 mm (width × height × depth). Image 1 is a photo of the real product taken from another angle: use it only for the material, colour and small details, never for the shape, the camera angle or the position. Turn image 0 into a photorealistic studio product photograph of that real washbasin: pure white seamless background (#FFFFFF), soft even studio lighting, no cast shadow, no props, no floor texture, no text, no watermark. ' +
+        TOILET_SIDE_ELEVATION,
     );
     const twoPiece = spec({ category: 'toilet', form: 'two-piece', lid: 'closed', sizeMm: [380, 760, 700] });
     const twoPieceText =
@@ -228,7 +230,7 @@ describe('direction photo prompt', () => {
     );
   });
 
-  it('ends a toilet’s side views with the side-elevation sentence, and no other view (2026-10-21)', () => {
+  it('ends a toilet’s and a basin’s side views with the side-elevation sentence, a bath’s never (2026-10-21, 11-07)', () => {
     const toilet = (form: DirectionPhotoSpec['form'], direction: DirectionPhotoSpec['direction']) =>
       buildDirectionPhotoPrompt(
         spec({
@@ -246,21 +248,52 @@ describe('direction photo prompt', () => {
         expect(toilet(form, direction).endsWith(`no watermark. ${TOILET_SIDE_ELEVATION}`)).toBe(true);
       expect(toilet(form, 'front')).not.toContain(TOILET_SIDE_ELEVATION);
     }
+    const basin = (
+      direction: DirectionPhotoSpec['direction'],
+      form: DirectionPhotoSpec['form'] = 'wall-round',
+    ) =>
+      buildDirectionPhotoPrompt(
+        spec({
+          category: 'basin',
+          form,
+          direction,
+          installation: form.startsWith('wall-') ? 'wall' : 'floor',
+          sizeMm: [500, 850, 420],
+        }),
+        1,
+      );
     for (const direction of ['left', 'right'] as const) {
       expect(buildDirectionPhotoPrompt(spec({ direction }), 1)).not.toContain(TOILET_SIDE_ELEVATION);
-      expect(
-        buildDirectionPhotoPrompt(
-          spec({
-            category: 'basin',
-            form: 'wall-round',
-            direction,
-            installation: 'wall',
-            sizeMm: [500, 180, 420],
-          }),
-          1,
-        ),
-      ).not.toContain(TOILET_SIDE_ELEVATION);
+      expect(basin(direction).endsWith(`no watermark. ${TOILET_SIDE_ELEVATION}`)).toBe(true);
     }
+    expect(basin('front')).not.toContain('orthographic');
+    // A floor basin's back: the back elevation (11 of 12 against 5 of 12); a bath's back stays as it was.
+    expect(basin('back', 'pedestal-round').endsWith(`no watermark. ${BACK_ELEVATION}`)).toBe(true);
+    expect(buildDirectionPhotoPrompt(spec({ direction: 'back' }), 1)).not.toContain('orthographic');
+  });
+
+  it('tells a basin’s photo angles when said, and keeps them from a bath and a two-piece toilet (2026-11-07)', () => {
+    const basin = spec({
+      category: 'basin',
+      form: 'pedestal-round',
+      direction: 'left',
+      sizeMm: [500, 850, 420],
+    });
+    expect(directionPhotoSpecSchema.safeParse(basin).success).toBe(true);
+    const told = { ...basin, photoAngles: ['front-left'] as DirectionPhotoSpec['photoAngles'] };
+    expect(directionPhotoSpecSchema.safeParse(told).success).toBe(true);
+    expect(buildDirectionPhotoPrompt(told, 1)).toContain(
+      'Image 1 was taken from the front left of the product, from above: that is not the view to make. Turn the product to the view of image 0 and do not copy the angle, the perspective or the framing of image 1. Turn image 0 into',
+    );
+    for (const refused of [
+      { ...spec(), photoAngles: ['front'] },
+      {
+        ...spec({ category: 'toilet', form: 'two-piece', lid: 'closed', sizeMm: [380, 760, 700] }),
+        photoAngles: ['front'],
+      },
+      { ...onePiece(), photoAngles: undefined },
+    ])
+      expect(directionPhotoSpecSchema.safeParse(refused).success).toBe(false);
   });
 
   it('says what to change in an earlier candidate last: the quick fixes, then the person’s words (고칠 점)', () => {

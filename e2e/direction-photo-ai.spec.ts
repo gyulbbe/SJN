@@ -540,6 +540,22 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
     },
   );
   await expect(basin.getByTestId('ai-guides').getByRole('img')).toHaveCount(4);
+  // A basin's photos are asked where they were taken from (2026-11-07), and it goes with each request.
+  await addReference(basin);
+  const basinAngle = basin.getByLabel('참고 사진 1 찍은 각도', { exact: true });
+  await expect(basinAngle).toHaveValue('unknown');
+  await expect(basin).toContainText('세면대의 옆·뒤는 AI가 사진의 각도를 베끼기 쉬워요.');
+  await basinAngle.selectOption('front-left');
+  mode = 'answer';
+  const beforeBasin = sent.length;
+  await basin.getByRole('button', { name: '방향 사진 만들기', exact: true }).click();
+  await expect(
+    basin.getByRole('group', { name: '왼쪽 후보' }).getByRole('button', { name: /후보 \d$/ }),
+  ).toHaveCount(2, { timeout: 30000 });
+  const basinSent = sent.slice(beforeBasin);
+  expect(basinSent.map((s) => s.spec.direction).sort()).toEqual(['front', 'front', 'left', 'left']);
+  for (const s of basinSent)
+    expect(s.spec).toMatchObject({ category: 'basin', form: 'wall-round', photoAngles: ['front-left'] });
   await basin.screenshot({ path: info.outputPath('generator-basin.png') });
 
   // A toilet: its body and lid (a tankless one has no open lid), no 뒤, and both go with each request.

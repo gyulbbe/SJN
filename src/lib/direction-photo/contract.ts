@@ -45,10 +45,12 @@ export { toiletLids } from './categories/toilet';
 
 /**
  * Where each photo was taken from, said as the slots name a photo: the way the product's front points
- * in it (front-right: between 정면 and 오른쪽, the product's front and right side seen). Asked only for
- * a one-piece or tankless toilet (photoAngleTold): with a guide shaped like the product the model
- * copied the photo's angle in 10 of 12 answers, and the sentence brought the view back; the bath's
- * guide held its narrow end without it (2 of 2) and lost it with it (4 of 4, 2026-10-15).
+ * in it (front-right: between 정면 and 오른쪽, the product's front and right side seen). Asked for a
+ * one-piece or tankless toilet and for a basin (photoAngleTold): with a guide shaped like the product
+ * the model copied the photo's angle in 10 of 12 answers, and the sentence brought the view back; the
+ * bath's guide held its narrow end without it (2 of 2) and lost it with it (4 of 4, 2026-10-15). A
+ * basin's sides and back with this sentence and a flat-elevation one came right in 42 of 52 and 11 of
+ * 12 answers against 9 of 52 and 5 of 12 (2026-11-07, docs/sanitary-direction-photos-20261107.md).
  */
 export const DIRECTION_PHOTO_PHOTO_ANGLES = [
   'unknown',
@@ -59,9 +61,12 @@ export const DIRECTION_PHOTO_PHOTO_ANGLES = [
   'left',
 ] as const;
 export type DirectionPhotoPhotoAngle = (typeof DIRECTION_PHOTO_PHOTO_ANGLES)[number];
-/** Whether the photos' angles are asked for and told to the model: a toilet shaped like the product. */
+/**
+ * Whether the photos' angles are asked for and told to the model: a toilet shaped like the product
+ * (required there), and a basin (optional on the wire: a page opened before 2026-11-07 sends none).
+ */
 export const photoAngleTold = (category: DirectionPhotoCategory, form: DirectionPhotoForm) =>
-  category === 'toilet' && form !== 'two-piece';
+  category === 'basin' || (category === 'toilet' && form !== 'two-piece');
 
 /**
  * The quick fixes a person may pick for an earlier candidate, each a sentence the server writes
@@ -162,10 +167,13 @@ export const directionPhotoSpecSchema = z
       context.addIssue({ code: 'custom', message: '제품 종류에 없는 형태예요.', path: ['form'] });
     if (spec.category === 'toilet' ? !spec.lid : spec.lid)
       context.addIssue({ code: 'custom', message: '뚜껑은 변기에만 정해요.', path: ['lid'] });
-    if (photoAngleTold(spec.category, spec.form) ? !spec.photoAngles : spec.photoAngles)
+    // Asked for a toilet shaped like the product (always sent) and a basin (sent by pages since
+    // 2026-11-07); never for anything else.
+    const told = photoAngleTold(spec.category, spec.form);
+    if (told ? spec.category === 'toilet' && !spec.photoAngles : spec.photoAngles)
       context.addIssue({
         code: 'custom',
-        message: '찍은 각도는 일체형·비데 일체형 변기에만 보내요.',
+        message: '찍은 각도는 일체형·비데 일체형 변기와 세면대에만 보내요.',
         path: ['photoAngles'],
       });
     if (spec.category !== 'toilet' && (spec.skirt || spec.bodyColor || spec.seatColor))
