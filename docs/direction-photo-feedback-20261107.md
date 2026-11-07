@@ -9,21 +9,21 @@
 ## 1. 앱에 넣은 것
 
 - **고칠 점**([화면](../src/components/materials/direction-photo-generator.tsx), [서버](../src/lib/direction-photo/server.ts), [문장](../src/lib/direction-photo/prompt.ts) `feedbackSentence`):
-  - 후보를 고르면 그 아래에 접힌 "고른 후보 고치기"가 생긴다. 빠른 선택 5개와 직접 쓰기(한 줄 200자)가 있다.
+  - 후보를 고르면 그 아래에 접힌 "고른 후보 고치기"가 생긴다. 빠른 선택 3개와 직접 쓰기(한 줄 200자)가 있다. 처음엔 5개였지만 각도·모양 2개는 Cloudflare에서 효과가 없어 뺐다(9절).
   - "{방향} 고쳐서 다시 만들기"는 고른 후보를 가이드 크기로 줄여 참고 사진 앞 2장과 함께 2번 보낸다(klein 4B 입력 4장 한도). 고친 후보 2장은 원래 후보 뒤에 붙는다.
   - 모델 입력은 image 0 가이드, 1~n 참고 사진, n+1 이전 후보다. 문장 끝에 고칠 점 문단을 붙인다.
   - 직접 쓴 글은 이 라우트가 받는 유일한 자유 글이다. 공백을 정리하고 `"`를 `'`로 바꿔 따옴표 안에 넣는다. 저장·기록하지 않는다(진단에는 빠른 선택과 글자 수만).
 
   | 버튼 | 코드 | 서버 문장(image k = 이전 후보) |
   | --- | --- | --- |
-  | 똑바로 본 모습 | `straight` | Image k is turned toward the camera or seen at a slant; make the view exactly that of image 0, straight on, with no perspective and no turn. |
+  | ~~똑바로 본 모습~~(뺌) | `straight` | Image k is turned toward the camera or seen at a slant; make the view exactly that of image 0, straight on, with no perspective and no turn. |
   | 사진 색 그대로 | `colour` | The colour or material in image k is not the real product's; take the colour, material and finish from the product photos. |
   | 벽·그림자 없이 | `background` | Image k shows a wall, a floor or a shadow; draw the product alone on pure white, with no wall, no floor and no cast shadow. |
   | 없는 물건 빼기 | `extras` | Image k has parts the real product does not have; leave out everything that is not on the real product in the photos. |
-  | 가이드 모양 그대로 | `shape` | The shape or proportions in image k differ from image 0; keep the outline, proportions and size exactly as in image 0. |
+  | ~~가이드 모양 그대로~~(뺌) | `shape` | The shape or proportions in image k differ from image 0; keep the outline, proportions and size exactly as in image 0. |
 
   - 문단 앞뒤: "Image k is an earlier attempt at this photo that the person wants changed." … "The person's request about image k, in their own words: "…"." … "Make the new photo from image 0 and the product photos as said above, keep what image k already got right and change only what is asked."
-- **세면대 두 문장**(별도 커밋, 사용자 결정 대기: 4절):
+- **세면대 두 문장**(별도 커밋, 사용자가 넣기로 함: 9절):
   - 세면대도 참고 사진마다 찍은 각도를 묻고 보낸다(`photoAngleTold`). 서버는 없어도 받는다(그 전에 연 화면).
   - 세면대 왼쪽·오른쪽 끝에는 변기와 같은 도면 옆면 문장, 받침대형 세면대 뒤에는 도면 뒷면 문장을 붙인다(`BACK_ELEVATION`).
   - 욕조와 투피스 변기는 그대로다.
@@ -57,7 +57,7 @@
 | B12 왼쪽 | 선 그림 | 한국어 "가이드 모양대로 실제 사진처럼 그려 주세요" | 얇은 판 그대로 | 선 그림 그대로 |
 
 - Cloudflare는 이전 답을 많이 따라 그린다(각도, 구멍, 색까지). 글이 색처럼 겉모습을 바꾸라고 하면 따르고, 한국어도 알아듣는다. 하지만 각도와 모양은 이전 답을 따라가서 고치지 못했다(각 1곳).
-- 그래서 방향·모양이 틀린 후보는 "고치기"보다 "{방향} 다시 만들기"가 맞다. "똑바로 본 모습"·"가이드 모양 그대로" 버튼을 둘지는 사용자에게 묻는다.
+- 그래서 방향·모양이 틀린 후보는 "고치기"보다 "{방향} 다시 만들기"가 맞다. "똑바로 본 모습"·"가이드 모양 그대로" 버튼은 뺐다(9절).
 - 그림: `고칠점-cf.png`. 표는 `review/cf/table.md`.
 
 ## 4. 세면대 두 문장: 앱 가이드로 비교
@@ -72,7 +72,7 @@
   | 방향·종류 모두 맞음 | 6 | 9 |
 
   - 방향이 달라진 21곳은 모두 새 문장 쪽이 맞았다. 그림은 `앱세면대-무료-달라진곳.png`.
-  - **미리 정한 기준("방향·종류 맞음"이 5곳 이상 늘어야 넣음)에는 못 미쳤다(+3).** 앱 가이드가 수전이 달린 표준 모형이라, 종류는 두 문장 모두에서 대부분 사진과 달랐다. 기준을 바꾸지 않고 넣을지 사용자에게 묻는다. 세면대 부분은 별도 커밋이라 그 커밋만 되돌리면 빠진다.
+  - **미리 정한 기준("방향·종류 맞음"이 5곳 이상 늘어야 넣음)에는 못 미쳤다(+3).** 앱 가이드가 수전이 달린 표준 모형이라, 종류는 두 문장 모두에서 대부분 사진과 달랐다. 기준을 바꾸지 않고 넣을지 사용자에게 물었고, 사용자가 넣기로 했다(9절). 세면대 부분은 별도 커밋이라 그 커밋만 되돌리면 빠진다.
 - **Cloudflare(두 번째 계정, 3곳 짝):** B1·B15·B21 왼쪽에서 지금 문장과 새 문장이 같았다(맞음 2, 살짝 돎 1씩). 새 문장의 B15는 베이지색으로 나왔다.
 
 ## 5. 비용
@@ -112,3 +112,10 @@ bash tests/direction-photo-feedback/cf-check.sh
 - 고칠 점의 Cloudflare 확인은 4곳, 1장씩이다. 겉모습(색)은 고쳤고 각도·모양은 고치지 못했다는 정도만 말할 수 있다.
 - 세면대 두 문장의 Cloudflare 확인은 3곳뿐이다. 무료 FLUX의 큰 차이가 Cloudflare에서도 나는지는 더 봐야 한다.
 - 직접 쓴 글은 그대로 모델에 간다. 로그인한 사용자만 쓸 수 있고 200자로 막지만, 내용은 걸러내지 않는다.
+
+## 9. 사용자 결정 (11-07)
+
+- **세면대 두 문장: 넣기.** 미리 정한 기준(+5)에는 못 미쳤지만, 방향은 뚜렷이 나아졌고(35 → 56) 나빠진 곳이 없어서 넣었다. 종류가 다른 것은 앱 가이드 때문이다.
+- **빠른 선택 "똑바로 본 모습"·"가이드 모양 그대로": 빼고 안내 넣기.** 고치기 칸에 "색·배경·없는 물건처럼 겉모습을 고칠 때 써요. 방향이나 모양이 틀리면 ‘{방향} 다시 만들기’가 더 잘 돼요(고치기는 고른 후보의 각도와 모양을 따라 그려요)."를 보인다. 시험 도구(`cases.ts`)는 두 문장을 11-07에 보낸 그대로 따로 가지고 있다.
+- **main 병합과 push: 고친 뒤 하기.**
+

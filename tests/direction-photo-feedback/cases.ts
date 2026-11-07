@@ -10,21 +10,46 @@
  *   image 2; a prompt of its own.
  * Two kinds of words: the quick fix (an English sentence the server writes) or the person's own words
  * in Korean, as typed.
+ *
+ * The trial ran with five quick fixes; the app kept three (colour, background, extras) and dropped the
+ * view and the shape after the Cloudflare check (the user's decision, 11-07). Their sentences stay here
+ * as they were sent, so the trial runs as it ran.
  */
-import {
-  DIRECTION_PHOTO_FIXES,
-  tidyFeedbackText,
-  type DirectionPhotoFeedback,
-  type DirectionPhotoFix,
-} from '../../src/lib/direction-photo/contract';
+import { tidyFeedbackText, type DirectionPhotoFix } from '../../src/lib/direction-photo/contract';
 import { feedbackSentence } from '../../src/lib/direction-photo/prompt';
+
+/** The trial's quick fixes: the app's three and the two it dropped. */
+export type TrialFix = DirectionPhotoFix | 'straight' | 'shape';
+const TRIAL_FIXES: readonly TrialFix[] = ['straight', 'colour', 'background', 'extras', 'shape'];
+type TrialFeedback = { fixes: TrialFix[]; text: string };
+/** The dropped fixes' sentences as the trial sent them in way A (image k: the earlier answer). */
+const DROPPED: Record<'straight' | 'shape', (k: number) => string> = {
+  straight: (k) =>
+    `Image ${k} is turned toward the camera or seen at a slant; make the view exactly that of image 0, straight on, with no perspective and no turn.`,
+  shape: (k) =>
+    `The shape or proportions in image ${k} differ from image 0; keep the outline, proportions and size exactly as in image 0.`,
+};
+/**
+ * Way A's paragraph as sent on 11-07: the app's (`feedbackSentence`), and for a dropped fix (always
+ * alone in this trial) its sentence right after the paragraph's first one, as the app put it then.
+ */
+export function trialParagraph(feedback: TrialFeedback, k: number): string {
+  const dropped = feedback.fixes.find((fix) => fix === 'straight' || fix === 'shape');
+  if (!dropped)
+    return feedbackSentence({ fixes: feedback.fixes as DirectionPhotoFix[], text: feedback.text }, k);
+  if (feedback.fixes.length !== 1) throw new Error('a dropped fix goes alone in this trial');
+  const frame = feedbackSentence({ fixes: [], text: feedback.text }, k);
+  const head = `Image ${k} is an earlier attempt at this photo that the person wants changed.`;
+  if (!frame.startsWith(`${head} `)) throw new Error('the app paragraph changed its first sentence');
+  return `${head} ${DROPPED[dropped](k)} ${frame.slice(head.length + 1)}`;
+}
 
 export type FeedbackCase = {
   id: string;
   view: 'front' | 'left' | 'right' | 'back';
   /** The method of the earlier answer (its prompt is that method's). */
   method: 'G' | 'G2';
-  fix: DirectionPhotoFix;
+  fix: TrialFix;
   ko: string;
   /** What was wrong with it, in plain words. */
   fault: string;
@@ -70,13 +95,13 @@ export type Frame = (typeof FRAMES)[number];
 export const WORDS = ['fix', 'ko', 'none'] as const;
 export type Words = (typeof WORDS)[number];
 
-export const feedbackOf = (c: FeedbackCase, words: Words): DirectionPhotoFeedback =>
+export const feedbackOf = (c: FeedbackCase, words: Words): TrialFeedback =>
   words === 'fix'
     ? { fixes: [c.fix], text: '' }
     : { fixes: [], text: words === 'ko' ? tidyFeedbackText(c.ko) : '' };
 
 /** B's quick fixes: the earlier answer is image 0 and the guide image 2. */
-const B_FIXES: Record<DirectionPhotoFix, string> = {
+const B_FIXES: Record<TrialFix, string> = {
   straight:
     'Image 0 is turned toward the camera or seen at a slant; make the view exactly that of image 2, straight on, with no perspective and no turn.',
   colour:
@@ -95,10 +120,8 @@ const B_FIXES: Record<DirectionPhotoFix, string> = {
  */
 export function promptOf(base: string, c: FeedbackCase, frame: Frame, words: Words): string {
   const feedback = feedbackOf(c, words);
-  if (frame === 'A') return `${base} ${feedbackSentence(feedback, 2)}`;
-  const fixes = DIRECTION_PHOTO_FIXES.filter((fix) => feedback.fixes.includes(fix)).map(
-    (fix) => B_FIXES[fix],
-  );
+  if (frame === 'A') return `${base} ${trialParagraph(feedback, 2)}`;
+  const fixes = TRIAL_FIXES.filter((fix) => feedback.fixes.includes(fix)).map((fix) => B_FIXES[fix]);
   return [
     'Image 0 is an earlier attempt at a studio product photograph of this product from this view, and the person wants it changed.',
     'Image 2 is a plain grey 3D render of the same view: it fixes the exact shape, outline, proportions, camera angle and position in the frame.',

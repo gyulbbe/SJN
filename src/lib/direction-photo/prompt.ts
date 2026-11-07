@@ -157,16 +157,12 @@ function basinElevation({ category, direction }: DirectionPhotoSpec): string {
 
 /** Each quick fix as the server says it, about the earlier candidate (`image`, e.g. "image 3"). */
 const FIX_SENTENCES: Record<DirectionPhotoFix, (image: string, Image: string) => string> = {
-  straight: (_, Image) =>
-    `${Image} is turned toward the camera or seen at a slant; make the view exactly that of image 0, straight on, with no perspective and no turn.`,
   colour: (image) =>
     `The colour or material in ${image} is not the real product's; take the colour, material and finish from the product photos.`,
   background: (_, Image) =>
     `${Image} shows a wall, a floor or a shadow; draw the product alone on pure white, with no wall, no floor and no cast shadow.`,
   extras: (_, Image) =>
     `${Image} has parts the real product does not have; leave out everything that is not on the real product in the photos.`,
-  shape: (image) =>
-    `The shape or proportions in ${image} differ from image 0; keep the outline, proportions and size exactly as in image 0.`,
 };
 /**
  * "고칠 점": the earlier candidate is image `index` (after the product photos); the quick fixes in

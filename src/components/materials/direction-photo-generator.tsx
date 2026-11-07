@@ -110,11 +110,9 @@ type Candidate =
 type Fixing = { previous: Blob; feedback: DirectionPhotoFeedback };
 /** The quick fixes as the buttons say them (the sentences are the server's, prompt.ts). */
 const FIX_LABELS: Record<DirectionPhotoFix, string> = {
-  straight: '똑바로 본 모습',
   colour: '사진 색 그대로',
   background: '벽·그림자 없이',
   extras: '없는 물건 빼기',
-  shape: '가이드 모양 그대로',
 };
 type FixDraft = { fixes: DirectionPhotoFix[]; text: string };
 
@@ -909,6 +907,10 @@ export function DirectionPhotoGenerator({
             {candidates[direction]?.[picked[direction] ?? -1]?.status === 'made' && (
               <details className="mt-1 w-full" role="group" aria-label={`${direction} 고른 후보 고치기`}>
                 <summary className="cursor-pointer text-sm font-semibold">고른 후보 고치기</summary>
+                <p className={`${styles.note} mt-1`} data-testid={`ai-fix-hint-${direction}`}>
+                  색·배경·없는 물건처럼 겉모습을 고칠 때 써요. 방향이나 모양이 틀리면 ‘{direction} 다시
+                  만들기’가 더 잘 돼요(고치기는 고른 후보의 각도와 모양을 따라 그려요).
+                </p>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {DIRECTION_PHOTO_FIXES.map((value) => {
                     const on = drafts[direction]?.fixes.includes(value) ?? false;

@@ -298,13 +298,13 @@ describe('direction photo prompt', () => {
 
   it('says what to change in an earlier candidate last: the quick fixes, then the person’s words (고칠 점)', () => {
     const feedback: DirectionPhotoFeedback = {
-      fixes: ['background', 'straight'],
+      fixes: ['background', 'colour'],
       text: '수전을 "빼" 주세요',
     };
     const text = buildPrompt(spec({ direction: 'front' }), 2, feedback);
     expect(text.endsWith(feedbackSentence(feedback, 3))).toBe(true);
     expect(feedbackSentence(feedback, 3)).toBe(
-      "Image 3 is an earlier attempt at this photo that the person wants changed. Image 3 is turned toward the camera or seen at a slant; make the view exactly that of image 0, straight on, with no perspective and no turn. Image 3 shows a wall, a floor or a shadow; draw the product alone on pure white, with no wall, no floor and no cast shadow. The person's request about image 3, in their own words: \"수전을 '빼' 주세요\". Make the new photo from image 0 and the product photos as said above, keep what image 3 already got right and change only what is asked.",
+      "Image 3 is an earlier attempt at this photo that the person wants changed. The colour or material in image 3 is not the real product's; take the colour, material and finish from the product photos. Image 3 shows a wall, a floor or a shadow; draw the product alone on pure white, with no wall, no floor and no cast shadow. The person's request about image 3, in their own words: \"수전을 '빼' 주세요\". Make the new photo from image 0 and the product photos as said above, keep what image 3 already got right and change only what is asked.",
     );
     expect(feedbackSentence({ fixes: ['colour'], text: '' }, 2)).not.toContain('own words');
     // Four images at most: the guide, two photos and the earlier candidate.
@@ -322,6 +322,9 @@ describe('direction photo prompt', () => {
       { fixes: [], text: '' },
       { fixes: ['colour', 'colour'], text: '' },
       { fixes: ['make it pink'], text: '' },
+      // The view and the shape are for 다시 만들기 (dropped 2026-11-07: Cloudflare kept the earlier ones).
+      { fixes: ['straight'], text: '' },
+      { fixes: ['shape'], text: '' },
       { fixes: [], text: '가'.repeat(201) },
       { fixes: [], text: '두 줄\n글' },
       { fixes: [], text: ' 앞에 빈칸' },

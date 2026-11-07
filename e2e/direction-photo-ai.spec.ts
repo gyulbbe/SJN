@@ -317,12 +317,20 @@ test('사진을 올리면 가이드 4장·후보를 만들고, 고른 사진이 
   // the pick). Those two requests are all the action sends (d1-query-budget: the screen's calls).
   const fixGroup = generator.getByRole('group', { name: '왼쪽 고른 후보 고치기' });
   // Folded until opened, so the picked directions do not each spread their fix out.
-  await expect(fixGroup.getByRole('button', { name: '똑바로 본 모습', exact: true })).toBeHidden();
+  await expect(fixGroup.getByRole('button', { name: '사진 색 그대로', exact: true })).toBeHidden();
   await fixGroup.getByText('고른 후보 고치기', { exact: true }).click();
+  // Three quick fixes (the look); the view and the shape point to 다시 만들기 instead.
+  for (const name of ['사진 색 그대로', '벽·그림자 없이', '없는 물건 빼기'])
+    await expect(fixGroup.getByRole('button', { name, exact: true })).toBeVisible();
+  for (const name of ['똑바로 본 모습', '가이드 모양 그대로'])
+    await expect(fixGroup.getByRole('button', { name, exact: true })).toHaveCount(0);
+  await expect(fixGroup.getByTestId('ai-fix-hint-왼쪽')).toContainText(
+    '방향이나 모양이 틀리면 ‘왼쪽 다시 만들기’가 더 잘 돼요',
+  );
   const fixButton = fixGroup.getByRole('button', { name: '왼쪽 고쳐서 다시 만들기', exact: true });
   await expect(fixButton).toBeDisabled();
-  await fixGroup.getByRole('button', { name: '똑바로 본 모습', exact: true }).click();
-  await expect(fixGroup.getByRole('button', { name: '똑바로 본 모습', exact: true })).toHaveAttribute(
+  await fixGroup.getByRole('button', { name: '사진 색 그대로', exact: true }).click();
+  await expect(fixGroup.getByRole('button', { name: '사진 색 그대로', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
@@ -352,7 +360,7 @@ test('사진을 올리면 가이드 4장·후보를 만들고, 고른 사진이 
     expect(s.spec.direction).toBe('left');
     expect(s.refs).toHaveLength(1);
     expect(s.previous).toEqual([480, 496]);
-    expect(s.feedback).toEqual({ fixes: ['straight'], text: '수전을 빼 주세요' });
+    expect(s.feedback).toEqual({ fixes: ['colour'], text: '수전을 빼 주세요' });
   }
   await expect(leftCandidates.getByText('고친 후보', { exact: true })).toHaveCount(2);
   await expect(generator.getByRole('button', { name: '왼쪽 후보 1', exact: true })).toHaveAttribute(

@@ -193,7 +193,7 @@ describe('direction photo route', () => {
 
   /** "고칠 점": an earlier candidate at the guide's size and what to change in it. */
   const fixing =
-    (feedback: unknown = { fixes: ['straight'], text: '수전을 빼 주세요' }) =>
+    (feedback: unknown = { fixes: ['colour'], text: '수전을 빼 주세요' }) =>
     async (form: FormData) => {
       form.set('previous', blob(await png(432, 496, '#cccccc')), 'earlier.png');
       form.set('feedback', typeof feedback === 'string' ? feedback : JSON.stringify(feedback));
@@ -201,7 +201,7 @@ describe('direction photo route', () => {
 
   it('sends an earlier candidate after the photos with what to change, last in the prompt (고칠 점)', async () => {
     const env = environment();
-    const feedback: DirectionPhotoFeedback = { fixes: ['straight'], text: '수전을 빼 주세요' };
+    const feedback: DirectionPhotoFeedback = { fixes: ['colour'], text: '수전을 빼 주세요' };
     const result = await runDirectionPhoto(
       await request(async (form) => {
         form.append('refs', blob(await png(288, 496, '#dddddd')), 'photo-2.png');
@@ -223,7 +223,7 @@ describe('direction photo route', () => {
     ]);
     expect(form.get('prompt')).toBe(buildDirectionPhotoPrompt(spec, 2, feedback));
     expect(form.get('prompt')).toContain(
-      'Image 3 is an earlier attempt at this photo that the person wants changed. Image 3 is turned toward the camera',
+      "Image 3 is an earlier attempt at this photo that the person wants changed. The colour or material in image 3 is not the real product's",
     );
     expect(form.get('prompt')).toContain('in their own words: "수전을 빼 주세요".');
     expect(new Uint8Array(await (form.get('input_image_3') as Blob).arrayBuffer())).toEqual(
@@ -237,7 +237,7 @@ describe('direction photo route', () => {
     const env = environment(vi.fn(async () => new Response('provider error', { status: 500 })));
     const failure = await runDirectionPhoto(await request(fixing()), env).catch((error: unknown) => error);
     const diagnostics = JSON.stringify((failure as { diagnostics?: unknown }).diagnostics);
-    expect(diagnostics).toContain('"feedback":{"fixes":["straight"],"textLength":9}');
+    expect(diagnostics).toContain('"feedback":{"fixes":["colour"],"textLength":9}');
     expect(diagnostics).not.toContain('수전');
   });
 

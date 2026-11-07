@@ -70,10 +70,12 @@ export const photoAngleTold = (category: DirectionPhotoCategory, form: Direction
 
 /**
  * The quick fixes a person may pick for an earlier candidate, each a sentence the server writes
- * (prompt.ts feedbackSentence): turned to the photo's angle, a colour unlike the photo, a wall or a
- * shadow, parts the product does not have, a shape unlike the guide (the 2026-11-07 trial's faults).
+ * (prompt.ts feedbackSentence): a colour unlike the photo, a wall or a shadow, parts the product does
+ * not have. Not the view or the shape: with the earlier candidate in the request Cloudflare drew its
+ * angle and outline again, asked or not (2026-11-07, docs/direction-photo-feedback-20261107.md); those
+ * are for "다시 만들기" (the user's decision, 11-07).
  */
-export const DIRECTION_PHOTO_FIXES = ['straight', 'colour', 'background', 'extras', 'shape'] as const;
+export const DIRECTION_PHOTO_FIXES = ['colour', 'background', 'extras'] as const;
 export type DirectionPhotoFix = (typeof DIRECTION_PHOTO_FIXES)[number];
 /** A person's own words about an earlier candidate: at most this many characters. */
 export const DIRECTION_PHOTO_FEEDBACK_MAX_CHARS = 200;
