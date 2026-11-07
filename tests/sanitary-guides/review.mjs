@@ -9,8 +9,12 @@
 //   node tests/sanitary-guides/review.mjs scores <engine>
 //     Each answer's outline against its own guide's (IoU) → review/<engine>-scores.json
 //   node tests/sanitary-guides/review.mjs table <engine> <rep|other>
-//     The grades (ratings-claude.txt, written before the key is opened: "<class> <view> <letter> <1|2|3> <y|n> [o k b]")
+//     The grades (ratings-claude.txt, written before the key is opened: "<class> <view> <letter> <1|2|3> <y|n> [o k b c u]";
+//     c colour or material unlike the photo, u could be registered as it is — Cloudflare only)
 //     with the key and the scores: per class pass or fail, G against C0 → review/<engine>-<set>/table.json, table.md
+//   node tests/sanitary-guides/review.mjs both
+//     The views made on both engines: the photo, the guide, the local answer and Cloudflare's (seed 1001),
+//     with Claude's grade of the Cloudflare answer → 결과-cloudflare-N.png
 //   node tests/sanitary-guides/review.mjs results <engine>
 //     Per kind, a block per class: its photo and guides, then the answers → 결과-<engine>_<kind>.png
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -75,7 +79,7 @@ if (command === 'sheets') {
         const j = Math.floor(random() * (i + 1));
         [list[i], list[j]] = [list[j], list[i]];
       }
-      rows.push({ id, view, photo: manifest[id][set].ref, list });
+      rows.push({ id, view, photo: manifest[id][set].ref, guide: manifest[id][set].guides.G[view], list });
     }
   const CELL = 300,
     LABEL = 120,
@@ -96,6 +100,13 @@ if (command === 'sheets') {
       });
       comp.push({ input: await tile(row.photo, CELL), left: LABEL, top });
       comp.push({ input: svg(CELL, 26, [['제품 사진', 16, 20]]), left: LABEL, top: top + CELL });
+      // Cloudflare ran one method (G) only: its guide beside the answer unblinds nothing and shows the
+      // view meant (the methods trial's lesson: a basin side reads as a front without its guide).
+      if (engine === 'cf') {
+        const left = LABEL + 3 * (CELL + 8);
+        comp.push({ input: await tile(row.guide, CELL), left, top });
+        comp.push({ input: svg(CELL, 26, [['가이드', 16, 20]]), left, top: top + CELL });
+      }
       for (const [k, [method, s, file]] of row.list.entries()) {
         const letter = 'ABC'[k];
         key[`${row.id} ${row.view} ${letter}`] = { method, seed: s, file };
@@ -320,5 +331,66 @@ if (command === 'results') {
       .png()
       .toFile(join(OUT, `결과-${engine}_${page.name}.png`));
     console.log(page.name, y);
+  }
+}
+
+if (command === 'both') {
+  const key = JSON.parse(readFileSync(join(OUT, 'review', 'cf-rep', 'key.json'), 'utf8'));
+  const table = JSON.parse(readFileSync(join(OUT, 'review', 'cf-rep', 'table.json'), 'utf8'));
+  const CELL = 200,
+    GAP = 6,
+    COL = CELL + GAP,
+    LABEL = 170;
+  const rows = Object.keys(key).map((k) => {
+    const [id, view] = k.split(' ');
+    return { id, view, grade: table.grades.find((g) => g.id === id && g.view === view) };
+  });
+  const heads = ['제품 사진', '분류 가이드', '무료 FLUX', 'Cloudflare'];
+  const PER = 21;
+  for (let p = 0; p * PER < rows.length; p++) {
+    const page = rows.slice(p * PER, (p + 1) * PER);
+    const width = LABEL + 4 * COL + GAP;
+    const comp = [
+      {
+        input: svg(
+          width,
+          30,
+          heads.map((t, i) => [t, 18, 22, 700, LABEL + i * COL + 8]),
+        ),
+        left: 0,
+        top: 0,
+      },
+    ];
+    let y = 32;
+    for (const { id, view, grade } of page) {
+      const product = manifest[id].rep;
+      const verdict = grade.dir === 1 ? '방향 맞음' : grade.dir === 2 ? '살짝 돎' : '사진 각도로 돎';
+      comp.push({
+        input: svg(LABEL, CELL, [
+          [id, 22, 30, 700],
+          [KOREAN[view], 17, 56],
+          [verdict, 14, 90, grade.dir === 1 ? 700 : 400],
+          [grade.same ? '종류 같음' : '종류 다름', 14, 112],
+          ...(grade.problems.includes('c') ? [['색 다름', 14, 134]] : []),
+          ...(grade.problems.includes('u') ? [['그대로 등록 가능', 14, 156, 700]] : []),
+        ]),
+        left: 0,
+        top: y,
+      });
+      const files = [
+        product.ref,
+        product.guides.G[view],
+        join(OUT, 'runs', 'local', id, 'rep', 'G', `${view}-1001.png`),
+        join(OUT, 'runs', 'cf', id, 'rep', 'G', `${view}-1001.png`),
+      ];
+      for (const [i, f] of files.entries())
+        if (existsSync(f)) comp.push({ input: await tile(f, CELL), left: LABEL + i * COL, top: y });
+      y += COL;
+    }
+    await sharp({ create: { width, height: y, channels: 3, background: '#e9e9e9' } })
+      .composite(comp)
+      .png()
+      .toFile(join(OUT, `결과-cloudflare-${p + 1}.png`));
+    console.log('page', p + 1, y);
   }
 }
