@@ -6,22 +6,28 @@
  *   shape named where the app names its own (and, for a few classes, the sentences that would say a
  *   part the shape has not: a tankless bowl's tank, a squat pan's seat).
  * - C0: what the app does now: its closest standard model and its prompt, unchanged.
+ * - G2 (2026-11-07, after Cloudflare turned 30 of 41 views to the photo's angle): G and, for a
+ *   basin, a urinal or a bath, the two sentences the app gives a toilet only: where the photo was
+ *   taken from and that its angle is not the one to make (photoAngleSentence), and, for a side or the
+ *   back, an orthographic elevation (TOILET_SIDE_ELEVATION; the methods trial's back sentence). A
+ *   toilet's G2 is its G: the app already says both.
  *
  * Every change is found exactly once in the app's text or the prompt is not made (`once`, as the
  * direction-photo methods trial did), so a class never drifts silently from the app.
  */
-import { buildDirectionPhotoPrompt } from '../../src/lib/direction-photo/prompt';
+import { buildDirectionPhotoPrompt, photoAngleSentence } from '../../src/lib/direction-photo/prompt';
 import {
   directionPhotoSpecSchema,
+  type DirectionPhotoPhotoAngle,
   type DirectionPhotoSpec,
   type DirectionPhotoView,
 } from '../../src/lib/direction-photo/contract';
-import { toiletInImageZero } from '../../src/lib/direction-photo/categories/toilet';
+import { TOILET_SIDE_ELEVATION, toiletInImageZero } from '../../src/lib/direction-photo/categories/toilet';
 import { B2_NOUNS, once } from '../direction-photo-methods/methods';
 import type { SanitaryClass } from './classes';
 import type { SanitaryShape } from './shapes';
 
-export const TRIAL_METHODS = ['G', 'C0'] as const;
+export const TRIAL_METHODS = ['G', 'C0', 'G2'] as const;
 export type TrialMethod = (typeof TRIAL_METHODS)[number];
 
 export const KOREAN_VIEW: Record<DirectionPhotoView, '정면' | '왼쪽' | '오른쪽' | '뒤'> = {
@@ -110,6 +116,27 @@ const PHOTO_ANGLE: Record<string, DirectionPhotoSpec['photoAngles']> = {
   T2: ['front-right'],
   T5: ['front-right'],
 };
+
+/**
+ * Where each basin's, urinal's and bath's representative photo was taken from (G2), read from the
+ * site's renders on 2026-11-07: LAUCHE's basins and the baths from the front left (the product's left
+ * end shows on the picture's right), the CLINS pedestal and semi-pedestal basins and two urinals
+ * straight in front, the sensor urinal from the front right; the drop-in bowl from above (unknown).
+ */
+export const PHOTO_FROM: Record<string, DirectionPhotoPhotoAngle> = {
+  ...Object.fromEntries(
+    ['B1', 'B2', 'B3', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12', 'B13', 'B14', 'B15', 'B16']
+      .concat(['B22', 'B23', 'B24', 'B26', 'A1', 'A2', 'A3', 'A4', 'A5'])
+      .map((id) => [id, 'front-left']),
+  ),
+  ...Object.fromEntries(['B4', 'B17', 'B18', 'B19', 'B20', 'B21', 'U1', 'U3'].map((id) => [id, 'front'])),
+  U2: 'front-right',
+  B25: 'unknown',
+};
+/** The methods trial's back sentence (methods.ts ORTHO.back), for a back view in G2. */
+export const BACK_ELEVATION =
+  'Draw it as an orthographic back elevation, like a product drawing: no perspective, no turn toward the camera, the outline exactly that of image 0.';
+const STUDIO = 'Turn image 0 into a photorealistic studio product photograph';
 
 /** The app's spec for a class at a view (its closest kind and form, at the given size). */
 export function specOf(
@@ -254,6 +281,15 @@ export function promptFor(
   sizeMm: [number, number, number] = c.sizeMm,
 ): string {
   if (!viewsOf(c).includes(view)) throw new Error(`${c.id}: the app makes no ${view} view`);
+  if (method === 'G2') {
+    const g = promptFor(c, view, 'G', sizeMm);
+    if (c.category === 'toilet') return g;
+    const from = PHOTO_FROM[c.id];
+    if (!from) throw new Error(`${c.id}: where its photo was taken from is not said`);
+    const withAngle = once(g, STUDIO, `${photoAngleSentence([from], view)} ${STUDIO}`);
+    const elevation = view === 'back' ? BACK_ELEVATION : view === 'front' ? '' : TOILET_SIDE_ELEVATION;
+    return elevation ? `${withAngle} ${elevation}` : withAngle;
+  }
   const spec = specOf(c, view, sizeMm);
   let text = buildDirectionPhotoPrompt(spec, 1);
   if (method === 'C0') {

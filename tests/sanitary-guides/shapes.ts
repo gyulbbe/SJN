@@ -188,11 +188,15 @@ export function createSanitaryShape(
       break;
     }
     case 'squat-pan': {
-      // A long pan set into the floor, its hood raised at the front end.
-      openBasin(rect(w, d, w * 0.48), 0, h * 0.62, w * 0.1, h * 0.45, ceramic, group);
+      // A long, low pan set into the floor: a wide flat rim round a shallow bowl, its hood raised at
+      // the front end. 2026-11-07: the first guide's walls stood at 62% of the height and the AI drew
+      // a deep tub (Cloudflare and local); the real pan's rim is well under half the hood's height.
+      // The hood is a wide dome over most of the pan's width, about a fifth of its length.
+      const rim = h * 0.38;
+      openBasin(rect(w, d, w * 0.48), 0, rim, w * 0.16, rim * 0.75, ceramic, group);
       const hood = add(new Mesh(new SphereGeometry(1, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2), ceramic));
-      hood.scale.set(w * 0.4, h * 0.38, d * 0.15);
-      hood.position.set(0, h * 0.62, d * 0.32);
+      hood.scale.set(w * 0.4, h - rim, d * 0.2);
+      hood.position.set(0, rim, d * 0.28);
       break;
     }
     // ---------- countertop and wall basins ----------

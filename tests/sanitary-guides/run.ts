@@ -3,7 +3,7 @@
  * local FLUX (free, shape screening only) or to Cloudflare through the direction-photo methods trial's
  * temporary Worker (billed), and keeps every call in the ledger. The pictures are prepare.ts's.
  *
- *   node tests/run-browser-test.mjs tests/sanitary-guides/run.ts <local|cf> <classes|all> <G,C0> <rep,other> [seeds]
+ *   node tests/run-browser-test.mjs tests/sanitary-guides/run.ts <local|cf> <classes|all> <G,C0,G2> <rep,other> [seeds]
  *     seeds: default 1001,1002. Views: the app's (prompts.ts viewsOf).
  *   DRY=1 counts the calls and their estimated neurons and sends nothing.
  *   ONLY=T2:front,B1:left limits the run to those class views.
@@ -24,7 +24,7 @@ import type { Manifest, Who } from './prepare';
 
 const [engine, classList, methodList, whoList, seedList = '1001,1002'] = process.argv.slice(3);
 if ((engine !== 'local' && engine !== 'cf') || !classList || !methodList || !whoList)
-  throw new Error('usage: run.ts <local|cf> <classes|all> <G,C0> <rep,other> [seeds]');
+  throw new Error('usage: run.ts <local|cf> <classes|all> <G,C0,G2> <rep,other> [seeds]');
 const DRY = !!process.env.DRY;
 const MODEL = process.env.FLUX_MODEL ?? FLUX_4B;
 const seeds = seedList.split(',').map(Number);
@@ -71,7 +71,7 @@ runs: for (const method of methods)
     const jobs: Job[] = [];
     for (const c of classes) {
       const product = manifest[c.id]?.[who];
-      const guides = product?.guides[method];
+      const guides = product?.guides[method === 'C0' ? 'C0' : 'G'];
       if (!product || !guides) continue;
       for (const view of viewsOf(c).filter((v) => !ONLY || ONLY.has(`${c.id}:${v}`)))
         for (const seed of seeds) {

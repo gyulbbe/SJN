@@ -98,6 +98,21 @@ describe('sanitary-ware AI direction-photo trial (2026-11-07)', () => {
     expect(seriesOf('뉴바네스 G63L (L)')).not.toBe(seriesOf('바네스 G62L (L)'));
   });
 
+  it('adds the photo angle and the elevation to a basin, urinal or bath (G2), and leaves a toilet as it is', () => {
+    for (const c of CLASSES)
+      for (const view of viewsOf(c)) {
+        const g = promptFor(c, view, 'G');
+        const g2 = promptFor(c, view, 'G2');
+        if (c.category === 'toilet') {
+          expect(g2).toBe(g);
+          continue;
+        }
+        expect(g2.startsWith(g.slice(0, g.indexOf('Turn image 0 into')))).toBe(true);
+        expect(g2).toMatch(view === 'front' ? /do not copy|close to the view|not the view/ : /orthographic (side|back) elevation/);
+        if (view !== 'front') expect(g2).toMatch(/orthographic (side|back) elevation[^.]*\.$/);
+      }
+  });
+
   it('counts the spend of the methods trial toward the day', () => {
     expect(OTHER_LEDGERS).toContain(METHODS_LEDGER);
   });

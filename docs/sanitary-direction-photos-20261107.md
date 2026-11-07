@@ -154,3 +154,14 @@ node tests/sanitary-guides/review.mjs sheets local rep
 - 무료 FLUX 서버(`tests/direction-photo-real/local-flux/server.py`, :8798)를 먼저 띄운다. GPU 메모리 약 8.4GB가 필요하다.
 - Cloudflare는 `bash tests/sanitary-guides/cf-failed.sh`(09:00 KST 이후). 하루 몫은 추정 5,000이다(`budget.ts`, 다른 시험 원장 포함).
 - `review.mjs`: `sheets` → `ratings-claude.txt`를 쓴 뒤 → `scores` → `table`(키를 여기서 연다) → `results`·`both`
+
+## 8. 옆 문장 시험 G2 (사용자 결정 11-07 "옆 문장 시험", 결과를 보기 전에 적음)
+
+- **G2:** G와 같은 가이드다. 세면대·소변기·욕조에 앱이 변기에만 주는 두 문장을 더한다(`prompts.ts`).
+  - 찍은 각도 문장(`photoAngleSentence`): 사진을 어디서 찍었는지와, 그 각도는 만들 방향이 아니니 따라 하지 말라는 말이다. 사진 각도는 대표 사진을 보고 정했다(`PHOTO_FROM`: LAUCHE 세면대·욕조는 앞 왼쪽, CLINS 반다리·긴다리 세면대와 소변기 둘은 정면, 센서 소변기는 앞 오른쪽, 언더볼은 모름).
+  - 정투상 문장: 옆은 앱의 변기 옆 문장(`TOILET_SIDE_ELEVATION`)을, 뒤는 방법 시험의 뒤 문장을 쓴다. 정면에는 찍은 각도 문장만 더한다.
+  - 변기의 G2는 G와 같다(앱이 이미 두 문장을 준다).
+- **T8 화변기 가이드를 고쳤다:** 통의 벽 높이를 62%에서 38%로 낮추고, 앞 덮개를 넓은 돔으로 바꿨다. 예전 가이드와 그 결과는 `prep/T8/rep/G-guide-v1`, `runs/*/T8/rep/G-guide-v1`에 남겼다. 11-06 가이드 폴더도 다시 그렸다.
+- **무료 단계:** 세면대·소변기·욕조의 옆·뒤 53곳에서 G2를 seed 1001·1002로 만든다(106장). 같은 곳의 G 2장과 섞어 블라인드로 채점한다(`review/local-g2`). T8은 새 가이드로 G를 3방향 × 2장 만든다.
+- **Cloudflare(11-08 09:00 KST 이후, 사용자 결정):** 11-07 Cloudflare에서 사진 각도로 돈 30곳 중 29곳에서 G2를 1장씩(seed 1001) 만든다. T5 정면은 G2 문장이 G와 같아 뺀다. 여기에 T8 정면을 새 가이드로 1장 더해 30회다.
+- **기준:** 29곳은 G가 Cloudflare에서 모두 돈 곳이다(0/29). G2가 그중 15곳 이상에서 방향과 종류가 맞으면 "옆 문장이 효과가 있다"고 본다. 그보다 적으면 효과가 부족하다고 적는다. 무료 단계 결과로 이 기준을 바꾸지 않는다.

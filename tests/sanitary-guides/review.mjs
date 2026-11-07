@@ -12,6 +12,9 @@
 //     The grades (ratings-claude.txt, written before the key is opened: "<class> <view> <letter> <1|2|3> <y|n> [o k b c u]";
 //     c colour or material unlike the photo, u could be registered as it is — Cloudflare only)
 //     with the key and the scores: per class pass or fail, G against C0 → review/<engine>-<set>/table.json, table.md
+//   node tests/sanitary-guides/review.mjs versus <engine> <set dir> <method A> <method B>
+//     Two methods graded on the same sheets (METHODS=A,B NAME=<dir> sheets): per method the answers'
+//     view and kind, per class view whether 1 of its 2 answers is right, and A against B per view
 //   node tests/sanitary-guides/review.mjs both
 //     The views made on both engines: the photo, the guide, the local answer and Cloudflare's (seed 1001),
 //     with Claude's grade of the Cloudflare answer → 결과-cloudflare-N.png
@@ -50,9 +53,22 @@ const tile = (file, size) =>
     .png()
     .toBuffer();
 
-/** The candidates of a class, view and set: [method, seed, file] that exist. */
+/**
+ * The candidates of a class, view and set: [method, seed, file] that exist. METHODS (comma-separated)
+ * picks the methods; by default G and, for a representative, C0 (C0 was made with seed 1001 only).
+ */
+const METHODS = process.env.METHODS?.split(',');
+const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : undefined;
 function candidates(id, who, view) {
-  const list = [['G', 1001], ['G', 1002], ...(who === 'rep' ? [['C0', 1001]] : [])];
+  const methods = METHODS ?? ['G', ...(who === 'rep' ? ['C0'] : [])];
+  const list = methods.flatMap((m) =>
+    m === 'C0'
+      ? [[m, 1001]]
+      : [
+          [m, 1001],
+          [m, 1002],
+        ],
+  );
   return list
     .map(([method, seed]) => [method, seed, answer(id, who, method, view, seed)])
     .filter(([, , file]) => existsSync(file));
@@ -61,7 +77,7 @@ function candidates(id, who, view) {
 const viewsOf = (id, who) => VIEWS.filter((v) => manifest[id][who]?.guides.G?.[v]);
 
 if (command === 'sheets') {
-  const dir = join(OUT, 'review', `${engine}-${set}`);
+  const dir = join(OUT, 'review', process.env.NAME ?? `${engine}-${set}`);
   mkdirSync(dir, { recursive: true });
   let seed = 20261107;
   const random = () => {
@@ -72,7 +88,7 @@ if (command === 'sheets') {
   };
   const rows = [];
   for (const id of ids)
-    for (const view of viewsOf(id, set)) {
+    for (const view of viewsOf(id, set).filter((v) => !ONLY || ONLY.has(`${id}:${v}`))) {
       const list = candidates(id, set, view);
       if (!list.length) continue;
       for (let i = list.length - 1; i > 0; i--) {
@@ -108,14 +124,14 @@ if (command === 'sheets') {
         comp.push({ input: svg(CELL, 26, [['가이드', 16, 20]]), left, top: top + CELL });
       }
       for (const [k, [method, s, file]] of row.list.entries()) {
-        const letter = 'ABC'[k];
+        const letter = 'ABCD'[k];
         key[`${row.id} ${row.view} ${letter}`] = { method, seed: s, file };
         const left = LABEL + (k + 1) * (CELL + 8);
         comp.push({ input: await tile(file, CELL), left, top });
         comp.push({ input: svg(CELL, 26, [[letter, 20, 21, 700]]), left, top: top + CELL });
       }
     }
-    const width = LABEL + 4 * (CELL + 8),
+    const width = LABEL + (1 + Math.max(3, ...page.map((r) => r.list.length))) * (CELL + 8),
       height = page.length * (CELL + 30);
     await sharp({ create: { width, height, channels: 3, background: '#e4e4e4' } })
       .composite(comp)
@@ -137,9 +153,9 @@ if (command === 'scores') {
     for (const who of ['rep', 'other']) {
       const product = manifest[id][who];
       if (!product) continue;
-      for (const method of ['G', 'C0'])
+      for (const method of ['G', 'C0', 'G2'])
         for (const view of VIEWS) {
-          const guide = product.guides[method]?.[view];
+          const guide = product.guides[method === 'C0' ? 'C0' : 'G']?.[view];
           if (!guide) continue;
           for (const seed of [1001, 1002]) {
             const file = answer(id, who, method, view, seed);
@@ -393,4 +409,58 @@ if (command === 'both') {
       .toFile(join(OUT, `결과-cloudflare-${p + 1}.png`));
     console.log('page', p + 1, y);
   }
+}
+
+if (command === 'versus') {
+  const [, , , name, a, b] = process.argv;
+  const dir = join(OUT, 'review', name);
+  const key = JSON.parse(readFileSync(join(dir, 'key.json'), 'utf8'));
+  const grades = [];
+  for (const line of readFileSync(join(dir, 'ratings-claude.txt'), 'utf8').split(/\r?\n/)) {
+    const m = line.trim().match(/^(\S+) (\S+) ([ABCD]) ([123]) ([yn])(?: (.*))?$/);
+    if (!m) continue;
+    const k = key[`${m[1]} ${m[2]} ${m[3]}`];
+    if (!k) throw new Error(`no key for ${m[1]} ${m[2]} ${m[3]}`);
+    grades.push({
+      id: m[1],
+      view: m[2],
+      ...k,
+      dir: Number(m[4]),
+      same: m[5] === 'y',
+      problems: (m[6] ?? '').trim(),
+    });
+  }
+  if (grades.length !== Object.keys(key).length)
+    throw new Error(`graded ${grades.length} of ${Object.keys(key).length}`);
+  const good = (g) => g.dir === 1 && g.same;
+  const lines = [];
+  for (const method of [a, b]) {
+    const list = grades.filter((g) => g.method === method);
+    lines.push(
+      `${method}: ${list.length}장 · 방향 맞음 ${list.filter((g) => g.dir === 1).length} · 살짝 ${list.filter((g) => g.dir === 2).length} · 틀림 ${list.filter((g) => g.dir === 3).length} · 종류 같음 ${list.filter((g) => g.same).length} · 배경 ${list.filter((g) => g.problems.includes('b')).length}`,
+    );
+  }
+  const slots = [...new Set(grades.map((g) => `${g.id} ${g.view}`))];
+  const pass = { [a]: 0, [b]: 0 };
+  const versus = { better: [], same: [], worse: [] };
+  const rows = ['| 분류 | 방향 | ' + a + ' | ' + b + ' |', '| --- | --- | --- | --- |'];
+  for (const slot of slots) {
+    const of = (m) => grades.filter((g) => `${g.id} ${g.view}` === slot && g.method === m);
+    const score = (m) => of(m).filter(good).length * 10 + of(m).filter((g) => g.dir === 2).length;
+    for (const m of [a, b]) if (of(m).some(good)) pass[m]++;
+    const d = score(b) - score(a);
+    versus[d > 0 ? 'better' : d < 0 ? 'worse' : 'same'].push(slot);
+    const cell = (m) =>
+      of(m)
+        .map((g) => `${g.dir}${g.same ? 'y' : 'n'}${g.problems ? ' ' + g.problems : ''}`)
+        .join(', ');
+    const [id, view] = slot.split(' ');
+    rows.push(`| ${id} | ${KOREAN[view]} | ${cell(a)} | ${cell(b)} |`);
+  }
+  lines.push(`2장 중 1장 이상 방향·종류 맞음(${slots.length}곳): ${a} ${pass[a]} · ${b} ${pass[b]}`);
+  lines.push(`${b}가 나음 ${versus.better.length}: ${versus.better.join(', ')}`);
+  lines.push(`같음 ${versus.same.length} · ${b}가 못함 ${versus.worse.length}: ${versus.worse.join(', ')}`);
+  writeFileSync(join(dir, 'table.md'), lines.join('\n') + '\n\n' + rows.join('\n') + '\n');
+  writeFileSync(join(dir, 'table.json'), JSON.stringify({ pass, versus, grades }, null, 1));
+  console.log(lines.join('\n'));
 }
