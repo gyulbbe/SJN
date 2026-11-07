@@ -32,13 +32,22 @@ const ARMS = [
 ];
 /** The control (way A, nothing asked): graded on its own sheet (NAME=control) against the earlier answer. */
 const CONTROL = process.env.NAME === 'control';
-const SHEET_ARMS = CONTROL ? [['A', 'none']] : ARMS;
+// ARMS=A:fix,A:ko,A:none picks the ways and words shown (the Cloudflare check: each case's words and the control).
+const SHEET_ARMS = process.env.ARMS
+  ? process.env.ARMS.split(',').map((arm) => arm.split(':'))
+  : CONTROL
+    ? [['A', 'none']]
+    : ARMS;
 const [command, engine] = process.argv.slice(2);
 const manifest = JSON.parse(readFileSync(join(SANITARY_PREP, 'manifest.json'), 'utf8'));
 const answer = (id, view, frame, words, seed = 1001) =>
   join(OUT, 'runs', engine, `${id}-${view}-${frame}-${words}-${seed}.png`);
 const earlier = (id, method, view) => join(SANITARY, 'runs', 'cf', id, 'rep', method, `${view}-1001.png`);
-const dir = join(OUT, 'review', CONTROL ? `${engine}-control` : (engine ?? ''));
+const dir = join(
+  OUT,
+  'review',
+  process.env.NAME && !CONTROL ? process.env.NAME : CONTROL ? `${engine}-control` : (engine ?? ''),
+);
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const svg = (w, h, lines) =>
   Buffer.from(
@@ -169,7 +178,8 @@ if (command === 'picture') {
     GAP = 6,
     COL = CELL + GAP,
     LABEL = 190;
-  const heads = ['이전 답', '가이드', 'A · 빠른 선택', 'A · 한국어 글', 'B · 빠른 선택', 'B · 한국어 글'];
+  const WORD = { fix: '빠른 선택', ko: '한국어 글', none: '아무것도 안 씀' };
+  const heads = ['이전 답', '가이드', ...SHEET_ARMS.map(([f, w]) => `${f} · ${WORD[w]}`)];
   const width = LABEL + heads.length * COL + GAP;
   const comp = [
     {
@@ -199,13 +209,13 @@ if (command === 'picture') {
     const files = [
       earlier(id, method, view),
       product.guides.G[view],
-      ...ARMS.map(([f, w]) => answer(id, view, f, w)),
+      ...SHEET_ARMS.map(([f, w]) => answer(id, view, f, w)),
     ];
     for (const [i, f] of files.entries()) {
       if (!existsSync(f)) continue;
       comp.push({ input: await tile(f, CELL), left: LABEL + i * COL, top: y });
       if (i < 2) continue;
-      const [frame, words] = ARMS[i - 2];
+      const [frame, words] = SHEET_ARMS[i - 2];
       const g = grades.find((x) => x.id === id && x.frame === frame && x.words === words);
       if (g)
         comp.push({
@@ -222,7 +232,7 @@ if (command === 'picture') {
     }
     y += COL;
   }
-  const file = join(OUT, `고칠점-${engine}.png`);
+  const file = join(OUT, `고칠점-${process.env.NAME ?? engine}.png`);
   await sharp({ create: { width, height: y, channels: 3, background: '#e9e9e9' } })
     .composite(comp)
     .png()

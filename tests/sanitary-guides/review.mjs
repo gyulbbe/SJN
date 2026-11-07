@@ -437,8 +437,22 @@ if (command === 'pair') {
       : `${g.dir === 1 ? '방향 맞음' : g.dir === 2 ? '살짝 돎' : '방향 틀림'}${g.same ? '' : ' · 모양 다름'}${g.problems.includes('c') ? ' · 색' : ''}${g.problems.includes('b') ? ' · 벽' : ''}`;
   for (const [p, [title, rows]] of groups.entries()) {
     const width = LABEL + 4 * COL + GAP;
-    const named = { G: '지금', G2: '문장 더함', G2E0: '문장 더함, 0° 가이드', G2E5: '문장 더함, 5° 가이드' };
-    const heads = ['제품 사진', '가이드 (10°)', `${a} (${named[a] ?? a})`, `${b} (${named[b] ?? b})`];
+    const named = {
+      G: '지금',
+      G2: '문장 더함',
+      G2E0: '문장 더함, 0° 가이드',
+      G2E5: '문장 더함, 5° 가이드',
+      C0: '지금 앱 문장',
+      C0G2: '두 문장 더함',
+    };
+    // GUIDE=C0 shows the app's guide (the C0 and C0G2 answers' own).
+    const guideKey = process.env.GUIDE ?? 'G';
+    const heads = [
+      '제품 사진',
+      guideKey === 'C0' ? '앱 가이드' : '가이드 (10°)',
+      `${a} (${named[a] ?? a})`,
+      `${b} (${named[b] ?? b})`,
+    ];
     const comp = [
       { input: svg(width, 34, [[`${title} ${rows.length}곳`, 20, 25, 700]]), left: 0, top: 0 },
       {
@@ -464,7 +478,7 @@ if (command === 'pair') {
       });
       const files = [
         product.ref,
-        product.guides.G[view],
+        product.guides[guideKey]?.[view] ?? product.guides.G[view],
         answer(id, 'rep', a, view, 1001),
         answer(id, 'rep', b, view, 1001),
       ];
@@ -484,6 +498,63 @@ if (command === 'pair') {
       .toFile(join(OUT, `${out}-${p + 1}.png`));
     console.log(out, p + 1, rows.length, y);
   }
+}
+
+if (command === 'changes') {
+  // node review.mjs changes <engine> <set dir> <method A> <method B> <file name>
+  // After `versus`: only the views where A's and B's answers (seed 1001) differ in view, two to a row:
+  // the class and view, A's answer and B's with their grades → <file name>.png
+  const [, , , , name, a, b, out] = process.argv;
+  const { grades } = JSON.parse(readFileSync(join(OUT, 'review', name, 'table.json'), 'utf8'));
+  const of = (id, view, m) =>
+    grades.find((g) => g.id === id && g.view === view && g.method === m && g.seed === 1001);
+  const slots = [...new Set(grades.map((g) => `${g.id} ${g.view}`))]
+    .map((s) => s.split(' '))
+    .filter(([id, view]) => of(id, view, a)?.dir !== of(id, view, b)?.dir);
+  const CELL = 150,
+    GAP = 6,
+    LABEL = 86,
+    BLOCK = LABEL + 2 * (CELL + GAP) + 18;
+  const word = (g) => (!g ? '' : g.dir === 1 ? '방향 맞음' : g.dir === 2 ? '살짝 돎' : '방향 틀림');
+  const named = { C0: '지금 앱 문장', C0G2: '두 문장 더함', G: '지금', G2: '문장 더함' };
+  const width = 2 * BLOCK;
+  const comp = [
+    {
+      input: svg(width, 30, [
+        [`${named[a] ?? a} → ${named[b] ?? b}: 방향이 달라진 ${slots.length}곳`, 17, 22, 700],
+      ]),
+      left: 0,
+      top: 0,
+    },
+  ];
+  const rows = Math.ceil(slots.length / 2);
+  for (const [k, [id, view]] of slots.entries()) {
+    const left = (k % 2) * BLOCK,
+      top = 32 + Math.floor(k / 2) * (CELL + GAP);
+    comp.push({
+      input: svg(LABEL, CELL, [
+        [id, 18, 24, 700],
+        [KOREAN[view], 14, 46],
+      ]),
+      left,
+      top,
+    });
+    for (const [i, m] of [a, b].entries()) {
+      const f = answer(id, 'rep', m, view, 1001);
+      if (existsSync(f))
+        comp.push({ input: await tile(f, CELL), left: left + LABEL + i * (CELL + GAP), top });
+      comp.push({
+        input: svg(CELL, 18, [[`${named[m] ?? m}: ${word(of(id, view, m))}`, 11, 13]]),
+        left: left + LABEL + i * (CELL + GAP),
+        top: top + CELL - 18,
+      });
+    }
+  }
+  await sharp({ create: { width, height: 32 + rows * (CELL + GAP), channels: 3, background: '#e9e9e9' } })
+    .composite(comp)
+    .png()
+    .toFile(join(OUT, `${out}.png`));
+  console.log(out, slots.length);
 }
 
 if (command === 'versus') {
