@@ -412,7 +412,7 @@ if (command === 'both') {
 }
 
 if (command === 'versus') {
-  const [, , , name, a, b] = process.argv;
+  const [, , , , name, a, b] = process.argv;
   const dir = join(OUT, 'review', name);
   const key = JSON.parse(readFileSync(join(dir, 'key.json'), 'utf8'));
   const grades = [];
