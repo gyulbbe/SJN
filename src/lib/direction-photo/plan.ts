@@ -17,20 +17,45 @@ export type DirectionPlan = {
 };
 
 /**
- * Which photos a run makes. 정면 and 왼쪽 always; 오른쪽 from the model only when the product is not
- * the same on both sides (else it is the 왼쪽 photo turned over, which saves the calls); 뒤 only for
- * a product that stands on the floor (a wall product's back is against the wall: no view shows it),
- * and not for a toilet (it stands against the wall, and its back came out as its front in nearly
- * every trial answer).
+ * A product this many times wider than deep gets no side photos from the model. In the 2026-11-07
+ * sanitary-ware trial (docs/sanitary-direction-photos-20261107.md, sections 9–11) every side of a
+ * bath (width ÷ depth 1.86–2.13) and of a 1.2 m counter basin (2.61) came out as its long front or
+ * long side, whatever the guide, the camera height or the sentences said; basins up to 1.78 mostly
+ * came out right.
+ */
+export const LONG_SIDE_RATIO = 1.8;
+export const LONG_NO_SIDES =
+  '가로가 깊이의 1.8배 이상인 긴 제품은 옆 사진을 만들지 않아요(AI가 옆 대신 긴 앞모습을 그려요)';
+/** Whether a size (width × height × depth, mm) is that long; not while a value is still missing. */
+export const isLongProduct = (sizeMm?: readonly [number, number, number]) =>
+  !!sizeMm && sizeMm.every((value) => value > 0) && sizeMm[0] >= LONG_SIDE_RATIO * sizeMm[2];
+
+/**
+ * Which photos a run makes. 정면 always; 왼쪽 unless the product is long (`isLongProduct`, never a
+ * toilet: it is deeper than wide); 오른쪽 from the model only when the product is not the same on
+ * both sides (else it is the 왼쪽 photo turned over, which saves the calls), and never for a long
+ * product; 뒤 only for a product that stands on the floor (a wall product's back is against the wall:
+ * no view shows it), and not for a toilet (it stands against the wall, and its back came out as its
+ * front in nearly every trial answer).
  */
 export function planDirections(input: {
   category?: DirectionPhotoCategory;
   installation: MaterialInput['installation'];
   symmetric: boolean;
+  /** Width × height × depth (mm), once entered. */
+  sizeMm?: readonly [number, number, number];
 }): DirectionPlan {
-  const plan: DirectionPlan = { made: ['정면', '왼쪽'], mirrored: [], skipped: [] };
-  if (input.symmetric) plan.mirrored.push('오른쪽');
-  else plan.made.push('오른쪽');
+  const plan: DirectionPlan = { made: ['정면'], mirrored: [], skipped: [] };
+  if (input.category !== 'toilet' && isLongProduct(input.sizeMm))
+    plan.skipped.push(
+      { direction: '왼쪽', reason: LONG_NO_SIDES },
+      { direction: '오른쪽', reason: LONG_NO_SIDES },
+    );
+  else {
+    plan.made.push('왼쪽');
+    if (input.symmetric) plan.mirrored.push('오른쪽');
+    else plan.made.push('오른쪽');
+  }
   if (input.category === 'toilet') plan.skipped.push({ direction: '뒤', reason: TOILET_NO_BACK });
   else if (standsOnFloor(input.installation)) plan.made.push('뒤');
   else plan.skipped.push({ direction: '뒤', reason: '벽에 거는 제품은 뒤 사진을 만들지 않아요' });

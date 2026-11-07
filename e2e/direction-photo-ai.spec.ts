@@ -245,14 +245,15 @@ test('사진을 올리면 가이드 4장·후보를 만들고, 고른 사진이 
   await page.getByRole('button', { name: '신규 자재 등록', exact: true }).click();
   const form = page.getByRole('dialog', { name: '신규 자재 등록', exact: true });
   await form.getByLabel('상품명').fill('AI 방향 욕조');
-  const generator = await openGenerator(form, ['1700', '560', '750']);
+  // 1300 wide, 750 deep: under 1.8 times, so it still gets side photos (a 1700 bath gets none, below).
+  const generator = await openGenerator(form, ['1300', '560', '750']);
 
   // Four guides in one row; 오른쪽 comes from 왼쪽 turned over; the share the room draws them at.
   const guides = generator.getByTestId('ai-guides');
   await expect(guides.getByRole('img')).toHaveCount(4, { timeout: 30000 });
   await expect(guides).toContainText('오른쪽 · 왼쪽 사진을 좌우 반전해 써요');
   await expect(guides).toContainText('정면 · 후보 2장을 만들어요 · 방 화면에서 약 16% 작게 보여요');
-  await expect(guides).toContainText('왼쪽 · 후보 2장을 만들어요 · 방 화면에서 약 33% 작게 보여요');
+  await expect(guides).toContainText('왼쪽 · 후보 2장을 만들어요 · 방 화면에서 약 27% 작게 보여요');
   await expect(generator.getByRole('button', { name: '방향 사진 만들기', exact: true })).toBeDisabled();
   await addReference(generator);
   // A bath's photos are not asked where they were taken from (only a toilet shaped like the product).
@@ -284,9 +285,9 @@ test('사진을 올리면 가이드 4장·후보를 만들고, 고른 사진이 
       form: 'oval-freestanding',
       direction: s.spec.direction,
       installation: 'floor',
-      sizeMm: [1700, 560, 750],
+      sizeMm: [1300, 560, 750],
     });
-    expect(s.guide).toEqual(s.spec.direction === 'left' ? [448, 496] : [496, 192]);
+    expect(s.guide).toEqual(s.spec.direction === 'left' ? [480, 496] : [496, 256]);
     for (const [w, h] of s.refs) {
       expect(Math.max(w, h)).toBeLessThanOrEqual(496);
       expect((w % 16) + (h % 16)).toBe(0);
@@ -421,8 +422,15 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   await expect(generator.getByTestId('ai-guide-size')).toContainText(
     '가로 1700 × 높이 560 × 깊이 750mm로 그렸어요.',
   );
+  // 1700 wide, 750 deep (2.3 times): a long product gets no side photos (plan.ts isLongProduct).
+  const noSides = '가로가 깊이의 1.8배 이상인 긴 제품은 옆 사진을 만들지 않아요';
+  await expect(generator.getByTestId('ai-guides')).toContainText(`왼쪽 · ${noSides}`);
+  await expect(generator.getByTestId('ai-guides')).toContainText(`오른쪽 · ${noSides}`);
+  await expect(generator.getByLabel(/좌우 대칭 제품/)).toBeDisabled();
+  await expect(generator.getByTestId('ai-estimate')).toContainText('AI 요청 4회');
+  await generator.screenshot({ path: info.outputPath('generator-long-bath.png') });
 
-  // A spent limit: the two requests in flight fail, the other four are never sent.
+  // A spent limit: the two requests in flight fail, the other two are never sent.
   await make.click();
   await expect(generator.getByTestId('ai-notice')).toContainText('오늘 AI 이용 한도를 모두 써서');
   expect(sent.length).toBeLessThanOrEqual(2);
@@ -443,7 +451,7 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   mode = 'wait';
   sent.length = 0;
   await generator.getByRole('button', { name: '모두 다시 만들기', exact: true }).click();
-  await expect(generator.getByRole('status').filter({ hasText: '만드는 중 0/6' })).toBeVisible();
+  await expect(generator.getByRole('status').filter({ hasText: '만드는 중 0/4' })).toBeVisible();
   await generator.getByRole('button', { name: '만들기 취소', exact: true }).click();
   await expect(generator.getByTestId('ai-notice')).toContainText(
     '취소했어요. 이미 보낸 요청은 사용량에 포함될 수 있어요.',
@@ -451,7 +459,9 @@ test('크기가 없으면 막고, 한도(429·402)는 남은 요청을 보내지
   expect(sent.length).toBe(2);
   waiting.forEach((resolve) => resolve());
 
-  // Not the same on both sides: 오른쪽 is made too (8 requests).
+  // 1300 wide: the sides come back. Not the same on both sides: 오른쪽 is made too (8 requests).
+  await form.getByLabel('가로 (mm)', { exact: true }).fill('1300');
+  await expect(generator.getByTestId('ai-guides')).toContainText('왼쪽 · 후보 2장을 만들어요');
   await generator.getByLabel(/좌우 대칭 제품/).uncheck();
   await expect(generator.getByTestId('ai-guides')).toContainText('오른쪽 · 후보 2장을 만들어요');
   await expect(generator.getByTestId('ai-estimate')).toContainText('AI 요청 8회');

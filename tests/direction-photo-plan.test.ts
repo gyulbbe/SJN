@@ -3,6 +3,8 @@ import {
   anchorFromAlpha,
   callNeurons,
   directionJobs,
+  isLongProduct,
+  LONG_NO_SIDES,
   planDirections,
   runDirectionJobs,
   runEstimate,
@@ -43,6 +45,43 @@ describe('what a run makes', () => {
       '왼쪽',
       '뒤',
     ]);
+  });
+
+  it('makes no side for a product at least 1.8 times wider than deep (a bath, a long counter)', () => {
+    const sides = [
+      { direction: '왼쪽', reason: LONG_NO_SIDES },
+      { direction: '오른쪽', reason: LONG_NO_SIDES },
+    ];
+    for (const symmetric of [true, false])
+      expect(
+        planDirections({ category: 'bath', installation: 'floor', symmetric, sizeMm: [1700, 560, 750] }),
+      ).toEqual({ made: ['정면', '뒤'], mirrored: [], skipped: sides });
+    expect(
+      planDirections({ category: 'basin', installation: 'wall', symmetric: false, sizeMm: [1200, 200, 460] }),
+    ).toEqual({
+      made: ['정면'],
+      mirrored: [],
+      skipped: [...sides, { direction: '뒤', reason: '벽에 거는 제품은 뒤 사진을 만들지 않아요' }],
+    });
+    // The boundary: 1.8 times is long, just under it is not.
+    expect(isLongProduct([900, 500, 500])).toBe(true);
+    expect(isLongProduct([895, 500, 500])).toBe(false);
+    expect(
+      planDirections({ category: 'basin', installation: 'wall', symmetric: true, sizeMm: [800, 150, 450] })
+        .made,
+    ).toEqual(['정면', '왼쪽']);
+  });
+
+  it('keeps the sides while a size is missing, and always for a toilet', () => {
+    expect(isLongProduct()).toBe(false);
+    expect(isLongProduct([1700, 560, 0])).toBe(false);
+    expect(
+      planDirections({ category: 'bath', installation: 'floor', symmetric: true, sizeMm: [1700, 560, 0] }),
+    ).toEqual({ made: ['정면', '왼쪽', '뒤'], mirrored: ['오른쪽'], skipped: [] });
+    expect(
+      planDirections({ category: 'toilet', installation: 'floor', symmetric: false, sizeMm: [900, 700, 400] })
+        .made,
+    ).toEqual(['정면', '왼쪽', '오른쪽']);
   });
 
   it('turns pixels over left to right, and twice gives the picture back', () => {

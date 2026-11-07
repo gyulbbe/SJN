@@ -178,7 +178,14 @@ export function DirectionPhotoGenerator({
   // The photos' angles, asked and sent for a toilet shaped like the product only (contract.ts).
   const anglesTold = !!kind && photoAngleTold(kind, shape);
   const wallToilet = kind === 'toilet' && !standsOnFloor(installation);
-  const plan = planDirections({ category: kind, installation, symmetric });
+  const plan = planDirections({
+    category: kind,
+    installation,
+    symmetric,
+    ...(entered && { sizeMm: [widthMm, heightMm, depthMm] as const }),
+  });
+  // A long product makes no side photos (plan.ts isLongProduct): the 오른쪽 choice has nothing to do.
+  const noSides = plan.skipped.some((skip) => skip.direction === '왼쪽');
   const ready = refs.filter((ref) => ref.status === 'ready' && ref.onWhite);
   const inputs = JSON.stringify([
     kind,
@@ -688,7 +695,7 @@ export function DirectionPhotoGenerator({
           <input
             type="checkbox"
             checked={symmetric}
-            disabled={!!running}
+            disabled={!!running || noSides}
             onChange={(event) => setSymmetric(event.target.checked)}
           />
           좌우 대칭 제품(오른쪽은 왼쪽 사진을 좌우 반전해 써요. 로고·글자가 있으면 끄세요)
