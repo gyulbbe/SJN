@@ -1,6 +1,10 @@
 import { productFrontSentence, productNoun } from '../product-photo-prompt';
 import {
+  DIRECTION_PHOTO_FIXES,
   standsOnFloor,
+  tidyFeedbackText,
+  type DirectionPhotoFeedback,
+  type DirectionPhotoFix,
   type DirectionPhotoForm,
   type DirectionPhotoPhotoAngle,
   type DirectionPhotoSpec,
@@ -136,13 +140,54 @@ function hiddenSentence(parts: string[]): string {
 /** Said for a bath whatever the view: the trial drew a drain on its outer wall (1 of 8). */
 const BATH_OUTSIDE = 'Draw no hole, drain or overflow on the outside of the tub.';
 
+/** Each quick fix as the server says it, about the earlier candidate (`image`, e.g. "image 3"). */
+const FIX_SENTENCES: Record<DirectionPhotoFix, (image: string, Image: string) => string> = {
+  straight: (_, Image) =>
+    `${Image} is turned toward the camera or seen at a slant; make the view exactly that of image 0, straight on, with no perspective and no turn.`,
+  colour: (image) =>
+    `The colour or material in ${image} is not the real product's; take the colour, material and finish from the product photos.`,
+  background: (_, Image) =>
+    `${Image} shows a wall, a floor or a shadow; draw the product alone on pure white, with no wall, no floor and no cast shadow.`,
+  extras: (_, Image) =>
+    `${Image} has parts the real product does not have; leave out everything that is not on the real product in the photos.`,
+  shape: (image) =>
+    `The shape or proportions in ${image} differ from image 0; keep the outline, proportions and size exactly as in image 0.`,
+};
 /**
- * The prompt for one direction. Deterministic: the same spec and number of photos give the same
- * text. The frame, the order and the photo-only role of images 1–n are the trial's (8 of 8 kept the
- * guide's angle, shape and proportions).
+ * "고칠 점": the earlier candidate is image `index` (after the product photos); the quick fixes in
+ * the list's order, then the person's own words, quoted (double quotes made single so the quote
+ * holds), then what to keep. Last in the prompt.
  */
-export function buildDirectionPhotoPrompt(spec: DirectionPhotoSpec, photos: number): string {
+export function feedbackSentence(feedback: DirectionPhotoFeedback, index: number): string {
+  const image = `image ${index}`,
+    Image = `Image ${index}`;
+  const fixes = DIRECTION_PHOTO_FIXES.filter((fix) => feedback.fixes.includes(fix)).map((fix) =>
+    FIX_SENTENCES[fix](image, Image),
+  );
+  const words = tidyFeedbackText(feedback.text).replaceAll('"', "'");
+  return [
+    `${Image} is an earlier attempt at this photo that the person wants changed.`,
+    ...fixes,
+    words ? `The person's request about ${image}, in their own words: "${words}".` : '',
+    `Make the new photo from image 0 and the product photos as said above, keep what ${image} already got right and change only what is asked.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
+ * The prompt for one direction. Deterministic: the same spec, number of photos and feedback give the
+ * same text. The frame, the order and the photo-only role of images 1–n are the trial's (8 of 8 kept
+ * the guide's angle, shape and proportions). With `feedback` an earlier candidate follows the photos
+ * as image n+1 (the model takes four images: the guide, two photos and it).
+ */
+export function buildDirectionPhotoPrompt(
+  spec: DirectionPhotoSpec,
+  photos: number,
+  feedback?: DirectionPhotoFeedback,
+): string {
   if (!Number.isInteger(photos) || photos < 1 || photos > 3) throw new Error('참고 사진은 1~3장이에요.');
+  if (feedback && photos > 2) throw new Error('고칠 때는 참고 사진을 2장까지 보내요.');
   if (spec.photoAngles && spec.photoAngles.length !== photos)
     throw new Error('참고 사진마다 찍은 각도가 있어야 해요.');
   const noun = productNoun(spec.category);
@@ -168,6 +213,7 @@ export function buildDirectionPhotoPrompt(spec: DirectionPhotoSpec, photos: numb
     `Turn image 0 into a photorealistic studio product photograph of that real ${noun}: pure white seamless background (#FFFFFF), soft even studio lighting, ${shadow}, no props, no floor texture, no text, no watermark.`,
     // A toilet's side drawn flat, last (the 2026-10-21 trial's place).
     spec.category === 'toilet' ? toiletSideSentence(spec) : '',
+    feedback ? feedbackSentence(feedback, photos + 1) : '',
   ]
     .filter(Boolean)
     .join(' ');

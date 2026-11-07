@@ -1,10 +1,12 @@
 import { readFluxAnswer } from '../ai-export/client';
-import type { DirectionPhotoSpec } from './contract';
+import type { DirectionPhotoFeedback, DirectionPhotoSpec } from './contract';
 
 /**
  * One direction photo from the server (POST /api/materials/direction-photo): the guide, the real
- * product's photos on white and the facts. One request, no retry; the answer is a PNG of twice the
- * guide's size. A refusal carries its HTTP status (a spent limit or a refused login ends a run).
+ * product's photos on white and the facts; to change an earlier candidate, it (at the guide's size,
+ * `shrinkToGuide`) and the "고칠 점" too, with at most two photos. One request, no retry; the answer
+ * is a PNG of twice the guide's size. A refusal carries its HTTP status (a spent limit or a refused
+ * login ends a run).
  */
 export async function requestDirectionPhoto(input: {
   guide: Blob;
@@ -13,12 +15,18 @@ export async function requestDirectionPhoto(input: {
   spec: DirectionPhotoSpec;
   signal: AbortSignal;
   userId?: string | null;
+  previous?: Blob;
+  feedback?: DirectionPhotoFeedback;
 }): Promise<Blob> {
   const form = new FormData();
   form.set('guide', input.guide, 'guide.png');
   input.refs.forEach((ref, index) => form.append('refs', ref, `photo-${index + 1}.png`));
   form.set('seed', String(input.seed));
   form.set('spec', JSON.stringify(input.spec));
+  if (input.previous && input.feedback) {
+    form.set('previous', input.previous, 'earlier.png');
+    form.set('feedback', JSON.stringify(input.feedback));
+  }
   return readFluxAnswer(
     await fetch('/api/materials/direction-photo', {
       method: 'POST',
@@ -67,6 +75,28 @@ const png = (canvas: HTMLCanvasElement) =>
       'image/png',
     ),
   );
+
+/**
+ * A candidate at its guide's size, on white, as the earlier picture of a "고칠 점" request: the answer
+ * is twice the guide, so it shrinks to the model's input (≤496 px, 16 px steps) without changing shape.
+ */
+export async function shrinkToGuide(blob: Blob, width: number, height: number): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('이미지를 읽지 못했어요.');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(bitmap, 0, 0, width, height);
+    return await png(canvas);
+  } finally {
+    bitmap.close();
+  }
+}
 
 /** The picture turned over left to right, as a PNG (transparency kept). */
 export async function mirrorPng(blob: Blob): Promise<Blob> {

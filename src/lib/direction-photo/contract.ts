@@ -63,6 +63,48 @@ export type DirectionPhotoPhotoAngle = (typeof DIRECTION_PHOTO_PHOTO_ANGLES)[num
 export const photoAngleTold = (category: DirectionPhotoCategory, form: DirectionPhotoForm) =>
   category === 'toilet' && form !== 'two-piece';
 
+/**
+ * The quick fixes a person may pick for an earlier candidate, each a sentence the server writes
+ * (prompt.ts feedbackSentence): turned to the photo's angle, a colour unlike the photo, a wall or a
+ * shadow, parts the product does not have, a shape unlike the guide (the 2026-11-07 trial's faults).
+ */
+export const DIRECTION_PHOTO_FIXES = ['straight', 'colour', 'background', 'extras', 'shape'] as const;
+export type DirectionPhotoFix = (typeof DIRECTION_PHOTO_FIXES)[number];
+/** A person's own words about an earlier candidate: at most this many characters. */
+export const DIRECTION_PHOTO_FEEDBACK_MAX_CHARS = 200;
+/**
+ * The product photos sent with an earlier candidate: Workers AI's klein 4B takes four images (the
+ * guide, two photos and the earlier candidate; docs/direction-photo-explore-results-20261021.md).
+ */
+export const DIRECTION_PHOTO_MAX_REFS_WITH_FEEDBACK = 2;
+export const DIRECTION_PHOTO_MAX_FEEDBACK_BYTES = 2048;
+/** No control characters, one space between words, none at the ends (as sent and as quoted). */
+export const tidyFeedbackText = (text: string) =>
+  text
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+/**
+ * "고칠 점": what to change in an earlier candidate, sent with it. The fixes are enums; the text is the
+ * only free text the route takes: tidy, without control characters, at most 200 characters, quoted to
+ * the model as the person's words and never logged.
+ */
+export const directionPhotoFeedbackSchema = z
+  .strictObject({
+    fixes: z.array(z.enum(DIRECTION_PHOTO_FIXES)).max(DIRECTION_PHOTO_FIXES.length),
+    text: z.string().max(DIRECTION_PHOTO_FEEDBACK_MAX_CHARS),
+  })
+  .superRefine((feedback, context) => {
+    if (new Set(feedback.fixes).size !== feedback.fixes.length)
+      context.addIssue({ code: 'custom', message: '같은 고칠 점이 두 번 있어요.', path: ['fixes'] });
+    // Sent tidy (no control characters, single spaces): anything else was not typed in the form.
+    if (feedback.text !== tidyFeedbackText(feedback.text))
+      context.addIssue({ code: 'custom', message: '고칠 점 글을 확인해 주세요.', path: ['text'] });
+    if (!feedback.fixes.length && !feedback.text)
+      context.addIssue({ code: 'custom', message: '고칠 점을 고르거나 써 주세요.', path: ['fixes'] });
+  });
+export type DirectionPhotoFeedback = z.infer<typeof directionPhotoFeedbackSchema>;
+
 /** The direction on the wire (the app's names, in the camera's words). */
 export const DIRECTION_PHOTO_VIEWS = ['front', 'left', 'right', 'back'] as const;
 export type DirectionPhotoView = (typeof DIRECTION_PHOTO_VIEWS)[number];

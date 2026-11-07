@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildDirectionPhotoPrompt as buildPrompt,
+  feedbackSentence,
   hiddenParts,
   photoAngleSentence,
 } from '../src/lib/direction-photo/prompt';
 import {
+  DIRECTION_PHOTO_FIXES,
   DIRECTION_PHOTO_FORMS,
+  directionPhotoFeedbackSchema,
   directionPhotoSpecSchema,
+  tidyFeedbackText,
+  type DirectionPhotoFeedback,
   type DirectionPhotoSpec,
 } from '../src/lib/direction-photo/contract';
 import { TOILET_SIDE_ELEVATION } from '../src/lib/direction-photo/categories/toilet';
@@ -256,6 +261,44 @@ describe('direction photo prompt', () => {
         ),
       ).not.toContain(TOILET_SIDE_ELEVATION);
     }
+  });
+
+  it('says what to change in an earlier candidate last: the quick fixes, then the person’s words (고칠 점)', () => {
+    const feedback: DirectionPhotoFeedback = {
+      fixes: ['background', 'straight'],
+      text: '수전을 "빼" 주세요',
+    };
+    const text = buildPrompt(spec({ direction: 'front' }), 2, feedback);
+    expect(text.endsWith(feedbackSentence(feedback, 3))).toBe(true);
+    expect(feedbackSentence(feedback, 3)).toBe(
+      "Image 3 is an earlier attempt at this photo that the person wants changed. Image 3 is turned toward the camera or seen at a slant; make the view exactly that of image 0, straight on, with no perspective and no turn. Image 3 shows a wall, a floor or a shadow; draw the product alone on pure white, with no wall, no floor and no cast shadow. The person's request about image 3, in their own words: \"수전을 '빼' 주세요\". Make the new photo from image 0 and the product photos as said above, keep what image 3 already got right and change only what is asked.",
+    );
+    expect(feedbackSentence({ fixes: ['colour'], text: '' }, 2)).not.toContain('own words');
+    // Four images at most: the guide, two photos and the earlier candidate.
+    expect(() => buildPrompt(spec(), 3, feedback)).toThrow();
+    // Without feedback nothing changes.
+    expect(buildPrompt(spec(), 2)).toBe(buildDirectionPhotoPrompt(spec(), 2));
+  });
+
+  it('takes the 고칠 점 as enums and at most 200 tidy characters', () => {
+    const ok = (value: unknown) => directionPhotoFeedbackSchema.safeParse(value).success;
+    expect(ok({ fixes: ['colour'], text: '' })).toBe(true);
+    expect(ok({ fixes: [], text: '수전을 빼 주세요' })).toBe(true);
+    expect(ok({ fixes: [...DIRECTION_PHOTO_FIXES], text: '가'.repeat(200) })).toBe(true);
+    for (const refused of [
+      { fixes: [], text: '' },
+      { fixes: ['colour', 'colour'], text: '' },
+      { fixes: ['make it pink'], text: '' },
+      { fixes: [], text: '가'.repeat(201) },
+      { fixes: [], text: '두 줄\n글' },
+      { fixes: [], text: ' 앞에 빈칸' },
+      { fixes: [], text: '빈칸  두 개' },
+      { fixes: [], text: '종\u0007소리' },
+      { fixes: [], text: '글', extra: 1 },
+      { fixes: [] },
+    ])
+      expect(ok(refused)).toBe(false);
+    expect(tidyFeedbackText('  두 줄\n글\t종\u0007소리  ')).toBe('두 줄 글 종 소리');
   });
 
   it('speaks of a tankless toilet’s seat unit, never of a tank (the 2026-10-18 trial’s words)', () => {

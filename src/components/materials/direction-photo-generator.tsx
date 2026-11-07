@@ -10,8 +10,11 @@ import { pickImageFiles } from '@/lib/file-drop';
 import { PRODUCT_DIRECTIONS, type ProductDirection } from '@/lib/product-direction';
 import type { MaterialCategory, MaterialInput, Point } from '@/lib/types';
 import {
+  DIRECTION_PHOTO_FEEDBACK_MAX_CHARS,
+  DIRECTION_PHOTO_FIXES,
   DIRECTION_PHOTO_FORMS,
   DIRECTION_PHOTO_MAX_MM,
+  DIRECTION_PHOTO_MAX_REFS_WITH_FEEDBACK,
   DIRECTION_PHOTO_MIN_MM,
   DIRECTION_PHOTO_PHOTO_ANGLES,
   directionPhotoSizeOk,
@@ -19,8 +22,11 @@ import {
   isDirectionPhotoCategory,
   photoAngleTold,
   standsOnFloor,
+  tidyFeedbackText,
   toiletLids,
   type DirectionPhotoCategory,
+  type DirectionPhotoFeedback,
+  type DirectionPhotoFix,
   type DirectionPhotoForm,
   type DirectionPhotoLid,
   type DirectionPhotoPhotoAngle,
@@ -38,7 +44,7 @@ import {
   type ToiletSkirt,
 } from '@/lib/direction-photo/categories/toilet';
 import { guideOverlap, overlapOrder } from '@/lib/direction-photo/candidate-order';
-import { mirrorPng, readAlpha, requestDirectionPhoto } from '@/lib/direction-photo/client';
+import { mirrorPng, readAlpha, requestDirectionPhoto, shrinkToGuide } from '@/lib/direction-photo/client';
 import {
   anchorFromAlpha,
   DIRECTION_PHOTO_CANDIDATES,
@@ -93,9 +99,24 @@ type Reference = {
   url?: string;
   error?: string;
 };
-/** `overlap`: its outline's overlap with the guide, where the candidates are put in that order. */
+/**
+ * `overlap`: its outline's overlap with the guide, where the candidates are put in that order;
+ * `fixed`: made from an earlier candidate and a "고칠 점".
+ */
 type Candidate =
-  { status: 'made'; blob: Blob; url: string; overlap?: number } | { status: 'failed'; message: string };
+  | { status: 'made'; blob: Blob; url: string; overlap?: number; fixed?: boolean }
+  | { status: 'failed'; message: string };
+/** "고칠 점" of one direction: the earlier candidate at its guide's size and what to change. */
+type Fixing = { previous: Blob; feedback: DirectionPhotoFeedback };
+/** The quick fixes as the buttons say them (the sentences are the server's, prompt.ts). */
+const FIX_LABELS: Record<DirectionPhotoFix, string> = {
+  straight: '똑바로 본 모습',
+  colour: '사진 색 그대로',
+  background: '벽·그림자 없이',
+  extras: '없는 물건 빼기',
+  shape: '가이드 모양 그대로',
+};
+type FixDraft = { fixes: DirectionPhotoFix[]; text: string };
 
 /**
  * "AI로 방향 사진 만들기" in the material form (bath, toilet, basin): the person's photos of the
@@ -146,6 +167,8 @@ export function DirectionPhotoGenerator({
   const [guideError, setGuideError] = useState('');
   const [candidates, setCandidates] = useState<Partial<Record<ProductDirection, Candidate[]>>>({});
   const [picked, setPicked] = useState<Partial<Record<ProductDirection, number>>>({});
+  /** "고칠 점" being written, per direction (kept after a fix, to change it and try again). */
+  const [drafts, setDrafts] = useState<Partial<Record<ProductDirection, FixDraft>>>({});
   const [running, setRunning] = useState<{ done: number; total: number }>();
   const [notice, setNotice] = useState('');
   const [applying, setApplying] = useState('');
@@ -332,14 +355,19 @@ export function DirectionPhotoGenerator({
   const canMake =
     !!kind && sized && !wallToilet && guidesCurrent && ready.length > 0 && !running && !applying && !disabled;
 
-  /** Sends the jobs for these directions; their candidates replace what was there. */
-  const make = async (directions: readonly ProductDirection[]) => {
+  /**
+   * Sends the jobs for these directions; their candidates replace what was there. With `fixing` (one
+   * direction, "고칠 점"): the earlier candidate and what to change go with the first two photos, and
+   * the new candidates are put after the direction's others (which stay, as does the pick).
+   */
+  const make = async (directions: readonly ProductDirection[], fixing?: Fixing) => {
     if (!kind || !guidesCurrent || !ready.length) return;
     const abort = new AbortController();
     controller.current = abort;
     const jobs = directionJobs(directions, DIRECTION_PHOTO_CANDIDATES, randomSeed);
-    const photos = ready.map((ref) => ref.onWhite!);
-    const photoAngles = anglesTold ? ready.map((ref) => ref.angle) : undefined;
+    const sent = fixing ? ready.slice(0, DIRECTION_PHOTO_MAX_REFS_WITH_FEEDBACK) : ready;
+    const photos = sent.map((ref) => ref.onWhite!);
+    const photoAngles = anglesTold ? sent.map((ref) => ref.angle) : undefined;
     const sizeMm: [number, number, number] = [widthMm, heightMm, depthMm].map(Math.round) as [
       number,
       number,
@@ -372,6 +400,7 @@ export function DirectionPhotoGenerator({
             spec,
             signal,
             userId,
+            ...(fixing && { previous: fixing.previous, feedback: fixing.feedback }),
           });
         },
       });
@@ -382,40 +411,44 @@ export function DirectionPhotoGenerator({
         if (outcome.status === 'made' && ordersCandidates(outcome.job.direction))
           overlaps.set(outcome, await guideOverlap(guideOf(outcome.job.direction)!.blob, outcome.image));
       if (!alive.current) return;
-      // The new answers replace the directions' earlier ones only now (a cancelled run keeps them).
+      // The new answers replace the directions' earlier ones only now (a cancelled run keeps them);
+      // a fix's answers go after the direction's others instead.
+      const made: Partial<Record<ProductDirection, Candidate[]>> = {};
+      for (const outcome of outcomes)
+        (made[outcome.job.direction] ??= [])[outcome.job.candidate] =
+          outcome.status === 'made'
+            ? {
+                status: 'made',
+                blob: outcome.image,
+                url: keep(outcome.image),
+                overlap: overlaps.get(outcome),
+                ...(fixing && { fixed: true }),
+              }
+            : { status: 'failed', message: outcome.message };
       setCandidates((current) => {
         const next = { ...current };
         for (const direction of directions) {
-          next[direction]?.forEach((candidate) => candidate.status === 'made' && drop(candidate.url));
-          delete next[direction];
-        }
-        for (const outcome of outcomes) {
-          const list = (next[outcome.job.direction] ??= []);
-          list[outcome.job.candidate] =
-            outcome.status === 'made'
-              ? {
-                  status: 'made',
-                  blob: outcome.image,
-                  url: keep(outcome.image),
-                  overlap: overlaps.get(outcome),
-                }
-              : { status: 'failed', message: outcome.message };
-        }
-        for (const direction of directions) {
-          const list = next[direction];
-          if (list && ordersCandidates(direction))
-            next[direction] = overlapOrder(
+          let list = made[direction] ?? [];
+          if (ordersCandidates(direction))
+            list = overlapOrder(
               list.map((candidate) => (candidate.status === 'made' ? candidate.overlap : undefined)),
             ).map((index) => list[index]);
+          if (fixing) next[direction] = [...(current[direction] ?? []), ...list];
+          else {
+            current[direction]?.forEach((candidate) => candidate.status === 'made' && drop(candidate.url));
+            next[direction] = list;
+          }
         }
         return next;
       });
-      setPicked((current) => {
-        const next = { ...current };
-        for (const direction of directions) delete next[direction];
-        return next;
-      });
-      setMadeWith(inputs);
+      if (!fixing) {
+        setPicked((current) => {
+          const next = { ...current };
+          for (const direction of directions) delete next[direction];
+          return next;
+        });
+        setMadeWith(inputs);
+      }
       const failed = outcomes.filter((outcome) => outcome.status === 'failed');
       if (failed.length)
         setNotice(
@@ -437,6 +470,50 @@ export function DirectionPhotoGenerator({
       if (alive.current) setRunning(undefined);
     }
   };
+
+  /** A direction's "고칠 점" as sent: the quick fixes in the list's order and the tidied words. */
+  const feedbackOf = (direction: ProductDirection): DirectionPhotoFeedback | undefined => {
+    const draft = drafts[direction];
+    const feedback = draft && {
+      fixes: DIRECTION_PHOTO_FIXES.filter((value) => draft.fixes.includes(value)),
+      text: tidyFeedbackText(draft.text),
+    };
+    return feedback && (feedback.fixes.length || feedback.text) ? feedback : undefined;
+  };
+  /** What a fix sends: the guide, up to two photos and the earlier candidate, twice. */
+  const fixEstimate = (direction: ProductDirection) => {
+    const guide = guideOf(direction);
+    return guide
+      ? runEstimate([guide], Math.min(DIRECTION_PHOTO_MAX_REFS_WITH_FEEDBACK, Math.max(1, ready.length)) + 1)
+      : undefined;
+  };
+  const fixNote = (direction: ProductDirection) => {
+    const estimate = fixEstimate(direction);
+    const photos = Math.min(DIRECTION_PHOTO_MAX_REFS_WITH_FEEDBACK, ready.length);
+    return `고른 후보와 참고 사진 앞 ${photos}장을 함께 보내요(AI가 한 번에 받는 그림은 4장까지예요). 고친 후보 ${DIRECTION_PHOTO_CANDIDATES}장은 원래 후보 뒤에 붙어요${
+      estimate ? ` · AI 요청 ${estimate.calls}회 · 약 ${estimate.neurons.toLocaleString('ko-KR')}뉴런` : ''
+    }`;
+  };
+  /** "고쳐서 다시 만들기": the picked candidate of `direction` at its guide's size, and what to change. */
+  const fix = async (direction: ProductDirection) => {
+    const candidate = candidates[direction]?.[picked[direction] ?? -1];
+    const guide = guideOf(direction);
+    const feedback = feedbackOf(direction);
+    if (candidate?.status !== 'made' || !guide || !feedback) return;
+    let previous: Blob;
+    try {
+      previous = await shrinkToGuide(candidate.blob, guide.width, guide.height);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '고른 후보를 읽지 못했어요.');
+      return;
+    }
+    await make([direction], { previous, feedback });
+  };
+  const setDraft = (direction: ProductDirection, change: (draft: FixDraft) => FixDraft) =>
+    setDrafts((current) => ({
+      ...current,
+      [direction]: change(current[direction] ?? { fixes: [], text: '' }),
+    }));
 
   const pickedDirections = plan.made.filter((direction) => picked[direction] !== undefined);
   const apply = async () => {
@@ -801,6 +878,9 @@ export function DirectionPhotoGenerator({
                   >
                     {}
                     <img src={candidate.url} alt="" />
+                    {candidate.fixed && (
+                      <span className="block py-0.5 text-xs text-[color:var(--muted)]">고친 후보</span>
+                    )}
                   </button>
                 ) : (
                   <span key={index} className={styles.promptNotice}>
@@ -824,6 +904,60 @@ export function DirectionPhotoGenerator({
               <span className={styles.note}>
                 가이드와 윤곽이 더 비슷한 후보(옆모습이 덜 돌아간 쪽)를 앞에 두었어요.
               </span>
+            )}
+            {candidates[direction]?.[picked[direction] ?? -1]?.status === 'made' && (
+              <details className="mt-1 w-full" role="group" aria-label={`${direction} 고른 후보 고치기`}>
+                <summary className="cursor-pointer text-sm font-semibold">고른 후보 고치기</summary>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {DIRECTION_PHOTO_FIXES.map((value) => {
+                    const on = drafts[direction]?.fixes.includes(value) ?? false;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`btn small${on ? ' primary' : ''}`}
+                        aria-pressed={on}
+                        disabled={!!running}
+                        onClick={() =>
+                          setDraft(direction, (draft) => ({
+                            ...draft,
+                            fixes: on
+                              ? draft.fixes.filter((other) => other !== value)
+                              : [...draft.fixes, value],
+                          }))
+                        }
+                      >
+                        {FIX_LABELS[value]}
+                      </button>
+                    );
+                  })}
+                </div>
+                <input
+                  className="input mt-1.5"
+                  type="text"
+                  maxLength={DIRECTION_PHOTO_FEEDBACK_MAX_CHARS}
+                  aria-label={`${direction} 고칠 점 직접 쓰기`}
+                  placeholder="직접 쓰기(선택) 예: 수전을 빼 주세요"
+                  value={drafts[direction]?.text ?? ''}
+                  disabled={!!running}
+                  onChange={(event) =>
+                    setDraft(direction, (draft) => ({ ...draft, text: event.target.value }))
+                  }
+                />
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn small"
+                    disabled={!canMake || !feedbackOf(direction)}
+                    onClick={() => void fix(direction)}
+                  >
+                    {direction} 고쳐서 다시 만들기
+                  </button>
+                  <span className={styles.note} data-testid={`ai-fix-note-${direction}`}>
+                    {fixNote(direction)}
+                  </span>
+                </div>
+              </details>
             )}
           </div>
         ) : null,

@@ -4,7 +4,11 @@ import sharp from 'sharp';
 import { runDirectionPhoto } from '../src/lib/direction-photo/server';
 import { requestDirectionPhoto } from '../src/lib/direction-photo/client';
 import { buildDirectionPhotoPrompt } from '../src/lib/direction-photo/prompt';
-import { directionPhotoSizeOk, type DirectionPhotoSpec } from '../src/lib/direction-photo/contract';
+import {
+  directionPhotoSizeOk,
+  type DirectionPhotoFeedback,
+  type DirectionPhotoSpec,
+} from '../src/lib/direction-photo/contract';
 import { FLUX_MODEL } from '../src/lib/ai-export/contract';
 
 vi.mock('../src/lib/auth/d1', () => ({ getD1Actor: vi.fn() }));
@@ -184,6 +188,92 @@ describe('direction photo route', () => {
         env,
       ),
     ).rejects.toMatchObject({ status: 400 });
+    expect(env.AI.run).not.toHaveBeenCalled();
+  });
+
+  /** "고칠 점": an earlier candidate at the guide's size and what to change in it. */
+  const fixing =
+    (feedback: unknown = { fixes: ['straight'], text: '수전을 빼 주세요' }) =>
+    async (form: FormData) => {
+      form.set('previous', blob(await png(432, 496, '#cccccc')), 'earlier.png');
+      form.set('feedback', typeof feedback === 'string' ? feedback : JSON.stringify(feedback));
+    };
+
+  it('sends an earlier candidate after the photos with what to change, last in the prompt (고칠 점)', async () => {
+    const env = environment();
+    const feedback: DirectionPhotoFeedback = { fixes: ['straight'], text: '수전을 빼 주세요' };
+    const result = await runDirectionPhoto(
+      await request(async (form) => {
+        form.append('refs', blob(await png(288, 496, '#dddddd')), 'photo-2.png');
+        await fixing(feedback)(form);
+      }),
+      env,
+    );
+    expect(result.status).toBe(200);
+    const form = await sent(env);
+    expect([...form.keys()]).toEqual([
+      'input_image_0',
+      'input_image_1',
+      'input_image_2',
+      'input_image_3',
+      'prompt',
+      'width',
+      'height',
+      'seed',
+    ]);
+    expect(form.get('prompt')).toBe(buildDirectionPhotoPrompt(spec, 2, feedback));
+    expect(form.get('prompt')).toContain(
+      'Image 3 is an earlier attempt at this photo that the person wants changed. Image 3 is turned toward the camera',
+    );
+    expect(form.get('prompt')).toContain('in their own words: "수전을 빼 주세요".');
+    expect(new Uint8Array(await (form.get('input_image_3') as Blob).arrayBuffer())).toEqual(
+      await png(432, 496, '#cccccc'),
+    );
+    // Still twice the guide.
+    expect([form.get('width'), form.get('height')]).toEqual(['864', '992']);
+  });
+
+  it('keeps the person’s words out of a failure’s diagnostics (their length and the quick fixes only)', async () => {
+    const env = environment(vi.fn(async () => new Response('provider error', { status: 500 })));
+    const failure = await runDirectionPhoto(await request(fixing()), env).catch((error: unknown) => error);
+    const diagnostics = JSON.stringify((failure as { diagnostics?: unknown }).diagnostics);
+    expect(diagnostics).toContain('"feedback":{"fixes":["straight"],"textLength":9}');
+    expect(diagnostics).not.toContain('수전');
+  });
+
+  it.each([
+    [
+      'an earlier candidate without what to change',
+      (f: FormData) => fixing()(f).then(() => f.delete('feedback')),
+    ],
+    [
+      'what to change without the earlier candidate',
+      (f: FormData) => fixing()(f).then(() => f.delete('previous')),
+    ],
+    [
+      'three photos with an earlier candidate (five images)',
+      async (f: FormData) => {
+        for (let i = 0; i < 2; i++) f.append('refs', blob(await png(496, 288)), 'photo.png');
+        await fixing()(f);
+      },
+    ],
+    ['words past 200 characters', fixing({ fixes: [], text: '가'.repeat(201) })],
+    ['nothing to change', fixing({ fixes: [], text: '' })],
+    ['an unknown quick fix', fixing({ fixes: ['make it gold'], text: '' })],
+    ['words with a line break', fixing({ fixes: [], text: '두 줄\n글' })],
+    ['unparsable feedback', fixing('{')],
+    [
+      'an earlier candidate that is not a PNG',
+      (f: FormData) =>
+        fixing()(f).then(() => f.set('previous', new Blob([new Uint8Array([1, 2])]), 'earlier.png')),
+    ],
+    [
+      'a second earlier candidate',
+      (f: FormData) => fixing()(f).then(() => f.append('previous', new Blob([new Uint8Array([1])]))),
+    ],
+  ] as const)('rejects %s before inference', async (_label, edit) => {
+    const env = environment();
+    await expect(runDirectionPhoto(await request(edit), env)).rejects.toMatchObject({ status: 400 });
     expect(env.AI.run).not.toHaveBeenCalled();
   });
 

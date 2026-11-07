@@ -145,6 +145,9 @@ type Sent = {
   /** The guide's bytes, hashed (sha256). */
   guideHash: string;
   refs: number[][];
+  /** "고칠 점": the earlier candidate's size and what to change, when sent. */
+  previous?: [number, number];
+  feedback?: unknown;
 };
 async function mockModel(
   page: Page,
@@ -162,6 +165,11 @@ async function mockModel(
         return [m.width!, m.height!];
       }),
     );
+    const previous = form.get('previous');
+    const earlier = previous
+      ? await sharp(Buffer.from(await (previous as Blob).arrayBuffer())).metadata()
+      : undefined;
+    const feedback = form.get('feedback');
     sent.push({
       keys: [...form.keys()],
       seed: String(form.get('seed')),
@@ -169,6 +177,8 @@ async function mockModel(
       guide: [meta.width!, meta.height!],
       guideHash: createHash('sha256').update(guide).digest('hex'),
       refs,
+      ...(earlier && { previous: [earlier.width!, earlier.height!] as [number, number] }),
+      ...(feedback !== null && { feedback: JSON.parse(String(feedback)) }),
     });
     const custom = await answer?.(spec, guide);
     if (custom) return route.fulfill(custom as Parameters<typeof route.fulfill>[0]);
@@ -301,6 +311,57 @@ test('사진을 올리면 가이드 4장·후보를 만들고, 고른 사진이 
     'aria-pressed',
     'true',
   );
+
+  // "고칠 점": the picked 왼쪽 candidate goes back, at its guide's size, with a quick fix and the
+  // person's words, twice; the two new candidates come after the first two, which stay (and so does
+  // the pick). Those two requests are all the action sends (d1-query-budget: the screen's calls).
+  const fixGroup = generator.getByRole('group', { name: '왼쪽 고른 후보 고치기' });
+  // Folded until opened, so the picked directions do not each spread their fix out.
+  await expect(fixGroup.getByRole('button', { name: '똑바로 본 모습', exact: true })).toBeHidden();
+  await fixGroup.getByText('고른 후보 고치기', { exact: true }).click();
+  const fixButton = fixGroup.getByRole('button', { name: '왼쪽 고쳐서 다시 만들기', exact: true });
+  await expect(fixButton).toBeDisabled();
+  await fixGroup.getByRole('button', { name: '똑바로 본 모습', exact: true }).click();
+  await expect(fixGroup.getByRole('button', { name: '똑바로 본 모습', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await fixGroup.getByLabel('왼쪽 고칠 점 직접 쓰기', { exact: true }).fill('  수전을   빼 주세요 ');
+  await expect(fixGroup.getByTestId('ai-fix-note-왼쪽')).toContainText(
+    '고른 후보와 참고 사진 앞 1장을 함께 보내요(AI가 한 번에 받는 그림은 4장까지예요). 고친 후보 2장은 원래 후보 뒤에 붙어요 · AI 요청 2회',
+  );
+  const calls: string[] = [];
+  const count = (request: { url: () => string; method: () => string }) => {
+    const { pathname } = new URL(request.url());
+    if (pathname.startsWith('/api/')) calls.push(`${request.method()} ${pathname}`);
+  };
+  page.on('request', count);
+  await fixButton.click();
+  const leftCandidates = generator.getByRole('group', { name: '왼쪽 후보' });
+  await expect(leftCandidates.getByRole('button', { name: /후보 \d$/ })).toHaveCount(4, { timeout: 30000 });
+  page.off('request', count);
+  const photoCalls = calls.filter((call) => call === 'POST /api/materials/direction-photo');
+  expect(photoCalls).toHaveLength(2);
+  // Anything else is at most the page's own 30-second access check landing in the same moment.
+  expect(calls.length - photoCalls.length).toBeLessThanOrEqual(1);
+  const fixes = sent.slice(6);
+  expect(fixes).toHaveLength(2);
+  expect(new Set(fixes.map((s) => s.seed)).size).toBe(2);
+  for (const s of fixes) {
+    expect(s.keys).toEqual(['guide', 'refs', 'seed', 'spec', 'previous', 'feedback']);
+    expect(s.spec.direction).toBe('left');
+    expect(s.refs).toHaveLength(1);
+    expect(s.previous).toEqual([480, 496]);
+    expect(s.feedback).toEqual({ fixes: ['straight'], text: '수전을 빼 주세요' });
+  }
+  await expect(leftCandidates.getByText('고친 후보', { exact: true })).toHaveCount(2);
+  await expect(generator.getByRole('button', { name: '왼쪽 후보 1', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await generator.getByRole('button', { name: '왼쪽 후보 3', exact: true }).click();
+  await generator.screenshot({ path: info.outputPath('generator-fix.png') });
+
   await generator.getByRole('button', { name: '고른 사진 넣기', exact: true }).click();
   await expect(generator.getByTestId('ai-notice')).toContainText('정면·왼쪽·오른쪽·뒤 칸에 넣었어요.');
   for (const [index, direction] of ['정면', '왼쪽', '오른쪽', '뒤'].entries())
