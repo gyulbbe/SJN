@@ -31,9 +31,10 @@ import type { SanitaryShape } from './shapes';
  * G the class guide, C0 the app's nearest model, G2 the class guide with the side sentences, and
  * G2E0·G2E5 G2's text on the class guide drawn from 0° or 5° above instead of the app's 10°
  * (2026-11-07, the user's "안 된 가이드 고쳐 다시 시험": a long counter's side and a bath's end read as
- * a front from 10°, the top being as tall as the side).
+ * a front from 10°, the top being as tall as the side). Neither helped (all 0 of 10), so G2L adds a
+ * sentence instead (the user's "문장으로 한 번 더 시험"): the long length runs away from the camera.
  */
-export const TRIAL_METHODS = ['G', 'C0', 'G2', 'G2E0', 'G2E5'] as const;
+export const TRIAL_METHODS = ['G', 'C0', 'G2', 'G2E0', 'G2E5', 'G2L'] as const;
 export type TrialMethod = (typeof TRIAL_METHODS)[number];
 /** The guide a method sends (prep/manifest.json `guides` key). */
 export const guideOf = (method: TrialMethod) =>
@@ -280,6 +281,13 @@ function extraEdits(c: SanitaryClass, view: DirectionPhotoView): Edit[] {
 }
 
 /**
+ * G2L's sentence for a side view (app size order width × height × depth): the width runs away from the
+ * camera, so only the depth and the height show.
+ */
+export const lengthAway = ([width, height, depth]: [number, number, number]) =>
+  `In this view the ${width} mm length runs straight away from the camera and cannot be seen: only the narrow ${depth} mm end shows, ${depth} mm wide and ${height} mm tall, exactly the outline of image 0. Do not draw the long front or the long side.`;
+
+/**
  * The prompt of a class at a view for a method, at the product's size. C0 is the app's own text; G
  * names the class's shape (an app-model class is the app's text too: its guide is the app's).
  */
@@ -291,6 +299,11 @@ export function promptFor(
 ): string {
   if (!viewsOf(c).includes(view)) throw new Error(`${c.id}: the app makes no ${view} view`);
   if (method === 'G2E0' || method === 'G2E5') return promptFor(c, view, 'G2', sizeMm);
+  if (method === 'G2L') {
+    if (c.category === 'toilet' || (view !== 'left' && view !== 'right'))
+      throw new Error(`${c.id} ${view}: G2L is for a basin's, urinal's or bath's side`);
+    return `${promptFor(c, view, 'G2', sizeMm)} ${lengthAway(sizeMm)}`;
+  }
   if (method === 'G2') {
     const g = promptFor(c, view, 'G', sizeMm);
     if (c.category === 'toilet') return g;

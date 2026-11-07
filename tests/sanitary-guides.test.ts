@@ -3,7 +3,7 @@ import { roundedRectPoints, shapeExtent } from './direction-photo-methods/shapes
 import { buildDirectionPhotoPrompt } from '../src/lib/direction-photo/prompt';
 import { appSize, seriesOf } from './sanitary-guides/catalog';
 import { CLASSES, directionsOf } from './sanitary-guides/classes';
-import { ASYMMETRIC, guideOf, NO_C0, promptFor, specOf, viewsOf } from './sanitary-guides/prompts';
+import { ASYMMETRIC, guideOf, lengthAway, NO_C0, promptFor, specOf, viewsOf } from './sanitary-guides/prompts';
 import { createSanitaryShape, SANITARY_SHAPES } from './sanitary-guides/shapes';
 import { LEDGER as METHODS_LEDGER } from './direction-photo-methods/paths.mjs';
 import { OTHER_LEDGERS } from './sanitary-guides/paths.mjs';
@@ -124,6 +124,16 @@ describe('sanitary-ware AI direction-photo trial (2026-11-07)', () => {
       'E0',
       'E5',
     ]);
+  });
+
+  it('adds the length-away sentence to a side (G2L) with the guide of G', () => {
+    const b9 = CLASSES.find((c) => c.id === 'B9')!;
+    const g2l = promptFor(b9, 'left', 'G2L', [1200, 200, 460]);
+    expect(g2l).toBe(`${promptFor(b9, 'left', 'G2', [1200, 200, 460])} ${lengthAway([1200, 200, 460])}`);
+    expect(g2l).toContain('the 1200 mm length runs straight away');
+    expect(g2l).toContain('460 mm wide and 200 mm tall');
+    expect(guideOf('G2L')).toBe('G');
+    expect(() => promptFor(b9, 'front', 'G2L')).toThrow(/side/);
   });
 
   it('counts the spend of the methods trial toward the day', () => {

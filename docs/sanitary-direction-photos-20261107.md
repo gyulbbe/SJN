@@ -231,3 +231,10 @@ node tests/sanitary-guides/review.mjs sheets local rep
   - 10° G2 무료 답 2장과 섞어 블라인드로 채점했다(`review/local-elev`).
 - **결과:** 50장 모두 방향이 틀렸다(10° 20장, 0° 20장, 5° 10장). 긴 상판은 모두 긴 앞모습을, 욕조는 모두 긴 옆을 그렸다. 0°의 긴 상판 옆 가이드(460 × 200 mm)는 그 자체가 넓고 얇은 직사각형이라 상판 앞모습과 구별되지 않는다. 욕조 끝 가이드는 그 틀 안에 긴 욕조 전체를 줄여 그렸다.
 - **판단:** 카메라 높이로는 고쳐지지 않는다. 그래서 Cloudflare로 보낼 곳이 없어 부르지 않았다. 남은 후보는 문장(긴 쪽이 카메라에서 멀어지는 방향으로 뻗어 보이지 않는다고 말하기)이나, 이런 제품은 옆 사진을 만들지 않는 것이다.
+
+## 11. 문장 시험 G2L (사용자 결정 11-07 "문장으로 한 번 더 시험", 무료, 13:45 KST)
+
+- **방법:** 10절과 같은 10곳에 G2 문장 끝에 한 문장을 더했다(`prompts.ts` `lengthAway`, 가이드는 앱의 10° 그대로). 예: B9 왼쪽은 "In this view the 1200 mm length runs straight away from the camera and cannot be seen: only the narrow 460 mm end shows, 460 mm wide and 200 mm tall, exactly the outline of image 0. Do not draw the long front or the long side."
+  - 무료 FLUX로 seed 1001·1002, 20장을 만들었다. 10° G2 무료 답 2장과 섞어 블라인드로 채점했다(`review/local-g2l`, 그림 `문장시험-무료결과-2.png`).
+- **결과:** 40장 모두 방향이 틀렸다(G2 20장, G2L 20장). 긴 상판은 모두 긴 앞모습을, 욕조는 모두 긴 옆을 그렸다. "긴 앞모습을 그리지 말라"는 문장도 따르지 않았다.
+- **판단:** 가이드 높이(10절)도 문장도 이 10곳을 고치지 못했다. 무료 FLUX에서 하나도 되지 않아 Cloudflare는 부르지 않았다. 긴 상판의 옆과 욕조의 끝은 지금 방법(가이드 + 사진 + 문장)으로는 만들 수 없다고 본다. 남은 길은 이런 제품의 옆 사진을 만들지 않는 것이다.
