@@ -27,6 +27,8 @@ export type DrawOptions = {
   /** The app's standard model of this form instead of the class's shape (the trial's C0). */
   appForm?: string;
   directions?: ProductDirection[];
+  /** The camera's height in degrees above level; the app's is 10 (guide-variants.ts). */
+  elevation?: number;
 };
 
 export async function drawClass(c: SanitaryClass, options: DrawOptions = {}) {
@@ -51,6 +53,7 @@ export async function drawClass(c: SanitaryClass, options: DrawOptions = {}) {
         } as GuideInput,
         { model: 'b0' },
         directions,
+        options.elevation,
       )
     : await renderModelGuides(
         c.model.from === 'trial'
@@ -61,6 +64,7 @@ export async function drawClass(c: SanitaryClass, options: DrawOptions = {}) {
             ),
         c.installation,
         directions,
+        options.elevation,
       );
   return Promise.all(
     guides.map(async (g) => ({

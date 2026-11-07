@@ -3,7 +3,7 @@
  * local FLUX (free, shape screening only) or to Cloudflare through the direction-photo methods trial's
  * temporary Worker (billed), and keeps every call in the ledger. The pictures are prepare.ts's.
  *
- *   node tests/run-browser-test.mjs tests/sanitary-guides/run.ts <local|cf> <classes|all> <G,C0,G2> <rep,other> [seeds]
+ *   node tests/run-browser-test.mjs tests/sanitary-guides/run.ts <local|cf> <classes|all> <G,C0,G2,G2E0,G2E5> <rep,other> [seeds]
  *     seeds: default 1001,1002. Views: the app's (prompts.ts viewsOf).
  *   DRY=1 counts the calls and their estimated neurons and sends nothing.
  *   ONLY=T2:front,B1:left limits the run to those class views.
@@ -22,7 +22,7 @@ import { budgetCheck, endsRun, fluxCost, FLUX_4B, ofAccount, type Row } from '..
 import { parseAccountFile, sendFlux } from '../direction-photo-methods/flux-send';
 import { CLASSES } from './classes';
 import { LEDGER, OTHER_LEDGERS, OUT, PREP, SECOND_ACCOUNT_FILE } from './paths.mjs';
-import { promptFor, TRIAL_METHODS, viewsOf, type TrialMethod } from './prompts';
+import { guideOf, promptFor, TRIAL_METHODS, viewsOf, type TrialMethod } from './prompts';
 import type { Manifest, Who } from './prepare';
 
 const [engine, classList, methodList, whoList, seedList = '1001,1002'] = process.argv.slice(3);
@@ -80,9 +80,9 @@ runs: for (const method of methods)
     const jobs: Job[] = [];
     for (const c of classes) {
       const product = manifest[c.id]?.[who];
-      const guides = product?.guides[method === 'C0' ? 'C0' : 'G'];
+      const guides = product?.guides[guideOf(method)];
       if (!product || !guides) continue;
-      for (const view of viewsOf(c).filter((v) => !ONLY || ONLY.has(`${c.id}:${v}`)))
+      for (const view of viewsOf(c).filter((v) => guides[v] && (!ONLY || ONLY.has(`${c.id}:${v}`))))
         for (const seed of seeds) {
           if (existsSync(answerFile(engine, c.id, who, method, view, seed))) continue;
           jobs.push({

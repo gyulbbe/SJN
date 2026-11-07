@@ -127,7 +127,7 @@ if (command === 'sheets') {
         comp.push({ input: svg(CELL, 26, [['가이드', 16, 20]]), left, top: top + CELL });
       }
       for (const [k, [method, s, file]] of row.list.entries()) {
-        const letter = 'ABCD'[k];
+        const letter = 'ABCDEF'[k];
         key[`${row.id} ${row.view} ${letter}`] = { method, seed: s, file };
         const left = LABEL + (k + 1) * (CELL + 8);
         comp.push({ input: await tile(file, CELL), left, top });
@@ -491,7 +491,7 @@ if (command === 'versus') {
   const key = JSON.parse(readFileSync(join(dir, 'key.json'), 'utf8'));
   const grades = [];
   for (const line of readFileSync(join(dir, 'ratings-claude.txt'), 'utf8').split(/\r?\n/)) {
-    const m = line.trim().match(/^(\S+) (\S+) ([ABCD]) ([123]) ([yn])(?: (.*))?$/);
+    const m = line.trim().match(/^(\S+) (\S+) ([ABCDEF]) ([123]) ([yn])(?: (.*))?$/);
     if (!m) continue;
     const k = key[`${m[1]} ${m[2]} ${m[3]}`];
     if (!k) throw new Error(`no key for ${m[1]} ${m[2]} ${m[3]}`);

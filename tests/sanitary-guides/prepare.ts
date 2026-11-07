@@ -46,8 +46,8 @@ export type PreparedProduct = {
   sizeMm: [number, number, number];
   ref: string;
   cutout: string;
-  /** method → view (front, left, …) → guide file */
-  guides: Partial<Record<'G' | 'C0', Record<string, string>>>;
+  /** guide (G, C0, or E0·E5 from elevations.ts, prompts.ts guideOf) → view (front, left, …) → file */
+  guides: Partial<Record<'G' | 'C0' | 'E0' | 'E5', Record<string, string>>>;
 };
 export type Manifest = Record<string, Partial<Record<Who, PreparedProduct>> & { otherNote?: string }>;
 

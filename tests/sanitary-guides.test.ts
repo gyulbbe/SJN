@@ -3,7 +3,7 @@ import { roundedRectPoints, shapeExtent } from './direction-photo-methods/shapes
 import { buildDirectionPhotoPrompt } from '../src/lib/direction-photo/prompt';
 import { appSize, seriesOf } from './sanitary-guides/catalog';
 import { CLASSES, directionsOf } from './sanitary-guides/classes';
-import { ASYMMETRIC, NO_C0, promptFor, specOf, viewsOf } from './sanitary-guides/prompts';
+import { ASYMMETRIC, guideOf, NO_C0, promptFor, specOf, viewsOf } from './sanitary-guides/prompts';
 import { createSanitaryShape, SANITARY_SHAPES } from './sanitary-guides/shapes';
 import { LEDGER as METHODS_LEDGER } from './direction-photo-methods/paths.mjs';
 import { OTHER_LEDGERS } from './sanitary-guides/paths.mjs';
@@ -111,6 +111,19 @@ describe('sanitary-ware AI direction-photo trial (2026-11-07)', () => {
         expect(g2).toMatch(view === 'front' ? /do not copy|close to the view|not the view/ : /orthographic (side|back) elevation/);
         if (view !== 'front') expect(g2).toMatch(/orthographic (side|back) elevation[^.]*\.$/);
       }
+  });
+
+  it('sends G2 text with the lower guides (G2E0, G2E5) and picks each method its guide', () => {
+    const b9 = CLASSES.find((c) => c.id === 'B9')!;
+    expect(promptFor(b9, 'left', 'G2E0')).toBe(promptFor(b9, 'left', 'G2'));
+    expect(promptFor(b9, 'left', 'G2E5')).toBe(promptFor(b9, 'left', 'G2'));
+    expect([guideOf('G'), guideOf('G2'), guideOf('C0'), guideOf('G2E0'), guideOf('G2E5')]).toEqual([
+      'G',
+      'G',
+      'C0',
+      'E0',
+      'E5',
+    ]);
   });
 
   it('counts the spend of the methods trial toward the day', () => {

@@ -27,8 +27,17 @@ import { B2_NOUNS, once } from '../direction-photo-methods/methods';
 import type { SanitaryClass } from './classes';
 import type { SanitaryShape } from './shapes';
 
-export const TRIAL_METHODS = ['G', 'C0', 'G2'] as const;
+/**
+ * G the class guide, C0 the app's nearest model, G2 the class guide with the side sentences, and
+ * G2E0·G2E5 G2's text on the class guide drawn from 0° or 5° above instead of the app's 10°
+ * (2026-11-07, the user's "안 된 가이드 고쳐 다시 시험": a long counter's side and a bath's end read as
+ * a front from 10°, the top being as tall as the side).
+ */
+export const TRIAL_METHODS = ['G', 'C0', 'G2', 'G2E0', 'G2E5'] as const;
 export type TrialMethod = (typeof TRIAL_METHODS)[number];
+/** The guide a method sends (prep/manifest.json `guides` key). */
+export const guideOf = (method: TrialMethod) =>
+  method === 'C0' ? 'C0' : method === 'G2E0' ? 'E0' : method === 'G2E5' ? 'E5' : 'G';
 
 export const KOREAN_VIEW: Record<DirectionPhotoView, '정면' | '왼쪽' | '오른쪽' | '뒤'> = {
   front: '정면',
@@ -281,6 +290,7 @@ export function promptFor(
   sizeMm: [number, number, number] = c.sizeMm,
 ): string {
   if (!viewsOf(c).includes(view)) throw new Error(`${c.id}: the app makes no ${view} view`);
+  if (method === 'G2E0' || method === 'G2E5') return promptFor(c, view, 'G2', sizeMm);
   if (method === 'G2') {
     const g = promptFor(c, view, 'G', sizeMm);
     if (c.category === 'toilet') return g;
