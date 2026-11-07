@@ -437,7 +437,8 @@ if (command === 'pair') {
       : `${g.dir === 1 ? '방향 맞음' : g.dir === 2 ? '살짝 돎' : '방향 틀림'}${g.same ? '' : ' · 모양 다름'}${g.problems.includes('c') ? ' · 색' : ''}${g.problems.includes('b') ? ' · 벽' : ''}`;
   for (const [p, [title, rows]] of groups.entries()) {
     const width = LABEL + 4 * COL + GAP;
-    const heads = ['제품 사진', '가이드', `${a} (지금)`, `${b} (문장 더함)`];
+    const named = { G: '지금', G2: '문장 더함', G2E0: '문장 더함, 0° 가이드', G2E5: '문장 더함, 5° 가이드' };
+    const heads = ['제품 사진', '가이드 (10°)', `${a} (${named[a] ?? a})`, `${b} (${named[b] ?? b})`];
     const comp = [
       { input: svg(width, 34, [[`${title} ${rows.length}곳`, 20, 25, 700]]), left: 0, top: 0 },
       {
