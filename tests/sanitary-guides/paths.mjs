@@ -2,6 +2,7 @@
 // writes: the main checkout's test-results (git-ignored), as the direction-photo methods trial does.
 import { join } from 'node:path';
 import {
+  ROOT,
   INPUTS,
   LEDGER as METHODS_LEDGER,
   OTHER_LEDGERS as METHODS_OTHERS,
@@ -17,3 +18,8 @@ export const PREP = join(OUT, 'prep');
 export const LEDGER = join(OUT, 'ledger.jsonl');
 /** The other trials' ledgers on the same signed-in account: their spend counts toward a UTC day. */
 export const OTHER_LEDGERS = [METHODS_LEDGER, ...METHODS_OTHERS];
+/**
+ * The user's second Cloudflare account (2026-11-07), git-ignored in the main checkout: CLOUDFLARE_ACCOUNT_ID
+ * and CLOUDFLARE_API_TOKEN for run.ts with CF_ACCOUNT=second. Its calls count only toward its own day.
+ */
+export const SECOND_ACCOUNT_FILE = join(ROOT, '.env.cf-second');

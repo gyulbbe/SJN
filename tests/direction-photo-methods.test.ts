@@ -12,7 +12,8 @@ import { TOILET_SIDE_ELEVATION } from '../src/lib/direction-photo/categories/toi
 import { PRODUCTS, productsFor, productById } from './direction-photo-methods/products';
 import { B2_NOUNS, jobFor } from './direction-photo-methods/methods';
 import { createTrialShape, shapeExtent } from './direction-photo-methods/shapes';
-import { budgetCheck, endsRun, fluxCost, type Row } from './direction-photo-methods/budget';
+import { budgetCheck, endsRun, fluxCost, ofAccount, type Row } from './direction-photo-methods/budget';
+import { parseAccountFile } from './direction-photo-methods/flux-send';
 import { iou, outline } from './direction-photo-real/measure.mjs';
 
 const REFS = ['refs/1.png', 'refs/2.png'];
@@ -141,6 +142,24 @@ describe('budget', () => {
       budgetCheck([{ at: '2026-11-01T00:00:00.000Z', neurons: 22_450, status: 200 }], [], { at, cost: 60 })
         .ok,
     ).toBe(false);
+  });
+  it('counts each account on its own day (rows without an account are the signed-in one)', () => {
+    const rows: Row[] = [
+      { at, neurons: 4900, status: 200 },
+      { at, neurons: 100, status: 200, account: 'second' },
+    ];
+    expect(ofAccount(rows).map((row) => row.neurons)).toEqual([4900]);
+    expect(ofAccount(rows, 'second').map((row) => row.neurons)).toEqual([100]);
+    expect(budgetCheck(ofAccount(rows, 'second'), [], { at, cost: 3000 }).ok).toBe(true);
+    expect(budgetCheck(ofAccount(rows), [], { at, cost: 3000 }).ok).toBe(false);
+  });
+  it('reads the second account file and refuses a malformed one', () => {
+    const id = 'a'.repeat(32);
+    const file = (account: string, token: string) =>
+      ['# note', `CLOUDFLARE_ACCOUNT_ID=${account}`, `CLOUDFLARE_API_TOKEN=${token}`, ''].join('\n');
+    expect(parseAccountFile(file(id, '"tok_1"'))).toEqual({ accountId: id, token: 'tok_1' });
+    expect(() => parseAccountFile(file('', 'x'))).toThrow(/ACCOUNT_ID/);
+    expect(() => parseAccountFile(file(id, ''))).toThrow(/TOKEN/);
   });
   it('stops the run on the account limit', () => {
     expect(endsRun(429)).toBe(true);

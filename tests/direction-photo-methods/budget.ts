@@ -28,7 +28,17 @@ export const fluxCost = (guide: { width: number; height: number }, photos: numbe
 /** Clef-flash bills input tokens only ($0.038 per M; 1,000 neurons = $0.011). */
 export const clefCost = (inputTokens: number) => (inputTokens * 0.038) / 1e6 / (0.011 / 1000);
 
-export type Row = { at: string; neurons?: number; status: number | string; engine?: string };
+export type Row = {
+  at: string;
+  neurons?: number;
+  status: number | string;
+  engine?: string;
+  /** The Cloudflare account the call went to; no field means the account wrangler is signed in to. */
+  account?: string;
+};
+/** The rows of one account: each account has its own UTC day, so only its own calls count. */
+export const ofAccount = <T extends Row>(rows: readonly T[], account = 'main') =>
+  rows.filter((row) => (row.account ?? 'main') === account);
 export const utcDay = (iso: string) => iso.slice(0, 10);
 const spent = (rows: readonly Row[]) =>
   rows.filter((row) => row.status !== 'refused' && row.engine !== 'local');
@@ -62,7 +72,7 @@ export function budgetCheck(
   return { ok: true };
 }
 
-/** An answer that ends the run: the account's limit or a refusal (no retry, no other account). */
+/** An answer that ends the run: the account's limit or a refusal (no retry, no automatic switch to another account). */
 export const endsRun = (status: number, error = '') =>
   status === 429 ||
   status === 401 ||

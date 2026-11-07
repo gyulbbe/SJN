@@ -15,6 +15,9 @@
 //   node tests/sanitary-guides/review.mjs versus <engine> <set dir> <method A> <method B>
 //     Two methods graded on the same sheets (METHODS=A,B NAME=<dir> sheets): per method the answers'
 //     view and kind, per class view whether 1 of its 2 answers is right, and A against B per view
+//   node tests/sanitary-guides/review.mjs pair <engine> <set dir> <method A> <method B> <file name>
+//     After versus: the photo, the guide and A's and B's answers (seed 1001) per view, first where B is
+//     right → <file name>-1.png, -2.png
 //   node tests/sanitary-guides/review.mjs both
 //     The views made on both engines: the photo, the guide, the local answer and Cloudflare's (seed 1001),
 //     with Claude's grade of the Cloudflare answer → 결과-cloudflare-N.png
@@ -408,6 +411,77 @@ if (command === 'both') {
       .png()
       .toFile(join(OUT, `결과-cloudflare-${p + 1}.png`));
     console.log('page', p + 1, y);
+  }
+}
+
+if (command === 'pair') {
+  // After `versus`: a row per class view, the photo, the guide, A's answer and B's (seed 1001), with the
+  // grades; first the views where B is right in view and kind, then the rest → <name>-1.png, <name>-2.png
+  const [, , , , name, a, b, out] = process.argv;
+  const { grades } = JSON.parse(readFileSync(join(OUT, 'review', name, 'table.json'), 'utf8'));
+  const of = (id, view, m) =>
+    grades.find((g) => g.id === id && g.view === view && g.method === m && g.seed === 1001);
+  const slots = [...new Set(grades.map((g) => `${g.id} ${g.view}`))].map((s) => s.split(' '));
+  const right = (g) => g && g.dir === 1 && g.same;
+  const groups = [
+    [`${b}로 방향·종류가 맞은 곳`, slots.filter(([id, view]) => right(of(id, view, b)))],
+    [`${b}로도 안 된 곳`, slots.filter(([id, view]) => !right(of(id, view, b)))],
+  ];
+  const CELL = 180,
+    GAP = 6,
+    COL = CELL + GAP,
+    LABEL = 150;
+  const verdict = (g) =>
+    !g
+      ? ''
+      : `${g.dir === 1 ? '방향 맞음' : g.dir === 2 ? '살짝 돎' : '방향 틀림'}${g.same ? '' : ' · 모양 다름'}${g.problems.includes('c') ? ' · 색' : ''}${g.problems.includes('b') ? ' · 벽' : ''}`;
+  for (const [p, [title, rows]] of groups.entries()) {
+    const width = LABEL + 4 * COL + GAP;
+    const heads = ['제품 사진', '가이드', `${a} (지금)`, `${b} (문장 더함)`];
+    const comp = [
+      { input: svg(width, 34, [[`${title} ${rows.length}곳`, 20, 25, 700]]), left: 0, top: 0 },
+      {
+        input: svg(
+          width,
+          26,
+          heads.map((t, i) => [t, 15, 19, 700, LABEL + i * COL + 6]),
+        ),
+        left: 0,
+        top: 34,
+      },
+    ];
+    let y = 62;
+    for (const [id, view] of rows) {
+      const product = manifest[id].rep;
+      comp.push({
+        input: svg(LABEL, CELL, [
+          [id, 22, 30, 700],
+          [KOREAN[view], 16, 56],
+        ]),
+        left: 0,
+        top: y,
+      });
+      const files = [
+        product.ref,
+        product.guides.G[view],
+        answer(id, 'rep', a, view, 1001),
+        answer(id, 'rep', b, view, 1001),
+      ];
+      for (const [i, f] of files.entries())
+        if (existsSync(f)) comp.push({ input: await tile(f, CELL), left: LABEL + i * COL, top: y });
+      for (const [i, m] of [a, b].entries())
+        comp.push({
+          input: svg(CELL, 20, [[verdict(of(id, view, m)), 12, 15, 400]]),
+          left: LABEL + (2 + i) * COL,
+          top: y + CELL - 20,
+        });
+      y += COL;
+    }
+    await sharp({ create: { width, height: y, channels: 3, background: '#e9e9e9' } })
+      .composite(comp)
+      .png()
+      .toFile(join(OUT, `${out}-${p + 1}.png`));
+    console.log(out, p + 1, rows.length, y);
   }
 }
 

@@ -7,6 +7,9 @@
  *     seeds: default 1001,1002. Views: the app's (prompts.ts viewsOf).
  *   DRY=1 counts the calls and their estimated neurons and sends nothing.
  *   ONLY=T2:front,B1:left limits the run to those class views.
+ *   CF_ACCOUNT=second sends Cloudflare calls to the user's second account through the REST API
+ *     (paths.mjs SECOND_ACCOUNT_FILE) instead of the temporary Worker; the ledger rows say `account`, and
+ *     the day's share counts that account's rows only.
  *
  * At most 2 calls at a time, no retry. A Cloudflare call that budget.ts refuses is written as `refused`
  * and stops the run, as does a 429 or the account's daily limit (exit 3). A finished answer is never
@@ -15,10 +18,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
-import { budgetCheck, endsRun, fluxCost, FLUX_4B, type Row } from '../direction-photo-methods/budget';
-import { sendFlux } from '../direction-photo-methods/flux-send';
+import { budgetCheck, endsRun, fluxCost, FLUX_4B, ofAccount, type Row } from '../direction-photo-methods/budget';
+import { parseAccountFile, sendFlux } from '../direction-photo-methods/flux-send';
 import { CLASSES } from './classes';
-import { LEDGER, OTHER_LEDGERS, OUT, PREP } from './paths.mjs';
+import { LEDGER, OTHER_LEDGERS, OUT, PREP, SECOND_ACCOUNT_FILE } from './paths.mjs';
 import { promptFor, TRIAL_METHODS, viewsOf, type TrialMethod } from './prompts';
 import type { Manifest, Who } from './prepare';
 
@@ -34,6 +37,12 @@ const whos = whoList.split(',') as Who[];
 const classes = classList === 'all' ? CLASSES : CLASSES.filter((c) => classList.split(',').includes(c.id));
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : undefined;
 const manifest = JSON.parse(readFileSync(path.join(PREP, 'manifest.json'), 'utf8')) as Manifest;
+const ACCOUNT = process.env.CF_ACCOUNT ?? 'main';
+if (ACCOUNT !== 'main' && ACCOUNT !== 'second') throw new Error(`CF_ACCOUNT ${ACCOUNT}?`);
+const rest =
+  engine === 'cf' && ACCOUNT === 'second'
+    ? parseAccountFile(readFileSync(SECOND_ACCOUNT_FILE, 'utf8'))
+    : undefined;
 
 const readRows = (file: string): Row[] =>
   existsSync(file)
@@ -42,7 +51,7 @@ const readRows = (file: string): Row[] =>
         .filter(Boolean)
         .map((line) => JSON.parse(line) as Row)
     : [];
-const others = OTHER_LEDGERS.flatMap(readRows);
+const others = ofAccount(OTHER_LEDGERS.flatMap(readRows), ACCOUNT);
 export const answerFile = (
   eng: string,
   id: string,
@@ -108,6 +117,7 @@ runs: for (const method of methods)
             at,
             engine,
             model: engine === 'cf' ? MODEL : 'local-klein-4b',
+            ...(engine === 'cf' && ACCOUNT !== 'main' ? { account: ACCOUNT, via: 'rest' } : {}),
             class: job.id,
             who: job.who,
             product: job.cd,
@@ -119,7 +129,7 @@ runs: for (const method of methods)
             neurons: Number(cost.toFixed(2)),
           };
           if (engine === 'cf') {
-            const check = budgetCheck(readRows(LEDGER), others, { at, cost });
+            const check = budgetCheck(ofAccount(readRows(LEDGER), ACCOUNT), others, { at, cost });
             if (!check.ok) {
               appendFileSync(
                 LEDGER,
@@ -134,7 +144,7 @@ runs: for (const method of methods)
           let status = 0,
             error: string | undefined;
           try {
-            const answer = await sendFlux(engine, p, job.prompt, job.seed, MODEL);
+            const answer = await sendFlux(engine, p, job.prompt, job.seed, MODEL, rest);
             status = answer.status;
             error = answer.error;
             if (answer.image) await sharp(Buffer.from(answer.image, 'base64')).png().toFile(out);
