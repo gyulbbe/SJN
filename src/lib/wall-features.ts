@@ -6,6 +6,12 @@ export const WALL_FEATURE_MAX_COUNT = 24;
 /** Supported modelling depth, not an estimate of the real wall thickness. */
 export const WALL_FEATURE_MAX_DEPTH_MM = 1000;
 export const WALL_FEATURE_CONTACT_EPSILON_MM = 1e-6;
+/**
+ * Ledges this close are one piece of masonry: before 2026-11-11 touching ledges were refused, so
+ * people left a millimetre or so between them. Drawn and measured as joined; storage keeps the gap.
+ */
+export const LEDGE_JOIN_GAP_MM = 5;
+export const LEDGE_OVERLAP_MESSAGE = '젠다이끼리는 맞닿게 놓을 수 있지만 겹칠 수는 없어요.';
 
 export type WallFeatureFace = 'left' | 'back' | 'right';
 type WallFeatureBaseV1 = {
@@ -313,27 +319,246 @@ export function validateWallFeatures(
         b = resolved[j].value;
       const epsilon = WALL_FEATURE_CONTACT_EPSILON_MM;
       const sameFace = a.face === b.face;
-      const touches = sameFace
-        ? Math.min(a.openingMm.right, b.openingMm.right) - Math.max(a.openingMm.left, b.openingMm.left) >=
-            -epsilon &&
-          Math.min(a.openingMm.bottom, b.openingMm.bottom) - Math.max(a.openingMm.top, b.openingMm.top) >=
-            -epsilon
-        : [0, 1, 2].every(
-            (axis) =>
-              Math.min(a.worldBounds.max[axis], b.worldBounds.max[axis]) -
-                Math.max(a.worldBounds.min[axis], b.worldBounds.min[axis]) >=
-              -epsilon,
-          );
+      const overlaps = [0, 1, 2].map(
+        (axis) =>
+          Math.min(a.worldBounds.max[axis], b.worldBounds.max[axis]) -
+          Math.max(a.worldBounds.min[axis], b.worldBounds.min[axis]),
+      );
+      // Two ledges may touch (side by side, one on the other, round a corner): only a shared volume
+      // is refused. A niche still needs clear wall around it.
+      const ledges = !!a.protrudes && !!b.protrudes;
+      const touches = ledges
+        ? overlaps.every((overlap) => overlap > epsilon)
+        : sameFace
+          ? Math.min(a.openingMm.right, b.openingMm.right) - Math.max(a.openingMm.left, b.openingMm.left) >=
+              -epsilon &&
+            Math.min(a.openingMm.bottom, b.openingMm.bottom) - Math.max(a.openingMm.top, b.openingMm.top) >=
+              -epsilon
+          : overlaps.every((overlap) => overlap >= -epsilon);
       if (touches)
         issues.push({
           code: sameFace ? 'touching-or-overlap' : 'volume-collision',
           path: ['wallFeatures', resolved[j].index],
           featureId: b.id,
           relatedFeatureId: a.id,
-          message: '서로 겹치거나 맞닿는 벽 구조는 별도 연결 형상이 필요해요.',
+          message: ledges
+            ? LEDGE_OVERLAP_MESSAGE
+            : '서로 겹치거나 맞닿는 벽 구조는 별도 연결 형상이 필요해요.',
         });
     }
   return issues;
+}
+
+type Axis = 0 | 1 | 2;
+type Side = 'min' | 'max';
+/** The axis a ledge stands out along: its wall's own plane is one end of it. */
+const depthAxis = (face: WallFeatureFace): Axis => (face === 'back' ? 2 : 0);
+/** The box end lying in the ledge's own wall, which never moves. */
+const wallSide = (face: WallFeatureFace): Side => (face === 'right' ? 'max' : 'min');
+
+/** A ledge with one end of its box moved: the box, and the one measure of the opening that follows it. */
+function withEdge(
+  room: RoomDimensions,
+  feature: ResolvedWallFeature,
+  axis: Axis,
+  side: Side,
+  value: number,
+): ResolvedWallFeature {
+  const min: [number, number, number] = [...feature.worldBounds.min],
+    max: [number, number, number] = [...feature.worldBounds.max];
+  (side === 'min' ? min : max)[axis] = value;
+  const mm = { ...feature.openingMm };
+  let depthMm = feature.depthMm;
+  if (axis === 1) {
+    if (side === 'min') mm.bottom = room.heightMm - value;
+    else mm.top = room.heightMm - value;
+  } else if (axis === depthAxis(feature.face))
+    depthMm =
+      feature.face === 'back'
+        ? value
+        : feature.face === 'left'
+          ? value + room.widthMm / 2
+          : room.widthMm / 2 - value;
+  else if (feature.face === 'back') mm[side === 'min' ? 'left' : 'right'] = value + room.widthMm / 2;
+  else if (feature.face === 'left') mm[side === 'min' ? 'right' : 'left'] = room.depthMm - value;
+  else mm[side === 'min' ? 'left' : 'right'] = value;
+  return {
+    ...feature,
+    heightMm: mm.bottom - mm.top,
+    depthMm,
+    opening: {
+      left: mm.left / feature.wallSpanMm,
+      top: mm.top / room.heightMm,
+      right: mm.right / feature.wallSpanMm,
+      bottom: mm.bottom / room.heightMm,
+    },
+    openingMm: mm,
+    worldBounds: { min, max },
+  };
+}
+
+const boxOverlap = (a: WallFeatureBounds, b: WallFeatureBounds, axis: number) =>
+  Math.min(a.max[axis], b.max[axis]) - Math.max(a.min[axis], b.min[axis]);
+
+/**
+ * The features as they are built: every one resolved, and ledges that face each other across
+ * LEDGE_JOIN_GAP_MM or less made to touch (the later one of the list reaches the earlier; one that
+ * meets the other's front with its end is the one that reaches). Edges a rounding error apart become
+ * the same number. Stored millimetres are not changed; drawing, areas, floor contact and the AI
+ * description all take this shape. Call validateWallFeatures first.
+ */
+export function joinedLedges(
+  room: RoomDimensions,
+  features: readonly WallFeatureV1[] | undefined,
+): ResolvedWallFeature[] {
+  const result = (features ?? []).map((feature) => resolveValid(room, feature));
+  const epsilon = WALL_FEATURE_CONTACT_EPSILON_MM;
+  const ledges = result.map((feature, index) => (feature.protrudes ? index : -1)).filter((i) => i >= 0);
+  if (ledges.length < 2) return result;
+  const locked = (feature: ResolvedWallFeature, axis: Axis, side: Side) =>
+    axis === depthAxis(feature.face) && side === wallSide(feature.face);
+  const sides: Side[] = ['min', 'max'];
+  // Rounding: the same plane is one number.
+  for (const i of ledges)
+    for (const j of ledges) {
+      if (j <= i) continue;
+      for (const axis of [0, 1, 2] as Axis[])
+        for (const si of sides)
+          for (const sj of sides) {
+            const a = result[i].worldBounds[si][axis],
+              b = result[j].worldBounds[sj][axis];
+            if (a === b || Math.abs(a - b) > epsilon) continue;
+            if (!locked(result[j], axis, sj)) result[j] = withEdge(room, result[j], axis, sj, a);
+            else if (!locked(result[i], axis, si)) result[i] = withEdge(room, result[i], axis, si, b);
+          }
+    }
+  const collides = (candidate: ResolvedWallFeature, self: number) =>
+    result.some((other, index) => {
+      if (index === self) return false;
+      if (other.protrudes)
+        return [0, 1, 2].every(
+          (axis) => boxOverlap(candidate.worldBounds, other.worldBounds, axis) > epsilon,
+        );
+      return (
+        other.face === candidate.face &&
+        Math.min(candidate.openingMm.right, other.openingMm.right) -
+          Math.max(candidate.openingMm.left, other.openingMm.left) >=
+          -epsilon &&
+        Math.min(candidate.openingMm.bottom, other.openingMm.bottom) -
+          Math.max(candidate.openingMm.top, other.openingMm.top) >=
+          -epsilon
+      );
+    });
+  for (const i of ledges)
+    for (const j of ledges) {
+      if (j <= i) continue;
+      const overlaps = [0, 1, 2].map((axis) =>
+        boxOverlap(result[i].worldBounds, result[j].worldBounds, axis),
+      );
+      const apart = overlaps.filter((overlap) => overlap < 0);
+      // One gap, across faces that overlap: ledges meeting only at an edge or a corner stay as they are.
+      if (apart.length !== 1 || -apart[0] > LEDGE_JOIN_GAP_MM) continue;
+      if (overlaps.some((overlap) => overlap >= 0 && overlap <= epsilon)) continue;
+      const axis = overlaps.findIndex((overlap) => overlap < 0) as Axis;
+      // The one whose end, top or underside faces the gap reaches across; a depth never changes.
+      const mover = depthAxis(result[j].face) !== axis ? j : depthAxis(result[i].face) !== axis ? i : -1;
+      if (mover < 0) continue;
+      const other = mover === j ? i : j;
+      const above = result[mover].worldBounds.min[axis] >= result[other].worldBounds.max[axis];
+      const moved = withEdge(
+        room,
+        result[mover],
+        axis,
+        above ? 'min' : 'max',
+        result[other].worldBounds[above ? 'max' : 'min'][axis],
+      );
+      if (!collides(moved, mover)) result[mover] = moved;
+    }
+  return result;
+}
+
+/** A ledge's faces, named as its drawn pieces are. */
+export type LedgeFaceRole = 'front' | 'reveal-left' | 'reveal-right' | 'reveal-top' | 'reveal-bottom';
+/**
+ * A rectangle of a ledge's face that another ledge lies flat against, in the ledge's own wall
+ * millimetres. `a`: along the wall (front, top, underside) or down from the ceiling (the two ends);
+ * `b`: down from the ceiling (front) or out from the wall (the others).
+ */
+export type LedgeCover = {
+  role: LedgeFaceRole;
+  /** The wall of the ledge that covers it. */
+  by: WallFeatureFace;
+  a0: number;
+  a1: number;
+  b0: number;
+  b1: number;
+};
+/** A box as a wall sees it: along the wall, down from the ceiling and out into the room. */
+function boundsOnFace(room: RoomDimensions, face: WallFeatureFace, bounds: WallFeatureBounds) {
+  const { min, max } = bounds,
+    w = room.widthMm,
+    d = room.depthMm;
+  const along =
+    face === 'back'
+      ? { left: min[0] + w / 2, right: max[0] + w / 2, near: min[2], far: max[2] }
+      : face === 'left'
+        ? { left: d - max[2], right: d - min[2], near: min[0] + w / 2, far: max[0] + w / 2 }
+        : { left: min[2], right: max[2], near: w / 2 - max[0], far: w / 2 - min[0] };
+  return { ...along, top: room.heightMm - max[1], bottom: room.heightMm - min[1] };
+}
+/**
+ * What the other ledges hide of this one (all from `joinedLedges`): neither drawn while the other
+ * stands there nor tiled. Rectangles of one face do not overlap, as the ledges do not.
+ */
+export function ledgeCovers(
+  room: RoomDimensions,
+  ledge: ResolvedWallFeature,
+  all: readonly ResolvedWallFeature[],
+): LedgeCover[] {
+  if (!ledge.protrudes) return [];
+  const epsilon = WALL_FEATURE_CONTACT_EPSILON_MM;
+  const o = ledge.openingMm,
+    depth = ledge.depthMm;
+  const covers: LedgeCover[] = [];
+  const same = (a: number, b: number) => Math.abs(a - b) <= epsilon;
+  for (const other of all) {
+    if (other.id === ledge.id || !other.protrudes) continue;
+    const box = boundsOnFace(room, ledge.face, other.worldBounds);
+    const u0 = Math.max(o.left, box.left),
+      u1 = Math.min(o.right, box.right),
+      v0 = Math.max(o.top, box.top),
+      v1 = Math.min(o.bottom, box.bottom),
+      t0 = Math.max(0, box.near),
+      t1 = Math.min(depth, box.far);
+    const u = u1 - u0 > epsilon,
+      v = v1 - v0 > epsilon,
+      t = t1 - t0 > epsilon;
+    const add = (role: LedgeFaceRole, a0: number, a1: number, b0: number, b1: number) =>
+      covers.push({ role, by: other.face, a0, a1, b0, b1 });
+    if (same(box.near, depth) && u && v) add('front', u0, u1, v0, v1);
+    if (same(box.right, o.left) && v && t) add('reveal-left', v0, v1, t0, t1);
+    if (same(box.left, o.right) && v && t) add('reveal-right', v0, v1, t0, t1);
+    if (same(box.bottom, o.top) && u && t) add('reveal-top', u0, u1, t0, t1);
+    if (same(box.top, o.bottom) && u && t) add('reveal-bottom', u0, u1, t0, t1);
+  }
+  return covers;
+}
+
+/**
+ * Which body each feature of `joinedLedges` belongs to: ledges lying flat against each other share
+ * a number (the index of the body's first ledge); a niche has -1.
+ */
+export function ledgeGroups(room: RoomDimensions, joined: readonly ResolvedWallFeature[]): number[] {
+  const groups = joined.map((feature, index) => (feature.protrudes ? index : -1));
+  for (let i = 0; i < joined.length; i++)
+    for (let j = i + 1; j < joined.length; j++) {
+      if (groups[i] < 0 || groups[j] < 0 || groups[i] === groups[j]) continue;
+      if (!ledgeCovers(room, joined[i], [joined[j]]).length) continue;
+      const from = Math.max(groups[i], groups[j]),
+        to = Math.min(groups[i], groups[j]);
+      for (let k = 0; k < groups.length; k++) if (groups[k] === from) groups[k] = to;
+    }
+  return groups;
 }
 
 /** Derived plain data only. Call validateWallFeatures first to validate a multi-feature scene. */

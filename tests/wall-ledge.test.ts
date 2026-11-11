@@ -78,10 +78,10 @@ describe('a ledge is validated', () => {
     expect(messages({ ...ledge(), bottomMm: undefined }).length).toBeGreaterThan(0);
   });
   it('refuses what it would meet: its wall, another wall’s ledge, a niche it would cover', () => {
-    expect(messages(ledge(), ledge({ id: id(2), leftMm: 1000 }))[0]).toContain('겹치거나');
+    expect(messages(ledge(), ledge({ id: id(2), leftMm: 1000 }))[0]).toContain('겹칠 수는 없어요');
     const cornerBack = ledge({ leftMm: 0, widthMm: 900 });
     const cornerLeft = ledge({ id: id(2), face: 'left', leftMm: 1500, widthMm: 900 });
-    expect(messages(cornerBack, cornerLeft)[0]).toContain('겹치거나');
+    expect(messages(cornerBack, cornerLeft)[0]).toContain('겹칠 수는 없어요');
     const coveredNiche: WallFeatureV1 = {
       version: 1,
       id: id(3),

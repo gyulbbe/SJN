@@ -2,9 +2,10 @@ import type { Scene, Surface } from './types';
 import { cellLeft, cellRight, partitionRoomFaces, type FaceCell } from './room-face-partition';
 import { roomDefinitionSchema } from './room-validation';
 import {
+  joinedLedges,
+  ledgeCovers,
   ledgeEndWall,
   ledgeFootprints,
-  resolveWallFeature,
   validateWallFeatures,
   type ResolvedWallFeature,
 } from './wall-features';
@@ -113,13 +114,30 @@ function grossCellAreaMm2(
       Number(left < opening.right && opening.right <= right && tiledEnd('right'));
     area += -openingArea + rearArea + reveals * overlapHeight * feature.depthMm;
     // Exact band boundary ownership points into the opening, as in geometry.
-    if (from <= opening.top && opening.top < to) area += width * feature.depthMm;
-    if (
-      (feature.kind === 'closed-niche' || (feature.protrudes && opening.bottom < 1)) &&
-      from < opening.bottom &&
-      opening.bottom <= to
-    )
-      area += width * feature.depthMm;
+    const ownsTop = from <= opening.top && opening.top < to,
+      ownsBottom =
+        (feature.kind === 'closed-niche' || (feature.protrudes && opening.bottom < 1)) &&
+        from < opening.bottom &&
+        opening.bottom <= to;
+    if (ownsTop) area += width * feature.depthMm;
+    if (ownsBottom) area += width * feature.depthMm;
+    // What another ledge lies flat against is not tiled, on either of the two.
+    const within = (low: number, high: number, a: number, b: number) =>
+      Math.max(0, Math.min(high, b) - Math.max(low, a));
+    const alongWall = (a: number, b: number) => within(left * span, right * span, a, b),
+      downWall = (a: number, b: number) => within(from * room.heightMm, to * room.heightMm, a, b);
+    for (const cover of ledgeCovers(room, feature, features)) {
+      if (cover.role === 'front') area -= alongWall(cover.a0, cover.a1) * downWall(cover.b0, cover.b1);
+      else if (cover.role === 'reveal-left' || cover.role === 'reveal-right') {
+        const end = cover.role === 'reveal-left' ? 'left' : 'right';
+        const owns =
+          end === 'left'
+            ? left <= opening.left && opening.left < right
+            : left < opening.right && opening.right <= right;
+        if (owns && tiledEnd(end)) area -= downWall(cover.a0, cover.a1) * (cover.b1 - cover.b0);
+      } else if (cover.role === 'reveal-top' ? ownsTop : ownsBottom)
+        area -= alongWall(cover.a0, cover.a1) * (cover.b1 - cover.b0);
+    }
   }
   return area;
 }
@@ -157,7 +175,8 @@ export function roomSurfaceAreasMm2(
       });
     return result;
   }
-  const features = (scene.wallFeatures ?? []).map((feature) => resolveWallFeature(room, feature));
+  // Ledges a few millimetres apart are measured as the one piece they are built as.
+  const features = joinedLedges(room, scene.wallFeatures);
   const ids = new Set<string>();
   if (surfaces.some((surface) => ids.has(surface.id) || !ids.add(surface.id))) {
     for (const surface of surfaces) result.set(surface.id, { areaMm2: null, issue: unclear });

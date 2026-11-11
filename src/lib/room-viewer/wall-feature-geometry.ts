@@ -2,10 +2,14 @@ import { Box3, BufferGeometry, Float32BufferAttribute, Vector3 } from 'three';
 import { roomFacePoint } from '../room-geometry';
 import type { RoomDefinition, RoomFace } from '../room-types';
 import {
+  joinedLedges,
+  ledgeCovers,
   ledgeEndWall,
-  resolveWallFeature,
   validateWallFeatures,
+  WALL_FEATURE_CONTACT_EPSILON_MM,
   WallFeatureValidationError,
+  type LedgeCover,
+  type LedgeFaceRole,
   type ResolvedWallFeature,
   type WallFeatureV1,
 } from '../wall-features';
@@ -38,7 +42,10 @@ export type WallFeaturePiece = {
   worldBounds: Box3;
   /** A piece of a ledge, which stands in the room: it casts a shadow and goes with its wall. */
   protrudes?: true;
-  /** A ledge's end flat on this wall: seen only while that wall is hidden, and never tiled. */
+  /**
+   * A part of a ledge flat on this wall, or on a ledge of this wall: seen only while that wall is
+   * hidden, and never tiled.
+   */
   againstFace?: WallFace;
 };
 export type WallFeaturePieces = {
@@ -103,7 +110,8 @@ export function buildWallFeaturePieces(
 ): WallFeaturePieces {
   const issues = validateWallFeatures(room, features);
   if (issues.length) throw new WallFeatureValidationError(issues);
-  const resolved = features.map((feature) => resolveWallFeature(room, feature));
+  // Ledges a few millimetres apart are built as touching (joinedLedges).
+  const resolved = joinedLedges(room, features);
   const affectedFaces = WALLS.filter((face) => resolved.some((feature) => feature.face === face));
   // Validate all parents before allocating geometry, retaining neutral/ambiguous surface entries.
   const parents = new Map(affectedFaces.map((face) => [face, wallPatches(patches, face)]));
@@ -233,21 +241,12 @@ export function buildWallFeaturePieces(
     return result;
   };
   const addInterior = (feature: ResolvedWallFeature, cells: ViewerSurfacePatch[]) => {
+    if (feature.protrudes) return addLedge(feature, cells);
     const { face, id, opening: o, wallSpanMm: length } = feature;
-    // A ledge is the same box turned out into the room: a negative depth, with its faces looking out.
-    const out = !!feature.protrudes;
-    const d = out ? -feature.depthMm : feature.depthMm;
-    const look = out ? -1 : 1;
+    const d = feature.depthMm;
     const uAxis = roomFacePoint(room, face, 1, 0)
       .sub(roomFacePoint(room, face, 0, 0))
-      .normalize()
-      .multiplyScalar(look);
-    const ledge = (end?: 'left' | 'right') => {
-      if (!out) return undefined;
-      const atEnd = end === 'left' ? o.left === 0 : end === 'right' ? o.right === 1 : false;
-      const againstFace = end && atEnd ? ledgeEndWall(face, end) : undefined;
-      return againstFace ? { againstFace } : {};
-    };
+      .normalize();
     for (const patch of cells) {
       const top = Math.max(o.top, patch.from),
         bottom = Math.min(o.bottom, patch.to);
@@ -257,13 +256,12 @@ export function buildWallFeaturePieces(
       if (left < right)
         add(
           face,
-          out ? 'front' : 'rear',
+          'rear',
           patch,
           rect(face, left, top, right, bottom, d),
           rectUv(left, top, right, bottom),
           normalFor(face),
           id,
-          ledge(),
         );
       if (cellLeft(patch) <= o.left && o.left < cellRight(patch))
         add(
@@ -284,7 +282,6 @@ export function buildWallFeaturePieces(
           ],
           uAxis.toArray(),
           id,
-          ledge('left'),
         );
       if (cellLeft(patch) < o.right && o.right <= cellRight(patch))
         add(
@@ -305,7 +302,6 @@ export function buildWallFeaturePieces(
           ],
           uAxis.clone().negate().toArray(),
           id,
-          ledge('right'),
         );
     }
     for (const part of along(cells, 'v', o.top, 'after', o.left, o.right))
@@ -325,9 +321,8 @@ export function buildWallFeaturePieces(
           [part.to, o.top + d / room.heightMm],
           [part.from, o.top + d / room.heightMm],
         ],
-        [0, -look, 0],
+        [0, -1, 0],
         id,
-        ledge(),
       );
     const bottomPoints = (from: number, to: number) => [
       point(face, from, o.bottom),
@@ -349,8 +344,7 @@ export function buildWallFeaturePieces(
           id,
         );
       }
-    // A ledge on the floor has no underside.
-    else if (!out || o.bottom < 1)
+    else
       for (const part of along(cells, 'v', o.bottom, 'before', o.left, o.right))
         add(
           face,
@@ -363,10 +357,202 @@ export function buildWallFeaturePieces(
             [part.to, o.bottom - d / room.heightMm],
             [part.from, o.bottom - d / room.heightMm],
           ],
-          [0, look, 0],
+          [0, 1, 0],
           id,
-          ledge(),
         );
+  };
+  /**
+   * A ledge: the niche's box turned out into the room, its faces looking out. Each face leaves out
+   * what another ledge lies flat against: a neighbour of the same wall hides it for good (the two go
+   * with their wall together), one of another wall until that wall is hidden.
+   */
+  const addLedge = (feature: ResolvedWallFeature, cells: ViewerSurfacePatch[]) => {
+    const { face, id, opening: o, wallSpanMm: length } = feature;
+    const depth = feature.depthMm,
+      height = room.heightMm;
+    const covers = ledgeCovers(room, feature, resolved);
+    const outward = roomFacePoint(room, face, 1, 0)
+      .sub(roomFacePoint(room, face, 0, 0))
+      .normalize()
+      .negate();
+    const wallAt = (end: 'left' | 'right') =>
+      (end === 'left' ? o.left === 0 : o.right === 1) ? ledgeEndWall(face, end) : undefined;
+    type Part = { a0: number; a1: number; b0: number; b1: number; by?: WallFace };
+    /**
+     * The parts of one face's rectangle [a0, a1] × [b0, b1] (`a`, `b` as in LedgeCover, in the face's
+     * own units: `aMm`, `bMm` millimetres each): the whole of it when nothing covers it, the same quad
+     * as a ledge standing alone.
+     */
+    const parts = (
+      role: LedgeFaceRole,
+      a0: number,
+      a1: number,
+      b0: number,
+      b1: number,
+      aMm: number,
+      bMm: number,
+    ): Part[] => {
+      const over = covers
+        .filter((cover) => cover.role === role)
+        .map((cover): LedgeCover => ({
+          ...cover,
+          a0: cover.a0 / aMm,
+          a1: cover.a1 / aMm,
+          b0: cover.b0 / bMm,
+          b1: cover.b1 / bMm,
+        }))
+        .filter((cover) => cover.a1 > a0 && cover.a0 < a1 && cover.b1 > b0 && cover.b0 < b1);
+      if (!over.length) return [{ a0, a1, b0, b1 }];
+      // A cut a rounding error from the rectangle's own edge is that edge.
+      const cuts = (from: number, to: number, values: number[], mm: number) => {
+        const near = WALL_FEATURE_CONTACT_EPSILON_MM / mm;
+        return uniqueSorted([
+          from,
+          to,
+          ...values.filter((value) => value > from + near && value < to - near),
+        ]);
+      };
+      const as = cuts(
+          a0,
+          a1,
+          over.flatMap((cover) => [cover.a0, cover.a1]),
+          aMm,
+        ),
+        bs = cuts(
+          b0,
+          b1,
+          over.flatMap((cover) => [cover.b0, cover.b1]),
+          bMm,
+        );
+      const result: Part[] = [];
+      for (let i = 0; i < as.length - 1; i++)
+        for (let j = 0; j < bs.length - 1; j++) {
+          const a = (as[i] + as[i + 1]) / 2,
+            b = (bs[j] + bs[j + 1]) / 2;
+          const cover = over.find((item) => item.a0 < a && a < item.a1 && item.b0 < b && b < item.b1);
+          if (cover?.by === face) continue;
+          result.push({
+            a0: as[i],
+            a1: as[i + 1],
+            b0: bs[j],
+            b1: bs[j + 1],
+            ...(cover ? { by: cover.by } : {}),
+          });
+        }
+      return result;
+    };
+    const against = (by?: WallFace) => (by ? { againstFace: by } : {});
+    for (const patch of cells) {
+      const top = Math.max(o.top, patch.from),
+        bottom = Math.min(o.bottom, patch.to);
+      if (top >= bottom) continue;
+      const left = Math.max(o.left, cellLeft(patch)),
+        right = Math.min(o.right, cellRight(patch));
+      if (left < right)
+        for (const part of parts('front', left, right, top, bottom, length, height))
+          add(
+            face,
+            'front',
+            patch,
+            rect(face, part.a0, part.b0, part.a1, part.b1, -depth),
+            rectUv(part.a0, part.b0, part.a1, part.b1),
+            normalFor(face),
+            id,
+            against(part.by),
+          );
+      // The ends: down the wall (a) and out from it (b, millimetres).
+      if (cellLeft(patch) <= o.left && o.left < cellRight(patch))
+        for (const part of parts('reveal-left', top, bottom, 0, depth, height, 1))
+          add(
+            face,
+            'reveal-left',
+            patch,
+            [
+              point(face, o.left, part.a0, -part.b0),
+              point(face, o.left, part.a0, -part.b1),
+              point(face, o.left, part.a1, -part.b1),
+              point(face, o.left, part.a1, -part.b0),
+            ],
+            [
+              [o.left - part.b0 / length, part.a0],
+              [o.left - part.b1 / length, part.a0],
+              [o.left - part.b1 / length, part.a1],
+              [o.left - part.b0 / length, part.a1],
+            ],
+            outward.toArray(),
+            id,
+            against(wallAt('left') ?? part.by),
+          );
+      if (cellLeft(patch) < o.right && o.right <= cellRight(patch))
+        for (const part of parts('reveal-right', top, bottom, 0, depth, height, 1))
+          add(
+            face,
+            'reveal-right',
+            patch,
+            [
+              point(face, o.right, part.a0, -part.b0),
+              point(face, o.right, part.a0, -part.b1),
+              point(face, o.right, part.a1, -part.b1),
+              point(face, o.right, part.a1, -part.b0),
+            ],
+            [
+              [o.right + part.b0 / length, part.a0],
+              [o.right + part.b1 / length, part.a0],
+              [o.right + part.b1 / length, part.a1],
+              [o.right + part.b0 / length, part.a1],
+            ],
+            outward.clone().negate().toArray(),
+            id,
+            against(wallAt('right') ?? part.by),
+          );
+    }
+    // The top and the underside: along the wall (a) and out from it (b, millimetres).
+    for (const strip of along(cells, 'v', o.top, 'after', o.left, o.right))
+      for (const part of parts('reveal-top', strip.from, strip.to, 0, depth, length, 1))
+        add(
+          face,
+          'reveal-top',
+          strip.cell,
+          [
+            point(face, part.a0, o.top, -part.b0),
+            point(face, part.a1, o.top, -part.b0),
+            point(face, part.a1, o.top, -part.b1),
+            point(face, part.a0, o.top, -part.b1),
+          ],
+          [
+            [part.a0, o.top - part.b0 / height],
+            [part.a1, o.top - part.b0 / height],
+            [part.a1, o.top - part.b1 / height],
+            [part.a0, o.top - part.b1 / height],
+          ],
+          [0, 1, 0],
+          id,
+          against(part.by),
+        );
+    // A ledge on the floor has no underside.
+    if (o.bottom < 1)
+      for (const strip of along(cells, 'v', o.bottom, 'before', o.left, o.right))
+        for (const part of parts('reveal-bottom', strip.from, strip.to, 0, depth, length, 1))
+          add(
+            face,
+            'reveal-bottom',
+            strip.cell,
+            [
+              point(face, part.a0, o.bottom, -part.b0),
+              point(face, part.a1, o.bottom, -part.b0),
+              point(face, part.a1, o.bottom, -part.b1),
+              point(face, part.a0, o.bottom, -part.b1),
+            ],
+            [
+              [part.a0, o.bottom + part.b0 / height],
+              [part.a1, o.bottom + part.b0 / height],
+              [part.a1, o.bottom + part.b1 / height],
+              [part.a0, o.bottom + part.b1 / height],
+            ],
+            [0, -1, 0],
+            id,
+            against(part.by),
+          );
   };
   /** The floor cells along a wall's foot, as wall u from `from` to `to` (left wall u = 1 − floor v). */
   const floorEdge = (face: WallFace, from: number, to: number) => {

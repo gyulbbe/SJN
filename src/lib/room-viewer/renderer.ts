@@ -37,7 +37,7 @@ import {
 } from '../types';
 import { roomFacePoint, validateRoomDimensions } from '../room-geometry';
 import type { RoomFace } from '../room-types';
-import { resolveWallFeature, type WallFeatureFace } from '../wall-features';
+import { joinedLedges, ledgeGroups, type WallFeatureFace } from '../wall-features';
 import { fitOutput } from '../render/math';
 import {
   createInteriorEnvironment,
@@ -62,7 +62,13 @@ import { ViewerLightingLut } from './lighting';
 import { ROOM_VIEWER_RENDERER_REVISION } from './render-version';
 import { backgroundFromPixels, coverageMaterial, labelsFromPixels, regionMaskMaterial } from './region-mask';
 import { fitSourceDepthClip, visibleMeshBounds, type SourceDepthClip } from './depth-clip';
-import { buildViewerSurfaces, viewerFaceIsVisible, ViewerTileCache, type SurfaceNotice } from './surfaces';
+import {
+  buildViewerSurfaces,
+  viewerFaceIsVisible,
+  ViewerTileCache,
+  type SurfaceNotice,
+  type ViewerContact,
+} from './surfaces';
 import { createRoomViewCamera, normalizeRoomView, roomViewViewport, type RoomViewState } from './view-state';
 
 export type RoomViewerMode = 'before' | 'after' | 'split' | 'compare';
@@ -80,7 +86,7 @@ type Prepared = {
   structureBounds: Box3;
   notices: SurfaceNotice[];
   /** Floor contact shades of the fixtures (cleared for an empty-room layer, then restored). */
-  contacts: Box3[];
+  contacts: ViewerContact[];
   dispose(): void;
 };
 const POLICY = 'room-quarter-turn-world-v1';
@@ -430,7 +436,7 @@ export class RoomViewerRenderer {
         }
     world.add(surfaces.group, fixtures.group, ceiling.group, ...lights);
     // Objects standing on the floor get a soft contact shade (Before and After alike).
-    const contacts: Box3[] = [];
+    const contacts: ViewerContact[] = [];
     for (const object of fixtures.group.children) {
       const box = new Box3().setFromObject(object);
       if (
@@ -440,12 +446,16 @@ export class RoomViewerRenderer {
       )
         contacts.push(box);
     }
-    // A ledge on the floor meets it the same way.
-    for (const feature of scene.wallFeatures ?? [])
-      if (feature.kind === 'ledge' && feature.bottomMm === 0) {
-        const { min, max } = resolveWallFeature(room, feature).worldBounds;
-        contacts.push(new Box3(new Vector3(...min), new Vector3(...max)));
-      }
+    // A ledge on the floor meets it the same way; ledges that touch are one body.
+    const built = joinedLedges(room, scene.wallFeatures);
+    const bodies = ledgeGroups(room, built);
+    built.forEach((feature, index) => {
+      if (!feature.protrudes || feature.worldBounds.min[1] !== 0) return;
+      const { min, max } = feature.worldBounds;
+      const box: ViewerContact = new Box3(new Vector3(...min), new Vector3(...max));
+      if (bodies.filter((body) => body === bodies[index]).length > 1) box.contactGroup = bodies[index];
+      contacts.push(box);
+    });
     surfaces.setContacts(contacts);
     this.lighting.bindTree(world);
     bindRoomShadows(world);

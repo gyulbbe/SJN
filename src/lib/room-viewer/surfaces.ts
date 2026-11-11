@@ -248,22 +248,29 @@ const MAX_CONTACTS = 8;
 type ContactUniforms = {
   sjnContacts: { value: Vector4[] };
   sjnContactHeights: { value: number[] };
+  /** 1: this box is one body with the box before it (ledges that touch). */
+  sjnContactJoins: { value: number[] };
   sjnContactCount: { value: number };
 };
+/** A box standing on the floor; boxes of one `contactGroup` are one body (ledges that touch). */
+export type ViewerContact = Box3 & { contactGroup?: number };
 // Floor bounce light is reduced around installed objects' footprints (x/z millimetres), so a bath
 // or toilet sits on the floor instead of floating. Direct light still comes from the shadow map.
+// Bodies multiply; the boxes of one body count once, as its nearest (two shades would add up into a
+// dark patch before the joint of two ledges). Without joined boxes this is the plain product.
 const contactSource = `
-uniform vec4 sjnContacts[${MAX_CONTACTS}];uniform float sjnContactHeights[${MAX_CONTACTS}];uniform int sjnContactCount;
+uniform vec4 sjnContacts[${MAX_CONTACTS}];uniform float sjnContactHeights[${MAX_CONTACTS}];uniform float sjnContactJoins[${MAX_CONTACTS}];uniform int sjnContactCount;
 float sjnContactOcclusion(){
  if(sjnFaceAxis.y<.5)return 1.;
- float o=1.;
+ float o=1.,m=1.;
  for(int i=0;i<${MAX_CONTACTS};i++){
   if(i>=sjnContactCount)break;
   vec4 b=sjnContacts[i];
   vec2 d=max(max(b.xy-sjnWorld.xz,sjnWorld.xz-b.zw),0.);
-  o*=1.-.5*clamp(sjnContactHeights[i]/400.,.25,1.)*exp(-length(d)/150.);
+  float t=1.-.5*clamp(sjnContactHeights[i]/400.,.25,1.)*exp(-length(d)/150.);
+  if(sjnContactJoins[i]>.5)m=min(m,t);else{o*=m;m=t;}
  }
- return o;
+ return o*m;
 }
 `;
 function surfaceMaterial(
@@ -382,6 +389,7 @@ export async function buildViewerSurfaces(
   const contacts: ContactUniforms = {
     sjnContacts: { value: Array.from({ length: MAX_CONTACTS }, () => new Vector4()) },
     sjnContactHeights: { value: new Array<number>(MAX_CONTACTS).fill(0) },
+    sjnContactJoins: { value: new Array<number>(MAX_CONTACTS).fill(0) },
     sjnContactCount: { value: 0 },
   };
   const voidBounds = new Map<string, Box3>();
@@ -497,13 +505,24 @@ export async function buildViewerSurfaces(
     notices,
     structureBounds: features?.structureBounds.clone() ?? new Box3(),
     /** World-space boxes of objects standing on the floor; the largest footprints are kept. */
-    setContacts(boxes: readonly Box3[]) {
-      const kept = [...boxes]
+    setContacts(boxes: readonly ViewerContact[]) {
+      const largest = [...boxes]
         .sort((a, b) => (b.max.x - b.min.x) * (b.max.z - b.min.z) - (a.max.x - a.min.x) * (a.max.z - a.min.z))
         .slice(0, MAX_CONTACTS);
+      // The boxes of one body follow its first one; the others keep their order.
+      const kept: ViewerContact[] = [];
+      for (const box of largest) {
+        if (kept.includes(box)) continue;
+        kept.push(box);
+        if (box.contactGroup !== undefined)
+          for (const other of largest)
+            if (other.contactGroup === box.contactGroup && !kept.includes(other)) kept.push(other);
+      }
       kept.forEach((box, i) => {
         contacts.sjnContacts.value[i].set(box.min.x, box.min.z, box.max.x, box.max.z);
         contacts.sjnContactHeights.value[i] = box.max.y - box.min.y;
+        contacts.sjnContactJoins.value[i] =
+          i > 0 && box.contactGroup !== undefined && box.contactGroup === kept[i - 1].contactGroup ? 1 : 0;
       });
       contacts.sjnContactCount.value = kept.length;
     },
