@@ -40,6 +40,7 @@ import {
   useWallFeatureTool,
   WallFeature3dNotice,
   WallFeatureCard,
+  WallFeatureGuides,
   WallFeaturePolygons,
   WallFeatureToolButton,
   WallFeatureToolOptions,
@@ -559,6 +560,15 @@ export default function RoomCanvasWorkspace({
         : [];
     });
   })();
+  const wallGuides = (() => {
+    const engine = renderer.current;
+    if (!engine || loading || failure) return [];
+    return wallTool.guides.flatMap((guide) => {
+      const from = engine.faceToFrame(guide.face, guide.from.u, guide.from.v, guide.outMm),
+        to = engine.faceToFrame(guide.face, guide.to.u, guide.to.v, guide.outMm);
+      return from && to ? [{ from, to }] : [];
+    });
+  })();
   const edited = wallOutlines.find((shape) => shape.source === 'edit');
   const cardAnchor =
     edited &&
@@ -669,6 +679,7 @@ export default function RoomCanvasWorkspace({
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
             >
               <WallFeaturePolygons items={wallOutlines} scale={1} />
+              <WallFeatureGuides items={wallGuides} scale={1} />
             </svg>
           )}
         </div>

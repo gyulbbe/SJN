@@ -9,6 +9,15 @@ import { roomSurfaceAreas } from '../src/lib/room-surface-areas';
 import { viewerSurfacePatches } from '../src/lib/room-viewer/surfaces';
 import { buildWallFeaturePieces, type WallFeaturePiece } from '../src/lib/room-viewer/wall-feature-geometry';
 import {
+  drawnFeature,
+  featureFromClick,
+  featureFromDrag,
+  ledgeBeside,
+  ledgeSnapNote,
+  LEDGE_SNAP_MM,
+  snapLedge,
+} from '../src/lib/wall-feature-editing';
+import {
   joinedLedges,
   LEDGE_JOIN_GAP_MM,
   LEDGE_OVERLAP_MESSAGE,
@@ -17,7 +26,7 @@ import {
   validateWallFeatures,
   type WallFeatureV1,
 } from '../src/lib/wall-features';
-import { DEFAULT_COLOR, EMPTY_MASK, type Scene } from '../src/lib/types';
+import { DEFAULT_COLOR, EMPTY_MASK, type MaterialVersion, type Scene } from '../src/lib/types';
 
 const room = { ...DEFAULT_ROOM };
 const id = (n: number) => 'dddddddd-dddd-4ddd-8ddd-' + n.toString(16).padStart(12, '0');
@@ -203,7 +212,7 @@ describe('a small gap is closed', () => {
     expect(a.openingMm).toEqual({ left: 300, top: 1500, right: 1100, bottom: 2400 });
     expect(b.openingMm.left).toBe(1200);
     expect(c.protrudes).toBeUndefined();
-    expect(built(undefined)).toEqual([]);
+    expect(joinedLedges(room, undefined)).toEqual([]);
   });
 });
 
@@ -340,5 +349,212 @@ describe('ledges that touch are one body on the floor', () => {
     expect(ledgeGroups(room, joinedLedges(room, features))).toEqual([0, 0, 2, -1]);
     expect(ledgeGroups(room, joinedLedges(room, corner()))).toEqual([0, 0]);
     expect(ledgeGroups(room, joinedLedges(room, side(6)))).toEqual([0, 1]);
+  });
+});
+
+describe('continuing a ledge', () => {
+  const a = ledge(1);
+  const drawn = (over: Partial<Ledge>) =>
+    ledge(2, { leftMm: 1130, widthMm: 500, heightMm: 850, depthMm: 150, ...over });
+  it('a drawn one meets its neighbour and takes its height, floor and depth', () => {
+    const snap = snapLedge(room, [a], drawn({}), 'draw');
+    expect(snap.feature).toMatchObject({
+      leftMm: 1100,
+      widthMm: 530,
+      bottomMm: 0,
+      heightMm: 900,
+      depthMm: 200,
+    });
+    expect(snap.matched).toEqual({ id: a.id, height: true, bottom: true, depth: true, ends: ['left'] });
+    expect(ledgeSnapNote(snap)).toBe('옆 젠다이에 맞췄어요 · 높이 900 · 깊이 200');
+    // A line down the joint and one along the two tops, on the ledge’s front.
+    expect(snap.guides).toEqual([
+      { face: 'back', from: { u: 1100 / 2400, v: 1 - 900 / 2400 }, to: { u: 1100 / 2400, v: 1 }, outMm: 200 },
+      {
+        face: 'back',
+        from: { u: 300 / 2400, v: 1 - 900 / 2400 },
+        to: { u: 1630 / 2400, v: 1 - 900 / 2400 },
+        outMm: 200,
+      },
+    ]);
+    expect(validateWallFeatures(room, [a, snap.feature])).toEqual([]);
+    // To its left as well.
+    expect(snapLedge(room, [a], drawn({ leftMm: 20, widthMm: 250 }), 'draw').feature).toMatchObject({
+      leftMm: 20,
+      widthMm: 280,
+      heightMm: 900,
+    });
+  });
+  it('a stair keeps its own height', () => {
+    const snap = snapLedge(room, [a], drawn({ heightMm: 600 }), 'draw');
+    expect(snap.feature).toMatchObject({ leftMm: 1100, heightMm: 600, depthMm: 200 });
+    expect(snap.matched).toMatchObject({ height: false, depth: true });
+    expect(ledgeSnapNote(snap)).toBe('옆 젠다이에 맞췄어요 · 깊이 200');
+    expect(snap.guides).toHaveLength(1);
+  });
+  it('further than 50 mm away, or far above, it is left alone', () => {
+    expect(LEDGE_SNAP_MM).toBe(50);
+    const far = drawn({ leftMm: 1151 });
+    expect(snapLedge(room, [a], far, 'draw')).toEqual({ feature: far, guides: [] });
+    const above = drawn({ bottomMm: 1200, heightMm: 300 });
+    expect(snapLedge(room, [a], above, 'draw').matched).toBeUndefined();
+    expect(snapLedge(room, [a, niche(3)], niche(4, { leftMm: 1700 }), 'draw').guides).toEqual([]);
+  });
+  it('round a corner it ends at the front of the ledge standing there', () => {
+    const back = ledge(1, { leftMm: 0, widthMm: 1200, heightMm: 1000, depthMm: 100 });
+    // Drawn along the left wall to its far end, which is the back wall.
+    const side = snapLedge(
+      room,
+      [back],
+      ledge(2, { face: 'left', leftMm: 1500, widthMm: 900, heightMm: 950 }),
+      'draw',
+    );
+    expect(side.feature).toMatchObject({ leftMm: 1500, widthMm: 800, heightMm: 1000, depthMm: 100 });
+    expect(validateWallFeatures(room, [back, side.feature])).toEqual([]);
+    expect(side.guides).toEqual([
+      {
+        face: 'left',
+        from: { u: 2300 / 2400, v: 1 - 1000 / 2400 },
+        to: { u: 2300 / 2400, v: 1 },
+        outMm: 100,
+      },
+    ]);
+    // The other way: a side ledge stands in the corner, the back one starts at its front.
+    const left = ledge(1, { face: 'left', leftMm: 1400, widthMm: 1000, depthMm: 120 });
+    expect(snapLedge(room, [left], ledge(2, { leftMm: 0, widthMm: 800 }), 'draw').feature).toMatchObject({
+      leftMm: 120,
+      widthMm: 680,
+      depthMm: 120,
+    });
+    // The right wall starts at the back wall.
+    const right = ledge(1, { face: 'right', leftMm: 0, widthMm: 900, depthMm: 150 });
+    expect(snapLedge(room, [right], ledge(2, { leftMm: 1500, widthMm: 900 }), 'draw').feature).toMatchObject({
+      leftMm: 1500,
+      widthMm: 750,
+    });
+    // A side ledge that stops short of the corner is no corner.
+    const short = ledge(1, { face: 'left', leftMm: 1300, widthMm: 1000 });
+    expect(snapLedge(room, [short], ledge(2, { leftMm: 0, widthMm: 800 }), 'draw').matched).toBeUndefined();
+  });
+  it('a moved one shifts whole and keeps its size', () => {
+    const moved = ledge(2, { leftMm: 1085, widthMm: 700, heightMm: 600, depthMm: 120 });
+    const snap = snapLedge(room, [a], moved, 'move');
+    expect(snap.feature).toMatchObject({ leftMm: 1100, widthMm: 700, heightMm: 600, depthMm: 120 });
+    expect(ledgeSnapNote(snap)).toBe('옆 젠다이에 붙였어요');
+    // From the other side its right end meets the neighbour.
+    expect(snapLedge(room, [a], ledge(2, { leftMm: 40, widthMm: 250 }), 'move').feature).toMatchObject({
+      leftMm: 50,
+      widthMm: 250,
+    });
+    // A hanging one comes level with a hanging neighbour.
+    const hung = ledge(1, { bottomMm: 700, heightMm: 300 });
+    expect(
+      snapLedge(room, [hung], ledge(2, { leftMm: 1110, widthMm: 400, bottomMm: 730, heightMm: 200 }), 'move')
+        .feature,
+    ).toMatchObject({ leftMm: 1100, bottomMm: 700, heightMm: 200 });
+  });
+  it('gives up a match the scene would refuse', () => {
+    const blocker = ledge(3, { leftMm: 1100, widthMm: 100, bottomMm: 1000, heightMm: 300 });
+    const moved = ledge(2, { leftMm: 1120, widthMm: 400, bottomMm: 950, heightMm: 200 });
+    expect(validateWallFeatures(room, [a, blocker, { ...moved, leftMm: 1100 }]).length).toBeGreaterThan(0);
+    expect(snapLedge(room, [a, blocker], moved, 'move').feature).toBe(moved);
+  });
+  it('one hanging just above another sits on it', () => {
+    const over = ledge(2, { leftMm: 400, widthMm: 500, bottomMm: 930, heightMm: 300, depthMm: 120 });
+    const drawnOn = snapLedge(room, [a], over, 'draw');
+    expect(drawnOn.feature).toMatchObject({ bottomMm: 900, heightMm: 330 });
+    expect(snapLedge(room, [a], over, 'move').feature).toMatchObject({ bottomMm: 900, heightMm: 300 });
+    expect(drawnOn.guides).toEqual([
+      {
+        face: 'back',
+        from: { u: 300 / 2400, v: 1 - 900 / 2400 },
+        to: { u: 1100 / 2400, v: 1 - 900 / 2400 },
+        outMm: 120,
+      },
+    ]);
+  });
+  it('a click on a ledge stands the new one beside it, on the pressed side', () => {
+    const clicked = featureFromClick(
+      room,
+      'back',
+      { u: 900 / 2400, v: 0.8 },
+      { depthMm: 150, shape: 'ledge' },
+    );
+    expect(ledgeBeside(room, [a], clicked, 900)).toMatchObject({ leftMm: 1100, widthMm: 1200 });
+    expect(ledgeBeside(room, [a], clicked, 500)).toMatchObject({ leftMm: 0, widthMm: 300 });
+    // Then it takes the neighbour’s measures like a drawn one.
+    expect(snapLedge(room, [a], ledgeBeside(room, [a], clicked, 900), 'draw').feature).toMatchObject({
+      leftMm: 1100,
+      heightMm: 900,
+      depthMm: 200,
+    });
+    const free = featureFromClick(room, 'left', { u: 0.5, v: 0.8 }, { depthMm: 150, shape: 'ledge' });
+    expect(ledgeBeside(room, [a], free, 1200)).toBe(free);
+  });
+  it('a click makes the next ledge as high and as far up as the last one applied', () => {
+    const at = { u: 0.5, v: 0.5 };
+    expect(featureFromClick(room, 'back', at, { depthMm: 150, shape: 'ledge' })).toMatchObject({
+      bottomMm: 0,
+      heightMm: 900,
+    });
+    expect(
+      featureFromClick(room, 'back', at, {
+        depthMm: 150,
+        shape: 'ledge',
+        ledgeHeightMm: 1000,
+        ledgeBottomMm: 0,
+      }),
+    ).toMatchObject({ bottomMm: 0, heightMm: 1000, widthMm: 1200 });
+    expect(
+      featureFromClick(room, 'back', at, {
+        depthMm: 150,
+        shape: 'ledge',
+        ledgeHeightMm: 120,
+        ledgeBottomMm: 1000,
+      }),
+    ).toMatchObject({ bottomMm: 1000, heightMm: 120 });
+    // One that no longer fits under the ceiling falls back to the usual size.
+    expect(
+      featureFromClick(room, 'back', at, {
+        depthMm: 150,
+        shape: 'ledge',
+        ledgeHeightMm: 2000,
+        ledgeBottomMm: 500,
+      }),
+    ).toMatchObject({ bottomMm: 0, heightMm: 900 });
+  });
+  it('the neighbour comes before the grout lines; the free end still takes them', () => {
+    const tile = {
+      id: 'wall',
+      materialId: 'wall',
+      version: 1,
+      category: 'tile',
+      widthMm: 600,
+      heightMm: 600,
+      defaultGroutWidth: 2,
+      defaultPattern: 'grid',
+    } as MaterialVersion;
+    const value = scene([a]);
+    for (const surface of value.surfaces)
+      if (surface.roomFace !== 'floor') surface.materialVersionId = 'wall';
+    const draw = { depthMm: 150, snap: true, materials: { wall: tile }, shape: 'ledge' as const };
+    // Drawn 30 mm from the first ledge, its top 50 mm below the first one's, to the floor.
+    const from = { u: 1130 / 2400, v: 1 - 850 / 2400 },
+      to = { u: 1700 / 2400, v: 1 };
+    const lined = featureFromDrag(value, 'back', from, to, draw).feature as Ledge;
+    const free = featureFromDrag(value, 'back', from, to, { ...draw, snap: false }).feature as Ledge;
+    // The grout lines alone would have moved the top and the left end elsewhere.
+    expect([lined.leftMm, lined.heightMm]).not.toEqual([1100, 900]);
+    expect(free).toMatchObject({ leftMm: 1130, heightMm: 850 });
+    const { snap } = drawnFeature(value, 'back', from, to, draw);
+    expect(snap!.feature).toMatchObject({ leftMm: 1100, bottomMm: 0, heightMm: 900, depthMm: 200 });
+    expect(snap!.feature.leftMm + snap!.feature.widthMm).toBe(lined.leftMm + lined.widthMm);
+    expect(validateWallFeatures(room, [a, snap!.feature])).toEqual([]);
+    // Away from any ledge the grout lines decide, as before.
+    const alone = drawnFeature(scene([]), 'back', from, to, { ...draw, materials: {} });
+    expect(alone.snap!.matched).toBeUndefined();
+    expect(drawnFeature(value, 'back', from, { u: from.u + 0.001, v: from.v + 0.001 }, draw).issue).toContain(
+      '크게 끌어',
+    );
   });
 });

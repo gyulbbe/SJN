@@ -18,20 +18,25 @@ import type { RoomDimensions, RoomFace } from '@/lib/room-types';
 import type { MaterialVersion, Scene } from '@/lib/types';
 import {
   featureFields,
+  drawnFeature,
   featureFromClick,
-  featureFromDrag,
   featureIssue,
   featureUv,
   isWallFace,
+  ledgeBeside,
+  ledgeSnapNote,
   movedFeature,
   putWallFeature,
   removeWallFeature,
+  snapLedge,
   WALL_FACE_NOTE,
   WALL_FEATURE_3D_NOTICE,
   wallFeatureDrawIssue,
   wallFeatureTitle,
   wallFeatureToolIssue,
   withFields,
+  type LedgeGuide,
+  type LedgeSnap,
   type WallFeatureFields,
 } from '@/lib/wall-feature-editing';
 import { WALL_FEATURE_MAX_DEPTH_MM, type WallFeatureFace, type WallFeatureV1 } from '@/lib/wall-features';
@@ -80,11 +85,14 @@ export function useWallFeatureTool({
   const [edit, setEdit] = useState<{ feature: WallFeatureV1; isNew: boolean; error?: string } | null>(null);
   const [moving, setMoving] = useState<WallFeatureV1 | null>(null);
   const [note, setNote] = useState('');
+  // The lines of the ledge a placed or moved one met, until its card closes or the move ends.
+  const [met, setMet] = useState<LedgeGuide[]>([]);
   useEffect(() => {
     setDraw(null);
     setEdit(null);
     setMoving(null);
     setNote('');
+    setMet([]);
   }, [st.tool, st.editing, st.project?.id, st.project?.activeDesignId, st.mode]);
   useEffect(() => {
     if (active && blocked) useEditor.getState().setTool('select');
@@ -101,7 +109,28 @@ export function useWallFeatureTool({
     snap: drawing.snap,
     materials,
     shape: drawing.shape,
+    ledgeHeightMm: drawing.ledgeHeightMm,
+    ledgeBottomMm: drawing.ledgeBottomMm,
   };
+  /**
+   * What a drag (`to`) or a click (`to` null) makes in a scene: a ledge near another one meets it and
+   * takes its measures (snapLedge), which comes before the grout lines.
+   */
+  function made(
+    latest: Scene,
+    face: WallFeatureFace,
+    from: FacePoint,
+    to: FacePoint | null,
+  ): { snap: LedgeSnap; issue?: never } | { snap?: never; issue: string } {
+    if (to) return drawnFeature(latest, face, from, to, options);
+    const feature = ledgeBeside(
+      latest.room!,
+      latest.wallFeatures,
+      featureFromClick(latest.room!, face, from, options),
+      from.u * (face === 'back' ? latest.room!.widthMm : latest.room!.depthMm),
+    );
+    return { snap: snapLedge(latest.room!, latest.wallFeatures, feature, 'draw') };
+  }
   /** Starts a drawing where the pointer went down; false (with a note) when it cannot. */
   function start(face: RoomFace | null | undefined, uv: FacePoint | null | undefined): boolean {
     const problem =
@@ -113,6 +142,7 @@ export function useWallFeatureTool({
       return false;
     }
     setNote('');
+    setMet([]);
     setEdit(null);
     setDraw({ face, from: uv, to: uv });
     return true;
@@ -125,15 +155,14 @@ export function useWallFeatureTool({
     setDraw(null);
     const latest = latestScene();
     if (!latest?.room) return;
-    const made = to
-      ? featureFromDrag(latest, face, from, to, options)
-      : { feature: featureFromClick(latest.room, face, from, options) };
-    if (!made.feature) return setNote(made.issue);
-    const problem = featureIssue(latest.room, latest.wallFeatures, made.feature);
+    const result = made(latest, face, from, to);
+    if (!result.snap) return setNote(result.issue);
+    const problem = featureIssue(latest.room, latest.wallFeatures, result.snap.feature);
     if (problem) return setNote(problem);
-    setNote('');
+    setNote(ledgeSnapNote(result.snap));
+    setMet(result.snap.guides);
     useEditor.getState().select(null);
-    setEdit({ feature: made.feature, isNew: true });
+    setEdit({ feature: result.snap.feature, isNew: true });
   }
   function cancelDraw() {
     setDraw(null);
@@ -144,6 +173,7 @@ export function useWallFeatureTool({
     if (!feature) return;
     useEditor.getState().select(id);
     setNote('');
+    setMet([]);
     setEdit({ feature: structuredClone(feature), isNew: false });
   }
   function startMove(id: string) {
@@ -158,11 +188,18 @@ export function useWallFeatureTool({
     const latest = latestScene();
     if (!latest?.room) return;
     const next = movedFeature(original, latest.room, du, dv);
-    if (!featureIssue(latest.room, latest.wallFeatures, next)) setMoving(next);
+    // Near another ledge it meets it; a place the scene refuses keeps the last free one.
+    const snap = snapLedge(latest.room, latest.wallFeatures, next, 'move');
+    if (featureIssue(latest.room, latest.wallFeatures, snap.feature)) return;
+    setMoving(snap.feature);
+    setMet(snap.guides);
+    setNote(ledgeSnapNote(snap));
   }
   function endMove(commit: boolean) {
     const moved = moving;
     setMoving(null);
+    setMet([]);
+    setNote('');
     if (commit && moved) write(moved);
   }
   /** One change (one history step, one save); a message when the scene refused it. */
@@ -185,19 +222,28 @@ export function useWallFeatureTool({
   function apply(feature: WallFeatureV1) {
     const error = write(feature);
     if (error) return setEdit((current) => current && { ...current, error });
-    useEditor
-      .getState()
-      .setWallFeatureDrawing(
-        feature.kind === 'ledge' ? { ledgeDepthMm: feature.depthMm } : { depthMm: feature.depthMm },
-      );
+    useEditor.getState().setWallFeatureDrawing(
+      feature.kind === 'ledge'
+        ? {
+            ledgeDepthMm: feature.depthMm,
+            ledgeHeightMm: feature.heightMm,
+            ledgeBottomMm: feature.bottomMm,
+          }
+        : { depthMm: feature.depthMm },
+    );
     setEdit(null);
+    setMet([]);
+    setNote('');
   }
   function remove(id: string) {
     useEditor.getState().change((draft) => removeWallFeature(draft, id));
     setEdit(null);
+    setMet([]);
   }
 
   const shapes: WallFeatureShape[] = [];
+  let guides = met,
+    drawingNote = '';
   if (room && st.mode === 'after') {
     const shape = (feature: WallFeatureV1, source: WallFeatureShape['source']) => {
       const box = featureUv(feature, room);
@@ -214,9 +260,12 @@ export function useWallFeatureTool({
     const selected = features?.find((item) => item.id === st.selection && item.id !== busy);
     if (selected && active) shape(selected, 'selected');
     if (draw && scene) {
-      const made = featureFromDrag(scene, draw.face, draw.from, draw.to, options);
-      if (made.feature) shape(made.feature, 'draw');
-      else
+      const preview = made(scene, draw.face, draw.from, draw.to);
+      if (preview.snap) {
+        shape(preview.snap.feature, 'draw');
+        guides = preview.snap.guides;
+        drawingNote = ledgeSnapNote(preview.snap);
+      } else
         shapes.push({
           face: draw.face,
           source: 'draw',
@@ -236,8 +285,10 @@ export function useWallFeatureTool({
   return {
     active,
     issue,
-    note,
+    note: drawingNote || note,
     shapes,
+    /** Lines showing the ledge a drawn, placed or moved one was matched to. */
+    guides,
     edit,
     drawing: !!draw,
     start,
@@ -248,9 +299,16 @@ export function useWallFeatureTool({
     startMove,
     moveTo,
     endMove,
-    setEdit: (feature: WallFeatureV1) =>
-      setEdit((current) => current && { ...current, feature, error: undefined }),
-    closeEdit: () => setEdit(null),
+    setEdit: (feature: WallFeatureV1) => {
+      // Typed numbers are the person’s own: the match no longer describes them.
+      setMet([]);
+      setEdit((current) => current && { ...current, feature, error: undefined });
+    },
+    closeEdit: () => {
+      setEdit(null);
+      setMet([]);
+      setNote('');
+    },
     apply,
     remove,
   };
@@ -283,6 +341,35 @@ export function WallFeaturePolygons({
           stroke={item.warn ? '#b34444' : '#2b9781'}
           strokeWidth="2"
           strokeDasharray="5 3"
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+      ))}
+    </>
+  );
+}
+
+/** The projected lines of a matched ledge inside a canvas’s SVG overlay. */
+export function WallFeatureGuides({
+  items,
+  scale,
+}: {
+  items: { from: { x: number; y: number }; to: { x: number; y: number } }[];
+  scale: number;
+}) {
+  return (
+    <>
+      {items.map((item, index) => (
+        <line
+          key={index}
+          data-testid="wall-feature-guide"
+          x1={item.from.x * scale}
+          y1={item.from.y * scale}
+          x2={item.to.x * scale}
+          y2={item.to.y * scale}
+          stroke="#d9722a"
+          strokeWidth="2"
+          strokeDasharray="2 4"
           vectorEffect="non-scaling-stroke"
           pointerEvents="none"
         />

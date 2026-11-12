@@ -2,6 +2,12 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-11 — 맞닿은 젠다이를 하나로 그리기, 옆에 이어 만들기
+
+- 무엇: 젠다이끼리 맞닿게 놓을 수 있고(옆·위아래·ㄱ자) 5mm 이하 틈은 이어서 그린다. 옆에서 끌거나 누르거나 옮기면 붙고 높이·깊이가 맞춰진다. 저장 형식·API·SQL은 그대로이고 검증 규칙만 바뀐다. 렌더 버전은 `room-view-v13-ledge-join`이다.
+- 확인: `npx vitest run tests/ledge-join.test.ts`, `node tests/run-browser-test.mjs tests/ledge-join-browser.ts --label after`, `npx playwright test e2e/wall-feature-drawing.spec.ts`
+- 결과: [결과 문서](wall-ledge-join-results-20261111.md) 9절.
+
 ## 2026-11-06 — 옛 자재 전체 목록 요청(`list`) 삭제
 
 - 무엇: 회원·관리자 프로젝트의 `materials({operation:'list'})`를 지웠다. 화면은 2026-10-22부터 쪽 목록(`page`)만 쓴다. 이제 `list`는 없는 작업으로 400을 받는다. 시험과 도구(`catalog-fixtures`, `make-r1b`)는 `page`·`getVersions`로 바꿨다.

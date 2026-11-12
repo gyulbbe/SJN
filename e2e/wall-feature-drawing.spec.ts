@@ -546,6 +546,153 @@ test('젠다이: 도구줄에서 고르고 끌어 바닥형을 만들면 3D로 �
   expect(errors).toEqual([]);
 });
 
+test('젠다이 이어 만들기: 옆에 끌면 붙고 높이·깊이가 맞춰지고(안내선), 누르면 옆에 서고, 옆 벽으로 꺾이고, 옮기면 붙는다. 끄는 동안 요청 0, 적용마다 저장 1', async ({
+  page,
+}, info) => {
+  app = await authenticatedApp(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const initial = await start(page);
+  const requests = watchRequests(page);
+  const field = (label: string) => card(page).getByLabel(label + ' (mm)', { exact: true });
+  const guides = page.getByTestId('wall-feature-guide');
+  await tool(page).click();
+  await page.getByTestId('wall-feature-shape-ledge').click();
+
+  // The first ledge, typed exactly: the back wall's left 1200, 1000 high, 100 deep.
+  const wall = await backWall(page, initial);
+  await page.mouse.move(wall.x + wall.width * 0.1, wall.y + wall.height * 0.6);
+  await page.mouse.down();
+  await page.mouse.move(wall.x + wall.width * 0.45, wall.y + wall.height * 1.1, { steps: 10 });
+  await page.mouse.up();
+  await expect(card(page)).toBeVisible();
+  await depth(page).fill('100');
+  await field('왼쪽 끝에서').fill('0');
+  await field('폭').fill('1200');
+  await field('높이').fill('1000');
+  await page.keyboard.press('Enter');
+  let saved = await savedProject(page, initial.editRevision);
+  const [first] = features(saved);
+  expect(first).toMatchObject({ kind: 'ledge', leftMm: 0, widthMm: 1200, heightMm: 1000, depthMm: 100 });
+  await ready(page, true);
+
+  // Drawn beside it, 30 mm off and 50 mm lower: it meets the first and takes its height and depth.
+  let px = await backWallPixels(page, first, 2400);
+  let mark = requests.count();
+  await page.mouse.move(...px(1230, 2400 - 950));
+  await page.mouse.down();
+  await page.mouse.move(...px(1500, 2000), { steps: 6 });
+  await page.mouse.move(...px(1900, 2500), { steps: 6 });
+  await expect(guides).toHaveCount(2);
+  await expect(note(page)).toContainText('옆 젠다이에 맞췄어요 · 높이 1000 · 깊이 100');
+  await shot(page, 'ledge-join-drawing', info);
+  expect(requests.projectSince(mark), '끄는 동안 프로젝트 요청 0').toEqual([]);
+  await page.mouse.up();
+  await expect(card(page)).toBeVisible();
+  await expect(field('왼쪽 끝에서')).toHaveValue('1200');
+  await expect(field('높이')).toHaveValue('1000');
+  await expect(field('바닥에서')).toHaveValue('0');
+  await expect(depth(page)).toHaveValue('100');
+  await expect(guides).toHaveCount(2);
+  await shot(page, 'ledge-join-card', info);
+  let saves = requests.saves();
+  await page.keyboard.press('Enter');
+  saved = await savedProject(page, saved.editRevision);
+  expect(requests.saves() - saves, '적용 1번에 저장 1').toBe(1);
+  let second = features(saved)[1];
+  expect(second).toMatchObject({
+    kind: 'ledge',
+    face: 'back',
+    leftMm: 1200,
+    bottomMm: 0,
+    heightMm: 1000,
+    depthMm: 100,
+  });
+  await expect(guides).toHaveCount(0);
+  await ready(page, true);
+  await shot(page, 'ledge-join-side', info);
+
+  // Pressed on the second one's right part: the next stands beside it, as high as the last applied.
+  px = await backWallPixels(page, second, 2400);
+  const secondRight = second.leftMm + second.widthMm;
+  mark = requests.count();
+  await page.mouse.click(...px(secondRight + 60, 2100));
+  await expect(card(page)).toBeVisible();
+  await expect(field('왼쪽 끝에서')).toHaveValue(String(secondRight));
+  await expect(field('높이')).toHaveValue('1000');
+  await expect(depth(page)).toHaveValue('100');
+  await page.keyboard.press('Escape');
+  await expect(card(page)).toHaveCount(0);
+  expect(requests.projectSince(mark), '취소한 누르기는 요청 0').toEqual([]);
+
+  // Round the corner: drawn along the left wall past its far end, it stops at the first one's front.
+  const [cornerX, cornerY] = px(0, 2400 - 900);
+  saves = requests.saves();
+  await page.mouse.move(cornerX - 90, cornerY + 30);
+  await page.mouse.down();
+  await page.mouse.move(cornerX - 40, cornerY + 90, { steps: 6 });
+  await page.mouse.move(cornerX + 12, cornerY + 150, { steps: 6 });
+  await page.mouse.up();
+  await expect(card(page)).toBeVisible();
+  await expect(card(page)).toContainText('왼쪽 벽 · 젠다이');
+  await expect(depth(page)).toHaveValue('100');
+  const cornerLeft = Number(await field('왼쪽 끝에서').inputValue()),
+    cornerWidth = Number(await field('폭').inputValue());
+  expect(cornerLeft + cornerWidth, '옆 벽 젠다이의 끝이 뒷벽 젠다이의 앞면에').toBe(2300);
+  await field('바닥에서').fill('0');
+  await field('높이').fill('1000');
+  await page.keyboard.press('Enter');
+  saved = await savedProject(page, saved.editRevision);
+  expect(requests.saves() - saves).toBe(1);
+  expect(features(saved)).toHaveLength(3);
+  expect(features(saved)[2]).toMatchObject({ kind: 'ledge', face: 'left', heightMm: 1000, depthMm: 100 });
+  await ready(page, true);
+  await shot(page, 'ledge-join-corner', info);
+
+  // Moved 100 mm away by its card, then dragged most of the way back: it meets the first again.
+  second = features(saved)[1];
+  // Picked by its front, where it was before the corner ledge came.
+  await page.mouse.click(...px(...middle(second, 2400)));
+  await expect(card(page)).toContainText('정면 벽 · 젠다이');
+  await expect(field('왼쪽 끝에서')).toHaveValue('1200');
+  await field('왼쪽 끝에서').fill('1300');
+  await card(page).getByRole('button', { name: '적용', exact: true }).click();
+  saved = await savedProject(page, saved.editRevision);
+  second = features(saved)[1];
+  expect(second.leftMm).toBe(1300);
+  await ready(page, true);
+  px = await backWallPixels(page, second, 2400);
+  const [fromX, fromY] = px(...middle(second, 2400));
+  const [toX] = px(middle(second, 2400)[0] - 75, middle(second, 2400)[1]);
+  mark = requests.count();
+  saves = requests.saves();
+  await page.mouse.move(fromX, fromY);
+  await page.mouse.down();
+  await page.mouse.move(toX, fromY, { steps: 8 });
+  await expect(guides).not.toHaveCount(0);
+  await expect(note(page)).toContainText('옆 젠다이에 붙였어요');
+  expect(requests.projectSince(mark), '옮기는 동안 프로젝트 요청 0').toEqual([]);
+  await page.mouse.up();
+  saved = await savedProject(page, saved.editRevision);
+  expect(requests.saves() - saves, '이동 1번에 저장 1').toBe(1);
+  expect(features(saved)[1]).toMatchObject({ leftMm: 1200, widthMm: second.widthMm, heightMm: 1000 });
+  await expect(guides).toHaveCount(0);
+  await ready(page, true);
+
+  // The joined ledges stay after a reload and download without an error.
+  await page.reload();
+  await ready(page, true);
+  expect(features(await storedProject(page))).toHaveLength(3);
+  await shot(page, 'ledge-join-reloaded', info);
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const download = page.waitForEvent('download', { timeout: 120000 });
+  await page.getByRole('button', { name: '이미지 다운로드', exact: true }).click();
+  await mkdir(SHOTS, { recursive: true });
+  await downloadedArtifact(await download, `${SHOTS}/ledge-join-download.png`);
+  expect(errors).toEqual([]);
+});
+
 test.describe('게스트 휴대폰', () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 375, height: 812 } });
   test('375px: 손가락으로 끌어 아래 시트 카드로 적용, 새로고침 뒤에도 남고 가로로 넘치지 않는다', async ({
@@ -645,6 +792,25 @@ test.describe('게스트 휴대폰', () => {
     });
     await ready(page, true);
     await shot(page, 'guest-375-ledge', info);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
+    // A tap just right of it stands the next one against it, as high and as deep.
+    const outline = (await page.getByTestId('wall-feature-selected').boundingBox())!;
+    await page.touchscreen.tap(outline.x + outline.width + 10, outline.y + outline.height / 2);
+    await expect(card(page)).toBeVisible();
+    await expect(card(page).getByLabel('왼쪽 끝에서 (mm)', { exact: true })).toHaveValue('1800');
+    await expect(card(page).getByLabel('높이 (mm)', { exact: true })).toHaveValue('900');
+    await expect(page.getByTestId('wall-feature-guide')).not.toHaveCount(0);
+    await shot(page, 'guest-375-ledge-join', info);
+    await card(page).getByRole('button', { name: '적용', exact: true }).tap();
+    await expect.poll(async () => getActiveDesign(await draft())!.scene.wallFeatures?.length ?? 0).toBe(2);
+    expect(getActiveDesign(await draft())!.scene.wallFeatures![1]).toMatchObject({
+      kind: 'ledge',
+      leftMm: 1800,
+      widthMm: 600,
+      heightMm: 900,
+      depthMm: 150,
+    });
+    await ready(page, true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
   });
 });

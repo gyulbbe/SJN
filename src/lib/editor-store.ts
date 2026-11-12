@@ -52,6 +52,9 @@ export type WallFeatureDrawing = {
   shape: WallFeatureShape;
   /** The depth last applied to a 젠다이, which has its own usual size. */
   ledgeDepthMm: number;
+  /** The height and distance from the floor of the 젠다이 last applied; none yet when absent. */
+  ledgeHeightMm?: number;
+  ledgeBottomMm?: number;
 };
 export type RoomResizeAssets = Pick<
   Scene,
