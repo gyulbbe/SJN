@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>젠다이 AI 변환 평가</title>
+    <style>
+      :root {
+        font-family: 'Malgun Gothic', system-ui, sans-serif;
+        color: #1d2a2e;
+        background: #f3f5f4;
+      }
+      body {
+        margin: 0;
+        padding: 12px 16px 24px;
+      }
+      header {
+        display: flex;
+        gap: 16px;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0;
+      }
+      #progress {
+        color: #5b6a6e;
+        font-size: 14px;
+      }
+      .pictures {
+        display: grid;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .pictures.two {
+        grid-template-columns: 1fr 1fr;
+      }
+      .pictures.three {
+        grid-template-columns: 0.8fr 1fr 1fr;
+      }
+      figure {
+        margin: 0;
+        background: #fff;
+        border: 1px solid #d5dcda;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      figcaption {
+        padding: 6px 10px;
+        font-size: 14px;
+        font-weight: 600;
+        background: #e9eeec;
+      }
+      figure img {
+        display: block;
+        width: 100%;
+        height: auto;
+        cursor: zoom-in;
+      }
+      .panel {
+        margin-top: 12px;
+        background: #fff;
+        border: 1px solid #d5dcda;
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin: 6px 0;
+      }
+      .row > span.label {
+        width: 150px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      button {
+        font: inherit;
+        font-size: 14px;
+        padding: 7px 11px;
+        border: 1px solid #b9c4c1;
+        border-radius: 7px;
+        background: #fff;
+        cursor: pointer;
+      }
+      button[aria-pressed='true'] {
+        background: #1f7a68;
+        border-color: #1f7a68;
+        color: #fff;
+      }
+      button.flag[aria-pressed='true'] {
+        background: #b34444;
+        border-color: #b34444;
+      }
+      button.primary {
+        background: #1f7a68;
+        border-color: #1f7a68;
+        color: #fff;
+        font-weight: 600;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .hint {
+        color: #5b6a6e;
+        font-size: 13px;
+        margin: 4px 0 0;
+      }
+      #zoom {
+        position: fixed;
+        inset: 0;
+        background: #000c;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        cursor: zoom-out;
+      }
+      #zoom img {
+        max-width: 96vw;
+        max-height: 96vh;
+      }
+      .done {
+        margin-top: 40px;
+        font-size: 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>젠다이 AI 변환 평가</h1>
+      <span id="progress"></span>
+      <button id="back" type="button">이전 것 다시 평가</button>
+    </header>
+    <main id="main"></main>
+    <div id="zoom"><img alt="크게 보기" /></div>
+    <script>
+      const FLAGS = [
+        ['gone', '젠다이가 없어짐'],
+        ['other', '다른 물건으로 바뀜(창·벤치·선반 등)'],
+        ['shape', '젠다이 모양이 바뀜(ㄱ자가 일자로, 높이·두께)'],
+        ['tiles', '젠다이 타일이 벽과 안 이어짐'],
+        ['niche', '벽 홈이 창이나 거울로 바뀜'],
+        ['added', '없던 물건이 생김'],
+        ['framing', '구도가 바뀜'],
+      ];
+      const file = (path) => '/file?path=' + encodeURIComponent(path);
+      const main = document.getElementById('main');
+      const zoom = document.getElementById('zoom');
+      zoom.addEventListener('click', () => (zoom.style.display = 'none'));
+      const picture = (title, path) => {
+        const figure = document.createElement('figure');
+        const caption = document.createElement('figcaption');
+        caption.textContent = title;
+        const image = document.createElement('img');
+        image.src = file(path);
+        image.alt = title;
+        image.addEventListener('click', () => {
+          zoom.querySelector('img').src = image.src;
+          zoom.style.display = 'flex';
+        });
+        figure.append(caption, image);
+        return figure;
+      };
+      const button = (text, onClick, className = '') => {
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.textContent = text;
+        element.className = className;
+        element.addEventListener('click', onClick);
+        return element;
+      };
+      const row = (label, ...children) => {
+        const element = document.createElement('div');
+        element.className = 'row';
+        const span = document.createElement('span');
+        span.className = 'label';
+        span.textContent = label;
+        element.append(span, ...children);
+        return element;
+      };
+      let queue = [],
+        at = 0,
+        keys = () => {};
+      document.addEventListener('keydown', (event) => {
+        if (zoom.style.display === 'flex') return (zoom.style.display = 'none');
+        keys(event);
+      });
+      async function rate(entry) {
+        const response = await fetch('/rate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(entry),
+        });
+        if (!response.ok) throw new Error('저장하지 못했어요');
+        at++;
+        show();
+      }
+      /** A row of 1–5 buttons; returns how to read the choice. */
+      function score(label, hint) {
+        let value = 0;
+        const buttons = [1, 2, 3, 4, 5].map((n) =>
+          button(String(n), () => {
+            value = n;
+            buttons.forEach((b, i) => b.setAttribute('aria-pressed', String(i + 1 === n)));
+            changed();
+          }),
+        );
+        const note = document.createElement('span');
+        note.className = 'hint';
+        note.textContent = hint;
+        return { element: row(label, ...buttons, note), read: () => value };
+      }
+      let changed = () => {};
+      function single(item) {
+        const pictures = document.createElement('div');
+        pictures.className = 'pictures two';
+        pictures.append(picture('앱 그림(내 설계)', item.design), picture('AI 결과', item.result));
+        const panel = document.createElement('div');
+        panel.className = 'panel';
+        const chosen = new Set();
+        const flags = FLAGS.filter(([code]) => code !== 'niche' || item.niche).map(([code, text], index) => {
+          const element = button(
+            `${index + 1}. ${text}`,
+            () => {
+              if (chosen.has(code)) chosen.delete(code);
+              else chosen.add(code);
+              element.setAttribute('aria-pressed', String(chosen.has(code)));
+            },
+            'flag',
+          );
+          element.setAttribute('aria-pressed', 'false');
+          return element;
+        });
+        const flagRow = row('문제가 있으면 표시', ...flags);
+        const real = score('실제 사진 같은가', '1 전혀 아님 … 5 사진 같음');
+        const design = score('내 설계와 같은가', '1 많이 다름 … 5 같음');
+        const next = button(
+          '다음 (Enter)',
+          () => rate({ id: item.id, flags: [...chosen], real: real.read(), design: design.read() }),
+          'primary',
+        );
+        next.disabled = true;
+        changed = () => (next.disabled = !(real.read() && design.read()));
+        const hint = document.createElement('p');
+        hint.className = 'hint';
+        hint.textContent =
+          '문제가 없으면 표시하지 않고 점수만 주세요. 숫자 키 1~7로 표시를 켜고 끌 수 있어요. 그림을 누르면 크게 보여요.';
+        panel.append(flagRow, real.element, design.element, row('', next), hint);
+        main.replaceChildren(pictures, panel);
+        keys = (event) => {
+          if (event.key === 'Enter' && !next.disabled) next.click();
+          const number = Number(event.key);
+          if (number >= 1 && number <= flags.length) flags[number - 1].click();
+        };
+      }
+      function pair(item) {
+        const pictures = document.createElement('div');
+        pictures.className = 'pictures three';
+        pictures.append(
+          picture('앱 그림(내 설계)', item.design),
+          picture('결과 A', item.a),
+          picture('결과 B', item.b),
+        );
+        const panel = document.createElement('div');
+        panel.className = 'panel';
+        const choose = (choice) => rate({ id: item.id, choice });
+        panel.append(
+          row(
+            '어느 쪽이 내 설계 같나',
+            button('← A가 더 가깝다', () => choose('a')),
+            button('↓ 비슷하다', () => choose('same')),
+            button('B가 더 가깝다 →', () => choose('b')),
+          ),
+        );
+        const hint = document.createElement('p');
+        hint.className = 'hint';
+        hint.textContent =
+          '젠다이와 벽 홈의 모양·위치를 중심으로 봐 주세요. 화살표 키(←, ↓, →)로도 고를 수 있어요.';
+        panel.append(hint);
+        main.replaceChildren(pictures, panel);
+        keys = (event) => {
+          if (event.key === 'ArrowLeft') choose('a');
+          else if (event.key === 'ArrowDown') choose('same');
+          else if (event.key === 'ArrowRight') choose('b');
+        };
+      }
+      function show() {
+        document.getElementById('progress').textContent =
+          `${Math.min(at + 1, queue.length)} / ${queue.length}` +
+          (at < queue.length ? (queue[at].a ? ' · 2단계: 나란히 비교' : ' · 1단계: 한 장씩') : '');
+        document.getElementById('back').disabled = at === 0;
+        if (at >= queue.length) {
+          keys = () => {};
+          const done = document.createElement('p');
+          done.className = 'done';
+          done.textContent = '모두 끝났어요. 고맙습니다. 이 창은 닫아도 돼요.';
+          return main.replaceChildren(done);
+        }
+        (queue[at].a ? pair : single)(queue[at]);
+        window.scrollTo(0, 0);
+      }
+      document.getElementById('back').addEventListener('click', () => {
+        if (at > 0) at--;
+        show();
+      });
+      (async () => {
+        const items = await (await fetch('/items.json')).json();
+        const rated = new Set(
+          (await (await fetch('/ratings.jsonl')).text())
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line).id),
+        );
+        queue = [...items.singles, ...items.pairs];
+        // Start at the first one not rated yet (a reload goes on where it stopped).
+        at = queue.findIndex((item) => !rated.has(item.id));
+        if (at < 0) at = queue.length;
+        show();
+      })();
+    </script>
+  </body>
+</html>
