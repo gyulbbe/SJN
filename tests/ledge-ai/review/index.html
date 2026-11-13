@@ -149,7 +149,8 @@
     <main id="main"></main>
     <div id="zoom"><img alt="크게 보기" /></div>
     <script>
-      const FLAGS = [
+      // A set's items.json may bring its own title, flags and pair question (the tile trial does).
+      let FLAGS = [
         ['gone', '젠다이가 없어짐'],
         ['other', '다른 물건으로 바뀜(창·벤치·선반 등)'],
         ['shape', '젠다이 모양이 바뀜(ㄱ자가 일자로, 높이·두께)'],
@@ -158,6 +159,10 @@
         ['added', '없던 물건이 생김'],
         ['framing', '구도가 바뀜'],
       ];
+      const PAIR = {
+        question: '어느 쪽이 내 설계 같나',
+        hint: '젠다이와 벽 홈의 모양·위치를 중심으로 봐 주세요.',
+      };
       const file = (path) => '/file?path=' + encodeURIComponent(path);
       const main = document.getElementById('main');
       const zoom = document.getElementById('zoom');
@@ -292,8 +297,7 @@
         changed = () => (next.disabled = !(real.read() && design.read()));
         const hint = document.createElement('p');
         hint.className = 'hint';
-        hint.textContent =
-          '문제가 없으면 표시하지 않고 점수만 주세요. 숫자 키 1~7로 표시를 켜고 끌 수 있어요. 그림을 누르면 크게 보여요. 글을 적는 중에는 숫자 키가 글자로 들어가고, Ctrl+Enter로 넘어가요.';
+        hint.textContent = `문제가 없으면 표시하지 않고 점수만 주세요. 숫자 키 1~${flags.length}로 표시를 켜고 끌 수 있어요. 그림을 누르면 크게 보여요. 글을 적는 중에는 숫자 키가 글자로 들어가고, Ctrl+Enter로 넘어가요.`;
         panel.append(flagRow, real.element, design.element, note.element, row('', next), hint);
         main.replaceChildren(pictures, panel);
         keys = (event) => {
@@ -317,7 +321,7 @@
         panel.append(
           note.element,
           row(
-            '어느 쪽이 내 설계 같나',
+            PAIR.question,
             button('← A가 더 가깝다', () => choose('a')),
             button('↓ 비슷하다', () => choose('same')),
             button('B가 더 가깝다 →', () => choose('b')),
@@ -325,8 +329,7 @@
         );
         const hint = document.createElement('p');
         hint.className = 'hint';
-        hint.textContent =
-          '젠다이와 벽 홈의 모양·위치를 중심으로 봐 주세요. 화살표 키(←, ↓, →)로도 고를 수 있어요. 글을 적을 때는 먼저 적고 나서 버튼을 눌러 주세요(고르면 바로 다음으로 넘어가요).';
+        hint.textContent = `${PAIR.hint} 화살표 키(←, ↓, →)로도 고를 수 있어요. 글을 적을 때는 먼저 적고 나서 버튼을 눌러 주세요(고르면 바로 다음으로 넘어가요).`;
         panel.append(hint);
         main.replaceChildren(pictures, panel);
         keys = (event) => {
@@ -356,6 +359,10 @@
       });
       (async () => {
         const items = await (await fetch('/items.json')).json();
+        if (items.flags) FLAGS = items.flags;
+        if (items.pairQuestion) PAIR.question = items.pairQuestion;
+        if (items.pairHint) PAIR.hint = items.pairHint;
+        if (items.title) document.title = document.querySelector('h1').textContent = items.title;
         for (const line of (await (await fetch('/ratings.jsonl')).text()).split('\n').filter(Boolean)) {
           const row = JSON.parse(line);
           saved.set(row.id, row);

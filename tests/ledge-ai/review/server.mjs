@@ -3,12 +3,13 @@
 // trial's folder only, and the ratings, appended to ratings.jsonl as each one is given. Nothing leaves
 // the PC.
 //
-//   node tests/ledge-ai/review/server.mjs --set r4 [--port 8794]
+//   node tests/ledge-ai/review/server.mjs --set r4 [--port 8794] [--root tile-ai-20261113]
+// --root names another trial's folder under test-results (the tile trial uses this screen too).
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OUT, REVIEW } from '../paths.mjs';
+import { OUT as LEDGE_OUT, ROOT } from '../paths.mjs';
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -17,6 +18,10 @@ const arg = (name, fallback) => {
 const port = Number(arg('port', 8794));
 const set = arg('set', 'r4');
 if (!/^[a-z0-9-]+$/.test(set)) throw new Error('--set <name>');
+const root = arg('root', '');
+if (root && !/^[a-z0-9-]+$/.test(root)) throw new Error('--root <folder under test-results>');
+const OUT = root ? join(ROOT, 'test-results', root) : LEDGE_OUT;
+const REVIEW = join(OUT, 'review');
 const here = fileURLToPath(new URL('.', import.meta.url));
 const dir = join(REVIEW, set);
 const RATINGS = join(dir, 'ratings.jsonl');

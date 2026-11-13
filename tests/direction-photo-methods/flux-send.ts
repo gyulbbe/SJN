@@ -8,7 +8,14 @@
  * second account, 2026-11-07: "cloudflare 계정 하나 더 있는데 그걸로 해봐"; its token can only run Workers
  * AI, so no Worker is uploaded there). The model's fields are the same multipart the Worker sends.
  */
-export type FluxPictures = { image0: Buffer; refs: Buffer[]; width: number; height: number };
+/** `out` is the answer's size when it is not twice the guide's (the tile trial's larger output). */
+export type FluxPictures = {
+  image0: Buffer;
+  refs: Buffer[];
+  width: number;
+  height: number;
+  out?: { width: number; height: number };
+};
 /** An account's REST access, read from a git-ignored file. Never printed or written to a ledger. */
 export type RestAccount = { accountId: string; token: string };
 
@@ -34,8 +41,8 @@ export async function sendFlux(
   model: string,
   rest?: RestAccount,
 ): Promise<{ status: number; image?: string; error?: string }> {
-  const width = p.width * 2,
-    height = p.height * 2;
+  const width = p.out?.width ?? p.width * 2,
+    height = p.out?.height ?? p.height * 2;
   if (engine === 'local') {
     const response = await fetch('http://127.0.0.1:8798', {
       method: 'POST',
