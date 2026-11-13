@@ -131,9 +131,36 @@ for (const [method, rows] of single)
     human.push(rating.flags.filter((f) => LEDGE_FLAGS.includes(f)).length);
   }
 const agreement = { pictures: auto.length, spearman: +spearman(auto, human).toFixed(2) };
+// What the reviewer wrote in their own words, beside the method it was about (read by people; no score).
+const notes = [];
+for (const [kind, items] of [
+  ['single', key.singles],
+  ['pair', key.pairs],
+])
+  for (const [id, item] of Object.entries(items)) {
+    const rating = ratings.get(id);
+    if (!rating?.note) continue;
+    const answer =
+      kind === 'single'
+        ? `real ${rating.real}, design ${rating.design}${rating.flags.length ? `, ${rating.flags.join('+')}` : ''}`
+        : rating.choice === 'same'
+          ? 'same'
+          : rating.choice === item.candidate
+            ? 'method'
+            : 'current';
+    notes.push({
+      id,
+      kind,
+      method: item.method,
+      scene: item.scene,
+      seed: item.seed,
+      answer,
+      note: rating.note,
+    });
+  }
 writeFileSync(
   join(dir, 'score.json'),
-  JSON.stringify({ set, rated: ratings.size, methods: result, agreement }, null, 1),
+  JSON.stringify({ set, rated: ratings.size, methods: result, agreement, notes }, null, 1),
 );
 console.log(`${set}: ${ratings.size} ratings`);
 console.table(
@@ -155,3 +182,8 @@ console.table(
   ),
 );
 console.log('Gemma check vs ledge flags:', JSON.stringify(agreement));
+if (notes.length) {
+  console.log(`notes: ${notes.length}`);
+  for (const n of notes)
+    console.log(`- ${n.id} ${n.method} ${n.scene}-${n.seed} [${n.answer}] ${n.note.replace(/\s+/g, ' ')}`);
+}

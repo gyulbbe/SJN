@@ -105,6 +105,17 @@
         opacity: 0.45;
         cursor: default;
       }
+      textarea {
+        font: inherit;
+        font-size: 14px;
+        flex: 1;
+        min-width: 260px;
+        min-height: 62px;
+        padding: 7px 9px;
+        border: 1px solid #b9c4c1;
+        border-radius: 7px;
+        resize: vertical;
+      }
       .hint {
         color: #5b6a6e;
         font-size: 13px;
@@ -187,8 +198,15 @@
         keys = () => {};
       document.addEventListener('keydown', (event) => {
         if (zoom.style.display === 'flex') return (zoom.style.display = 'none');
+        // While writing, keys are letters; only Ctrl+Enter goes on.
+        if (event.target instanceof HTMLTextAreaElement) {
+          if (event.isComposing || !(event.key === 'Enter' && event.ctrlKey)) return;
+          event.preventDefault();
+        }
         keys(event);
       });
+      /** The last rating of each id, so a note written before shows again on "이전 것 다시 평가". */
+      const saved = new Map();
       async function rate(entry) {
         const response = await fetch('/rate', {
           method: 'POST',
@@ -196,8 +214,16 @@
           body: JSON.stringify(entry),
         });
         if (!response.ok) throw new Error('저장하지 못했어요');
+        saved.set(entry.id, entry);
         at++;
         show();
+      }
+      /** A free note in the reviewer's own words; it stays in ratings.jsonl on this PC. */
+      function memo(id) {
+        const area = document.createElement('textarea');
+        area.placeholder = '글로 적고 싶은 것이 있으면 적어 주세요. 안 적어도 돼요.';
+        area.value = saved.get(id)?.note ?? '';
+        return { element: row('글로 적기', area), read: () => area.value.trim() };
       }
       /** A row of 1–5 buttons; returns how to read the choice. */
       function score(label, hint) {
@@ -238,9 +264,17 @@
         const flagRow = row('문제가 있으면 표시', ...flags);
         const real = score('실제 사진 같은가', '1 전혀 아님 … 5 사진 같음');
         const design = score('내 설계와 같은가', '1 많이 다름 … 5 같음');
+        const note = memo(item.id);
         const next = button(
           '다음 (Enter)',
-          () => rate({ id: item.id, flags: [...chosen], real: real.read(), design: design.read() }),
+          () =>
+            rate({
+              id: item.id,
+              flags: [...chosen],
+              real: real.read(),
+              design: design.read(),
+              note: note.read(),
+            }),
           'primary',
         );
         next.disabled = true;
@@ -248,8 +282,8 @@
         const hint = document.createElement('p');
         hint.className = 'hint';
         hint.textContent =
-          '문제가 없으면 표시하지 않고 점수만 주세요. 숫자 키 1~7로 표시를 켜고 끌 수 있어요. 그림을 누르면 크게 보여요.';
-        panel.append(flagRow, real.element, design.element, row('', next), hint);
+          '문제가 없으면 표시하지 않고 점수만 주세요. 숫자 키 1~7로 표시를 켜고 끌 수 있어요. 그림을 누르면 크게 보여요. 글을 적는 중에는 숫자 키가 글자로 들어가고, Ctrl+Enter로 넘어가요.';
+        panel.append(flagRow, real.element, design.element, note.element, row('', next), hint);
         main.replaceChildren(pictures, panel);
         keys = (event) => {
           if (event.key === 'Enter' && !next.disabled) next.click();
@@ -267,8 +301,10 @@
         );
         const panel = document.createElement('div');
         panel.className = 'panel';
-        const choose = (choice) => rate({ id: item.id, choice });
+        const note = memo(item.id);
+        const choose = (choice) => rate({ id: item.id, choice, note: note.read() });
         panel.append(
+          note.element,
           row(
             '어느 쪽이 내 설계 같나',
             button('← A가 더 가깝다', () => choose('a')),
@@ -279,7 +315,7 @@
         const hint = document.createElement('p');
         hint.className = 'hint';
         hint.textContent =
-          '젠다이와 벽 홈의 모양·위치를 중심으로 봐 주세요. 화살표 키(←, ↓, →)로도 고를 수 있어요.';
+          '젠다이와 벽 홈의 모양·위치를 중심으로 봐 주세요. 화살표 키(←, ↓, →)로도 고를 수 있어요. 글을 적을 때는 먼저 적고 나서 버튼을 눌러 주세요(고르면 바로 다음으로 넘어가요).';
         panel.append(hint);
         main.replaceChildren(pictures, panel);
         keys = (event) => {
@@ -309,15 +345,13 @@
       });
       (async () => {
         const items = await (await fetch('/items.json')).json();
-        const rated = new Set(
-          (await (await fetch('/ratings.jsonl')).text())
-            .split('\n')
-            .filter(Boolean)
-            .map((line) => JSON.parse(line).id),
-        );
+        for (const line of (await (await fetch('/ratings.jsonl')).text()).split('\n').filter(Boolean)) {
+          const row = JSON.parse(line);
+          saved.set(row.id, row);
+        }
         queue = [...items.singles, ...items.pairs];
         // Start at the first one not rated yet (a reload goes on where it stopped).
-        at = queue.findIndex((item) => !rated.has(item.id));
+        at = queue.findIndex((item) => !saved.has(item.id));
         if (at < 0) at = queue.length;
         show();
       })();
