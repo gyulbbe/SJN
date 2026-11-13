@@ -43,6 +43,11 @@ for (const [id, item] of Object.entries(key.pairs)) {
     .set(spot(item), rating.choice === 'same' ? 'same' : rating.choice === item.candidate ? 'win' : 'loss');
 }
 const current = single.get('cur') ?? new Map();
+/** The scenes and seeds a method has a picture for in the set, rated or not. */
+const shown = (method) =>
+  Object.values(key.singles)
+    .filter((item) => item.method === method)
+    .map(spot);
 const methods = [...new Set(Object.values(key.singles).map((item) => item.method))];
 const mean = (values) => (values.length ? values.reduce((s, n) => s + n, 0) / values.length : NaN);
 const count = (rows, flags) =>
@@ -59,16 +64,15 @@ const result = {};
 for (const method of methods) {
   const own = single.get(method) ?? new Map();
   // A retry shows only the answers it changed; the others are the current method's.
-  const kept = method.endsWith('+retry') ? [...current.keys()].filter((s) => !own.has(s)) : [];
-  const rated = new Map([...own, ...kept.map((s) => [s, current.get(s)])]);
+  const kept = method.endsWith('+retry') ? shown('cur').filter((s) => !shown(method).includes(s)) : [];
+  const rated = new Map([...own, ...kept.filter((s) => current.has(s)).map((s) => [s, current.get(s)])]);
   // Beside the current method: the same scenes and seeds only.
   const spots = [...rated.keys()].filter((s) => current.has(s));
   const mine = summary(spots.map((s) => rated.get(s))),
     base = summary(spots.map((s) => current.get(s)));
   const outcome = pairs.get(method) ?? new Map();
-  const beside = [...spots.map((s) => outcome.get(s) ?? (kept.includes(s) ? 'same' : undefined))].filter(
-    Boolean,
-  );
+  // Criterion 5 counts every rated pair ("전체 쌍"), also where one of its single pictures has no rating.
+  const beside = [...outcome.values(), ...kept.filter((s) => !outcome.has(s)).map(() => 'same')];
   const wins = beside.filter((o) => o === 'win').length;
   const row = {
     ...mine,

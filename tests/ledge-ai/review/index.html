@@ -207,16 +207,27 @@
       });
       /** The last rating of each id, so a note written before shows again on "이전 것 다시 평가". */
       const saved = new Map();
+      // One answer at a time: Enter on the focused "다음" button is both the key and the button's own
+      // click, and the second one must not pass over the next picture (it did on 11-13: ten were skipped).
+      let saving = false;
       async function rate(entry) {
-        const response = await fetch('/rate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(entry),
-        });
-        if (!response.ok) throw new Error('저장하지 못했어요');
-        saved.set(entry.id, entry);
-        at++;
-        show();
+        if (saving) return;
+        saving = true;
+        try {
+          const response = await fetch('/rate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(entry),
+          });
+          if (!response.ok) throw new Error('저장하지 못했어요');
+          saved.set(entry.id, entry);
+          // On to the next one without an answer, so a reload offers only what is left.
+          const next = queue.findIndex((item, index) => index > at && !saved.has(item.id));
+          at = next < 0 ? queue.length : next;
+          show();
+        } finally {
+          saving = false;
+        }
       }
       /** A free note in the reviewer's own words; it stays in ratings.jsonl on this PC. */
       function memo(id) {
