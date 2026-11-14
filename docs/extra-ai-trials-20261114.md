@@ -161,3 +161,18 @@ O1 문장(놓은 제품이 변기·세면대일 때):
 - 시험 장면 10개(개발 8, 마지막 확인 2)에서 앱이 만드는 글과 시험이 보낸 글이 글자까지 같다(`node tests/run-browser-test.mjs tests/extra-ai/app-prompt.ts`, 개발 장면은 실제로 보낸 16개 요청의 기록과도 비교).
 - 시험 도구의 `cur`(`prompt-current.txt`)는 문장이 들어가기 전에 그린 장면의 글이다. 이후 장면을 다시 그리면 `methods.ts`가 거절한다.
 - AI 호출 수·보내는 그림·저장 형식·API는 그대로다. main에 올리는 것은 마지막 확인 뒤에 여쭤본다.
+
+## 12. 이어서 할 일 (11-15 오전 9시 KST 이후)
+
+작업 폴더는 워크트리 `C:\dev\SJN-wall-drawing`, 브랜치 `claude/added-objects`(main에 올리지 않음). 결과·장부는 `C:\dev\SJN\test-results\extra-ai-20261114\`. 두 번째 계정의 하루 몫은 UTC 00:00(오전 9시 KST)에 다시 찬다.
+
+1. **마지막 확인(기준 6) 부르기:** 지금 방식과 끝 문장 × 처음 보는 장면 2개(`large`, `side`, 앱 변경 전에 그림) × seed 2 = 8번, 요금표 추정 약 880뉴런(실제는 1.6배까지). 먼저 `--dry`로 보이고, 429가 나면 바로 멈춘다.
+   ```bash
+   node tests/run-browser-test.mjs tests/extra-ai/run.ts --engine second --round r4 --methods cur,names-end --scenes large,side --seeds 424242,777001 --holdout --dry
+   node tests/run-browser-test.mjs tests/extra-ai/run.ts --engine second --round r4 --methods cur,names-end --scenes large,side --seeds 424242,777001 --holdout
+   ```
+2. **앱이 보여 주는 그림 만들기(AI 없음):** `node tests/run-browser-test.mjs tests/extra-ai/post.ts --group cf --methods cur,names-end --scenes large,side --seeds 424242,777001 --holdout`
+3. **사용자 평가(약 2분):** `node tests/extra-ai/review-build.mjs --set r4 --methods cur,names-end --holdout` → `node tests/ledge-ai/review/server.mjs --root extra-ai-20261114 --set r4 --port 8794`. 이번에도 사용자 평가로 판정한다(기준 5 미달). `node tests/extra-ai/review-score.mjs --set r4`로 기준 1~3을 본다. 끝나면 평가 서버를 끄고 꺼졌는지 확인한다.
+4. **결과 보고와 main 올리기:** 넘으면 결과를 문서에 적고 main에 올릴지 여쭤본다(올리면 자동 배포). 못 넘으면 그대로 보고하고 넣을지 다시 여쭤본다.
+5. **11-14에 다 못 돌린 확인:** 로컬 D1 시험 파일들은 한꺼번에 돌리면 포트가 겹쳐 실패한다(따로 돌린 `d1-storage`는 통과). `npx vitest run --no-file-parallelism tests/admin-projects.test.ts tests/d1-*.test.ts tests/service-limit-server.test.ts tests/storage-server.test.ts`로 하나씩 돌려 확인한다(10분 넘게 걸림, 백그라운드로). `reconstruction-source-plane-mapping`·`reconstruction-corpus`는 워크트리에 저장된 시험 자료가 없어서 실패하는 것으로, 이번 변경과 관계없다.
+6. **다음 개선 거리(사용자 메모):** 타일 안의 가는 줄무늬가 사라짐, 세면대·변기 색이 어두워짐, 홈(니치)이 어색함, AI 그림자·빛 비침이 셈.
