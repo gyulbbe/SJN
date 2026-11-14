@@ -17,8 +17,10 @@ const LAMP_DEPTH = 0.52;
 /**
  * The 2D composite's room with the light off: the 3D room's mean brightness without its downlight
  * over with it (measured, tests/smc-ceiling-browser.ts). The 2D room has no light to switch off.
+ * 0.53 until 2026-11-14; 0.65 since the 3D light rig gives more of its light as bounce (user decision,
+ * docs/light-tuning-results-20261114.md).
  */
-export const CEILING_LIGHT_OFF_LEVEL = 0.53;
+export const CEILING_LIGHT_OFF_LEVEL = 0.65;
 
 let image: Promise<HTMLCanvasElement | null> | undefined;
 /** The picture, read once per page. A failure gives null (the colour) and the next ceiling tries again. */

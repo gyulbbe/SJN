@@ -51,7 +51,7 @@
 | 나란히·겹쳐 보기 | 각 장면 | After에만 천장 |
 
 - **조명 끔, 3D:** SpotLight와 그림자를 끈다. 환경 반사광은 남는다.
-- **조명 끔, 2D:** 빛이 없는 그림이라 방 영역 전체에 0.53을 곱한다(`CEILING_LIGHT_OFF_LEVEL`).
+- **조명 끔, 2D:** 빛이 없는 그림이라 방 영역 전체에 0.53을 곱한다(`CEILING_LIGHT_OFF_LEVEL`). 2026-11-14 3D 빛 조정 뒤 다시 재서 0.65로 바꿨다(3D 끔÷켬 선형 0.653, 2D 0.644, [빛 개선](light-tuning-results-20261114.md)).
 
 ### 밝기 값 (`tests/smc-ceiling-browser.ts`, 기본 방)
 | 값 | 숫자 | 근거 |
