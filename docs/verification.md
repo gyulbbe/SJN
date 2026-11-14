@@ -6,6 +6,7 @@
 
 - 무엇: 2D·3D 모두 타일이 화면에서 6px 이상이면 줄눈을 최소 1px로 그린다. 3D 천장 조명 0.44 → 0.32, 반사광 0.58 → 0.66. 렌더 버전 `room-view-v14-light`, `DESIGN_RENDER_REVISION` 5. 저장 형식·API·SQL은 그대로다.
 - 확인: `node tests/run-browser-test.mjs tests/light-tuning-browser.ts --variants app --gpu`와 `tests/light-tuning-compare.ts --variants app`(기준 1~4 통과), `tests/tile-joint-width.test.ts`, `shading-browser.ts`(그린 줄눈 폭으로 기대값 고침), `render-realism-browser.ts`(ΔE 0.4 안), `room-viewer-render-browser.ts`, `render-browser.ts`, `comparison-render-browser.ts`, `room-wall-features-browser.ts`, `smc-ceiling-browser.ts`, `photo-lighting-render-browser.ts`, 전체 vitest(`--maxWorkers=4`, 기존 6개 외 통과).
+- e2e: `flux-export`, `flux-refine`, `room-viewer`, `simple-editor`, `base-room` 통과(1개 건너뜀). 변환 창 색 보정 시험 2개는 가짜 AI 답이 이제 줄눈을 지녀 되돌리기가 일어나지 않아, 하나는 흐린 답으로 되돌리기를, 하나는 되돌리기 없는 버튼을 보게 고쳤다.
 - 일부러 달라진 것: `tile-mipmap-browser.ts`(새 기준 대비 "줄인 그림과의 차이"가 줄눈을 굵게 그린 만큼 커짐, 물결무늬 없음을 그림으로 확인), `ledge-join-browser.ts`의 "그대로인 장면 픽셀 같음" 3개(빛이 바뀜, 이음매 값은 그대로).
 - 결과: [결과 문서](light-tuning-results-20261114.md).
 
