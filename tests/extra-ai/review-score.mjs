@@ -4,7 +4,7 @@
 // With --compare <set> it also counts how often two sets (the user's check set and mine) agree on
 // "없던 물건이 생김" for the same pictures. No AI call.
 //
-//   node tests/extra-ai/review-score.mjs --set r2 [--base cur] [--compare u12]
+//   node tests/extra-ai/review-score.mjs --set r2 [--base cur] [--compare u12] [--ratings u12,r2u]
 // Output: the table on the console and test-results/extra-ai-20261114/review/<set>/score.json
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -29,7 +29,20 @@ const read = (name) => {
     }
   return { key, ratings };
 };
-const { key, ratings } = read(set);
+const { key, ratings: own } = read(set);
+// --ratings u12,r2u scores the set with the ratings of the user's check sets instead (each of their
+// pictures points back to this set's id with `from`); criterion 5 sends the whole set to the user
+// when the user's check and mine disagree.
+const others = arg('ratings');
+const ratings = others ? new Map() : own;
+if (others)
+  for (const name of others.split(',')) {
+    const other = read(name);
+    for (const [id, item] of Object.entries(other.key)) {
+      const rating = other.ratings.get(id);
+      if (rating && item.from) ratings.set(item.from, { ...rating, id: item.from });
+    }
+  }
 const spot = (job) => `${job.scene}-${job.seed}`;
 /** method → scene-seed → rating. */
 const byMethod = new Map();
@@ -119,7 +132,7 @@ if (compare) {
   const differ = [];
   for (const [id, item] of Object.entries(other.key)) {
     const theirs = other.ratings.get(id),
-      mine = ratings.get(item.from);
+      mine = own.get(item.from);
     if (!theirs || !mine) continue;
     total++;
     if (flagged(theirs, 'added') === flagged(mine, 'added')) same++;
@@ -134,4 +147,4 @@ if (compare) {
   agreement = { same, total, differ };
   console.log(`"없던 물건" agreement ${compare} vs ${set}: ${same}/${total}`, differ);
 }
-writeFileSync(join(REVIEW, set, 'score.json'), JSON.stringify({ base, table, gemma, agreement }, null, 1));
+writeFileSync(join(REVIEW, set, others ? `score-${others.replace(/,/g, '+')}.json` : 'score.json'), JSON.stringify({ base, table, gemma, agreement }, null, 1));
