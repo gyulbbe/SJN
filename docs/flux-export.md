@@ -116,9 +116,10 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 바로 뒤에 타일 면 문장을 쓴다. 예: "Left wall and back wall and right wall: white (#ecebe6) matte tiles, 300 × 600 mm, grid layout, light grey (#d9d8d2) grout 2 mm. Keep this exact white as it appears in image 0; do not warm, yellow or tint it." 유채색은 "…; do not change its hue or saturation."이다.
   - 방 안 입력이면 다음에 천장 문장을 쓴다: "The ceiling is plain white (#f3f2ee) paint with one flat square light panel." SMC 천장은 "The ceiling is a moulded <색> SMC bathroom ceiling with one flat square light panel."이고, 조명을 끄면 끝이 "with no light fixture."다.
   - 다음에 설비마다 "N. A white (#f2f1ec) glossy floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size." 형식의 한 문장을 쓴다.
-  - 끝에 "Image 0 contains exactly these fixtures: 1 toilet, 1 washbasin." 요약을 붙인다. 장면이 비어 있으면 기존 고정 지시문 그대로다.
+  - 다음에 "Image 0 contains exactly these fixtures: 1 toilet, 1 washbasin." 요약을 붙인다. 장면이 비어 있으면 기존 고정 지시문 그대로다.
+  - 설비가 있으면 맨 끝에 놓지 않은 흔한 욕실 물건을 이름으로 막는 문장을 붙인다(2026-11-14): "These objects are not in this design and must not appear anywhere in the picture: no toilet-paper holder, towel bar, hook, shelf, mirror, wall cabinet, glass shower screen, window, door or door handle, and no second toilet or washbasin." 놓은 종류는 빼고(거울·문·유리 칸막이 등), 두 번째는 놓은 변기·세면대만 말한다. 시험에서 없던 물건이 생긴 그림이 16장 중 3장 → 1장(사용자 평가)이었고, 사실감·설계는 같았다. 같은 문장을 단면 문장 바로 뒤에 두면 놓은 세면대가 사라져 끝에 둔다([결과](extra-ai-trials-20261114.md)).
   - 2026-09-27 전에는 타일 면 문장이 맨 끝이었고 "off-white"를 썼다.
-- **길이**: 2,400자 이하. 넘으면 뒤쪽 설비의 세부 설명 → 개별 설비 문장 → 타일 면 문장을 색만 남긴 짧은 문장으로 순서로 줄인다. 설비 개수 요약, 타일 색, 천장 문장은 끝까지 남긴다.
+- **길이**: 2,400자 이하. 넘으면 뒤쪽 설비의 세부 설명 → 개별 설비 문장 → 타일 면 문장을 색만 남긴 짧은 문장으로 순서로 줄인다. 설비 개수 요약, 타일 색, 천장 문장은 끝까지 남긴다. 끝의 금지 문장은 그것 없이 들어가는 길이에서 전체가 안 들어가면 먼저 짧은 꼴("No toilet-paper holder, … anywhere; no second toilet or washbasin.")이 되고, 그다음에 설비 세부를 줄인다. 그래도 안 들어가면 빠진다.
 - **화면**: 변환 창에 "변환에 전달한 제품"(한국어 종류·위치)을 보여 준다. 제품 정보를 만들지 못하면 이미지로만 변환하고 그렇다고 알린다.
 - **사용량**: 모델 입력 이미지는 그대로 1장이다. Workers AI klein 4B는 이미지 타일 단위로 과금되므로 호출당 사용량은 기존과 같다(약 110뉴런, 추정). 응답 시간도 기존과 비슷하다(실측 약 9초).
 - **한계**: 모델이 문장을 따를지는 보장되지 않는다. 결과 확인은 제품이 사라지거나 바뀐 것을 알릴 뿐, 다시 만들지는 않는다.

@@ -147,4 +147,7 @@ if (compare) {
   agreement = { same, total, differ };
   console.log(`"없던 물건" agreement ${compare} vs ${set}: ${same}/${total}`, differ);
 }
-writeFileSync(join(REVIEW, set, others ? `score-${others.replace(/,/g, '+')}.json` : 'score.json'), JSON.stringify({ base, table, gemma, agreement }, null, 1));
+writeFileSync(
+  join(REVIEW, set, others ? `score-${others.replace(/,/g, '+')}.json` : 'score.json'),
+  JSON.stringify({ base, table, gemma, agreement }, null, 1),
+);

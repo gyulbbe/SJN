@@ -5,7 +5,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { fluxInputLayout, FLUX_PROMPT } from '../src/lib/ai-export/contract';
-import { buildFluxPrompt, FLUX_CUTAWAY_SENTENCE } from '../src/lib/ai-export/prompt';
+import { addedObjectsSentence, buildFluxPrompt, FLUX_CUTAWAY_SENTENCE } from '../src/lib/ai-export/prompt';
+import type { FluxFixtureKind } from '../src/lib/ai-export/scene-contract';
 import {
   budgetCheck,
   fluxNeurons,
@@ -22,6 +23,7 @@ import {
   pngSize,
 } from './export-photoreal/methods';
 import { SPECS } from './export-photoreal/specs';
+import { withSentence } from './extra-ai/methods';
 
 const at = '2026-11-04T10:00:00.000Z';
 const row = (neurons: number, model = '@cf/black-forest-labs/flux-2-klein-4b', when = at): LedgerRow => ({
@@ -121,7 +123,12 @@ describe.skipIf(!built)('export-photoreal current method = the app request', () 
     const dir = join(root, id);
     const { scene } = JSON.parse(readFileSync(join(dir, 'grounding.json'), 'utf8'));
     const request = fluxRequest('current', dir);
-    expect(request.prompt).toBe(buildFluxPrompt(scene));
+    // The scenes were drawn before the added-objects sentence went into the app (2026-11-14): the app's
+    // prompt is theirs with that sentence at the end, shortened the way that trial did.
+    const added = addedObjectsSentence(
+      scene.fixtures.map((fixture: { kind: FluxFixtureKind }) => fixture.kind),
+    );
+    expect(withSentence(request.prompt, added.full, added.compact, 'end')).toBe(buildFluxPrompt(scene));
     const capture = pngSize(readFileSync(join(dir, 'capture.png')));
     const layout = fluxInputLayout(capture.width, capture.height);
     expect(pngSize(request.images[0])).toEqual({ width: layout.width, height: layout.height });

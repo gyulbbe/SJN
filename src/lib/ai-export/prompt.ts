@@ -218,9 +218,47 @@ function buildEmptyRoomPrompt(scene: FluxScene, mode: NonNullable<FluxScene['mod
 }
 
 /**
+ * Bathroom objects the model drew although the design had none (trials 11-04 to 11-13: glass screens,
+ * towel bars, paper holders, hooks, door handles), each with the placed kinds that make it part of the
+ * design, so it is not named then. `short` is the compact form's word ('' leaves it out there).
+ */
+const FLUX_ADDED_OBJECTS: { words: string; short: string; unless: readonly FluxFixtureKind[] }[] = [
+  { words: 'toilet-paper holder', short: 'toilet-paper holder', unless: [] },
+  { words: 'towel bar', short: 'towel bar', unless: [] },
+  { words: 'hook', short: '', unless: [] },
+  { words: 'shelf', short: 'shelf', unless: ['wallShelf'] },
+  { words: 'mirror', short: 'mirror', unless: ['mirror', 'mirrorCabinet'] },
+  { words: 'wall cabinet', short: '', unless: ['wallCabinet', 'mirrorCabinet', 'vanity'] },
+  { words: 'glass shower screen', short: 'glass screen', unless: ['glassPartition', 'showerCurtain'] },
+  { words: 'window', short: 'window', unless: ['window'] },
+  { words: 'door', short: 'door', unless: ['door'] },
+  { words: 'door handle', short: 'handle', unless: ['door'] },
+];
+/**
+ * The sentence naming those objects for a design's placed kinds, put at the very end of the prompt:
+ * on the 2026-11-14 trial it cut the results with an added object from 3 of 16 to 1 of 16 (the user's
+ * rating; 6 to 3 on mine) with realism and design unchanged. Before the fixtures (right after the
+ * cutaway sentence) it made the model drop placed washbasins (docs/extra-ai-trials-20261114.md).
+ * `compact` is for long prompts.
+ */
+export function addedObjectsSentence(placed: readonly FluxFixtureKind[]): { full: string; compact: string } {
+  const named = FLUX_ADDED_OBJECTS.filter((item) => !item.unless.some((kind) => placed.includes(kind)));
+  const list = (words: string[]) =>
+    words.length > 1 ? `${words.slice(0, -1).join(', ')} or ${words.at(-1)}` : (words[0] ?? '');
+  const second = [placed.includes('toilet') ? 'toilet' : '', placed.includes('basin') ? 'washbasin' : '']
+    .filter(Boolean)
+    .join(' or ');
+  return {
+    full: `These objects are not in this design and must not appear anywhere in the picture: no ${list(named.map((item) => item.words))}${second ? `, and no second ${second}` : ''}.`,
+    compact: `No ${list(named.map((item) => item.short).filter(Boolean))} anywhere${second ? `; no second ${second}` : ''}.`,
+  };
+}
+
+/**
  * Deterministic: the same scene always yields the same text. The walls' and floor's colours come
  * right after the fixed instruction (the model weighs early text more; a cutaway view's sentence
- * before them), then the ceiling when shown, the fixtures in the order given and the count summary.
+ * before them), then the ceiling when shown, the fixtures in the order given, the count summary and,
+ * with fixtures, the sentence naming the objects not to add.
  */
 export function buildFluxPrompt(scene: FluxScene | undefined): string {
   if (scene?.mode) return buildEmptyRoomPrompt(scene, scene.mode);
@@ -233,7 +271,8 @@ export function buildFluxPrompt(scene: FluxScene | undefined): string {
   const summary = scene.fixtures.length
     ? `Image 0 contains exactly these fixtures: ${[...counts].map(([noun, count]) => `${count} ${noun}${count > 1 ? 's' : ''}`).join(', ')}. Each one keeps its type, position, size, shape and colour; no fixture turns into a different object and nothing is added.`
     : '';
-  const compose = (listed: number, detailed: number, compact: boolean) =>
+  type Step = [listed: number, detailed: number, compact: boolean];
+  const compose = ([listed, detailed, compact]: Step, added = '') =>
     [
       FLUX_PROMPT,
       cutaway,
@@ -241,20 +280,29 @@ export function buildFluxPrompt(scene: FluxScene | undefined): string {
       scene.ceiling ? ceilingSentence(scene.ceiling) : '',
       ...scene.fixtures.slice(0, listed).map((fixture, i) => fixtureSentence(fixture, i + 1, i < detailed)),
       summary,
+      added,
     ]
       .filter(Boolean)
       .join(' ');
-  // Shorten the least important fixture's detail first, then list fewer fixtures, then keep only
-  // the tile colours. The summary with every count and the colours always stay.
+  const fits = (text: string) => text.length <= FLUX_PROMPT_MAX_CHARS;
+  // From the longest prompt to the shortest: the least important fixture's detail first, then fewer
+  // fixtures, then only the tile colours. The summary with every count and the colours always stay.
   const all = scene.fixtures.length;
-  for (let detailed = all; detailed >= 0; detailed--) {
-    const text = compose(all, detailed, false);
-    if (text.length <= FLUX_PROMPT_MAX_CHARS) return text;
+  const steps: Step[] = [];
+  for (let detailed = all; detailed >= 0; detailed--) steps.push([all, detailed, false]);
+  for (let listed = all - 1; listed >= 0; listed--) steps.push([listed, 0, false]);
+  steps.push([0, 0, true]);
+  const first = steps.findIndex((step) => fits(compose(step)));
+  if (first < 0) return compose(steps.at(-1)!).slice(0, FLUX_PROMPT_MAX_CHARS);
+  if (!all) return compose(steps[first]);
+  // The added-objects sentence: whole where the prompt fits as it would without it, otherwise its
+  // compact form, and only then shorter fixtures (the trial's order). Left out if nothing fits.
+  const added = addedObjectsSentence(scene.fixtures.map((fixture) => fixture.kind));
+  const whole = compose(steps[first], added.full);
+  if (fits(whole)) return whole;
+  for (const step of steps.slice(first)) {
+    const text = compose(step, added.compact);
+    if (fits(text)) return text;
   }
-  for (let listed = all; listed >= 0; listed--) {
-    const text = compose(listed, 0, false);
-    if (text.length <= FLUX_PROMPT_MAX_CHARS) return text;
-  }
-  const text = compose(0, 0, true);
-  return text.length <= FLUX_PROMPT_MAX_CHARS ? text : text.slice(0, FLUX_PROMPT_MAX_CHARS);
+  return compose(steps[first]);
 }

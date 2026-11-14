@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FLUX_PROMPT } from '../src/lib/ai-export/contract';
 import {
+  addedObjectsSentence,
   buildFluxPrompt,
   ceilingSentence,
   colorWords,
@@ -294,5 +295,64 @@ describe('where a fixture faces (from the angle name of its photo)', () => {
     const text = buildFluxPrompt(crowded);
     expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
     expect(text).toBe(buildFluxPrompt(structuredClone(crowded)));
+  });
+});
+
+describe('the objects not to add (added-objects trial 2026-11-14)', () => {
+  const FULL =
+    'These objects are not in this design and must not appear anywhere in the picture: no toilet-paper holder, towel bar, hook, shelf, mirror, wall cabinet, glass shower screen, window, door or door handle, and no second toilet or washbasin.';
+  it('ends the prompt with the common objects named and a second toilet or washbasin ruled out', () => {
+    const text = buildFluxPrompt(scene);
+    expect(text.endsWith(` ${FULL}`)).toBe(true);
+    expect(text.indexOf(FULL)).toBeGreaterThan(text.indexOf('Image 0 contains exactly these fixtures'));
+    expect(text).toBe(buildFluxPrompt(structuredClone(scene)));
+  });
+
+  it('does not name a kind the design has, and rules out only the second of what is placed', () => {
+    const { full, compact } = addedObjectsSentence(['bath', 'mirror', 'door', 'glassPartition', 'wallShelf']);
+    expect(full).toBe(
+      'These objects are not in this design and must not appear anywhere in the picture: no toilet-paper holder, towel bar, hook, wall cabinet or window.',
+    );
+    expect(compact).toBe('No toilet-paper holder, towel bar or window anywhere.');
+    expect(addedObjectsSentence(['toilet']).compact).toBe(
+      'No toilet-paper holder, towel bar, shelf, mirror, glass screen, window, door or handle anywhere; no second toilet.',
+    );
+    expect(addedObjectsSentence(['vanity', 'showerCurtain']).full).not.toMatch(/wall cabinet|glass/);
+  });
+
+  it('is only said about a design with fixtures; the empty-room prompts keep their own list', () => {
+    const bare = buildFluxPrompt({ ...scene, fixtures: [] });
+    expect(bare).not.toContain('must not appear anywhere');
+    const empty = buildFluxPrompt({ ...scene, fixtures: [], mode: 'empty-room' });
+    expect(empty).not.toContain('must not appear anywhere');
+    expect(empty.startsWith(FLUX_EMPTY_ROOM_PROMPT)).toBe(true);
+  });
+
+  it('takes its compact form before any fixture loses its detail, and stays within the limit', () => {
+    // Five fixtures: every one keeps its place and size with the compact sentence (not with the whole).
+    const five: FluxScene = {
+      ...scene,
+      fixtures: [
+        toilet,
+        basin,
+        ...[0, 1, 2].map((i) => ({ ...basin, box: [i / 13, 0.5, (i + 1) / 13, 0.6] })),
+      ],
+    } as FluxScene;
+    expect(fluxSceneSchema.safeParse(five).success).toBe(true);
+    const text = buildFluxPrompt(five);
+    expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
+    expect(text.endsWith(` ${addedObjectsSentence(['toilet', 'basin']).compact}`)).toBe(true);
+    expect(text.match(/ \(x \d+–\d+%, y \d+–\d+%\)/g)).toHaveLength(5);
+  });
+
+  it('shortens fixtures for the compact sentence in a crowded prompt and never cuts the count summary', () => {
+    const crowded: FluxScene = {
+      ...scene,
+      fixtures: Array.from({ length: 12 }, (_, i) => ({ ...basin, box: [i / 13, 0.5, (i + 1) / 13, 0.6] })),
+    };
+    const text = buildFluxPrompt(crowded);
+    expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
+    expect(text).toContain('Image 0 contains exactly these fixtures: 12 washbasins.');
+    expect(text.endsWith(' ' + addedObjectsSentence(['basin']).compact)).toBe(true);
   });
 });

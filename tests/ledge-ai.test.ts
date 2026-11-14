@@ -203,7 +203,9 @@ describe('fitting the app prompt', () => {
     ],
   });
   it('puts the sentences right after the cutaway sentence and changes nothing else', () => {
-    const prompt = buildFluxPrompt(scene(1));
+    // No fixture, so that nothing has to be shortened: since 2026-11-14 a prompt with fixtures ends
+    // with the app's added-objects sentence and no longer leaves room for these sentences whole.
+    const prompt = buildFluxPrompt(scene(0));
     const added = structureSentences([corner], 'ledge');
     const text = withSentences(prompt, added);
     expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);

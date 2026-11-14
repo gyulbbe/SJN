@@ -9,7 +9,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FLUX_PROMPT } from '../../src/lib/ai-export/contract';
-import { FLUX_CUTAWAY_SENTENCE, FLUX_PROMPT_MAX_CHARS } from '../../src/lib/ai-export/prompt';
+import {
+  addedObjectsSentence,
+  FLUX_CUTAWAY_SENTENCE,
+  FLUX_PROMPT_MAX_CHARS,
+} from '../../src/lib/ai-export/prompt';
 import type { FluxScene } from '../../src/lib/ai-export/scene-contract';
 import { fluxNeurons } from '../export-photoreal/budget';
 import { pngSize } from '../ledge-ai/methods';
@@ -18,36 +22,12 @@ export { FLUX_4B, SEEDS } from '../ledge-ai/methods';
 export const METHODS = ['cur', 'names', 'names-end'] as const;
 export type Method = (typeof METHODS)[number];
 
-type Kind = FluxScene['fixtures'][number]['kind'];
 /**
- * The objects the model added in earlier trials (11-04, 11-11, 11-13), as words, each with the placed
- * kinds that make it part of the design (then it is not named).
+ * The added-objects sentence is the app's since it went in (2026-11-14, prompt.ts
+ * `addedObjectsSentence`, the same words the trial sent). The scenes' `prompt-current.txt` were drawn
+ * before that, without it; scenes drawn later already end with it and are refused here.
  */
-const ADDED: { words: string; short: string; unless: readonly Kind[] }[] = [
-  { words: 'toilet-paper holder', short: 'toilet-paper holder', unless: [] },
-  { words: 'towel bar', short: 'towel bar', unless: [] },
-  { words: 'hook', short: '', unless: [] },
-  { words: 'shelf', short: 'shelf', unless: ['wallShelf'] },
-  { words: 'mirror', short: 'mirror', unless: ['mirror', 'mirrorCabinet'] },
-  { words: 'wall cabinet', short: '', unless: ['wallCabinet', 'mirrorCabinet', 'vanity'] },
-  { words: 'glass shower screen', short: 'glass screen', unless: ['glassPartition', 'showerCurtain'] },
-  { words: 'window', short: 'window', unless: ['window'] },
-  { words: 'door', short: 'door', unless: ['door'] },
-  { words: 'door handle', short: 'handle', unless: ['door'] },
-];
-/** The added-objects sentence for a scene's placed fixtures: full, and a compact form for long prompts. */
-export function addedObjectsSentence(placed: readonly Kind[]): { full: string; compact: string } {
-  const named = ADDED.filter((item) => !item.unless.some((kind) => placed.includes(kind)));
-  const list = (words: string[]) =>
-    words.length > 1 ? `${words.slice(0, -1).join(', ')} or ${words.at(-1)}` : (words[0] ?? '');
-  const second = [placed.includes('toilet') ? 'toilet' : '', placed.includes('basin') ? 'washbasin' : '']
-    .filter(Boolean)
-    .join(' or ');
-  return {
-    full: `These objects are not in this design and must not appear anywhere in the picture: no ${list(named.map((item) => item.words))}${second ? `, and no second ${second}` : ''}.`,
-    compact: `No ${list(named.map((item) => item.short).filter(Boolean))} anywhere${second ? `; no second ${second}` : ''}.`,
-  };
-}
+export { addedObjectsSentence };
 
 /**
  * The prompt with a sentence added after the cutaway sentence (`front`) or at the end. When the whole
@@ -94,6 +74,8 @@ export function fluxRequest(method: string, dir: string): FluxRequest {
   const current = readFileSync(join(dir, 'prompt-current.txt'), 'utf8');
   const { scene } = JSON.parse(readFileSync(join(dir, 'grounding.json'), 'utf8')) as { scene: FluxScene };
   const sentence = addedObjectsSentence(scene.fixtures.map((fixture) => fixture.kind));
+  if (current.endsWith(sentence.full) || current.endsWith(sentence.compact))
+    throw new Error(`${dir} was drawn after the sentence went into the app; its current prompt has it`);
   const prompt =
     method === 'cur'
       ? current
