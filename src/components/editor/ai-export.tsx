@@ -21,6 +21,7 @@ import type { FluxCheckWall } from '@/lib/ai-export/check-contract';
 import { fluxResultNotices, readFluxCheck, type FluxNoticeInput } from '@/lib/ai-export/notices';
 import { FLUX_FRONT, fluxOrbitView, snapFluxOrbit } from '@/lib/ai-export/view';
 import { restoreBackdrop } from '@/lib/ai-export/backdrop';
+import { restoreResultJoints } from '@/lib/ai-export/joints';
 import type { RoomOrbit, RoomViewState } from '@/lib/room-viewer/view-state';
 import AiViewPicker, { type AiPreview } from './ai-view-picker';
 import { FLUX_9B_WAIT, FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
@@ -196,6 +197,8 @@ export default function AiExport({
   const [check, setCheck] = useState<FluxNoticeInput['check']>();
   const [colors, setColors] = useState<FluxNoticeInput['colors']>();
   const [showOriginal, setShowOriginal] = useState(false);
+  /** How many walls and floors of the shown result got the design's joints back (joints.ts). */
+  const [jointFaces, setJointFaces] = useState(0);
   const [shifted, setShifted] = useState(false);
   /** The model reframed an outside view, so its white margin could not be put back. */
   const [marginKept, setMarginKept] = useState(false);
@@ -222,8 +225,11 @@ export default function AiExport({
   const state = useRef<{
     image?: Blob;
     grounding?: FluxGrounding;
-    /** The render, its regions and the model input's padding, for the colour check. */
-    color?: { capture: Pixels; mask: RegionMask; layout: FluxInputLayout };
+    /**
+     * The render, its regions and the model input's padding, for the colour check, and the same frame
+     * with widened joints, for putting drifted joints back (none for the 2D front composite).
+     */
+    color?: { capture: Pixels; mask: RegionMask; layout: FluxInputLayout; joints?: Pixels };
     /** Walls in the captured view, asked about in the result check. */
     walls?: FluxCheckWall[];
     /** Walls with a region, where another tile is intended (not a tile-layout warning). */
@@ -270,6 +276,7 @@ export default function AiExport({
     setCheck(undefined);
     setColors(undefined);
     setShowOriginal(false);
+    setJointFaces(0);
   }, []);
   function chooseMethod(next: FluxMethod) {
     if (busy || next === method) return;
@@ -293,6 +300,7 @@ export default function AiExport({
     setCheck(undefined);
     setColors(undefined);
     setShowOriginal(false);
+    setJointFaces(0);
     setShifted(false);
     const started = performance.now();
     let timer = setTimeout(() => controller.abort(), 190_000);
@@ -319,6 +327,7 @@ export default function AiExport({
             capture: pixels,
             mask: source.regions,
             layout: fluxInputLayout(pixels.width, pixels.height),
+            ...(source.joints ? { joints: await readPixels(source.joints) } : {}),
           };
           state.current.walls = visibleWalls(source.regions, source.snapshot.scene);
           state.current.regionWalls = [
@@ -468,6 +477,7 @@ export default function AiExport({
           mask: color.mask,
           layout: color.layout,
           boxes: composite.boxes,
+          ...(color.joints ? { joints: color.joints } : {}),
           ...(outcomes.length
             ? {
                 refine: {
@@ -487,6 +497,7 @@ export default function AiExport({
         setResult({ url: rawUrl, correctedUrl, elapsed: (performance.now() - started) / 1000 });
         setResultVariant(requested);
         setShifted(composed.shifted);
+        setJointFaces(composed.joints?.restored.length ?? 0);
         setColors(
           !composed.review.framing.aligned
             ? { status: 'reframed' }
@@ -504,19 +515,37 @@ export default function AiExport({
         setResult({ url, elapsed: (performance.now() - started) / 1000 });
         setResultVariant(requested);
       }
-      // Walls and floor back to the render's colours where the model kept the framing (no AI call).
+      // Where the model kept the framing (no AI call): the design's joints back on the faces whose
+      // joints it moved, then walls and floor back to the render's colours.
       if (color && !composite) {
         const url = state.current.urls.at(-1);
         try {
-          const review = reviewResultColors({ ...color, result: await readPixels(blob) });
+          const raw = await readPixels(blob);
+          const { capture, mask, layout } = color;
+          const frame = color.joints ? framing(projectCapture(capture, layout, raw), raw) : undefined;
+          const joints =
+            color.joints && frame?.aligned
+              ? restoreResultJoints({ capture, joints: color.joints, mask, layout, result: raw, frame })
+              : undefined;
+          const review = reviewResultColors({
+            capture,
+            mask,
+            layout,
+            result: joints?.image ?? raw,
+            // The same shift the joints were put back at (the search would only find it again).
+            ...(joints?.image && frame ? { alignment: { dx: frame.dx, dy: frame.dy } } : {}),
+          });
           if (!live.current) return;
+          const shownPixels = review.corrected ?? joints?.image;
           if (!review.framing.aligned) setColors({ status: 'reframed' });
-          else if (review.corrected) {
-            const correctedUrl = URL.createObjectURL(await pixelsToPng(review.corrected));
+          else if (shownPixels) {
+            const correctedUrl = URL.createObjectURL(await pixelsToPng(shownPixels));
             state.current.urls.push(correctedUrl);
             if (!live.current) return;
             setResult((previous) => (previous.url === url ? { ...previous, correctedUrl } : previous));
-            setColors({ status: 'corrected', warnings: review.warnings, unmatched: review.unmatched });
+            setJointFaces(joints?.restored.length ?? 0);
+            if (review.corrected)
+              setColors({ status: 'corrected', warnings: review.warnings, unmatched: review.unmatched });
           }
         } catch {
           if (live.current) setColors({ status: 'failed' });
@@ -599,6 +628,7 @@ export default function AiExport({
     check,
     colors: colors?.status === 'corrected' && !result.correctedUrl ? undefined : colors,
     corrected: !showOriginal,
+    ...(jointFaces ? { joints: jointFaces } : {}),
     showTiles: FLUX_SHOW_TILE_NOTICE,
     regionWalls: state.current.regionWalls,
     ...(mode ? { composite: { shifted, ...(refineSummary ? { refine: refineSummary } : {}) } } : {}),
@@ -761,7 +791,7 @@ export default function AiExport({
               <a
                 className="btn"
                 href={shown}
-                download={`${filename}-${shownModel}${shown === result.url && result.correctedUrl ? '-AI원본색' : ''}.png`}
+                download={`${filename}-${shownModel}${shown === result.url && result.correctedUrl ? (jointFaces ? '-AI원본' : '-AI원본색') : ''}.png`}
               >
                 {shownName} PNG 저장
               </a>
@@ -773,7 +803,13 @@ export default function AiExport({
                 aria-pressed={showOriginal}
                 onClick={() => setShowOriginal((value) => !value)}
               >
-                {showOriginal ? '보정한 색 보기' : 'AI 원본 색 보기'}
+                {jointFaces
+                  ? showOriginal
+                    ? '보정한 그림 보기'
+                    : 'AI 원본 보기'
+                  : showOriginal
+                    ? '보정한 색 보기'
+                    : 'AI 원본 색 보기'}
               </button>
             )}
           </div>

@@ -243,6 +243,11 @@ export type FluxNoticeInput = {
     | { status: 'failed' };
   /** Whether the colour-corrected result is on screen (else the model's own colours). */
   corrected: boolean;
+  /**
+   * How many walls and floors got the design's joints back because the model moved them
+   * (joints.ts); absent or 0 when none did. Shown only with the corrected result.
+   */
+  joints?: number;
   /** Tile-layout answers are shown only when they proved reliable enough. */
   showTiles: boolean;
   /** Walls with a region: another tile there is intended, so a tile-layout answer about them is no warning. */
@@ -336,6 +341,11 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
         }`,
       });
   }
+  // With joints put back, the faces' texture is the design's: only the light stays the model's.
+  const tail =
+    input.joints && input.corrected
+      ? '빛과 제품·유리는 AI 결과 그대로예요.'
+      : '명암·질감과 제품·유리는 AI 결과 그대로예요.';
   if (colors?.status === 'corrected') {
     const shifted = colorChangeLines(colors.warnings),
       lightened = lightnessChangeLines(colors.warnings),
@@ -346,7 +356,6 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
         lines: [...shifted, ...lightened].map((line) => `${line.text} 바뀌었을 수 있어요.`),
       });
     else {
-      const tail = '명암·질감과 제품·유리는 AI 결과 그대로예요.';
       // "Matched" only when it is true: a face whose lightness is still far from the render's is said so.
       infos.unshift({
         key: 'color',
@@ -365,7 +374,7 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
     // one by one, or the render where that did not hold).
     if (composite && infos[0]?.key === 'color')
       infos[0].text = infos[0].text.replace(
-        '명암·질감과 제품·유리는 AI 결과 그대로예요.',
+        tail,
         composite.refine
           ? '제품은 따로 다듬은 결과나 3D 렌더를 제자리에 올렸어요.'
           : '제품은 3D 렌더를 제자리에 그대로 올렸어요.',
@@ -378,6 +387,13 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
         (input.backdrop === 'reframed'
           ? ' 방 둘레 흰 여백도 되돌리지 못했으니, 여백에 생긴 벽·물건은 무시해 주세요.'
           : ''),
+    });
+  if (input.joints)
+    infos.splice(infos[0]?.key === 'color' ? 1 : 0, 0, {
+      key: 'joints',
+      text: input.corrected
+        ? `타일 줄눈·무늬가 설계와 달라진 벽·바닥 ${input.joints}면은 설계의 줄눈·무늬로 되돌렸어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.`
+        : `AI 원본이에요. 벽·바닥 ${input.joints}면은 타일 줄눈·무늬가 설계와 달라요.`,
     });
   if (check?.status === 'failed')
     infos.push({

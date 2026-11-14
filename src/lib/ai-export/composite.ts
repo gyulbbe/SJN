@@ -1,5 +1,14 @@
 import type { FluxInputLayout } from './contract';
-import { FIXTURE_REGION, reviewResultColors, type ColorReview, type Pixels, type RegionMask } from './color';
+import {
+  FIXTURE_REGION,
+  framing,
+  projectCapture,
+  reviewResultColors,
+  type ColorReview,
+  type Pixels,
+  type RegionMask,
+} from './color';
+import { restoreResultJoints, type JointRestore } from './joints';
 import { applyRefined, type OwnMask, type RefinedLayer } from './refine';
 
 /**
@@ -404,8 +413,13 @@ export type ComposedResult = {
   shifted: boolean;
   /** Our fixtures on the model's room as it came. */
   raw: Pixels;
-  /** The same on the colour-corrected room; absent when the check could not correct. */
+  /**
+   * The same on the colour-corrected room, with the design's joints put back where the model moved
+   * them; absent when the check could neither correct nor put joints back.
+   */
   corrected?: Pixels;
+  /** Which faces' joints went back (joints.ts); absent without a widened capture or a kept framing. */
+  joints?: JointRestore;
 };
 /**
  * Everything after the model answers, for one result: the colour check against its input, the
@@ -425,6 +439,8 @@ export function composeFluxResult(input: {
    * 3D selves, with every product's 3D silhouette (repainted or kept) so overlaps are left alone.
    */
   refine?: { layers: readonly RefinedLayer[]; owns: readonly OwnMask[] };
+  /** The same frame with its joints widened (FluxCaptureSource.joints), to put drifted joints back. */
+  joints?: Pixels;
 }): ComposedResult {
   const { result, layers, mask, layout, boxes } = input;
   const fixtures = input.refine?.layers.length
@@ -440,15 +456,30 @@ export function composeFluxResult(input: {
   const measured = floor.columns >= 8;
   const offFloor = Math.abs(floor.offset) > (MAX_FLOOR_OFFSET * layers.width) / 1024;
   const toResult = layout.scale * (result.width / layout.width);
+  const floorAlignment =
+    measured && !offFloor ? { dx: 0, dy: Math.round(floor.offset * toResult) } : undefined;
+  // The design's joints go back on the faces where the model moved them, before the colour check
+  // (as rated, docs/tile-ai-trials-20261113.md), at the shift the colour check would use.
+  const frame = input.joints
+    ? (floorAlignment ?? framing(projectCapture(input.input, layout, result), result))
+    : undefined;
+  const joints =
+    input.joints && frame && (floorAlignment || ('aligned' in frame && frame.aligned))
+      ? restoreResultJoints({ capture: input.input, joints: input.joints, mask, layout, result, frame })
+      : undefined;
   const review = reviewResultColors({
     capture: input.input,
     mask,
     layout,
-    result,
+    result: joints?.image ?? result,
     // The model's room has no fixtures: ours go on after the colour is corrected, so the room is
     // corrected under them too and no uncorrected edge shows around them.
     underFixtures: true,
-    ...(measured && !offFloor ? { alignment: { dx: 0, dy: Math.round(floor.offset * toResult) } } : {}),
+    ...(floorAlignment
+      ? { alignment: floorAlignment }
+      : joints?.image && frame
+        ? { alignment: { dx: frame.dx, dy: frame.dy } }
+        : {}),
   });
   const shifted = measured ? offFloor : !review.framing.aligned;
   const on = (model: Pixels) =>
@@ -464,6 +495,9 @@ export function composeFluxResult(input: {
     floor,
     shifted,
     raw: on(room),
-    ...(review.corrected ? { corrected: on(resultOnCapture(review.corrected, layout, size)) } : {}),
+    ...(review.corrected || joints?.image
+      ? { corrected: on(resultOnCapture(review.corrected ?? joints!.image!, layout, size)) }
+      : {}),
+    ...(joints ? { joints } : {}),
   };
 }

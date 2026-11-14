@@ -77,6 +77,8 @@ import { prepareReferenceImage } from '@/lib/ai-export/client';
 import { REFINE_CROP_EDGE, REFINE_MARGIN, REFINE_MAX_PRODUCTS } from '@/lib/ai-export/refine';
 import { refineTargets, visibleCeiling, type FluxCaptureSource } from '@/lib/ai-export/scene';
 import { FLUX_BACKDROP, fluxRoom } from '@/lib/ai-export/view';
+import { inputPxPerMm, widenedJointMm, widenJoints } from '@/lib/ai-export/joints';
+import { fluxInputLayout } from '@/lib/ai-export/contract';
 import type { RoomViewState } from '@/lib/room-viewer/view-state';
 import type { PhotoCompositor } from '@/lib/render/compositor';
 import { accountLabel } from '@/lib/auth/credential-account';
@@ -1550,18 +1552,49 @@ function EditorWorkspace({ id, adminContext, guestContext, layoutStudio }: Edito
         }
         refined = { crops, references };
       }
+      const boxes = roomRenderer.fixtureBounds(width, height, view);
+      // Where each region is in the frame, for the prompt to say so.
+      const surfaceBoxes = roomRenderer.surfaceBounds(
+        width,
+        height,
+        view,
+        snapshot.scene.surfaces.filter((surface) => surface.region).map((surface) => surface.id),
+      );
+      // The same frame with every joint wide enough to see in the model input (an extra render,
+      // never sent): after the answer it tells which faces' joints the model moved (joints.ts).
+      let joints: Blob | undefined;
+      const frame = {
+        width: Math.min(edge, (edge * width) / height),
+        height: Math.min(edge, (edge * height) / width),
+      };
+      if (snapshot.scene.room)
+        try {
+          roomRenderer.render(frame.width, frame.height, view, 'after');
+          const perMm = inputPxPerMm(
+            (face, u, v) => roomRenderer.faceToFrame(face, u, v),
+            snapshot.scene.room,
+            frame,
+            fluxInputLayout(frame.width, frame.height).scale,
+          );
+          const widened = new RoomViewerRenderer();
+          try {
+            await widened.setSnapshot(widenJoints(snapshot, widenedJointMm(perMm)), assetReader, {
+              background: FLUX_BACKDROP,
+            });
+            joints = await widened.export(view, { format: 'png', mode: 'after', longEdge: edge });
+          } finally {
+            widened.dispose();
+          }
+        } catch {
+          // Without it the result is shown as the model drew it (no joints put back).
+          joints = undefined;
+        }
       return {
         blob,
         reader: assetReader,
         snapshot,
-        boxes: roomRenderer.fixtureBounds(width, height, view),
-        // Where each region is in the frame, for the prompt to say so.
-        surfaceBoxes: roomRenderer.surfaceBounds(
-          width,
-          height,
-          view,
-          snapshot.scene.surfaces.filter((surface) => surface.region).map((surface) => surface.id),
-        ),
+        boxes,
+        surfaceBoxes,
         regions,
         ...(visibleCeiling(regions) ? { ceiling: VIEWER_CEILING_COLOR } : {}),
         ...(view.projection === 'room-orbit' ? { cutaway: true } : {}),
@@ -1570,6 +1603,7 @@ function EditorWorkspace({ id, adminContext, guestContext, layoutStudio }: Edito
         // Same renderer, camera and pixel grid as the frame above.
         ...(layers ? { layers } : {}),
         ...(refined ? { refine: refined } : {}),
+        ...(joints ? { joints } : {}),
       };
     } finally {
       roomRenderer.dispose();

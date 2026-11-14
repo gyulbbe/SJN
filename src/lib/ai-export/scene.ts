@@ -299,6 +299,11 @@ export type FluxCaptureSource = {
    * product's photo on white (within the model's input size) for those that have one.
    */
   refine?: { crops: ProductCrop[]; references: Record<string, Blob> };
+  /**
+   * The same frame with every joint drawn wide enough to see in the model input (joints.ts): never
+   * sent, only for judging which faces' joints the model moved. Absent without a room.
+   */
+  joints?: Blob;
 };
 
 /**

@@ -2,6 +2,12 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-14 — AI 변환 결과에 타일 줄눈 되돌리기
+
+- 무엇: 캡처 때 줄눈을 넓힌 그림을 한 장 더 그리고(모델에는 안 보냄), 결과에서 줄눈이 어긋난 벽·바닥에 설계의 줄눈·무늬를 되돌린다. AI 호출 수·보내는 그림과 문장·저장 형식·API·SQL은 그대로다.
+- 확인: `npx vitest run tests/flux-joints.test.ts tests/tile-ai.test.ts tests/flux-composite.test.ts tests/flux-notices.test.ts`, `npx playwright test e2e/flux-export.spec.ts e2e/flux-refine.spec.ts`(10 + 2), 전체 vitest(`--maxWorkers=4`, 워크트리에 없는 데이터를 읽는 기존 6개 외 통과), `npx tsc --noEmit`, eslint.
+- 사람 평가: 개발 장면 112건과 마지막 확인 12건([결과](tile-ai-trials-20261113.md) 6절).
+
 ## 2026-11-13 — 젠다이 AI 변환 시험(앱 변경 없음)
 
 - 무엇: AI 변환이 젠다이·벽 홈을 지키게 하는 방법 6가지를 시험했다. 기준을 넘은 방법이 없어 `src/`는 바꾸지 않았고 시험 도구(`tests/ledge-ai/`)와 문서만 더했다.

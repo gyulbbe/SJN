@@ -470,7 +470,12 @@ test('result walls get their tile colour back; the AI colours stay one click awa
       return { warmth: r - b, brightness: (r + g + b) / 3 };
     });
   const corrected = await wall();
-  const toggle = dialog.getByRole('button', { name: 'AI 원본 색 보기', exact: true });
+  // The model's answer here is the input enlarged, so its 0.2 px joints are gone: the design's joints
+  // go back on those faces (joints.ts) and the toggle shows the whole AI original.
+  await expect(dialog.getByTestId('flux-joints-note')).toContainText(
+    /^타일 줄눈·무늬가 설계와 달라진 벽·바닥 \d면은 설계의 줄눈·무늬로 되돌렸어요\./,
+  );
+  const toggle = dialog.getByRole('button', { name: 'AI 원본 보기', exact: true });
   await expect(toggle).toHaveAttribute('aria-pressed', 'false');
   await toggle.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('flux-color-corrected.png') });
@@ -480,7 +485,7 @@ test('result walls get their tile colour back; the AI colours stay one click awa
   expect(saved.suggestedFilename()).toMatch(/flux-2-klein-4b\.png$/);
   expect((await sharp(await downloadedArtifact(saved)).metadata()).format).toBe('png');
   await toggle.click();
-  const original = dialog.getByRole('button', { name: '보정한 색 보기', exact: true });
+  const original = dialog.getByRole('button', { name: '보정한 그림 보기', exact: true });
   await expect(original).toHaveAttribute('aria-pressed', 'true');
   const raw = await wall();
   expect(raw.warmth).toBeGreaterThan(corrected.warmth + 15);
@@ -489,7 +494,8 @@ test('result walls get their tile colour back; the AI colours stay one click awa
   await expect(warning).toContainText('벽 타일 색이 원본보다 따뜻하게(노랗게) 바뀌었을 수 있어요.');
   const rawDownload = page.waitForEvent('download');
   await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
-  expect((await rawDownload).suggestedFilename()).toMatch(/flux-2-klein-4b-AI원본색\.png$/);
+  expect((await rawDownload).suggestedFilename()).toMatch(/flux-2-klein-4b-AI원본\.png$/);
+  await expect(dialog.getByTestId('flux-joints-note')).toContainText(/^AI 원본이에요\. 벽·바닥 \d면은/);
   // A narrow screen keeps the new controls inside the dialog.
   await page.setViewportSize({ width: 390, height: 844 });
   await original.scrollIntoViewIfNeeded();
@@ -1060,7 +1066,7 @@ test('a wall the model drew much darker is put back; the AI colours warn about t
       return (r + g + b) / 3;
     });
   const corrected = await wall();
-  await dialog.getByRole('button', { name: 'AI 원본 색 보기', exact: true }).click();
+  await dialog.getByRole('button', { name: 'AI 원본 보기', exact: true }).click();
   const raw = await wall();
   // The darkened wall comes back a good part of the way, never past the render's own light.
   expect(corrected).toBeGreaterThan(raw + 25);
