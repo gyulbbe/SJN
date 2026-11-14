@@ -21,6 +21,7 @@ import { CORNER_OCCLUSION_GLSL, TONE_MAPPING_GLSL } from '../render/realistic-li
 import {
   drawTileCell,
   TILE_ATLAS_SRGB,
+  TILE_JOINT_WIDTH_GLSL,
   TILE_SAMPLE_GLSL,
   tileAtlasLayout,
   tileAtlasTexture,
@@ -195,6 +196,7 @@ float sjnGroutAmount=0.;
 vec2 sjnSlope=vec2(0.);
 vec3 sjnDecode(vec3 c){return mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),step(vec3(.04045),c));}
 ${TILE_SAMPLE_GLSL}
+${TILE_JOINT_WIDTH_GLSL}
 vec3 sjnTileColor(){
  vec2 mm=sjnUv*sjnPlane-sjnOffset;
  float c=cos(sjnAngle),s=sin(sjnAngle); mm=vec2(c*mm.x+s*mm.y,-s*mm.x+c*mm.y);
@@ -209,7 +211,9 @@ vec3 sjnTileColor(){
  vec3 color=${TILE_ATLAS_SRGB ? '' : 'sjnDecode'}(sjnTileTexel(sjnAtlas,inside/tileStep,atlasCell,tileDx,tileDy,sjnLayout,sjnLod).rgb);
  vec2 seam=mod(inside-(sjnTile+sjnGrout*.5)+period*.5,period)-period*.5;
  vec2 d=abs(seam);
- vec2 coverage=clamp((sjnGrout*.5-d+aa*.5)/aa,0.,1.)-clamp((-sjnGrout*.5-d+aa*.5)/aa,0.,1.);
+ // A sub-pixel joint is drawn at least TILE_JOINT_MIN_PX wide where tiles are large enough on screen.
+ vec2 shown=sjnJointWidth(sjnGrout,sjnTile,aa);
+ vec2 coverage=clamp((shown*.5-d+aa*.5)/aa,0.,1.)-clamp((-shown*.5-d+aa*.5)/aa,0.,1.);
  coverage=mix(coverage,vec2(sjnGrout)/period,step(period,aa));
  float grout=sjnGrout<=0.?0.:1.-(1.-coverage.x)*(1.-coverage.y);
  sjnGroutAmount=grout;

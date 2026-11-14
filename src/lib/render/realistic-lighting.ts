@@ -36,10 +36,16 @@ vec3 sjnToneMap(vec3 color){
 }
 `;
 
-/** Diffuse level the ceiling light gives the floor centre (a white surface lit to 1 = 1). */
-const CEILING_LIGHT = 0.44;
-/** Ambient bounce level (environment map or hemisphere fallback). */
-const BOUNCE = 0.58;
+/**
+ * Diffuse level the ceiling light gives the floor centre (a white surface lit to 1 = 1), and the
+ * ambient bounce level (environment map or hemisphere fallback). 2026-11-14 (0.44/0.58 → 0.32/0.66,
+ * docs/light-tuning-results-20261114.md): less of the downlight and more bounce, so a wall is lit
+ * more evenly (no bright patch in its middle) while the walls' overall level stays.
+ */
+const CEILING_LIGHT = 0.32;
+const BOUNCE = 0.66;
+/** The 2D front-view model pass keeps its 2026-09-25 bounce: the 2D picture's light was not changed. */
+const MODEL_BOUNCE = 0.58;
 // Neutral white: any warm or cool cast would shift every tile colour the user compares.
 const LIGHT_COLOR = '#ffffff';
 
@@ -73,7 +79,7 @@ export function createRoomLightRig(room: RoomDimensions, options: { environment:
 export function createModelLights(): Object3D[] {
   const key = new DirectionalLight(LIGHT_COLOR, 2.2);
   key.position.set(-600, 2600, 4200);
-  return [new HemisphereLight('#f7f7f7', '#c8c8c8', BOUNCE * Math.PI), key];
+  return [new HemisphereLight('#f7f7f7', '#c8c8c8', MODEL_BOUNCE * Math.PI), key];
 }
 
 /**

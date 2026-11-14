@@ -2,6 +2,13 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-14 — 앱 그림의 줄눈 최소 굵기와 3D 빛
+
+- 무엇: 2D·3D 모두 타일이 화면에서 6px 이상이면 줄눈을 최소 1px로 그린다. 3D 천장 조명 0.44 → 0.32, 반사광 0.58 → 0.66. 렌더 버전 `room-view-v14-light`, `DESIGN_RENDER_REVISION` 5. 저장 형식·API·SQL은 그대로다.
+- 확인: `node tests/run-browser-test.mjs tests/light-tuning-browser.ts --variants app --gpu`와 `tests/light-tuning-compare.ts --variants app`(기준 1~4 통과), `tests/tile-joint-width.test.ts`, `shading-browser.ts`(그린 줄눈 폭으로 기대값 고침), `render-realism-browser.ts`(ΔE 0.4 안), `room-viewer-render-browser.ts`, `render-browser.ts`, `comparison-render-browser.ts`, `room-wall-features-browser.ts`, `smc-ceiling-browser.ts`, `photo-lighting-render-browser.ts`, 전체 vitest(`--maxWorkers=4`, 기존 6개 외 통과).
+- 일부러 달라진 것: `tile-mipmap-browser.ts`(새 기준 대비 "줄인 그림과의 차이"가 줄눈을 굵게 그린 만큼 커짐, 물결무늬 없음을 그림으로 확인), `ledge-join-browser.ts`의 "그대로인 장면 픽셀 같음" 3개(빛이 바뀜, 이음매 값은 그대로).
+- 결과: [결과 문서](light-tuning-results-20261114.md).
+
 ## 2026-11-14 — AI 변환 결과에 타일 줄눈 되돌리기
 
 - 무엇: 캡처 때 줄눈을 넓힌 그림을 한 장 더 그리고(모델에는 안 보냄), 결과에서 줄눈이 어긋난 벽·바닥에 설계의 줄눈·무늬를 되돌린다. AI 호출 수·보내는 그림과 문장·저장 형식·API·SQL은 그대로다.

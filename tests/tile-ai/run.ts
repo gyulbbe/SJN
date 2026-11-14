@@ -16,6 +16,7 @@ import { ACCOUNTS } from '../ledge-ai/budget';
 import { admit, BUDGET_STOP, isLimit, spent, type Account, type LedgerRow } from './budget';
 import { FLUX_4B, fluxRequest } from './methods';
 import { ACCOUNT_FILES, HOLDOUT, LEDGER, OTHER_LEDGERS, RESULTS, SCENES } from './paths.mjs';
+import { resultGroup, sceneRoot } from './scene-dir';
 
 const arg = (name: string, fallback = '') => {
   const i = process.argv.indexOf(`--${name}`);
@@ -33,11 +34,11 @@ const dry = process.argv.includes('--dry');
 const holdout = process.argv.includes('--holdout');
 
 const sceneDir = (scene: string) => {
-  const dir = join((holdout ? HOLDOUT : SCENES) as string, scene);
+  const dir = join(sceneRoot((holdout ? HOLDOUT : SCENES) as string), scene);
   if (!existsSync(dir)) throw new Error(`no scene ${scene}${holdout ? ' (holdout)' : ''}`);
   return dir;
 };
-const group = engine === 'local' ? 'local' : 'cf';
+const group = resultGroup(engine === 'local' ? 'local' : 'cf');
 const base = (method: string, scene: string, seed: number) =>
   join(RESULTS as string, group, method, `${scene}-${seed}`);
 const rows = (file: string): LedgerRow[] =>

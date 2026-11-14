@@ -4,6 +4,7 @@ import { build } from 'esbuild';
 import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import { tileJointWidth } from '../src/lib/render/tile-atlas';
 
 const directory = 'test-results/shading-quality';
 await mkdir(directory, { recursive: true });
@@ -437,9 +438,13 @@ try {
     maximum: number;
     mean: number;
   };
-  assert.ok(Math.abs(grout.mean - grout.expected) < 0.00035, 'Subpixel grout should preserve physical width');
+  // Since 2026-11-14 a sub-pixel joint of a tile this large on screen (600 mm at 6.02 mm a pixel,
+  // 100 px) is drawn one pixel wide (TILE_JOINT_MIN_PX): its coverage is that width over the period.
+  const drawn = tileJointWidth(2, 600, 2408 / 400) / 602;
+  assert.ok(drawn > grout.expected, 'The joint is drawn wider than its physical 2 mm here');
+  assert.ok(Math.abs(grout.mean - drawn) < 0.00035, 'A sub-pixel joint keeps its drawn width');
   assert.ok(
-    (grout.maximum - grout.minimum) / grout.expected < 0.16,
+    (grout.maximum - grout.minimum) / drawn < 0.16,
     'Grout coverage must stay stable across pixel phase',
   );
   const coverage = result.metrics['mask-coverage'] as Record<string, number>;

@@ -24,6 +24,7 @@ import {
 } from '../../src/lib/ai-export/color';
 import { measure, pixels, sceneParts } from './measure';
 import { HOLDOUT, RESULTS, SCENES } from './paths.mjs';
+import { resultGroup, sceneRoot } from './scene-dir';
 import { restoreJoints } from './restore';
 
 const arg = (name: string, fallback = '') => {
@@ -31,7 +32,7 @@ const arg = (name: string, fallback = '') => {
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 const list = (name: string, fallback = '') => arg(name, fallback).split(',').filter(Boolean);
-const group = arg('group', 'cf');
+const group = resultGroup(arg('group', 'cf'));
 const holdout = process.argv.includes('--holdout');
 const restore = process.argv.includes('--restore');
 const threshold = Number(arg('threshold', '0.3'));
@@ -58,7 +59,7 @@ async function fixed(dir: string, file: string) {
 }
 
 for (const scene of list('scenes')) {
-  const dir = join((holdout ? HOLDOUT : SCENES) as string, scene);
+  const dir = join(sceneRoot((holdout ? HOLDOUT : SCENES) as string), scene);
   for (const method of list('methods'))
     for (const seed of list('seeds', '424242')) {
       const file = join(RESULTS as string, group, method, `${scene}-${seed}.png`);

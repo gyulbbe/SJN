@@ -14,14 +14,16 @@
  * The two held-out scenes go to holdout/ and are opened only in the last round.
  *
  * Usage: node tests/run-browser-test.mjs tests/tile-ai/scenes.ts [--gpu] [--only id,id] [--holdout]
+ *          [--dir scenes-light] (another folder for scenes drawn by a later renderer; the default keeps the trial's)
  */
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { chromium } from '@playwright/test';
 import { build } from 'esbuild';
 import sharp from 'sharp';
 import type { PublicRecord } from '../export-photoreal/scene-builder';
 import { HOLDOUT, OUT, SCENES, SNAPSHOT } from './paths.mjs';
+import { sceneRoot } from './scene-dir';
 import { visibleUnits, type TileFacts, type TileLayer } from './sentences';
 import { SPECS } from './specs';
 
@@ -271,7 +273,7 @@ try {
       { spec, used, minJointPx: MIN_JOINT_PX, unitTile, unitJointPx: UNIT_JOINT_PX },
     );
     if (errors.length) throw new Error(errors.join('\n'));
-    const dir = join((spec.holdout ? HOLDOUT : SCENES) as string, spec.id);
+    const dir = join(sceneRoot(spec.holdout ? (HOLDOUT as string) : (SCENES as string)), spec.id);
     mkdirSync(dir, { recursive: true });
     const buf = (b: string) => Buffer.from(b, 'base64');
     writeFileSync(join(dir, 'capture.png'), buf(r.capture));
@@ -393,6 +395,9 @@ try {
 }
 mkdirSync(OUT as string, { recursive: true });
 writeFileSync(
-  join(OUT as string, `scenes-summary${withHoldout ? '-holdout' : ''}.json`),
+  join(
+    OUT as string,
+    `${basename(sceneRoot(SCENES as string))}-summary${withHoldout ? '-holdout' : ''}.json`,
+  ),
   JSON.stringify({ gpu, summary }, null, 1),
 );

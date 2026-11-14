@@ -29,6 +29,31 @@ const MAX_TILE_ANISOTROPY = 8;
  * The shaders read linear colour and do not decode it again.
  */
 export const TILE_ATLAS_SRGB = true;
+/**
+ * A joint is drawn at least this many pixels wide where a tile is TILE_JOINT_FULL_PX or more on screen
+ * (fading in from TILE_JOINT_FADE_PX), so the tile layout stays readable when a 2 mm joint is a
+ * fraction of a pixel (0.4 px on a 2,400 mm wall in the 1,024 px AI capture). Smaller tiles keep the
+ * physical average. Joint positions and the tile picture are unchanged; only the joint's drawn width
+ * grows. Chosen 2026-11-14 with the user (docs/light-tuning-results-20261114.md).
+ */
+export const TILE_JOINT_MIN_PX = 1;
+export const TILE_JOINT_FADE_PX = 3;
+export const TILE_JOINT_FULL_PX = 6;
+/** The drawn joint width (mm) on one axis: TS twin of TILE_JOINT_WIDTH_GLSL (`pixelMm`: one pixel in mm). */
+export function tileJointWidth(groutMm: number, tileMm: number, pixelMm: number): number {
+  const grow = Math.min(
+    1,
+    Math.max(0, (tileMm / pixelMm - TILE_JOINT_FADE_PX) / (TILE_JOINT_FULL_PX - TILE_JOINT_FADE_PX)),
+  );
+  return Math.max(groutMm, TILE_JOINT_MIN_PX * pixelMm * grow);
+}
+/** GLSL: the drawn joint width (mm) for a joint `grout` mm wide, tiles `tile` mm and pixels `aa` mm. */
+export const TILE_JOINT_WIDTH_GLSL = `
+vec2 sjnJointWidth(float grout,vec2 tile,vec2 aa){
+ vec2 grow=clamp((tile/aa-${TILE_JOINT_FADE_PX.toFixed(1)})/${(TILE_JOINT_FULL_PX - TILE_JOINT_FADE_PX).toFixed(1)},0.,1.);
+ return max(vec2(grout),${TILE_JOINT_MIN_PX.toFixed(1)}*aa*grow);
+}
+`;
 
 export type TileAtlasLayout = {
   columns: number;

@@ -51,6 +51,7 @@ import { labelsFromPixels } from '../room-viewer/region-mask';
 import {
   drawTileCell,
   TILE_ATLAS_SRGB,
+  TILE_JOINT_WIDTH_GLSL,
   TILE_SAMPLE_GLSL,
   tileAtlasLayout,
   tileAtlasTexture,
@@ -141,6 +142,7 @@ uniform float seed;uniform float variantCount;uniform vec4 atlasLayout;uniform v
 uniform float shading;uniform float meanLuminance;uniform vec4 adjustment;uniform float gloss;uniform float relief;
 ${colorFunctions}
 ${TILE_SAMPLE_GLSL}
+${TILE_JOINT_WIDTH_GLSL}
 void main(){
   vec4 background=texture2D(previousImage,vUv);
   float amount=texture2D(areaMask,vUv).a;
@@ -169,7 +171,9 @@ void main(){
   // This preserves subpixel grout coverage without periodically losing the leading edge.
   vec2 seamOffset=mod(inside-(tileSize+groutWidth*.5)+period*.5,period)-period*.5;
   vec2 seamDistance=abs(seamOffset);
-  vec2 seamCoverage=clamp((groutWidth*.5-seamDistance+aa*.5)/aa,0.,1.)-clamp((-groutWidth*.5-seamDistance+aa*.5)/aa,0.,1.);
+  // A sub-pixel joint is drawn at least TILE_JOINT_MIN_PX wide where tiles are large enough on screen.
+  vec2 shownWidth=sjnJointWidth(groutWidth,tileSize,aa);
+  vec2 seamCoverage=clamp((shownWidth*.5-seamDistance+aa*.5)/aa,0.,1.)-clamp((-shownWidth*.5-seamDistance+aa*.5)/aa,0.,1.);
   seamCoverage=mix(seamCoverage,vec2(groutWidth)/period,step(period,aa));
   float grout=groutWidth<=0.?0.:1.-(1.-seamCoverage.x)*(1.-seamCoverage.y);
   // Recessed joints and rounded tile edges lit from above (-y on the surface plane): upper edges
@@ -576,9 +580,12 @@ export class PhotoCompositor {
     const promise = (async () => {
       if (!ids.length || !ids[0]) throw new Error(`${material.name}: 렌더링용 타일 이미지가 없습니다.`);
       const layout = tileAtlasLayout(ids.length, quality === 'export' ? 2048 : 512, this.maxOutputEdge);
-      if (layout.cell < 16) throw new Error(`${material.name}: 타일 무늬가 너무 많아 그래픽 한도를 넘습니다.`);
+      if (layout.cell < 16)
+        throw new Error(`${material.name}: 타일 무늬가 너무 많아 그래픽 한도를 넘습니다.`);
       // Comparison cards only need the atlas cell pixels, not retained full-size originals.
-      const images = await Promise.all(ids.map((id) => this.loadImage(id, compact ? layout.cell : undefined)));
+      const images = await Promise.all(
+        ids.map((id) => this.loadImage(id, compact ? layout.cell : undefined)),
+      );
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = layout.size;
       const ctx = context2d(canvas);
