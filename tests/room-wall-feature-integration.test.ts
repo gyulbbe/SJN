@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Box3, Mesh, PerspectiveCamera, Vector3 } from 'three';
+import {
+  Box3,
+  Mesh,
+  PerspectiveCamera,
+  Vector3,
+  type BufferGeometry,
+  type MeshStandardMaterial,
+} from 'three';
+import { NICHE_REAR_GRADIENT, NICHE_SHADE } from '../src/lib/room-viewer/niche-look';
 import { createRoomSurfaces, DEFAULT_ROOM } from '../src/lib/room-geometry';
 import { buildViewerSurfaces, ViewerTileCache, viewerSurfaceGeometry } from '../src/lib/room-viewer/surfaces';
 import {
@@ -70,7 +78,12 @@ describe('wall feature renderer integration', () => {
     const back = input.surfaces.find((s) => s.roomFace === 'back')!.id;
     const fragments = meshes.filter((mesh) => mesh.userData.surfaceId === back);
     expect(fragments.length).toBeGreaterThan(5);
-    expect(new Set(fragments.map((mesh) => mesh.material)).size).toBe(1);
+    // The wall's own fragments share its material; the niche's inner faces take their shades
+    // (niche-look.ts): one material per reveal shade and one for the shaded back.
+    const wall = fragments.filter(
+      (mesh) => mesh.name.endsWith(':base-wall') || mesh.name.startsWith('room-face:'),
+    );
+    expect(new Set(wall.map((mesh) => mesh.material)).size).toBe(1);
     const geometrySpies = meshes.map((mesh) => vi.spyOn(mesh.geometry, 'dispose'));
     const materials = [
       ...new Set(meshes.flatMap((mesh) => (Array.isArray(mesh.material) ? mesh.material : [mesh.material]))),
@@ -81,6 +94,39 @@ describe('wall feature renderer integration', () => {
     expect(geometrySpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
     expect(materialSpies.every((spy) => spy.mock.calls.length === 1)).toBe(true);
     expect(input).toEqual(original);
+  });
+  it('shades a niche so it reads as a recess: the back from its top to its bottom, the top reveal darkest', async () => {
+    const input = scene();
+    input.wallFeatures = [feature()];
+    const result = await buildViewerSurfaces(input, {}, cache());
+    const meshes = result.group.children as Mesh<BufferGeometry, MeshStandardMaterial>[];
+    const named = (role: string) => meshes.filter((mesh) => mesh.name.endsWith(':' + role));
+    const wallColor = named('base-wall')[0].material.color.r;
+    // The back: vertex colours from NICHE_REAR_GRADIENT.top at its top edge to .bottom at its foot.
+    for (const rear of named('rear')) {
+      expect(rear.material.vertexColors).toBe(true);
+      const position = rear.geometry.getAttribute('position'),
+        color = rear.geometry.getAttribute('color');
+      for (let i = 0; i < position.count; i++) {
+        const y = position.getY(i);
+        const expected =
+          y >= 2400 - 400 - 1
+            ? NICHE_REAR_GRADIENT!.top
+            : y <= 2400 - 900 + 1
+              ? NICHE_REAR_GRADIENT!.bottom
+              : undefined;
+        if (expected !== undefined) expect(color.getX(i)).toBeCloseTo(expected, 5);
+      }
+    }
+    for (const role of ['reveal-top', 'reveal-left', 'reveal-right'] as const)
+      for (const mesh of named(role))
+        expect(mesh.material.color.r).toBeCloseTo(wallColor * NICHE_SHADE[role]!, 5);
+    // The bottom reveal and the wall keep the light as it is; no niche face casts a shadow.
+    for (const mesh of named('reveal-bottom')) expect(mesh.material.color.r).toBeCloseTo(wallColor, 5);
+    expect(
+      meshes.filter((mesh) => mesh.name.startsWith('wall-feature:')).some((mesh) => mesh.castShadow),
+    ).toBe(false);
+    result.dispose();
   });
   it('shows interiors from inside the void even when the parent wall is cut away', async () => {
     const input = scene();

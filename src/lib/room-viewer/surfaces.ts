@@ -29,6 +29,7 @@ import {
   type TileAtlasLayout,
 } from '../render/tile-atlas';
 import { buildWallFeaturePieces, type WallFeaturePiece } from './wall-feature-geometry';
+import { NICHE_CASTS_SHADOW, NICHE_REAR_GRADIENT, NICHE_SHADE } from './niche-look';
 import type { RoomDefinition, RoomFace } from '../room-types';
 import {
   DEFAULT_COLOR,
@@ -397,12 +398,36 @@ export async function buildViewerSurfaces(
     sjnContactCount: { value: 0 },
   };
   const voidBounds = new Map<string, Box3>();
+  // Only a closed niche takes the recess shades (niche-look.ts); a floor alcove is drawn as before.
+  const niches = new Set(
+    (scene.wallFeatures ?? [])
+      .filter((feature) => feature.kind === 'closed-niche')
+      .map((feature) => feature.id),
+  );
   for (const piece of features?.pieces ?? []) {
     if (!piece.featureId) continue;
     const bounds = voidBounds.get(piece.featureId) ?? new Box3();
     bounds.union(piece.worldBounds);
     voidBounds.set(piece.featureId, bounds);
   }
+  /** A recess's back shaded from its top to its bottom (NICHE_REAR_GRADIENT), as vertex colours. */
+  const shadeRearGradient = (
+    geometry: BufferGeometry,
+    featureId: string,
+    gradient: { top: number; bottom: number },
+  ) => {
+    const bounds = voidBounds.get(featureId);
+    if (!bounds) return;
+    const position = geometry.getAttribute('position');
+    const top = bounds.max.y,
+      span = Math.max(1e-6, bounds.max.y - bounds.min.y);
+    const colors = new Float32Array(position.count * 3);
+    for (let i = 0; i < position.count; i++) {
+      const t = Math.min(1, Math.max(0, (top - position.getY(i)) / span));
+      colors.fill(gradient.top + (gradient.bottom - gradient.top) * t, i * 3, i * 3 + 3);
+    }
+    geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
+  };
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
@@ -456,6 +481,16 @@ export async function buildViewerSurfaces(
       ownedMaterials.add(material);
       // The ledge's faces read apart from the wall behind them, whose tile and light they share.
       const shaded = new Map<number, MeshStandardMaterial>();
+      let gradientValue: MeshStandardMaterial | undefined;
+      // A recess's back with its shade per vertex (NICHE_REAR_GRADIENT).
+      const gradientMaterial = () => {
+        if (!gradientValue) {
+          gradientValue = surfaceMaterial(room, patch, contacts, product, atlas);
+          gradientValue.vertexColors = true;
+          ownedMaterials.add(gradientValue);
+        }
+        return gradientValue;
+      };
       const ledgeMaterial = (shade: number) => {
         let value = shaded.get(shade);
         if (!value) {
@@ -467,8 +502,24 @@ export async function buildViewerSurfaces(
         return value;
       };
       const add = (geometry: BufferGeometry, piece?: WallFeaturePiece) => {
-        const shade = piece?.protrudes ? LEDGE_SHADE[piece.role] : undefined;
-        const mesh = new Mesh(geometry, shade ? ledgeMaterial(shade) : material);
+        // A recess's inner faces (niche-look.ts): its back and its four reveals.
+        const recess =
+          !!piece &&
+          !piece.protrudes &&
+          !!piece.featureId &&
+          niches.has(piece.featureId) &&
+          (piece.role === 'rear' || piece.role.startsWith('reveal-'));
+        const gradient = recess && piece.role === 'rear' ? NICHE_REAR_GRADIENT : undefined;
+        if (gradient && piece?.featureId) shadeRearGradient(geometry, piece.featureId, gradient);
+        const shade = piece?.protrudes
+          ? LEDGE_SHADE[piece.role]
+          : recess && !gradient
+            ? NICHE_SHADE[piece.role]
+            : undefined;
+        const mesh = new Mesh(
+          geometry,
+          gradient ? gradientMaterial() : shade ? ledgeMaterial(shade) : material,
+        );
         mesh.name = piece
           ? 'wall-feature:' + (piece.featureId ?? patch.face) + ':' + piece.role
           : 'room-face:' +
@@ -481,7 +532,7 @@ export async function buildViewerSurfaces(
             row.to;
         if (patch.surface) mesh.userData.surfaceId = patch.surface.id;
         mesh.receiveShadow = true;
-        mesh.castShadow = !!piece?.protrudes;
+        mesh.castShadow = !!piece?.protrudes || (recess && NICHE_CASTS_SHADOW && piece.role !== 'rear');
         group.add(mesh);
         meshes.push({ face: piece?.ownerFace ?? patch.face, mesh, piece });
       };

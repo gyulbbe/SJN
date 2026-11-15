@@ -244,7 +244,23 @@ try {
             m.geometry.userData.wallFeature?.role === 'base-wall' &&
             m.geometry.userData.wallFeature.sourceSurfaceId === parent!.id,
         );
-        if (metadata.role !== 'floor-extension')
+        // A recess's back and its top and side reveals take their own shade of the wall's tile
+        // (niche-look.ts, 2026-11-15): the same kind of material, from the same tile, darker.
+        const shaded =
+          f.kind === 'closed-niche' &&
+          ['rear', 'reveal-top', 'reveal-left', 'reveal-right'].includes(metadata.role);
+        if (metadata.role !== 'floor-extension' && shaded)
+          check(
+            !!base &&
+              piece.material !== base.material &&
+              (piece.material as import('three').MeshStandardMaterial).type ===
+                (base.material as import('three').MeshStandardMaterial).type &&
+              ((piece.material as import('three').MeshStandardMaterial).vertexColors ||
+                (piece.material as import('three').MeshStandardMaterial).color.r <
+                  (base.material as import('three').MeshStandardMaterial).color.r),
+            `${f.face}-${f.kind}-${metadata.role}-parent-shader-shaded`,
+          );
+        else if (metadata.role !== 'floor-extension')
           check(
             base?.material === piece.material,
             `${f.face}-${f.kind}-${metadata.role}-parent-shader-shared`,

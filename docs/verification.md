@@ -2,6 +2,12 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-15 — 3D 그림의 닫힌 홈 그늘
+
+- 무엇: 닫힌 홈의 위·옆 안쪽 면을 어둡게(0.5, 0.72), 뒤판을 위에서 아래로 밝아지게(0.68 → 0.95) 그린다(`src/lib/room-viewer/niche-look.ts`, `surfaces.ts`). 홈 밖·젠다이·바닥 오목은 그대로. `DESIGN_RENDER_REVISION` 6 → 7. 저장 형식·API·SQL은 그대로다.
+- 확인: `room-wall-feature-integration.test.ts`, `room-wall-features-browser.ts`, `wall-ledge-browser.ts`, `tile-mipmap-browser.ts --gpu`, `tests/niche-look/render.ts`(앱 = 시험 `h3s` 픽셀 같음), e2e `room-viewer`·`flux-export`, typecheck, lint.
+- 결과: [결과 문서](niche-look-20261115.md).
+
 ## 2026-11-15 — AI 변환에서 어두워진 흰 도기 밝기 되돌리기
 
 - 무엇: 지금 방식의 결과에서 흰 도기(변기·세면대·욕조)를 모델이 렌더보다 많이 어둡게 그렸으면 벽·바닥과 같은 규칙으로 L\*만 되돌린다(`src/lib/ai-export/fixture-light.ts`). 안내 한 줄과 "AI 원본 보기". AI 호출·보내는 그림·저장 형식·API·SQL은 그대로다.

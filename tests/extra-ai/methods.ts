@@ -74,7 +74,8 @@ export function fluxRequest(method: string, dir: string): FluxRequest {
   const current = readFileSync(join(dir, 'prompt-current.txt'), 'utf8');
   const { scene } = JSON.parse(readFileSync(join(dir, 'grounding.json'), 'utf8')) as { scene: FluxScene };
   const sentence = addedObjectsSentence(scene.fixtures.map((fixture) => fixture.kind));
-  if (current.endsWith(sentence.full) || current.endsWith(sentence.compact))
+  // Only the sentence methods would add it twice; `cur` sends the scene's prompt as it is.
+  if (method !== 'cur' && (current.endsWith(sentence.full) || current.endsWith(sentence.compact)))
     throw new Error(`${dir} was drawn after the sentence went into the app; its current prompt has it`);
   const prompt =
     method === 'cur'
