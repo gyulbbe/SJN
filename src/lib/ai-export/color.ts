@@ -722,6 +722,11 @@ export function reviewResultColors(input: {
   alignment?: { dx: number; dy: number };
   /** See CorrectionOptions.underFixtures: the composite's empty room. */
   underFixtures?: boolean;
+  /**
+   * The result's own regions (model-fixtures.ts: where the model drew its fixtures), at its size and
+   * moved by its shift; by default the render's, moved.
+   */
+  resultMask?: RegionMask;
 }): ColorReview {
   const size = { width: input.result.width, height: input.result.height };
   const reference = projectCapture(input.capture, input.layout, size);
@@ -729,7 +734,7 @@ export function reviewResultColors(input: {
   const searched = framing(reference, input.result);
   const frame = input.alignment ? { ...searched, ...input.alignment, aligned: true } : searched;
   if (!frame.aligned) return { framing: frame, changes: [], warnings: [], unmatched: [] };
-  const resultMask = shiftMask(referenceMask, frame.dx, frame.dy);
+  const resultMask = input.resultMask ?? shiftMask(referenceMask, frame.dx, frame.dy);
   const changes = compareFaces(reference, input.result, referenceMask, resultMask);
   // No tiled wall or floor large enough to compare (an empty room): nothing to say or change.
   if (!changes.length) return { framing: frame, changes, warnings: [], unmatched: [] };
