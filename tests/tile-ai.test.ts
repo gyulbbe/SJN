@@ -181,7 +181,7 @@ describe('putting the joints back', () => {
           result.image.data[i * 4 + 1],
           result.image.data[i * 4 + 2],
         ]);
-    // The light stays the model's: the wall's left is still darker than its right.
+    // The light is mostly the model's: the wall's left is still darker than its right.
     const mean = (from: number, to: number) => {
       let sum = 0,
         n = 0;
@@ -192,7 +192,12 @@ describe('putting the joints back', () => {
         }
       return sum / n;
     };
-    expect(mean(10, 40)).toBeLessThan(mean(200, 230) - 20);
+    // Since 2026-11-15 a restored face keeps a quarter of the model's light shape (RESTORE_LIGHT_KEEP):
+    // its 0.7× left is about 0.7^0.25 ≈ 0.91× now, darker than the right but by less.
+    const left = mean(10, 40),
+      right = mean(200, 230);
+    expect(left).toBeLessThan(right - 5);
+    expect(left).toBeGreaterThan(right - 20);
   });
   it('changes nothing when no face is named', () => {
     const reference = room(24);

@@ -368,6 +368,23 @@ export function refineTargets(snapshot: Pick<RenderSnapshot, 'scene' | 'material
   return targets;
 }
 
+/**
+ * How many placed products the 3D room draws as their own photos (no standard model): the export
+ * dialog opens on the empty-room method for such a design, so the products stay their photos and the
+ * model never redraws them (docs/photo-products-20261115.md).
+ */
+export function photoProductCount(snapshot: Pick<RenderSnapshot, 'scene' | 'materials'>): number {
+  return snapshot.scene.fixtures.filter((fixture) => {
+    if (fixture.reconstruction) return false;
+    const material = snapshot.materials[fixture.materialVersionId];
+    return !!(
+      material?.views?.[fixture.viewIndex]?.assetId ||
+      material?.coverAssetId ||
+      material?.imageAssetIds?.[0]
+    );
+  }).length;
+}
+
 /** A wall that covers at least this share of the capture is asked about in the result check. */
 const MIN_WALL_SHARE = 0.02;
 const WALL_ORDER = ['left', 'back', 'right'] as const;

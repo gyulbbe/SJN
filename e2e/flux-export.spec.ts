@@ -344,6 +344,8 @@ test('every result is checked once for the placed products; a missing one is rep
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  // A design with a photo product opens on experiment A (2026-11-15); this test is about the current method.
+  await dialog.getByRole('group', { name: '변환 방식' }).getByText('지금 방식', { exact: true }).click();
   const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
   await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
   await expect(dialog.getByText('AI 제품 확인: 배치한 제품 1개가 모두 보여요.')).toBeVisible({
@@ -631,6 +633,8 @@ test('the AI input is the outside view turned in the live 3D preview, its white 
   await page.getByRole('button', { name: '공간 둘러보기 닫기', exact: true }).click();
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  // A design with a photo product opens on experiment A (2026-11-15); this test is about the current method.
+  await dialog.getByRole('group', { name: '변환 방식' }).getByText('지금 방식', { exact: true }).click();
   const picker = dialog.getByRole('group', { name: 'AI 입력 시점' });
   const preview = picker.getByTestId('flux-view-preview');
   const readout = picker.getByTestId('flux-view-readout');
@@ -909,9 +913,15 @@ test('composite export (chosen in the dialog): the room goes out empty, our prod
   await expect(page.getByTestId('save-status')).toHaveText('클라우드에 저장됨', { timeout: 30000 });
   await page.getByRole('button', { name: '내보내기', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
-  // The current method is the default; experiment A and B are one click away.
+  // A design with a photo product opens on experiment A (2026-11-15), even after the current method
+  // was remembered; the current method is one click away and A one more.
   const methods = dialog.getByRole('group', { name: '변환 방식' });
   await expect(methods.getByRole('radio')).toHaveCount(4);
+  await expect(methods.getByRole('radio', { name: '실험 A · 빈 방 합성', exact: true })).toBeChecked();
+  await expect(dialog.getByTestId('flux-composite-note')).toContainText(
+    '사진으로 등록한 제품이 있어 이 방식으로 열었어요',
+  );
+  await methods.getByText('지금 방식', { exact: true }).click();
   await expect(methods.getByRole('radio', { name: '지금 방식', exact: true })).toBeChecked();
   await expect(dialog.getByTestId('flux-composite-note')).toContainText('제품까지 AI가 다시 그려요');
   await methods.getByText('실험 A · 빈 방 합성', { exact: true }).click();

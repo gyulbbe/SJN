@@ -2,6 +2,18 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-15 — 사진 제품 설계는 빈 방 합성(실험 A)으로, 3D 사진 제품의 검은 테두리 없앰
+
+- 무엇:
+  - 사진으로 등록한 제품이 있는 설계는 AI 변환 창이 실험 A로 열린다(`photoProductCount`, 기억한 실험은 그대로).
+  - 3D 그림의 사진 제품 텍스처는 반투명·투명 픽셀에 가장 가까운 불투명 픽셀 색을 채운다(`edgeFilled`). `DESIGN_RENDER_REVISION` 7 → 8.
+  - AI 호출 수·보내는 그림(A는 기존 그대로)·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - `tests/photo-product-export.test.ts`
+  - 시험 그림: 사진 제품 장면 6개 × seed 2 + 열지 않은 2장면 × 2, 내 평가 기준 1~3 통과
+  - e2e `flux-export`·`flux-refine`·`standard-model-switch`, typecheck, lint
+- 결과: [결과 문서](photo-products-20261115.md).
+
 ## 2026-11-15 — AI 변환의 빛 줄기·그림자 옅게
 
 - 무엇: 줄눈 되돌리기(`src/lib/ai-export/joints.ts`)가 되돌린 면에서 모델 빛의 "렌더 빛 대비" 차이를 1/4만 남긴다(`RESTORE_LIGHT_KEEP` 0.25, 1이면 그 전과 같음). 안내 문구에 "AI가 그린 빛 줄기·그림자는 옅게 했어요"를 넣고, 색 안내 끝은 "제품(모양)·유리는 AI 결과 그대로예요."가 된다. AI 호출·보내는 그림과 문장·저장 형식·API·SQL은 그대로다.

@@ -75,7 +75,12 @@ import AiExport from './ai-export';
 import type { AiPreview } from './ai-view-picker';
 import { prepareReferenceImage } from '@/lib/ai-export/client';
 import { REFINE_CROP_EDGE, REFINE_MARGIN, REFINE_MAX_PRODUCTS } from '@/lib/ai-export/refine';
-import { refineTargets, visibleCeiling, type FluxCaptureSource } from '@/lib/ai-export/scene';
+import {
+  photoProductCount,
+  refineTargets,
+  visibleCeiling,
+  type FluxCaptureSource,
+} from '@/lib/ai-export/scene';
 import { FLUX_BACKDROP, fluxRoom } from '@/lib/ai-export/view';
 import { inputPxPerMm, widenedJointMm, widenJoints } from '@/lib/ai-export/joints';
 import { fluxInputLayout } from '@/lib/ai-export/contract';
@@ -1626,6 +1631,8 @@ function EditorWorkspace({ id, adminContext, guestContext, layoutStudio }: Edito
           refineByDefault: refineTargets({ scene: aiAfter, materials })
             .slice(0, REFINE_MAX_PRODUCTS)
             .some((target) => !target.fromPhoto),
+          // Products drawn as their own photos: the dialog then opens on the empty-room method.
+          photoProducts: photoProductCount({ scene: aiAfter, materials }),
         }
       : undefined;
   async function exportImage() {

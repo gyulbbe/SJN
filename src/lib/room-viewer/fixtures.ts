@@ -1,11 +1,11 @@
 import {
   Box3,
   Camera,
-  CanvasTexture,
   DataTexture,
   DoubleSide,
   Group,
   LinearFilter,
+  LinearMipmapLinearFilter,
   Mesh,
   MeshBasicMaterial,
   Object3D,
@@ -62,6 +62,54 @@ type DecodedImage = {
 };
 /** Alpha above this is the product itself (`solidBottom`); `bounds` counts anything above 8. */
 const SOLID_ALPHA = 128;
+/** A photo pixel at least this opaque keeps its own colour in the 3D texture (edgeFilled). */
+const EDGE_OPAQUE = 250;
+
+/**
+ * A product photo's pixels for the 3D texture, top row first: every pixel less than EDGE_OPAQUE keeps
+ * its alpha but takes the colour of the nearest more opaque one. The catalogue's cut-out photos store
+ * black under their transparent and soft edge pixels, and the 3D room draws a photo with an alpha
+ * test (no blending), so those pixels showed as a 1 px black outline round every photo product (and
+ * the AI export's model saw it, docs/photo-products-20261115.md). The 2D editor blends and never
+ * showed it. A photo with no opaque pixel is returned as it is.
+ */
+export function edgeFilled(data: Uint8ClampedArray, width: number, height: number): Uint8ClampedArray {
+  const out = Uint8ClampedArray.from(data);
+  const n = width * height;
+  const from = new Int32Array(n).fill(-1);
+  let queue = new Int32Array(n),
+    length = 0;
+  for (let i = 0; i < n; i++)
+    if (data[i * 4 + 3] >= EDGE_OPAQUE) {
+      from[i] = i;
+      queue[length++] = i;
+    }
+  if (!length) return out;
+  // Breadth first from the opaque pixels: each pixel takes the colour of the one it was reached from.
+  let next = new Int32Array(n);
+  while (length) {
+    let nextLength = 0;
+    for (let k = 0; k < length; k++) {
+      const i = queue[k],
+        x = i % width;
+      for (const j of [x > 0 ? i - 1 : -1, x < width - 1 ? i + 1 : -1, i - width, i + width]) {
+        if (j < 0 || j >= n || from[j] >= 0) continue;
+        from[j] = from[i];
+        next[nextLength++] = j;
+      }
+    }
+    [queue, next] = [next, queue];
+    length = nextLength;
+  }
+  for (let i = 0; i < n; i++) {
+    const source = from[i];
+    if (source === i || source < 0) continue;
+    out[i * 4] = data[source * 4];
+    out[i * 4 + 1] = data[source * 4 + 1];
+    out[i * 4 + 2] = data[source * 4 + 2];
+  }
+  return out;
+}
 
 /** One cache per viewer, shared by Before and every After. No asset writes, inference, or object URLs. */
 export class ProductAssetCache {
@@ -132,8 +180,18 @@ export class ProductAssetCache {
               if (alpha > SOLID_ALPHA) solid = Math.max(solid, y + 1);
             }
           if (!right || !bottom) throw new Error('제품 이미지가 모두 투명해요.');
-          const texture = new CanvasTexture(canvas);
+          // A data texture's first row is its bottom; its colour is the photo's with edges filled.
+          const filled = edgeFilled(data, canvas.width, canvas.height);
+          const rows = new Uint8Array(filled.length),
+            stride = canvas.width * 4;
+          for (let y = 0; y < canvas.height; y++)
+            rows.set(filled.subarray(y * stride, (y + 1) * stride), (canvas.height - 1 - y) * stride);
+          const texture = new DataTexture(rows, canvas.width, canvas.height);
           texture.colorSpace = SRGBColorSpace;
+          texture.magFilter = LinearFilter;
+          texture.minFilter = LinearMipmapLinearFilter;
+          texture.generateMipmaps = true;
+          texture.needsUpdate = true;
           const image = {
             texture,
             outline: softOutline(canvas),

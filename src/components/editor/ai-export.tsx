@@ -57,6 +57,9 @@ type Result = { url?: string; correctedUrl?: string; elapsed?: number; error?: s
  * stand-ins, and ours go back on top) or experiment C (A, and each product repainted on its own).
  * C is the default when the room has a product it can repaint (a standard model); with none, C would only be A, so the current one stays the default. This browser
  * remembers the choice, "current" too (a convenience only: unreadable storage means the default).
+ * A design with a product drawn as its own photo opens on A whatever was remembered, unless an
+ * experiment was (2026-11-15, the user's choice): the model never redraws those products, so their
+ * shape and colour stay the photo's and nothing hazes round them (docs/photo-products-20261115.md).
  */
 type FluxMethod = 'current' | FluxRoomMode | 'refine';
 const FLUX_METHODS: { value: FluxMethod; label: string }[] = [
@@ -174,6 +177,8 @@ export default function AiExport({
      * model a photo reconstruction made. Products the person switched to a model do not count.
      */
     refineByDefault?: boolean;
+    /** How many placed products the room draws as their own photos (the dialog then opens on A). */
+    photoProducts?: number;
   };
   filename: string;
   userId?: string | null;
@@ -206,9 +211,12 @@ export default function AiExport({
   /** The model reframed an outside view, so its white margin could not be put back. */
   const [marginKept, setMarginKept] = useState(false);
   // Only scenes drawn in the room can be composited.
-  const [method, setMethod] = useState<FluxMethod>(() =>
-    room ? (savedMethod() ?? (room.refineByDefault ? 'refine' : 'current')) : 'current',
-  );
+  const [method, setMethod] = useState<FluxMethod>(() => {
+    if (!room) return 'current';
+    const saved = savedMethod();
+    if (room.photoProducts && (saved ?? 'current') === 'current') return 'empty-room';
+    return saved ?? (room.refineByDefault ? 'refine' : 'current');
+  });
   const refining = !!room && method === 'refine';
   // The per-product export sends the room empty, as experiment A does.
   const mode: FluxRoomMode | undefined =
@@ -735,7 +743,9 @@ export default function AiExport({
             {refining
               ? refineNote(room?.refinable ?? 0, variant)
               : mode
-                ? `실험: AI에는 제품을 뺀 빈 방${mode === 'placeholders' ? '(제품 자리는 회색 표시)' : ''}을 보내고, 결과 위에 3D 렌더의 제품을 같은 자리·크기 그대로 올려요. 제품 모양은 그대로지만 매끈한 3D 질감으로 보일 수 있어요.`
+                ? mode === 'empty-room' && room?.photoProducts
+                  ? `사진으로 등록한 제품이 있어 이 방식으로 열었어요. AI에는 제품을 뺀 빈 방을 보내고, 결과 위에 제품을 등록한 사진 그대로 같은 자리·크기로 올려요. AI가 제품 모양이나 색을 바꾸지 않아요.`
+                  : `실험: AI에는 제품을 뺀 빈 방${mode === 'placeholders' ? '(제품 자리는 회색 표시)' : ''}을 보내고, 결과 위에 3D 렌더의 제품을 같은 자리·크기 그대로 올려요. 제품 모양은 그대로지만 매끈한 3D 질감으로 보일 수 있어요.`
                 : '제품까지 AI가 다시 그려요. 사진 같지만 제품 모양이 바뀌거나 없던 물건이 생길 수 있어요.'}
             {result.url ? ' 방식을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.' : ''}
           </div>
