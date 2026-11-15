@@ -39,18 +39,43 @@ export const TILE_ATLAS_SRGB = true;
 export const TILE_JOINT_MIN_PX = 1;
 export const TILE_JOINT_FADE_PX = 3;
 export const TILE_JOINT_FULL_PX = 6;
-/** The drawn joint width (mm) on one axis: TS twin of TILE_JOINT_WIDTH_GLSL (`pixelMm`: one pixel in mm). */
-export function tileJointWidth(groutMm: number, tileMm: number, pixelMm: number): number {
+/**
+ * The minimum fades out on an axis the view squashes: a wall seen at a slant (a side wall of the room,
+ * the far floor) has pixels many times longer across its tiles than up them, and its tiles a few pixels
+ * wide, so 1 px joints there turned the wall into a dense grid the front wall does not have
+ * (2026-11-15, docs/side-wall-tiles-20261115.md). `squash` is one axis's pixel size over the other
+ * axis's: up to TILE_JOINT_SQUASH_KEEP the minimum stays, from TILE_JOINT_SQUASH_OFF the joint is its
+ * real width. A wall seen straight on (squash about 1) is drawn exactly as before.
+ */
+export const TILE_JOINT_SQUASH_KEEP = 1.5;
+export const TILE_JOINT_SQUASH_OFF = 3;
+/**
+ * The drawn joint width (mm) on one axis: TS twin of TILE_JOINT_WIDTH_GLSL (`pixelMm`: one pixel in
+ * mm along this axis, `otherPixelMm` along the other; the same by default, a face seen straight on).
+ */
+export function tileJointWidth(
+  groutMm: number,
+  tileMm: number,
+  pixelMm: number,
+  otherPixelMm = pixelMm,
+): number {
   const grow = Math.min(
     1,
     Math.max(0, (tileMm / pixelMm - TILE_JOINT_FADE_PX) / (TILE_JOINT_FULL_PX - TILE_JOINT_FADE_PX)),
   );
-  return Math.max(groutMm, TILE_JOINT_MIN_PX * pixelMm * grow);
+  const squash = pixelMm / Math.max(Math.min(pixelMm, otherPixelMm), 1e-6);
+  const keep = Math.min(
+    1,
+    Math.max(0, (TILE_JOINT_SQUASH_OFF - squash) / (TILE_JOINT_SQUASH_OFF - TILE_JOINT_SQUASH_KEEP)),
+  );
+  return Math.max(groutMm, TILE_JOINT_MIN_PX * pixelMm * grow * keep);
 }
 /** GLSL: the drawn joint width (mm) for a joint `grout` mm wide, tiles `tile` mm and pixels `aa` mm. */
 export const TILE_JOINT_WIDTH_GLSL = `
 vec2 sjnJointWidth(float grout,vec2 tile,vec2 aa){
  vec2 grow=clamp((tile/aa-${TILE_JOINT_FADE_PX.toFixed(1)})/${(TILE_JOINT_FULL_PX - TILE_JOINT_FADE_PX).toFixed(1)},0.,1.);
+ vec2 squash=aa/max(min(aa.x,aa.y),1e-6);
+ grow*=clamp((${TILE_JOINT_SQUASH_OFF.toFixed(1)}-squash)/${(TILE_JOINT_SQUASH_OFF - TILE_JOINT_SQUASH_KEEP).toFixed(1)},0.,1.);
  return max(vec2(grout),${TILE_JOINT_MIN_PX.toFixed(1)}*aa*grow);
 }
 `;

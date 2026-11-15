@@ -2,6 +2,12 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-15 — 비스듬한 옆벽의 줄눈 최소 굵기
+
+- 무엇: 줄눈 최소 1px을 화면에서 눌린 축(그 축의 픽셀 크기가 다른 축의 1.5배 넘음)에서는 서서히 빼서 3배부터 실제 굵기로 그린다(2D·3D 공용 `TILE_JOINT_WIDTH_GLSL`). 정면처럼 바로 보이는 면은 픽셀까지 그대로다. `DESIGN_RENDER_REVISION` 5 → 6(브라우저 안 시안 미리보기만 새로 그림). `ROOM_VIEWER_RENDERER_REVISION`은 올리지 않았다(올리면 모든 프로젝트 요약이 오래된 것이 되어 목록마다 R2를 읽음). 저장 형식·API·SQL은 그대로다.
+- 확인: `tests/side-wall/render.ts`·`score.ts`(실제 타일 7개 × 보기 5개, 4배 참고 대비; 앱 코드 그림 = 후보 `squash2` 픽셀 동일), `tests/tile-joint-width.test.ts`, `tile-mipmap-browser.ts`(GPU·SwiftShader, 오늘 코드를 기준으로: 민무늬에 선 없음·무늬 칸 섞임 없음·면 밖 픽셀 그대로·합성 줄무늬 깨짐 같거나 줄어듦; "11-05 이전 대비 절반" 항목은 기준이 오늘 코드라 해당 없음), `shading-browser.ts`, `tile-regions-browser.ts`, 전체 vitest(로컬 D1·워크트리에 없는 자료 기존 실패 외 통과), typecheck, lint.
+- 결과: [결과 문서](side-wall-tiles-20261115.md).
+
 ## 2026-11-14 — 앱 그림의 줄눈 최소 굵기와 3D 빛
 
 - 무엇: 2D·3D 모두 타일이 화면에서 6px 이상이면 줄눈을 최소 1px로 그린다. 3D 천장 조명 0.44 → 0.32, 반사광 0.58 → 0.66. SMC 천장 조명을 끈 방의 2D 밝기 0.53 → 0.65(3D에 맞춤). 렌더 버전 `room-view-v14-light`, `DESIGN_RENDER_REVISION` 5. 저장 형식·API·SQL은 그대로다.

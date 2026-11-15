@@ -99,7 +99,7 @@
 
 근거: [AI 내보내기 UI](../../../../src/components/editor/ai-export.tsx), [입력 시점](../../../../src/lib/ai-export/view.ts), [알림 규칙](../../../../src/lib/ai-export/notices.ts), [FLUX 계약](../../../../src/lib/ai-export/contract.ts), [장면 계약](../../../../src/lib/ai-export/scene-contract.ts), [장면 추출](../../../../src/lib/ai-export/scene.ts), [프롬프트](../../../../src/lib/ai-export/prompt.ts), [서버 경로](../../../../src/app/api/export/photoreal/route.ts), [결과 확인](../../../../src/lib/ai-export/check-server.ts), [줄눈 되돌리기](../../../../src/lib/ai-export/joints.ts). 상세: [FLUX 변환](../../../../docs/flux-export.md).
 
-앱 그림(2D·3D)은 타일이 화면에서 6px 이상이면 줄눈을 최소 1px로 그린다(2026-11-14, [빛 개선](../../../../docs/light-tuning-results-20261114.md)). 3D는 천장 조명 0.32·반사광 0.66이다.
+앱 그림(2D·3D)은 타일이 화면에서 6px 이상이면 줄눈을 최소 1px로 그린다(2026-11-14, [빛 개선](../../../../docs/light-tuning-results-20261114.md)). 비스듬히 보여 눌린 축(옆벽의 가로, 먼 바닥)은 실제 굵기로 그려 옆벽이 정면과 같은 타일로 보이게 한다(2026-11-15, [옆면 타일](../../../../docs/side-wall-tiles-20261115.md)). 3D는 천장 조명 0.32·반사광 0.66이다.
 
 결과는 구도가 맞을 때 AI 호출 없이 다듬는다: 배경 흰 여백 되돌리기 → 줄눈이 있는 모든 벽·바닥에 설계의 줄눈·무늬 되돌리기(2026-11-14 줄눈이 어긋난 면만, 2026-11-15부터 모든 면; 빛은 AI 것, 캡처 때 줄눈을 넓힌 그림을 한 장 더 그려 면마다 점수를 잼) → 벽·바닥 색 보정. "AI 원본 보기"로 모델 그림 그대로를 볼 수 있다.
 
