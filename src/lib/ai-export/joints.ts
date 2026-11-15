@@ -186,7 +186,7 @@ export function faceScores(reference: Pixels, result: Pixels, mask: RegionMask, 
  * A box blur (two passes each way) of `value` weighted by `weight` (0 or 1): pixels outside the
  * weight do not bleed in. `cover` is the weighted share of the blur's window (1 deep inside).
  */
-function blurInside(
+export function blurInside(
   value: Float32Array,
   weight: Float32Array,
   width: number,
@@ -386,12 +386,15 @@ export function restoreResultJoints(input: {
   result: Pixels;
   frame: { dx: number; dy: number };
   onto?: Pixels;
+  /** Faces under this joint score are restored (RESTORE_BELOW; Infinity restores every scored face). */
+  restoreBelow?: number;
 }): JointRestore {
   const { capture, joints, mask, layout, result, frame } = input;
+  const below = input.restoreBelow ?? RESTORE_BELOW;
   const size = { width: result.width, height: result.height };
   const projected = projectMask(mask, layout, size);
   const scores = faceScores(projectCapture(joints, layout, size), result, projected, frame.dx, frame.dy);
-  const restored = scores.filter((face) => face.score < RESTORE_BELOW);
+  const restored = scores.filter((face) => face.score < below);
   if (!restored.length) return { restored, scores };
   const labels = new Set(
     restored.map((face) => mask.regions.findIndex((region) => region.key === face.key) + 1),

@@ -106,6 +106,8 @@ export function appView(
   scene: TrialScene,
   result: Pixels,
   erase?: { labels?: ReadonlySet<number>; criteria?: EraseCriteria },
+  /** The tile-pattern trial's rule: restore faces under this joint score (Infinity: every face). */
+  restoreBelow?: number,
 ): AppView {
   const { capture, mask, layout } = scene;
   const size = { width: result.width, height: result.height };
@@ -119,7 +121,15 @@ export function appView(
   // The app measures the framing again on the backdrop-restored picture before the joints.
   const again = framing(reference, checked);
   const joints = again.aligned
-    ? restoreResultJoints({ capture, joints: scene.joints, mask, layout, result: checked, frame: again })
+    ? restoreResultJoints({
+        capture,
+        joints: scene.joints,
+        mask,
+        layout,
+        result: checked,
+        frame: again,
+        restoreBelow,
+      })
     : undefined;
   // O3 after the joints: on a face whose joints were put back the model's moved joints are gone, so
   // only what it added is left to find.
