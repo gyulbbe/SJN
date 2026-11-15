@@ -112,7 +112,7 @@ describe('the widened capture', () => {
 
 describe('putting drifted joints back', () => {
   const joints = capture(24, 3);
-  it('restores a wall the model re-laid at another size and leaves a kept one, the floor and fixtures alone', () => {
+  it('restores a wall the model re-laid at another size, and leaves the joint-less floor and fixtures alone', () => {
     const relaid = tiled(34);
     const done = restoreResultJoints({
       capture: capture(24),
@@ -137,8 +137,23 @@ describe('putting drifted joints back', () => {
       result: tiled(24),
       frame,
     });
-    expect(kept.restored).toEqual([]);
-    expect(kept.image).toBeUndefined();
+    // A wall that kept its joints is restored too (2026-11-15): its tiles may have lost their pattern.
+    // The model had drawn the design's joints, so the restored wall stays close to its own picture.
+    expect(kept.restored.map((face) => face.key)).toEqual(['face:back']);
+    expect(kept.image).toBeDefined();
+    expect(Math.abs(mean(kept.image!, 30, 20, 60, 100) - mean(tiled(24), 30, 20, 60, 100))).toBeLessThan(6);
+    // Restoring only drifted faces is still possible (the rule before 2026-11-15).
+    const before = restoreResultJoints({
+      capture: capture(24),
+      joints,
+      mask: mask(),
+      layout,
+      result: tiled(24),
+      frame,
+      restoreBelow: 0.3,
+    });
+    expect(before.restored).toEqual([]);
+    expect(before.image).toBeUndefined();
   });
   it('lets a dark object the model added go instead of leaving a smudge, and keeps a shadow the render has too', () => {
     // The render has a shadow at x 30–60, y 60–100; the model drew it too, and added a dark box at x 172–182.
@@ -193,7 +208,7 @@ describe('the joints notice', () => {
     expect(notices.infos.map((info) => info.key)).toEqual(['color', 'joints']);
     expect(notices.infos[0].text).toContain('빛과 제품·유리는 AI 결과 그대로예요.');
     expect(notices.infos[1].text).toBe(
-      '타일 줄눈·무늬가 설계와 달라진 벽·바닥 2면은 설계의 줄눈·무늬로 되돌렸어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.',
+      '벽·바닥 2면의 타일 줄눈·무늬를 설계대로 되돌렸어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.',
     );
   });
   it('says the original differs when the model’s own picture is shown, and nothing without restored faces', () => {
@@ -205,7 +220,7 @@ describe('the joints notice', () => {
       joints: 3,
     });
     expect(original.infos.find((info) => info.key === 'joints')?.text).toBe(
-      'AI 원본이에요. 벽·바닥 3면은 타일 줄눈·무늬가 설계와 달라요.',
+      'AI 원본이에요. 타일 줄눈·무늬는 AI가 그린 그대로라 설계와 다를 수 있어요.',
     );
     const none = fluxResultNotices({ products: [], colors, corrected: true, showTiles: false });
     expect(none.infos.map((info) => info.key)).toEqual(['color']);

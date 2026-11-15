@@ -11,7 +11,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { restoreBackdrop } from '../../src/lib/ai-export/backdrop';
 import { framing, projectCapture, projectMask } from '../../src/lib/ai-export/color';
-import { faceScores, RESTORE_BELOW } from '../../src/lib/ai-export/joints';
+import { faceScores } from '../../src/lib/ai-export/joints';
+
+/** The app's cut-off before 2026-11-15 (P0): faces under it were restored. */
+const P0_BELOW = 0.3;
 import { loadScene, pixels, type TrialScene } from '../extra-ai/app-view';
 import { patternScores } from './pattern';
 import { EXTRA, OUT, TILE } from './paths.mjs';
@@ -115,7 +118,7 @@ export async function measure(source: Source, scene: TrialScene): Promise<Pictur
         detail: p?.detail ?? null,
         amount: p?.amount ?? null,
         amount75: p?.amount75 ?? null,
-        restoredNow: !!j && j.score < RESTORE_BELOW,
+        restoredNow: !!j && j.score < P0_BELOW,
       },
     ];
   });

@@ -24,7 +24,8 @@ for (const source of sources(set)) {
   const scene = await loadScene(source.dir, source.jointsFile);
   const result = await pixels(source.result);
   let started = performance.now();
-  const p0 = appView(scene, result);
+  // P0 is the rule before 2026-11-15 (the app now restores every face, which is P2).
+  const p0 = appView(scene, result, undefined, 0.3);
   const ms0 = performance.now() - started;
   started = performance.now();
   const p2 = appView(scene, result, undefined, Infinity);

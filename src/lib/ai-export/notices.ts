@@ -392,8 +392,8 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
     infos.splice(infos[0]?.key === 'color' ? 1 : 0, 0, {
       key: 'joints',
       text: input.corrected
-        ? `타일 줄눈·무늬가 설계와 달라진 벽·바닥 ${input.joints}면은 설계의 줄눈·무늬로 되돌렸어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.`
-        : `AI 원본이에요. 벽·바닥 ${input.joints}면은 타일 줄눈·무늬가 설계와 달라요.`,
+        ? `벽·바닥 ${input.joints}면의 타일 줄눈·무늬를 설계대로 되돌렸어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.`
+        : `AI 원본이에요. 타일 줄눈·무늬는 AI가 그린 그대로라 설계와 다를 수 있어요.`,
     });
   if (check?.status === 'failed')
     infos.push({

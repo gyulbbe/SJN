@@ -28,7 +28,8 @@ for (const [id, item] of Object.entries(key.pairs)) {
     pairs.missing++;
     continue;
   }
-  const chose = rating.choice === 'same' ? 'same' : rating.choice === 'a' ? item.a : item.a === 'p0' ? 'p2' : 'p0';
+  const chose =
+    rating.choice === 'same' ? 'same' : rating.choice === 'a' ? item.a : item.a === 'p0' ? 'p2' : 'p0';
   pairs[chose]++;
   if (rating.note) pairNotes.push({ source: item.source, chose, note: rating.note });
 }
@@ -42,7 +43,11 @@ for (const [id, item] of Object.entries(key.singles)) {
 const mean = (list, field) => (list.length ? list.reduce((s, r) => s + r[field], 0) / list.length : NaN);
 const flagged = (list, flag) => list.filter((r) => (r.flags ?? []).includes(flag)).length;
 const summary = {
-  pairs: { ...pairs, betterShare: +(pairs.p2 / rated).toFixed(3), worseShare: +(pairs.p0 / rated).toFixed(3) },
+  pairs: {
+    ...pairs,
+    betterShare: +(pairs.p2 / rated).toFixed(3),
+    worseShare: +(pairs.p0 / rated).toFixed(3),
+  },
   singles: Object.fromEntries(
     ['p0', 'p2'].map((rule) => [
       rule,
@@ -69,5 +74,7 @@ console.log('single notes:');
 for (const rule of ['p0', 'p2'])
   for (const r of singles[rule])
     if (r.note || r.flags?.length)
-      console.log(` ${rule} ${r.source} [${(r.flags ?? []).join(',')}] ${r.real}/${r.design} ${(r.note ?? '').replace(/\s+/g, ' ')}`);
+      console.log(
+        ` ${rule} ${r.source} [${(r.flags ?? []).join(',')}] ${r.real}/${r.design} ${(r.note ?? '').replace(/\s+/g, ' ')}`,
+      );
 writeFileSync(join(dir, 'score.json'), JSON.stringify({ ...summary, pairNotes }, null, 1));

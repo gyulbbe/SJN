@@ -472,10 +472,10 @@ test('result walls get their tile colour back; the AI colours stay one click awa
       return { warmth: r - b, brightness: (r + g + b) / 3 };
     });
   const corrected = await wall();
-  // The model's answer here is the input enlarged and blurred, so its joints are gone: the design's
-  // joints go back on those faces (joints.ts) and the toggle shows the whole AI original.
+  // The design's joints and pattern go back on every tiled face (joints.ts) and the toggle shows the
+  // whole AI original.
   await expect(dialog.getByTestId('flux-joints-note')).toContainText(
-    /^타일 줄눈·무늬가 설계와 달라진 벽·바닥 \d면은 설계의 줄눈·무늬로 되돌렸어요\./,
+    /^벽·바닥 \d면의 타일 줄눈·무늬를 설계대로 되돌렸어요\./,
   );
   const toggle = dialog.getByRole('button', { name: 'AI 원본 보기', exact: true });
   await expect(toggle).toHaveAttribute('aria-pressed', 'false');
@@ -497,7 +497,9 @@ test('result walls get their tile colour back; the AI colours stay one click awa
   const rawDownload = page.waitForEvent('download');
   await dialog.getByRole('link', { name: '4B PNG 저장' }).click();
   expect((await rawDownload).suggestedFilename()).toMatch(/flux-2-klein-4b-AI원본\.png$/);
-  await expect(dialog.getByTestId('flux-joints-note')).toContainText(/^AI 원본이에요\. 벽·바닥 \d면은/);
+  await expect(dialog.getByTestId('flux-joints-note')).toHaveText(
+    'AI 원본이에요. 타일 줄눈·무늬는 AI가 그린 그대로라 설계와 다를 수 있어요.',
+  );
   // A narrow screen keeps the new controls inside the dialog.
   await page.setViewportSize({ width: 390, height: 844 });
   await original.scrollIntoViewIfNeeded();
@@ -1068,9 +1070,12 @@ test('a wall the model drew much darker is put back; the AI colours warn about t
       return (r + g + b) / 3;
     });
   const corrected = await wall();
-  // This answer keeps the input's joints (only darker), so none go back: the colour-only toggle.
-  await expect(dialog.getByTestId('flux-joints-note')).toHaveCount(0);
-  await dialog.getByRole('button', { name: 'AI 원본 색 보기', exact: true }).click();
+  // This answer keeps the input's joints (only darker); since 2026-11-15 every tiled face still gets
+  // the design's joints and pattern back, so the toggle shows the whole AI original.
+  await expect(dialog.getByTestId('flux-joints-note')).toContainText(
+    /^벽·바닥 \d면의 타일 줄눈·무늬를 설계대로 되돌렸어요\./,
+  );
+  await dialog.getByRole('button', { name: 'AI 원본 보기', exact: true }).click();
   const raw = await wall();
   // The darkened wall comes back a good part of the way, never past the render's own light.
   expect(corrected).toBeGreaterThan(raw + 25);

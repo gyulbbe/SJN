@@ -2,12 +2,15 @@
  * Putting the design's tile joints back on a FLUX result (no AI call; docs/tile-ai-trials-20261113.md,
  * adopted 2026-11-14). In the 496 px model input a 2 mm joint is about 0.2 px, so the model often
  * re-lays a wall at another tile size, turns a staggered bond into a grid or leaves a printed tile
- * plain. Where a face's joints drifted, the result keeps only its broad light and colour (a blur wider
- * than a joint) and the render's fine detail (its luminance over its own blur) is multiplied back in.
+ * plain. On each wall and floor with joints the result keeps only its broad light and colour (a blur
+ * wider than a joint) and the render's fine detail (its luminance over its own blur) is multiplied back
+ * in. Until 2026-11-15 only faces whose joints drifted were; now every face with joints is, because a
+ * face can keep its grid and still lose the fine lines, veins or waves inside its tiles, which no score
+ * tells apart from the model's own texture (docs/tile-pattern-trials-20261115.md).
  *
- * Which faces drifted is measured against a second capture of the same frame with every joint drawn
- * wide enough to see in the model input (`widenJoints`): the render's own joints are too thin to
- * correlate with. Fixtures, faces that kept their joints and the backdrop stay the model's.
+ * Each face's joint score is still measured against a second capture of the same frame with every
+ * joint drawn wide enough to see in the model input (`widenJoints`); a face without joints in the
+ * design gets none and stays the model's, as do fixtures and the backdrop.
  */
 import type { RenderSnapshot } from '../types';
 import {
@@ -22,8 +25,11 @@ import type { FluxInputLayout } from './contract';
 
 /** The widened capture's joints are at least this wide in the model input (pixels). */
 export const JOINT_MIN_INPUT_PX = 1.25;
-/** A face whose joint score is under this is restored. */
-export const RESTORE_BELOW = 0.3;
+/**
+ * A face whose joint score is under this is restored: every face with joints since 2026-11-15 (0.3
+ * before, which let faces that kept their grid but lost the pattern inside their tiles go).
+ */
+export const RESTORE_BELOW = Infinity;
 /** The blur that separates broad light from joints, as a share of the picture's width. */
 export const LIGHT_BLUR = 0.012;
 /** How far the render's detail may darken or lighten the model's light. */
@@ -310,38 +316,64 @@ export function restoreJoints(
   const { width, height } = result;
   const out = new Uint8ClampedArray(result.data);
   const radius = Math.max(2, Math.round(width * LIGHT_BLUR));
-  const count = width * height;
-  const ones = new Float32Array(count).fill(1);
+  // The reference's pixel under each result pixel (its own pixel past the edge).
+  const refLumAll = new Float32Array(width * height);
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const rx = Math.max(0, Math.min(width - 1, x - shift.dx)),
+        ry = Math.max(0, Math.min(height - 1, y - shift.dy));
+      refLumAll[y * width + x] = luminance(reference.data, (ry * width + rx) * 4);
+    }
+  // Each face is worked on inside its box grown by the widest blur's reach (two passes of
+  // radius × 4 each way), on the object search's cell grid: the same numbers as on the whole
+  // picture, at a fraction of the cost when every face is restored.
+  const reach = 2 * radius * 4 + 2 * CELL;
   for (const label of labels) {
     if (label === FIXTURE_REGION || label < 1) continue;
-    const weight = new Float32Array(count);
-    let any = false;
-    for (let i = 0; i < count; i++)
-      if (mask.data[i] === label) {
-        weight[i] = 1;
-        any = true;
-      }
-    if (!any) continue;
-    // The reference's pixel under each result pixel (its own pixel past the edge).
-    const refLum = new Float32Array(count);
+    let minX = width,
+      minY = height,
+      maxX = -1,
+      maxY = -1;
     for (let y = 0; y < height; y++)
-      for (let x = 0; x < width; x++) {
-        const rx = Math.max(0, Math.min(width - 1, x - shift.dx)),
-          ry = Math.max(0, Math.min(height - 1, y - shift.dy));
-        refLum[y * width + x] = luminance(reference.data, (ry * width + rx) * 4);
-      }
-    const refLight = blurInside(refLum, weight, width, height, radius).mean;
+      for (let x = 0; x < width; x++)
+        if (mask.data[y * width + x] === label) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+    if (maxX < 0) continue;
+    const x0 = Math.max(0, Math.floor((minX - reach) / CELL) * CELL),
+      y0 = Math.max(0, Math.floor((minY - reach) / CELL) * CELL),
+      x1 = Math.min(width, maxX + reach + 1),
+      y1 = Math.min(height, maxY + reach + 1);
+    const w = x1 - x0,
+      h = y1 - y0,
+      count = w * h;
+    const at = (i: number) => (y0 + Math.floor(i / w)) * width + x0 + (i % w);
+    const weight = new Float32Array(count),
+      refLum = new Float32Array(count),
+      ones = new Float32Array(count).fill(1);
+    const data = new Uint8ClampedArray(count * 4);
+    for (let i = 0; i < count; i++) {
+      const j = at(i);
+      if (mask.data[j] === label) weight[i] = 1;
+      refLum[i] = refLumAll[j];
+      for (let c = 0; c < 4; c++) data[i * 4 + c] = result.data[j * 4 + c];
+    }
+    const local: Pixels = { width: w, height: h, data };
+    const refLight = blurInside(refLum, weight, w, h, radius).mean;
     // The light comes from the face without the objects the model added.
-    const objects = addedObjects(result, refLum, weight);
+    const objects = addedObjects(local, refLum, weight);
     const lit = new Float32Array(count);
     for (let i = 0; i < count; i++) lit[i] = weight[i] && !objects[i] ? 1 : 0;
     // Near the face's rim the detail fades in over a few pixels.
-    const inside = blurInside(weight, ones, width, height, 2).mean;
+    const inside = blurInside(weight, ones, w, h, 2).mean;
     const channels = [0, 1, 2].map((c) => {
       const plane = new Float32Array(count);
-      for (let i = 0; i < count; i++) plane[i] = result.data[i * 4 + c];
-      const near = blurInside(plane, lit, width, height, radius),
-        far = blurInside(plane, lit, width, height, radius * 4);
+      for (let i = 0; i < count; i++) plane[i] = data[i * 4 + c];
+      const near = blurInside(plane, lit, w, h, radius),
+        far = blurInside(plane, lit, w, h, radius * 4);
       // Inside a large object the near window is empty: the wider one fills it.
       const light = new Float32Array(count);
       for (let i = 0; i < count; i++) {
@@ -357,8 +389,9 @@ export function restoreJoints(
         Math.min(DETAIL_RANGE[1], refLum[i] / Math.max(1, refLight[i])),
       );
       const alpha = Math.max(0, Math.min(1, (inside[i] - 0.5) * 2));
+      const j = at(i);
       for (let c = 0; c < 3; c++)
-        out[i * 4 + c] = Math.round(result.data[i * 4 + c] * (1 - alpha) + channels[c][i] * detail * alpha);
+        out[j * 4 + c] = Math.round(data[i * 4 + c] * (1 - alpha) + channels[c][i] * detail * alpha);
     }
   }
   return { width, height, data: out };
@@ -373,7 +406,7 @@ export type JointRestore = {
 };
 /**
  * The whole step for one result that kept the framing: score each face against the widened capture,
- * then put the joints back on the faces under RESTORE_BELOW. `capture` and `joints` are the render and
+ * then put the joints back on the faces under RESTORE_BELOW (every face with joints). `capture` and `joints` are the render and
  * its widened copy at capture size, `mask` their regions, `frame` the model's shift (result pixels) as
  * the colour check measured it. The faces are judged on `result` (the model's own picture); the joints
  * go onto `onto` (the colour-corrected result, by default `result`).
