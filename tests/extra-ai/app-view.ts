@@ -108,6 +108,8 @@ export function appView(
   erase?: { labels?: ReadonlySet<number>; criteria?: EraseCriteria },
   /** The tile-pattern trial's rule: restore faces under this joint score (Infinity: every face). */
   restoreBelow?: number,
+  /** The AI-light trial: how much of the model's light shape a restored face keeps. */
+  lightKeep?: number,
 ): AppView {
   const { capture, mask, layout } = scene;
   const size = { width: result.width, height: result.height };
@@ -129,6 +131,7 @@ export function appView(
         result: checked,
         frame: again,
         restoreBelow,
+        lightKeep,
       })
     : undefined;
   // O3 after the joints: on a face whose joints were put back the model's moved joints are gone, so

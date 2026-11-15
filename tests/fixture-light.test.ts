@@ -152,7 +152,8 @@ describe('the ceramics notice', () => {
       ceramics: 1,
     });
     expect(notices.infos.map((info) => info.key)).toEqual(['color', 'joints', 'ceramics']);
-    expect(notices.infos[0].text).toContain('빛과 제품 모양·유리는 AI 결과 그대로예요.');
+    expect(notices.infos[0].text).toContain('. 제품 모양·유리는 AI 결과 그대로예요.');
+    expect(notices.infos[0].text).not.toContain('빛과');
     expect(notices.infos[2].text).toBe(
       'AI가 어둡게 그린 도기(세면대·변기·욕조) 1개는 밝기를 설계 쪽으로 되돌렸어요.',
     );
@@ -168,6 +169,6 @@ describe('the ceramics notice', () => {
     expect(original.infos.find((info) => info.key === 'ceramics')).toBeUndefined();
     const none = fluxResultNotices({ products: [], colors, corrected: true, showTiles: false, joints: 2 });
     expect(none.infos.map((info) => info.key)).toEqual(['color', 'joints']);
-    expect(none.infos[0].text).toContain('빛과 제품·유리는 AI 결과 그대로예요.');
+    expect(none.infos[0].text).toContain('. 제품·유리는 AI 결과 그대로예요.');
   });
 });

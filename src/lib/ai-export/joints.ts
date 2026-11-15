@@ -11,6 +11,11 @@
  * Each face's joint score is still measured against a second capture of the same frame with every
  * joint drawn wide enough to see in the model input (`widenJoints`); a face without joints in the
  * design gets none and stays the model's, as do fixtures and the backdrop.
+ *
+ * Since 2026-11-15 a restored face also keeps only a quarter of the model's own light shape against
+ * the render's (`RESTORE_LIGHT_KEEP`): the model drew sun-like streaks, big shadows and glare the
+ * render's one ceiling light does not have, and the reviewer chose the quarter over today's light in
+ * 15 of 16 and 8 of 8 unseen pictures (docs/ai-light-20261115.md).
  */
 import type { RenderSnapshot } from '../types';
 import {
@@ -301,6 +306,48 @@ function addedObjects(result: Pixels, refLum: Float32Array, weight: Float32Array
 }
 
 /**
+ * How much of the model's own light shape a restored face keeps (docs/ai-light-20261115.md): its light
+ * over the render's, against the face's median, raised to this power. 1 keeps the model's light as it
+ * is; 0.5 halves (in log) the streaks, shadows and glare the render does not have; 0 keeps only the
+ * model's overall level on the render's light. A shadow the render has too is in both and stays.
+ * A quarter since 2026-11-15 (the reviewer's choice; 1 before).
+ */
+export const RESTORE_LIGHT_KEEP = 0.25;
+/** Bounds of the factor one pixel's light may be moved by. */
+const LIGHT_FACTOR = [0.25, 4] as const;
+
+/**
+ * In place: each pixel's light (three channels) scaled so its ratio to the render's light keeps only
+ * `keep` of its distance (log) from the face's median ratio. The colour of the light stays.
+ */
+function keepLightDifference(
+  channels: Float32Array[],
+  refLight: Float32Array,
+  weight: Float32Array,
+  keep: number,
+) {
+  const ratio = new Float32Array(weight.length);
+  const sample: number[] = [];
+  for (let i = 0; i < weight.length; i++) {
+    if (!weight[i]) continue;
+    const lum = 0.2126 * channels[0][i] + 0.7152 * channels[1][i] + 0.0722 * channels[2][i];
+    ratio[i] = Math.max(1e-3, lum) / Math.max(1, refLight[i]);
+    if (i % 7 === 0) sample.push(ratio[i]);
+  }
+  if (!sample.length) return;
+  sample.sort((x, y) => x - y);
+  const median = sample[sample.length >> 1];
+  for (let i = 0; i < weight.length; i++) {
+    if (!weight[i]) continue;
+    const factor = Math.min(
+      LIGHT_FACTOR[1],
+      Math.max(LIGHT_FACTOR[0], Math.pow(ratio[i] / median, keep - 1)),
+    );
+    for (const channel of channels) channel[i] *= factor;
+  }
+}
+
+/**
  * The result with the render's fine detail on the faces `labels` names (mask labels, 1-based).
  * `reference` and `mask` are at the result's size, the mask already moved by the model's shift, and
  * `shift` (result pixels) says where the reference's pixel of a result pixel is. On those faces a dark
@@ -312,6 +359,7 @@ export function restoreJoints(
   mask: RegionMask,
   labels: ReadonlySet<number>,
   shift = { dx: 0, dy: 0 },
+  lightKeep = RESTORE_LIGHT_KEEP,
 ): Pixels {
   const { width, height } = result;
   const out = new Uint8ClampedArray(result.data);
@@ -382,6 +430,7 @@ export function restoreJoints(
       }
       return light;
     });
+    if (lightKeep !== 1) keepLightDifference(channels, refLight, weight, lightKeep);
     for (let i = 0; i < count; i++) {
       if (!weight[i]) continue;
       const detail = Math.max(
@@ -421,6 +470,8 @@ export function restoreResultJoints(input: {
   onto?: Pixels;
   /** Faces under this joint score are restored (RESTORE_BELOW; Infinity restores every scored face). */
   restoreBelow?: number;
+  /** How much of the model's light shape a restored face keeps (RESTORE_LIGHT_KEEP). */
+  lightKeep?: number;
 }): JointRestore {
   const { capture, joints, mask, layout, result, frame } = input;
   const below = input.restoreBelow ?? RESTORE_BELOW;
@@ -438,6 +489,7 @@ export function restoreResultJoints(input: {
     shiftMask(projected, frame.dx, frame.dy),
     labels,
     frame,
+    input.lightKeep ?? RESTORE_LIGHT_KEEP,
   );
   return { restored, scores, image };
 }

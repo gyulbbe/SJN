@@ -2,6 +2,12 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-15 — AI 변환의 빛 줄기·그림자 옅게
+
+- 무엇: 줄눈 되돌리기(`src/lib/ai-export/joints.ts`)가 되돌린 면에서 모델 빛의 "렌더 빛 대비" 차이를 1/4만 남긴다(`RESTORE_LIGHT_KEEP` 0.25, 1이면 그 전과 같음). 안내 문구에 "AI가 그린 빛 줄기·그림자는 옅게 했어요"를 넣고, 색 안내 끝은 "제품(모양)·유리는 AI 결과 그대로예요."가 된다. AI 호출·보내는 그림과 문장·저장 형식·API·SQL은 그대로다.
+- 확인: `tests/flux-joints.test.ts`(렌더에 없는 그림자 띠 0.6 → 약 0.88, 고른 빛·바닥은 그대로), `fixture-light`·`flux-notices` 시험, `tests/ai-light/app-check.ts`(앱 코드 = 시험 k25 그림 40장 픽셀 같음), e2e `flux-export`, typecheck, lint.
+- 결과: [결과 문서](ai-light-20261115.md).
+
 ## 2026-11-15 — 3D 그림의 닫힌 홈 그늘
 
 - 무엇: 닫힌 홈의 위·옆 안쪽 면을 어둡게(0.5, 0.72), 뒤판을 위에서 아래로 밝아지게(0.68 → 0.95) 그린다(`src/lib/room-viewer/niche-look.ts`, `surfaces.ts`). 홈 밖·젠다이·바닥 오목은 그대로. `DESIGN_RENDER_REVISION` 6 → 7. 저장 형식·API·SQL은 그대로다.

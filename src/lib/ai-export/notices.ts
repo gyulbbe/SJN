@@ -346,12 +346,13 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
         }`,
       });
   }
-  // With joints put back, the faces' texture is the design's: only the light stays the model's.
-  // With ceramics brightened, their lightness is no longer the model's either (their shape is).
+  // With joints put back, the faces' texture is the design's and their light mostly the render's
+  // (joints.ts RESTORE_LIGHT_KEEP): only the products stay the model's. With ceramics brightened,
+  // their lightness is no longer the model's either (their shape is).
   const productWords = input.ceramics && input.corrected ? '제품 모양·유리' : '제품·유리';
   const tail =
     input.joints && input.corrected
-      ? `빛과 ${productWords}는 AI 결과 그대로예요.`
+      ? `${productWords}는 AI 결과 그대로예요.`
       : `명암·질감과 ${productWords}는 AI 결과 그대로예요.`;
   if (colors?.status === 'corrected') {
     const shifted = colorChangeLines(colors.warnings),
@@ -399,7 +400,7 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
     infos.splice(infos[0]?.key === 'color' ? 1 : 0, 0, {
       key: 'joints',
       text: input.corrected
-        ? `벽·바닥 ${input.joints}면의 타일 줄눈·무늬를 설계대로 되돌렸어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.`
+        ? `벽·바닥 ${input.joints}면의 타일 줄눈·무늬를 설계대로 되돌리고, AI가 그린 빛 줄기·그림자는 옅게 했어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.`
         : `AI 원본이에요. 타일 줄눈·무늬는 AI가 그린 그대로라 설계와 다를 수 있어요.`,
     });
   if (input.ceramics && input.corrected) {

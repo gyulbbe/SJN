@@ -5,6 +5,7 @@ import { fluxInputLayout } from '../src/lib/ai-export/contract';
 import {
   inputPxPerMm,
   JOINT_MIN_INPUT_PX,
+  RESTORE_LIGHT_KEEP,
   restoreResultJoints,
   widenedJointMm,
   widenJoints,
@@ -175,6 +176,37 @@ describe('putting drifted joints back', () => {
     // The shadow stays.
     expect(mean(done.image!, 35, 65, 55, 95)).toBeLessThan(wall - 50);
   });
+  it('keeps only a quarter of light the render does not have, and leaves even light and other faces as they were', () => {
+    expect(RESTORE_LIGHT_KEEP).toBe(0.25);
+    // The model drew a broad shadow band (x 60–120) across the wall the render lights evenly.
+    const banded = tiled(24, (x, y) =>
+      y < 110 && x >= 60 && x < 120
+        ? Math.round((x % 24 < 1.5 || y % 24 < 1.5 ? 160 : 228) * 0.6)
+        : undefined,
+    );
+    const run = (result: Pixels, lightKeep?: number) =>
+      restoreResultJoints({ capture: capture(24), joints, mask: mask(), layout, result, frame, lightKeep })
+        .image!;
+    const band = (image: Pixels) => mean(image, 70, 20, 110, 100) / mean(image, 160, 20, 200, 100);
+    // The model's light as it is (1, the rule before 2026-11-15): the band stays at about 0.6.
+    expect(band(run(banded, 1))).toBeLessThan(0.7);
+    // A quarter of it (in log): 0.6^0.25 ≈ 0.88.
+    const softened = run(banded);
+    expect(band(softened)).toBeGreaterThan(0.84);
+    expect(band(softened)).toBeLessThan(0.95);
+    // The floor (not restored) is the model's, pixel for pixel.
+    const floor = (image: Pixels) => image.data.slice(image.width * 4 * 2 * 115);
+    expect(floor(softened)).toEqual(floor(banded));
+    // Even light has next to nothing to soften: a quarter and all of it give almost the same picture
+    // (the blurs of the model's and the render's joints differ a little near the wall's rim).
+    const even = tiled(24);
+    const a = run(even),
+      b = run(even, 1);
+    let most = 0;
+    for (let i = 0; i < a.data.length; i++) most = Math.max(most, Math.abs(a.data[i] - b.data[i]));
+    expect(most).toBeLessThanOrEqual(6);
+    expect(Math.abs(mean(a, 10, 10, 230, 100) - mean(b, 10, 10, 230, 100))).toBeLessThan(1);
+  });
 });
 
 describe('the composite with joints', () => {
@@ -203,12 +235,13 @@ describe('the composite with joints', () => {
 
 describe('the joints notice', () => {
   const colors = { status: 'corrected' as const, warnings: [] };
-  it('says which faces got the design joints back, after the colour line, and that only the light is the model’s', () => {
+  it('says which faces got the design joints back and their light softened, after the colour line, and that only the products are the model’s', () => {
     const notices = fluxResultNotices({ products: [], colors, corrected: true, showTiles: false, joints: 2 });
     expect(notices.infos.map((info) => info.key)).toEqual(['color', 'joints']);
-    expect(notices.infos[0].text).toContain('빛과 제품·유리는 AI 결과 그대로예요.');
+    expect(notices.infos[0].text).toContain('. 제품·유리는 AI 결과 그대로예요.');
+    expect(notices.infos[0].text).not.toContain('빛과');
     expect(notices.infos[1].text).toBe(
-      '벽·바닥 2면의 타일 줄눈·무늬를 설계대로 되돌렸어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.',
+      '벽·바닥 2면의 타일 줄눈·무늬를 설계대로 되돌리고, AI가 그린 빛 줄기·그림자는 옅게 했어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.',
     );
   });
   it('says the original differs when the model’s own picture is shown, and nothing without restored faces', () => {
