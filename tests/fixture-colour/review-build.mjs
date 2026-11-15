@@ -57,7 +57,8 @@ writeFileSync(
       title: '세면대·변기 색 평가',
       flags: [],
       pairQuestion: '어느 쪽 세면대·변기가 내 설계(흰 도기)에 더 가깝고 자연스럽나',
-      pairHint: '세면대·변기·욕조의 색과 밝기, 둘레에 테두리·얼룩이 없는지를 봐 주세요. 느낀 점은 글로 적어 주세요.',
+      pairHint:
+        '세면대·변기·욕조의 색과 밝기, 둘레에 테두리·얼룩이 없는지를 봐 주세요. 느낀 점은 글로 적어 주세요.',
       singles: [],
       pairs: items,
     },
@@ -65,5 +66,8 @@ writeFileSync(
     1,
   ),
 );
-writeFileSync(join(dir, 'key.json'), JSON.stringify({ pairs: Object.fromEntries(pairs.map((p, k) => [id(k), p])) }, null, 1));
+writeFileSync(
+  join(dir, 'key.json'),
+  JSON.stringify({ pairs: Object.fromEntries(pairs.map((p, k) => [id(k), p])) }, null, 1),
+);
 console.log(`${set}: ${pairs.length} pairs, about ${Math.round((pairs.length * 8) / 60)} min`);

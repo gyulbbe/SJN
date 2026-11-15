@@ -21,6 +21,7 @@ import type { FluxCheckWall } from '@/lib/ai-export/check-contract';
 import { fluxResultNotices, readFluxCheck, type FluxNoticeInput } from '@/lib/ai-export/notices';
 import { FLUX_FRONT, fluxOrbitView, snapFluxOrbit } from '@/lib/ai-export/view';
 import { restoreBackdrop } from '@/lib/ai-export/backdrop';
+import { restoreFixtureLightness } from '@/lib/ai-export/fixture-light';
 import { restoreResultJoints } from '@/lib/ai-export/joints';
 import type { RoomOrbit, RoomViewState } from '@/lib/room-viewer/view-state';
 import AiViewPicker, { type AiPreview } from './ai-view-picker';
@@ -199,6 +200,8 @@ export default function AiExport({
   const [showOriginal, setShowOriginal] = useState(false);
   /** How many walls and floors of the shown result got the design's joints back (joints.ts). */
   const [jointFaces, setJointFaces] = useState(0);
+  /** White ceramics whose lightness went back (fixture-light.ts); 0 when none did. */
+  const [ceramicFixtures, setCeramicFixtures] = useState(0);
   const [shifted, setShifted] = useState(false);
   /** The model reframed an outside view, so its white margin could not be put back. */
   const [marginKept, setMarginKept] = useState(false);
@@ -277,6 +280,7 @@ export default function AiExport({
     setColors(undefined);
     setShowOriginal(false);
     setJointFaces(0);
+    setCeramicFixtures(0);
   }, []);
   function chooseMethod(next: FluxMethod) {
     if (busy || next === method) return;
@@ -301,6 +305,7 @@ export default function AiExport({
     setColors(undefined);
     setShowOriginal(false);
     setJointFaces(0);
+    setCeramicFixtures(0);
     setShifted(false);
     const started = performance.now();
     let timer = setTimeout(() => controller.abort(), 190_000);
@@ -536,7 +541,19 @@ export default function AiExport({
             ...(joints?.image && frame ? { alignment: { dx: frame.dx, dy: frame.dy } } : {}),
           });
           if (!live.current) return;
-          const shownPixels = review.corrected ?? joints?.image;
+          // Last, the white ceramics the model drew much darker get their lightness back (fixture-light.ts).
+          const corrected = review.corrected ?? joints?.image;
+          const ceramics = review.framing.aligned
+            ? restoreFixtureLightness({
+                capture,
+                mask,
+                layout,
+                fixtures: state.current.grounding?.scene?.fixtures ?? [],
+                result: corrected ?? raw,
+                frame: review.framing,
+              })
+            : undefined;
+          const shownPixels = ceramics?.image ?? corrected;
           if (!review.framing.aligned) setColors({ status: 'reframed' });
           else if (shownPixels) {
             const correctedUrl = URL.createObjectURL(await pixelsToPng(shownPixels));
@@ -544,6 +561,7 @@ export default function AiExport({
             if (!live.current) return;
             setResult((previous) => (previous.url === url ? { ...previous, correctedUrl } : previous));
             setJointFaces(joints?.restored.length ?? 0);
+            setCeramicFixtures(ceramics?.image ? ceramics.fixtures.filter((f) => f.added > 0).length : 0);
             if (review.corrected)
               setColors({ status: 'corrected', warnings: review.warnings, unmatched: review.unmatched });
           }
@@ -629,6 +647,7 @@ export default function AiExport({
     colors: colors?.status === 'corrected' && !result.correctedUrl ? undefined : colors,
     corrected: !showOriginal,
     ...(jointFaces ? { joints: jointFaces } : {}),
+    ...(ceramicFixtures ? { ceramics: ceramicFixtures } : {}),
     showTiles: FLUX_SHOW_TILE_NOTICE,
     regionWalls: state.current.regionWalls,
     ...(mode ? { composite: { shifted, ...(refineSummary ? { refine: refineSummary } : {}) } } : {}),
@@ -791,7 +810,7 @@ export default function AiExport({
               <a
                 className="btn"
                 href={shown}
-                download={`${filename}-${shownModel}${shown === result.url && result.correctedUrl ? (jointFaces ? '-AI원본' : '-AI원본색') : ''}.png`}
+                download={`${filename}-${shownModel}${shown === result.url && result.correctedUrl ? (jointFaces || ceramicFixtures ? '-AI원본' : '-AI원본색') : ''}.png`}
               >
                 {shownName} PNG 저장
               </a>
@@ -803,7 +822,7 @@ export default function AiExport({
                 aria-pressed={showOriginal}
                 onClick={() => setShowOriginal((value) => !value)}
               >
-                {jointFaces
+                {jointFaces || ceramicFixtures
                   ? showOriginal
                     ? '보정한 그림 보기'
                     : 'AI 원본 보기'

@@ -17,7 +17,12 @@ import { parseAccountFile, sendFlux } from '../direction-photo-methods/flux-send
 import { loadScene, pixels, png } from '../extra-ai/app-view';
 import { admit, BUDGET_STOP, isLimit, spent, type LedgerRow } from '../extra-ai/budget';
 import { FLUX_4B, fluxRequest } from '../extra-ai/methods';
-import { ACCOUNT_FILES, OTHER_LEDGERS as EXTRA_OTHERS, LEDGER as EXTRA_LEDGER, SCENES } from '../extra-ai/paths.mjs';
+import {
+  ACCOUNT_FILES,
+  OTHER_LEDGERS as EXTRA_OTHERS,
+  LEDGER as EXTRA_LEDGER,
+  SCENES,
+} from '../extra-ai/paths.mjs';
 import { OUT } from './paths.mjs';
 import { brightenCeramics } from './w2';
 
@@ -117,10 +122,24 @@ for (const job of pending) {
   writeFileSync(
     `${file}.json`,
     JSON.stringify(
-      { round: 'w2', engine: 'second', ...job, ms, estimate: request.estimate, prompt: request.prompt, lifted: lifted.lifted },
+      {
+        round: 'w2',
+        engine: 'second',
+        ...job,
+        ms,
+        estimate: request.estimate,
+        prompt: request.prompt,
+        lifted: lifted.lifted,
+      },
       null,
       1,
     ),
   );
-  console.log('ok', job.scene, job.seed, `${ms} ms`, lifted.lifted.map((l) => `${l.kind} ${l.from}+${l.add}`).join(', '));
+  console.log(
+    'ok',
+    job.scene,
+    job.seed,
+    `${ms} ms`,
+    lifted.lifted.map((l) => `${l.kind} ${l.from}+${l.add}`).join(', '),
+  );
 }

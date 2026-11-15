@@ -28,12 +28,20 @@ export function brightenCeramics(input: {
   fixtures: readonly FluxFixture[];
 }): { image: Pixels; lifted: { kind: FluxFixture['kind']; from: number; add: number }[] } {
   const { width, height } = input.image;
-  const { mask, kinds } = fixtureMask(projectMask(input.mask, input.layout, { width, height }), input.fixtures, CERAMIC_KINDS);
+  const { mask, kinds } = fixtureMask(
+    projectMask(input.mask, input.layout, { width, height }),
+    input.fixtures,
+    CERAMIC_KINDS,
+  );
   const sums = mask.regions.map(() => ({ L: 0, n: 0 }));
   for (let i = 0; i < mask.data.length; i++) {
     const label = mask.data[i];
     if (!label) continue;
-    sums[label - 1].L += rgbToLab(input.image.data[i * 4], input.image.data[i * 4 + 1], input.image.data[i * 4 + 2])[0];
+    sums[label - 1].L += rgbToLab(
+      input.image.data[i * 4],
+      input.image.data[i * 4 + 1],
+      input.image.data[i * 4 + 2],
+    )[0];
     sums[label - 1].n++;
   }
   const add = sums.map((s) => (s.n >= 30 ? Math.max(0, W2_TARGET_L - s.L / s.n) : 0));
@@ -62,6 +70,10 @@ export function brightenCeramics(input: {
   void FIXTURE_REGION;
   return {
     image: { width, height, data: out },
-    lifted: sums.map((s, k) => ({ kind: kinds[k], from: s.n ? +(s.L / s.n).toFixed(1) : 0, add: +add[k].toFixed(1) })),
+    lifted: sums.map((s, k) => ({
+      kind: kinds[k],
+      from: s.n ? +(s.L / s.n).toFixed(1) : 0,
+      add: +add[k].toFixed(1),
+    })),
   };
 }

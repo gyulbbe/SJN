@@ -248,6 +248,11 @@ export type FluxNoticeInput = {
    * (joints.ts); absent or 0 when none did. Shown only with the corrected result.
    */
   joints?: number;
+  /**
+   * How many white ceramics (toilet, washbasin, bathtub) the model drew much darker got their
+   * lightness back (fixture-light.ts); absent or 0 when none did. Shown only with the corrected result.
+   */
+  ceramics?: number;
   /** Tile-layout answers are shown only when they proved reliable enough. */
   showTiles: boolean;
   /** Walls with a region: another tile there is intended, so a tile-layout answer about them is no warning. */
@@ -342,10 +347,12 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
       });
   }
   // With joints put back, the faces' texture is the design's: only the light stays the model's.
+  // With ceramics brightened, their lightness is no longer the model's either (their shape is).
+  const productWords = input.ceramics && input.corrected ? '제품 모양·유리' : '제품·유리';
   const tail =
     input.joints && input.corrected
-      ? '빛과 제품·유리는 AI 결과 그대로예요.'
-      : '명암·질감과 제품·유리는 AI 결과 그대로예요.';
+      ? `빛과 ${productWords}는 AI 결과 그대로예요.`
+      : `명암·질감과 ${productWords}는 AI 결과 그대로예요.`;
   if (colors?.status === 'corrected') {
     const shifted = colorChangeLines(colors.warnings),
       lightened = lightnessChangeLines(colors.warnings),
@@ -395,6 +402,15 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
         ? `벽·바닥 ${input.joints}면의 타일 줄눈·무늬를 설계대로 되돌렸어요. 그 면에 AI가 그린 작은 물건은 지워졌을 수 있어요.`
         : `AI 원본이에요. 타일 줄눈·무늬는 AI가 그린 그대로라 설계와 다를 수 있어요.`,
     });
+  if (input.ceramics && input.corrected) {
+    // Right after the colour and joints lines: what else the corrected picture changed.
+    let at = 0;
+    while (at < infos.length && (infos[at].key === 'color' || infos[at].key === 'joints')) at++;
+    infos.splice(at, 0, {
+      key: 'ceramics',
+      text: `AI가 어둡게 그린 도기(세면대·변기·욕조) ${input.ceramics}개는 밝기를 설계 쪽으로 되돌렸어요.`,
+    });
+  }
   if (check?.status === 'failed')
     infos.push({
       key: 'check',

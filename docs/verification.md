@@ -2,6 +2,12 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-15 — AI 변환에서 어두워진 흰 도기 밝기 되돌리기
+
+- 무엇: 지금 방식의 결과에서 흰 도기(변기·세면대·욕조)를 모델이 렌더보다 많이 어둡게 그렸으면 벽·바닥과 같은 규칙으로 L\*만 되돌린다(`src/lib/ai-export/fixture-light.ts`). 안내 한 줄과 "AI 원본 보기". AI 호출·보내는 그림·저장 형식·API·SQL은 그대로다.
+- 확인: `tests/fixture-light.test.ts`, `flux-joints`·`flux-notices`·`flux-color` 시험, `tests/fixture-colour/pictures.ts`(시험 W1과 앱 코드 그림 96장 픽셀 같음, 열지 않은 8장 확대 확인), e2e `flux-export`, typecheck, lint.
+- 결과: [결과 문서](fixture-colour-20261115.md).
+
 ## 2026-11-15 — 비스듬한 옆벽의 줄눈 최소 굵기
 
 - 무엇: 줄눈 최소 1px을 화면에서 눌린 축(그 축의 픽셀 크기가 다른 축의 1.5배 넘음)에서는 서서히 빼서 3배부터 실제 굵기로 그린다(2D·3D 공용 `TILE_JOINT_WIDTH_GLSL`). 정면처럼 바로 보이는 면은 픽셀까지 그대로다. `DESIGN_RENDER_REVISION` 5 → 6(브라우저 안 시안 미리보기만 새로 그림). `ROOM_VIEWER_RENDERER_REVISION`은 올리지 않았다(올리면 모든 프로젝트 요약이 오래된 것이 되어 목록마다 R2를 읽음). 저장 형식·API·SQL은 그대로다.
