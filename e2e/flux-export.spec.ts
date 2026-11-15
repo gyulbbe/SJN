@@ -840,6 +840,10 @@ test('the AI input is the outside view turned in the live 3D preview, its white 
 test('composite export (chosen in the dialog): the room goes out empty, our products come back at their render pixels', async ({
   page,
 }, testInfo) => {
+  // Four conversions (A, A again, B, C). In this software-WebGL browser each capture takes about
+  // 14 s (the frame, its room/fixture layers and the widened-joint render with its own renderer),
+  // and B's framing search about 8 s more: about 105 s of 120 s, so the shared limit was too tight.
+  test.setTimeout(180_000);
   const sent: { scene: { fixtures: unknown[]; mode?: string } }[] = [];
   const checks: { fixtures: unknown[]; room?: string }[] = [];
   let shift = 0;
@@ -914,7 +918,6 @@ test('composite export (chosen in the dialog): the room goes out empty, our prod
   await expect(methods.getByRole('radio', { name: '실험 A · 빈 방 합성', exact: true })).toBeChecked();
   await expect(dialog.getByTestId('flux-composite-note')).toContainText('AI에는 제품을 뺀 빈 방');
   const result = dialog.getByAltText('FLUX 4B 현장 사진 변환 결과');
-  const source = dialog.getByAltText('AI 변환 기준 원본');
   await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
   const warning = dialog.getByRole('alert');
   await expect(warning).toContainText('배치하지 않은 물건이 생겼을 수 있어요: 유리 칸막이(가운데)', {
@@ -927,32 +930,42 @@ test('composite export (chosen in the dialog): the room goes out empty, our prod
   expect(checks[0]).toMatchObject({ fixtures: [], room: 'empty' });
   // The shown result is on the capture grid and carries the product at the render's pixels (the
   // reference is the full render), though the model's room had none.
-  const pixels = (locator: import('@playwright/test').Locator) =>
-    locator.evaluate(async (element) => {
-      const image = element as HTMLImageElement;
-      await image.decode();
-      const canvas = document.createElement('canvas');
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      const context = canvas.getContext('2d')!;
-      context.drawImage(image, 0, 0);
-      return {
-        width: canvas.width,
-        height: canvas.height,
-        data: [...context.getImageData(0, 0, canvas.width, canvas.height).data],
+  // Compared in the page: only the counts come back (sending both pictures' pixels to the test as
+  // number arrays took about 18 s of this test's time).
+  await expect(result).toBeVisible();
+  const { shown, reference, blue, blueKept } = await dialog.evaluate(
+    async (element, alts) => {
+      const read = async (alt: string) => {
+        const image = element.querySelector<HTMLImageElement>(`img[alt="${alt}"]`)!;
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext('2d')!;
+        context.drawImage(image, 0, 0);
+        return context.getImageData(0, 0, canvas.width, canvas.height);
       };
-    });
-  const [shown, reference] = await Promise.all([pixels(result), pixels(source)]);
-  expect([shown.width, shown.height]).toEqual([reference.width, reference.height]);
-  let blue = 0,
-    blueKept = 0;
-  for (let i = 0; i < reference.data.length; i += 4) {
-    if (reference.data[i + 2] <= reference.data[i] + 60) continue;
-    blue++;
-    const change =
-      Math.abs(shown.data[i] - reference.data[i]) + Math.abs(shown.data[i + 2] - reference.data[i + 2]);
-    if (change <= 12) blueKept++;
-  }
+      const [shown, reference] = await Promise.all([read(alts.result), read(alts.source)]);
+      let blue = 0,
+        blueKept = 0;
+      if (shown.width === reference.width && shown.height === reference.height)
+        for (let i = 0; i < reference.data.length; i += 4) {
+          if (reference.data[i + 2] <= reference.data[i] + 60) continue;
+          blue++;
+          const change =
+            Math.abs(shown.data[i] - reference.data[i]) + Math.abs(shown.data[i + 2] - reference.data[i + 2]);
+          if (change <= 12) blueKept++;
+        }
+      return {
+        shown: [shown.width, shown.height],
+        reference: [reference.width, reference.height],
+        blue,
+        blueKept,
+      };
+    },
+    { result: 'FLUX 4B 현장 사진 변환 결과', source: 'AI 변환 기준 원본' },
+  );
+  expect(shown).toEqual(reference);
   expect(blue).toBeGreaterThan(100);
   expect(blueKept / blue).toBeGreaterThan(0.95);
   await warning.scrollIntoViewIfNeeded();
