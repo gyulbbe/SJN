@@ -40,8 +40,8 @@ for (const id of scenes) {
   const layers: RoomLayers = {
     width: empty.width,
     height: empty.height,
-    full: Uint8ClampedArray.from(await rgba(join(layersDir, "full.png"))),
-    shadowed: Uint8ClampedArray.from(await rgba(join(layersDir, "behind.png"))),
+    full: Uint8ClampedArray.from(await rgba(join(layersDir, 'full.png'))),
+    shadowed: Uint8ClampedArray.from(await rgba(join(layersDir, 'behind.png'))),
     empty: Uint8ClampedArray.from(empty.data),
     coverage: new Uint8Array(await sharp(join(layersDir, 'coverage.png')).extractChannel(0).raw().toBuffer()),
   };
@@ -63,8 +63,18 @@ for (const id of scenes) {
     const shown = composed.corrected ?? composed.raw;
     writeFileSync(join(dir, `${id}-a-${seed}.png`), await png(shown));
     writeFileSync(join(dir, `${id}-a-${seed}.raw.png`), await png(composed.raw));
-    rows.push({ id: `${id}-a-${seed}`, scene: id, seed, shifted: composed.shifted, floor: composed.floor, ms });
+    rows.push({
+      id: `${id}-a-${seed}`,
+      scene: id,
+      seed,
+      shifted: composed.shifted,
+      floor: composed.floor,
+      ms,
+    });
     console.log(id, seed, 'shifted', composed.shifted, 'floor', JSON.stringify(composed.floor), `${ms} ms`);
   }
 }
-writeFileSync(join(OUT as string, `pictures-a${holdout ? '-holdout' : ''}.json`), JSON.stringify(rows, null, 1));
+writeFileSync(
+  join(OUT as string, `pictures-a${holdout ? '-holdout' : ''}.json`),
+  JSON.stringify(rows, null, 1),
+);

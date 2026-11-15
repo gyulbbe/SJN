@@ -110,9 +110,6 @@ export function appView(
   restoreBelow?: number,
   /** The AI-light trial: how much of the model's light shape a restored face keeps. */
   lightKeep?: number,
-  /** The photo-product trial: the band around fixtures, in light-blur radii (0 none). */
-  fixtureBand?: number,
-  fixtureKeep?: boolean,
 ): AppView {
   const { capture, mask, layout } = scene;
   const size = { width: result.width, height: result.height };
@@ -135,8 +132,6 @@ export function appView(
         frame: again,
         restoreBelow,
         lightKeep,
-        fixtureBand,
-        fixtureKeep,
       })
     : undefined;
   // O3 after the joints: on a face whose joints were put back the model's moved joints are gone, so

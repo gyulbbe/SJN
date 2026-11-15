@@ -8,7 +8,7 @@
  * model's light around it (the ring's light over the render's, within composite.ts MIN_GAIN–MAX_GAIN)
  * and softened over the edge's inner pixel so the outline never grows. Everything else stays.
  */
-import { lightGain, toByte, toLinear, type Gain } from './composite';
+import { lightGain, toByte, toLinear, type Gain } from '../../src/lib/ai-export/composite';
 import {
   FIXTURE_REGION,
   projectCapture,
@@ -16,10 +16,10 @@ import {
   shiftMask,
   type Pixels,
   type RegionMask,
-} from './color';
-import type { FluxInputLayout } from './contract';
-import { fixtureMask } from './fixture-light';
-import { FLUX_FIXTURE_KINDS, type FluxFixture } from './scene-contract';
+} from '../../src/lib/ai-export/color';
+import type { FluxInputLayout } from '../../src/lib/ai-export/contract';
+import { fixtureMask } from '../../src/lib/ai-export/fixture-light';
+import { FLUX_FIXTURE_KINDS, type FluxFixture } from '../../src/lib/ai-export/scene-contract';
 
 /** The ring of room around a product that sets its light, in result pixels from its outline. */
 export const PHOTO_RING = [3, 16] as const;

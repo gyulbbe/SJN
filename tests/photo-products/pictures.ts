@@ -10,24 +10,18 @@
  *   holdout  the same on the held-out scenes
  * Output: test-results/photo-products-20261115/pictures/<id>.<p0|p>.png and pictures-<set>.json
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   framing,
   projectCapture,
-  reviewResultColors,
   projectMask,
   rgbToLab,
   shiftMask,
   type Pixels,
-  type RegionMask,
 } from '../../src/lib/ai-export/color';
-import sharp from 'sharp';
 import { fixtureMask, restoreFixtureLightness } from '../../src/lib/ai-export/fixture-light';
-import { restoreBackdrop } from '../../src/lib/ai-export/backdrop';
-import { restoreResultJoints } from '../../src/lib/ai-export/joints';
-import { modelFixtureMask } from '../../src/lib/ai-export/model-fixtures';
-import { pastePhotoProducts } from '../../src/lib/ai-export/photo-products';
+import { pastePhotoProducts } from './paste';
 import { FLUX_FIXTURE_KINDS } from '../../src/lib/ai-export/scene-contract';
 import { appView, loadScene, pixels, png } from '../extra-ai/app-view';
 import { OUT, PHOTOS_RESULTS, PHOTOS_SCENE } from './paths.mjs';
@@ -37,16 +31,12 @@ const arg = (name: string, fallback = '') => {
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 const set = arg('set', 'step0');
-/** The joint restore's band around fixtures (joints.ts FIXTURE_BAND), in light-blur radii. */
-const band = Number(arg('band', '0'));
-/** Whether the model's own fixture stays in the band (joints.ts FIXTURE_KEEP). */
-const keep = arg('keep', '1') !== '0';
 /**
- * Whether the steps follow the model's fixtures (model-fixtures.ts) with the render's walls behind its
- * fixtures (behind.ts): `-e` pictures.
+ * The band (`--band`) and empty-room-layer (`--behind`) modes of the haze trial needed trial options in
+ * the app's steps, removed after the trial (they are in commit feaa5ab); their pictures stay in
+ * test-results (pictures-b2*, pictures-b2n-e).
  */
-const behind = process.argv.includes('--behind');
-const tag = (band ? `-b${band}${keep ? '' : 'n'}` : '') + (behind ? '-e' : '');
+const tag = '';
 const dir = join(OUT as string, `pictures${tag}`);
 mkdirSync(dir, { recursive: true });
 
@@ -108,78 +98,6 @@ function productLightness(image: Pixels, labels: Uint8Array, count: number) {
   return sums.map((s) => (s.n ? +(s.L / s.n).toFixed(1) : null));
 }
 
-type View = {
-  checked: Pixels;
-  shown: Pixels;
-  aligned: boolean;
-  resultMask?: RegionMask;
-  moved?: { added: number; removed: number };
-  ms?: number;
-};
-/** As app-view.ts appView, with the steps following the model's fixtures and the render behind them. */
-async function behindView(
-  sceneId: string,
-  scene: Awaited<ReturnType<typeof loadScene>>,
-  result: Pixels,
-): Promise<View> {
-  const layers = join(OUT as string, 'behind', sceneId);
-  const behindCapture = await pixels(join(layers, 'behind.png'));
-  const regions = JSON.parse(readFileSync(join(layers, 'regions-behind.json'), 'utf8')) as Omit<
-    RegionMask,
-    'data'
-  >;
-  const behindMask: RegionMask = {
-    ...regions,
-    data: new Uint8Array(await sharp(join(layers, 'mask-behind.png')).extractChannel(0).raw().toBuffer()),
-  };
-  const { capture, mask, layout } = scene;
-  const size = { width: result.width, height: result.height };
-  const reference = projectCapture(capture, layout, size);
-  const first = framing(reference, result);
-  const checked =
-    (first.aligned && mask.outside
-      ? restoreBackdrop({ result, capture, mask, layout, shift: first })
-      : undefined) ?? result;
-  if (!first.aligned) return { checked, shown: checked, aligned: false };
-  const again = framing(reference, checked);
-  if (!again.aligned) return { checked, shown: checked, aligned: false };
-  const started = performance.now();
-  const model = modelFixtureMask({
-    model: checked,
-    renderMask: shiftMask(projectMask(mask, layout, size), again.dx, again.dy),
-    behindMask: shiftMask(projectMask(behindMask, layout, size), again.dx, again.dy),
-  });
-  const joints = restoreResultJoints({
-    capture,
-    joints: scene.joints,
-    mask,
-    layout,
-    result: checked,
-    frame: again,
-    behind: behindCapture,
-    resultMask: model.mask,
-    fixtureBand: band,
-    fixtureKeep: false,
-  });
-  const onto = joints.image ?? checked;
-  const review = reviewResultColors({
-    capture,
-    mask,
-    layout,
-    result: onto,
-    alignment: { dx: again.dx, dy: again.dy },
-    resultMask: model.mask,
-  });
-  return {
-    checked,
-    shown: review.framing.aligned ? (review.corrected ?? onto) : checked,
-    aligned: review.framing.aligned,
-    resultMask: model.mask,
-    moved: { added: model.added, removed: model.removed },
-    ms: Math.round(performance.now() - started),
-  };
-}
-
 const rows = [];
 for (const source of sources) {
   if (!existsSync(source.result)) continue;
@@ -187,9 +105,7 @@ for (const source of sources) {
   const result = await pixels(source.result);
   const size = { width: result.width, height: result.height };
   const reference = projectCapture(scene.capture, scene.layout, size);
-  const view: View = behind
-    ? await behindView(source.scene, scene, result)
-    : appView(scene, result, undefined, undefined, undefined, band, keep);
+  const view = appView(scene, result);
   if (!view.aligned) {
     rows.push({ ...source, aligned: false });
     console.log(source.id, 'not aligned');
@@ -204,7 +120,6 @@ for (const source of sources) {
       fixtures: scene.scene.fixtures,
       result: view.shown,
       frame,
-      ...(view.resultMask ? { resultMask: view.resultMask } : {}),
     }).image ?? view.shown;
 
   const started = performance.now();
@@ -243,7 +158,6 @@ for (const source of sources) {
       ring: x.ringPixels,
     })),
     ms: Math.round(ms),
-    ...(view.moved ? { moved: view.moved, behindMs: view.ms } : {}),
   };
   rows.push(row);
   console.log(
