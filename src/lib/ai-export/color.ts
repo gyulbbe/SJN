@@ -539,6 +539,12 @@ export type CorrectionOptions = {
    * not always where the render has them, and the correction stays off them.
    */
   underFixtures?: boolean;
+  /**
+   * The fixtures in the mask are where the model drew them (model-fixtures, on trial): the fades next
+   * to them (FADE_PX, FADE_L_PX), there because the model's fixture was not exactly where the
+   * render's is, shrink to this many pixels.
+   */
+  fixtureFade?: number;
 };
 /** The mask's labels with each fixture pixel given the face nearest to it (chamfer propagation). */
 function fillFixtures(mask: RegionMask): Uint8Array {
@@ -676,8 +682,10 @@ export function correctFaces(
   const out = new Uint8ClampedArray(result.data);
   for (let i = 0; i < labels.length; i++) {
     if (!shifts.has(labels[i])) continue;
-    const k = Math.min(1, Math.max(0, (open[i] - 1) / FADE_PX));
-    const kL = Math.min(1, Math.max(0, (open[i] - 1) / FADE_L_PX));
+    const fade = options.fixtureFade ?? FADE_PX,
+      fadeL = options.fixtureFade ?? FADE_L_PX;
+    const k = fade > 0 ? Math.min(1, Math.max(0, (open[i] - 1) / fade)) : 1;
+    const kL = fadeL > 0 ? Math.min(1, Math.max(0, (open[i] - 1) / fadeL)) : 1;
     const da = smoothA[i] * k,
       db = smoothB[i] * k,
       dL = smoothL[i] * (kL * kL * (3 - 2 * kL));
@@ -722,6 +730,11 @@ export function reviewResultColors(input: {
   alignment?: { dx: number; dy: number };
   /** See CorrectionOptions.underFixtures: the composite's empty room. */
   underFixtures?: boolean;
+  /**
+   * The result's own regions (model-fixtures.ts: where the model drew its fixtures), at its size and
+   * moved by its shift; by default the render's, moved.
+   */
+  resultMask?: RegionMask;
 }): ColorReview {
   const size = { width: input.result.width, height: input.result.height };
   const reference = projectCapture(input.capture, input.layout, size);
@@ -729,12 +742,15 @@ export function reviewResultColors(input: {
   const searched = framing(reference, input.result);
   const frame = input.alignment ? { ...searched, ...input.alignment, aligned: true } : searched;
   if (!frame.aligned) return { framing: frame, changes: [], warnings: [], unmatched: [] };
-  const resultMask = shiftMask(referenceMask, frame.dx, frame.dy);
+  const resultMask = input.resultMask ?? shiftMask(referenceMask, frame.dx, frame.dy);
   const changes = compareFaces(reference, input.result, referenceMask, resultMask);
   // No tiled wall or floor large enough to compare (an empty room): nothing to say or change.
   if (!changes.length) return { framing: frame, changes, warnings: [], unmatched: [] };
   const warnings = changes.filter(isColorWarning);
-  const corrected = correctFaces(input.result, resultMask, changes, { underFixtures: input.underFixtures });
+  const corrected = correctFaces(input.result, resultMask, changes, {
+    underFixtures: input.underFixtures,
+    ...(input.resultMask ? { fixtureFade: 1 } : {}),
+  });
   const residual = compareFaces(reference, corrected, referenceMask, resultMask);
   const unmatched = residual.filter((change) => Math.abs(change.lightnessDelta) > LIGHTNESS_RESIDUAL_L);
   return { framing: frame, changes, warnings, corrected, residual, unmatched };

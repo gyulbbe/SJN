@@ -116,11 +116,15 @@ export function restoreFixtureLightness(input: {
   fixtures: readonly FluxFixture[];
   result: Pixels;
   frame: { dx: number; dy: number };
+  /** The result's regions where the model drew its fixtures (model-fixtures.ts), moved by its shift. */
+  resultMask?: RegionMask;
 }): { image?: Pixels; fixtures: FixtureLight[] } {
   const size = { width: input.result.width, height: input.result.height };
   const { mask, kinds } = fixtureMask(projectMask(input.mask, input.layout, size), input.fixtures);
   if (!mask.regions.length) return { fixtures: [] };
-  const moved = shiftMask(mask, input.frame.dx, input.frame.dy);
+  const moved = input.resultMask
+    ? fixtureMask(input.resultMask, input.fixtures).mask
+    : shiftMask(mask, input.frame.dx, input.frame.dy);
   const before = fixtureMeans(projectCapture(input.capture, input.layout, size), mask),
     after = fixtureMeans(input.result, moved);
   const fixtures: FixtureLight[] = [];
