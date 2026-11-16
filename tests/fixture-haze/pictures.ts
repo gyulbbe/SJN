@@ -1,8 +1,9 @@
 /**
  * The fixture-haze trial's pictures (no AI call, docs/fixture-haze-20261116.md): each result as the
  * app shows it today (`p0`: backdrop, joints and pattern, colours, ceramics' lightness, all on the
- * render's fixture outline) and with F1 (`f1`: the same steps on the outline the model drew, cutout.ts
- * and model-mask.ts, with the render's walls behind its fixtures from behind.ts).
+ * render's fixture outline) and with F1 (`f1`: the app's same steps on the outline the model drew,
+ * src/lib/ai-export/current-refine.ts and fixture-outline.ts, with the cut-outs of cutout.ts and the
+ * render's walls behind its fixtures from behind.ts).
  *
  * Usage: node tests/run-browser-test.mjs tests/fixture-haze/pictures.ts [--set dev|holdout|new|new-holdout]
  * Output: test-results/fixture-haze-20261116/pictures/<id>.{p0,f1}.png, pictures-<set>.json
@@ -11,20 +12,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { restoreBackdrop } from '../../src/lib/ai-export/backdrop';
-import {
-  framing,
-  projectCapture,
-  projectMask,
-  reviewResultColors,
-  shiftMask,
-  type Pixels,
-  type RegionMask,
-} from '../../src/lib/ai-export/color';
+import { framing, projectCapture, type Pixels, type RegionMask } from '../../src/lib/ai-export/color';
 import { restoreFixtureLightness } from '../../src/lib/ai-export/fixture-light';
-import { restoreResultJoints } from '../../src/lib/ai-export/joints';
 import type { FluxScene } from '../../src/lib/ai-export/scene-contract';
 import { appView, loadScene, pixels, png } from '../extra-ai/app-view';
-import { cutoutMask, type Cut } from './model-mask';
+import { refineCurrentResult } from '../../src/lib/ai-export/current-refine';
+import { type Cut } from '../../src/lib/ai-export/fixture-outline';
 import { OUT } from './paths.mjs';
 import { haze, type HazeSet } from './sources';
 
@@ -112,34 +105,19 @@ for (const source of haze(set)) {
           shift: first,
         })
       : undefined) ?? result;
-  const again = framing(reference, checked);
-  const model = cutoutMask({
-    model: checked,
-    renderMask: shiftMask(projectMask(scene.mask, scene.layout, size), again.dx, again.dy),
-    behindMask: shiftMask(projectMask(behindMask, scene.layout, size), again.dx, again.dy),
+  // The app's own finishing steps (current-refine.ts) with the model's fixture outline.
+  const refined = refineCurrentResult({
+    raw: checked,
+    capture: scene.capture,
+    mask: scene.mask,
+    layout: scene.layout,
+    joints: scene.joints,
     fixtures: scene.scene.fixtures,
+    behind: { image: behind, mask: behindMask },
     cuts: await cutsOf(source.id, scene.scene, size),
   });
-  const joints = restoreResultJoints({
-    capture: scene.capture,
-    joints: scene.joints,
-    mask: scene.mask,
-    layout: scene.layout,
-    result: checked,
-    frame: again,
-    behind,
-    resultMask: model.mask,
-  });
-  const onto = joints.image ?? checked;
-  const review = reviewResultColors({
-    capture: scene.capture,
-    mask: scene.mask,
-    layout: scene.layout,
-    result: onto,
-    alignment: { dx: again.dx, dy: again.dy },
-    resultMask: model.colourMask,
-  });
-  const f1 = ceramics(review.corrected ?? onto, model.colourMask);
+  const model = refined.outline ?? { verdicts: [], added: 0, removed: 0 };
+  const f1 = refined.shown ?? checked;
   const ms = Math.round(performance.now() - started);
   writeFileSync(join(dir, `${source.id}.p0.png`), await png(p0));
   writeFileSync(join(dir, `${source.id}.f1.png`), await png(f1));

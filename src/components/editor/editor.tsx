@@ -1534,6 +1534,19 @@ function EditorWorkspace({ id, adminContext, guestContext, layoutStudio }: Edito
         view,
       );
       const layers = composite ? roomRenderer.exportLayers(view, { longEdge: edge }) : undefined;
+      // Today's method: the room behind the fixtures (never sent), for finishing the result on the
+      // fixture outline the model drew (fixture-outline.ts). Without it the render's outline is used.
+      let behind: FluxCaptureSource['behind'];
+      if (!composite)
+        try {
+          const own = roomRenderer.exportLayers(view, { longEdge: edge });
+          behind = {
+            image: { width: own.width, height: own.height, data: own.shadowed },
+            regions: roomRenderer.regionMask(regions.width, regions.height, view, { withoutFixtures: true }),
+          };
+        } catch {
+          behind = undefined;
+        }
       // Each repaintable product alone, large, from the very camera of the frame above; the real
       // product's photo goes with it (read from the saved assets, never from the room).
       let refined: FluxCaptureSource['refine'];
@@ -1609,6 +1622,7 @@ function EditorWorkspace({ id, adminContext, guestContext, layoutStudio }: Edito
         ...(layers ? { layers } : {}),
         ...(refined ? { refine: refined } : {}),
         ...(joints ? { joints } : {}),
+        ...(behind ? { behind } : {}),
       };
     } finally {
       roomRenderer.dispose();

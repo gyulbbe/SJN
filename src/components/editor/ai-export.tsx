@@ -9,20 +9,15 @@ import {
   requestFluxImage,
   requestFluxProduct,
 } from '@/lib/ai-export/client';
-import {
-  framing,
-  projectCapture,
-  reviewResultColors,
-  type Pixels,
-  type RegionMask,
-} from '@/lib/ai-export/color';
+import { framing, projectCapture, type Pixels, type RegionMask } from '@/lib/ai-export/color';
 import { fluxInputLayout, type FluxInputLayout, type FluxVariant } from '@/lib/ai-export/contract';
 import type { FluxCheckWall } from '@/lib/ai-export/check-contract';
 import { fluxResultNotices, readFluxCheck, type FluxNoticeInput } from '@/lib/ai-export/notices';
 import { FLUX_FRONT, fluxOrbitView, snapFluxOrbit } from '@/lib/ai-export/view';
 import { restoreBackdrop } from '@/lib/ai-export/backdrop';
-import { restoreFixtureLightness } from '@/lib/ai-export/fixture-light';
-import { restoreResultJoints } from '@/lib/ai-export/joints';
+import { refineCurrentResult } from '@/lib/ai-export/current-refine';
+import { cropPixels, outlineCrops, type Cut } from '@/lib/ai-export/fixture-outline';
+import type { FluxFixture } from '@/lib/ai-export/scene-contract';
 import type { RoomOrbit, RoomViewState } from '@/lib/room-viewer/view-state';
 import AiViewPicker, { type AiPreview } from './ai-view-picker';
 import { FLUX_9B_WAIT, FLUX_CHECK_WAIT, FLUX_WAIT } from '@/lib/server-wait';
@@ -240,7 +235,14 @@ export default function AiExport({
      * The render, its regions and the model input's padding, for the colour check, and the same frame
      * with widened joints, for putting drifted joints back (none for the 2D front composite).
      */
-    color?: { capture: Pixels; mask: RegionMask; layout: FluxInputLayout; joints?: Pixels };
+    color?: {
+      capture: Pixels;
+      mask: RegionMask;
+      layout: FluxInputLayout;
+      joints?: Pixels;
+      /** Today's method: the render with its fixtures hidden and its regions (fixture-outline.ts). */
+      behind?: { image: Pixels; mask: RegionMask };
+    };
     /** Walls in the captured view, asked about in the result check. */
     walls?: FluxCheckWall[];
     /** Walls with a region, where another tile is intended (not a tile-layout warning). */
@@ -297,6 +299,43 @@ export default function AiExport({
     restart();
   }
   const turned = !!sent && (sent.azimuth !== orbit.azimuth || sent.elevation !== orbit.elevation);
+  /**
+   * The cut-out of every fixture box of the result (fixture-outline.ts), one at a time on the
+   * cut-out model the per-product export also uses (the first run loads it, about 98 MB).
+   */
+  async function fixtureCuts(raw: Pixels, fixtures: readonly FluxFixture[]): Promise<Cut[]> {
+    const crops = outlineCrops(fixtures, raw);
+    if (!crops.length) return [];
+    const message = 'AI가 그린 제품 윤곽을 찾는 중이에요.';
+    startWait({ message });
+    if (!state.current.background) {
+      const { BackgroundRemovalClient } = await import('@/lib/background-removal/client');
+      state.current.background = new BackgroundRemovalClient();
+    }
+    let note: string | undefined;
+    const cuts: Cut[] = [];
+    for (const crop of crops) {
+      const result = await state.current.background.run(
+        await pixelsToPng(cropPixels(raw, crop)),
+        (progress) => {
+          const next = cutoutNote(progress);
+          if (next !== note && live.current) startWait({ message: next ? `${message} ${next}.` : message });
+          note = next;
+        },
+      );
+      const cut = await readPixels(result.blob);
+      const alpha = new Uint8Array(crop.width * crop.height);
+      for (let y = 0; y < crop.height; y++)
+        for (let x = 0; x < crop.width; x++) {
+          const sx = Math.min(cut.width - 1, Math.floor(((x + 0.5) * cut.width) / crop.width)),
+            sy = Math.min(cut.height - 1, Math.floor(((y + 0.5) * cut.height) / crop.height));
+          alpha[y * crop.width + x] = cut.data[(sy * cut.width + sx) * 4 + 3];
+        }
+      cuts.push({ ...crop, alpha });
+    }
+    finishWait(false);
+    return cuts;
+  }
   async function generate() {
     if (state.current.controller || disabled) return;
     // Turned since the fixed source was captured: this conversion starts a new comparison.
@@ -341,6 +380,7 @@ export default function AiExport({
             mask: source.regions,
             layout: fluxInputLayout(pixels.width, pixels.height),
             ...(source.joints ? { joints: await readPixels(source.joints) } : {}),
+            ...(source.behind ? { behind: { image: source.behind.image, mask: source.behind.regions } } : {}),
           };
           state.current.walls = visibleWalls(source.regions, source.snapshot.scene);
           state.current.regionWalls = [
@@ -529,39 +569,39 @@ export default function AiExport({
         setResultVariant(requested);
       }
       // Where the model kept the framing (no AI call): the design's joints back on the faces whose
-      // joints it moved, then walls and floor back to the render's colours.
+      // joints it moved, then walls and floor back to the render's colours, then the ceramics'
+      // lightness (current-refine.ts), on the fixture outline the model drew when it can be found.
       if (color && !composite) {
         const url = state.current.urls.at(-1);
         try {
           const raw = await readPixels(blob);
           const { capture, mask, layout } = color;
-          const frame = color.joints ? framing(projectCapture(capture, layout, raw), raw) : undefined;
-          const joints =
-            color.joints && frame?.aligned
-              ? restoreResultJoints({ capture, joints: color.joints, mask, layout, result: raw, frame })
-              : undefined;
-          const review = reviewResultColors({
+          const fixtures = state.current.grounding?.scene?.fixtures ?? [];
+          // Where the model drew each fixture, by the cut-out model; without it the render's outline.
+          let cuts: Cut[] | undefined;
+          if (color.behind)
+            try {
+              cuts = await fixtureCuts(raw, fixtures);
+            } catch {
+              controller.signal.throwIfAborted();
+              cuts = undefined;
+            }
+          controller.signal.throwIfAborted();
+          const {
+            joints,
+            review,
+            ceramics,
+            shown: shownPixels,
+          } = refineCurrentResult({
+            raw,
             capture,
             mask,
             layout,
-            result: joints?.image ?? raw,
-            // The same shift the joints were put back at (the search would only find it again).
-            ...(joints?.image && frame ? { alignment: { dx: frame.dx, dy: frame.dy } } : {}),
+            fixtures,
+            ...(color.joints ? { joints: color.joints } : {}),
+            ...(color.behind && cuts ? { behind: color.behind, cuts } : {}),
           });
           if (!live.current) return;
-          // Last, the white ceramics the model drew much darker get their lightness back (fixture-light.ts).
-          const corrected = review.corrected ?? joints?.image;
-          const ceramics = review.framing.aligned
-            ? restoreFixtureLightness({
-                capture,
-                mask,
-                layout,
-                fixtures: state.current.grounding?.scene?.fixtures ?? [],
-                result: corrected ?? raw,
-                frame: review.framing,
-              })
-            : undefined;
-          const shownPixels = ceramics?.image ?? corrected;
           if (!review.framing.aligned) setColors({ status: 'reframed' });
           else if (shownPixels) {
             const correctedUrl = URL.createObjectURL(await pixelsToPng(shownPixels));
@@ -573,7 +613,8 @@ export default function AiExport({
             if (review.corrected)
               setColors({ status: 'corrected', warnings: review.warnings, unmatched: review.unmatched });
           }
-        } catch {
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
           if (live.current) setColors({ status: 'failed' });
         }
       }

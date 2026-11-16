@@ -317,49 +317,6 @@ export const RESTORE_LIGHT_KEEP = 0.25;
 const LIGHT_FACTOR = [0.25, 4] as const;
 
 /**
- * Around the render's fixtures, a band this many light-blur radii wide (docs/photo-products-
- * 20261115.md, on trial; 0 turns it off): the model draws a toilet or a washbasin a little larger or
- * of another shape than the render, and without the band its white spilled into the wall's blurred
- * light (a haze around every fixture) while the restore painted the wall over its edge. In the band no
- * pixel lights the face; with `fixtureKeep` a band pixel whose colour is much nearer the model's
- * fixture there (its pixels over the render's fixture, blurred wide) than the model's wall light keeps
- * the model's pixel, so the fixture it drew keeps its own outline.
- */
-export const FIXTURE_BAND = 0;
-export const FIXTURE_KEEP = true;
-
-/** Chessboard distance (capped at `cap`) from every pixel to the nearest pixel of `inside`. */
-export function chessboardDistance(inside: Uint8Array, width: number, height: number, cap: number) {
-  const d = new Uint16Array(width * height).fill(cap);
-  for (let i = 0; i < d.length; i++) if (inside[i]) d[i] = 0;
-  for (let y = 0; y < height; y++)
-    for (let x = 0; x < width; x++) {
-      const i = y * width + x;
-      let v = d[i];
-      if (x > 0) v = Math.min(v, d[i - 1] + 1);
-      if (y > 0) {
-        v = Math.min(v, d[i - width] + 1);
-        if (x > 0) v = Math.min(v, d[i - width - 1] + 1);
-        if (x < width - 1) v = Math.min(v, d[i - width + 1] + 1);
-      }
-      d[i] = v;
-    }
-  for (let y = height - 1; y >= 0; y--)
-    for (let x = width - 1; x >= 0; x--) {
-      const i = y * width + x;
-      let v = d[i];
-      if (x < width - 1) v = Math.min(v, d[i + 1] + 1);
-      if (y < height - 1) {
-        v = Math.min(v, d[i + width] + 1);
-        if (x < width - 1) v = Math.min(v, d[i + width + 1] + 1);
-        if (x > 0) v = Math.min(v, d[i + width - 1] + 1);
-      }
-      d[i] = v;
-    }
-  return d;
-}
-
-/**
  * In place: each pixel's light (three channels) scaled so its ratio to the render's light keeps only
  * `keep` of its distance (log) from the face's median ratio. The colour of the light stays.
  */
@@ -403,8 +360,6 @@ export function restoreJoints(
   labels: ReadonlySet<number>,
   shift = { dx: 0, dy: 0 },
   lightKeep = RESTORE_LIGHT_KEEP,
-  fixtureBand = FIXTURE_BAND,
-  fixtureKeep = FIXTURE_KEEP,
 ): Pixels {
   const { width, height } = result;
   const out = new Uint8ClampedArray(result.data);
@@ -458,25 +413,8 @@ export function restoreJoints(
     const refLight = blurInside(refLum, weight, w, h, radius).mean;
     // The light comes from the face without the objects the model added.
     const objects = addedObjects(local, refLum, weight);
-    // The band around the render's fixtures (none when fixtureBand is 0).
-    const reachBand = Math.round(radius * fixtureBand);
-    let band: Uint8Array | undefined;
-    const fixture = new Float32Array(count);
-    if (reachBand > 0) {
-      let any = false;
-      for (let i = 0; i < count; i++)
-        if (mask.data[at(i)] === FIXTURE_REGION) {
-          fixture[i] = 1;
-          any = true;
-        }
-      if (any) {
-        const distance = chessboardDistance(Uint8Array.from(fixture), w, h, reachBand + 1);
-        band = new Uint8Array(count);
-        for (let i = 0; i < count; i++) if (weight[i] && distance[i] <= reachBand) band[i] = 1;
-      }
-    }
     const lit = new Float32Array(count);
-    for (let i = 0; i < count; i++) lit[i] = weight[i] && !objects[i] && !band?.[i] ? 1 : 0;
+    for (let i = 0; i < count; i++) lit[i] = weight[i] && !objects[i] ? 1 : 0;
     // Near the face's rim the detail fades in over a few pixels.
     const inside = blurInside(weight, ones, w, h, 2).mean;
     const channels = [0, 1, 2].map((c) => {
@@ -492,44 +430,14 @@ export function restoreJoints(
       }
       return light;
     });
-    const modelLight = channels.map((channel) => Float32Array.from(channel));
     if (lightKeep !== 1) keepLightDifference(channels, refLight, weight, lightKeep);
-    const detailAt = (i: number) =>
-      Math.max(DETAIL_RANGE[0], Math.min(DETAIL_RANGE[1], refLum[i] / Math.max(1, refLight[i])));
-    // In the band, the model's own fixture (its colour nearer the fixture's than the wall light's) stays.
-    let stays: Float32Array | undefined;
-    if (band && fixtureKeep) {
-      const fixtureColour = [0, 1, 2].map((c) => {
-        const plane = new Float32Array(count);
-        for (let i = 0; i < count; i++) plane[i] = data[i * 4 + c];
-        return blurInside(plane, fixture, w, h, radius * 2);
-      });
-      const raw = new Float32Array(count),
-        bandWeight = new Float32Array(count);
-      for (let i = 0; i < count; i++) {
-        if (!band[i] || !fixtureColour[0].cover[i]) continue;
-        bandWeight[i] = 1;
-        let toWall = 0,
-          toFixture = 0;
-        for (let c = 0; c < 3; c++) {
-          const v = data[i * 4 + c];
-          toWall += (v - modelLight[c][i]) ** 2;
-          toFixture += (v - fixtureColour[c].mean[i]) ** 2;
-        }
-        toWall = Math.sqrt(toWall);
-        toFixture = Math.sqrt(toFixture);
-        const wall = 0.2126 * modelLight[0][i] + 0.7152 * modelLight[1][i] + 0.0722 * modelLight[2][i];
-        const nearer = (toWall - toFixture) / Math.max(1, toWall + toFixture);
-        const apart = toWall / Math.max(8, wall);
-        raw[i] = Math.max(0, Math.min(1, nearer * 2)) * Math.max(0, Math.min(1, (apart - 0.06) / 0.06));
-      }
-      stays = blurInside(raw, bandWeight, w, h, 1).mean;
-      for (let i = 0; i < count; i++) if (!band[i]) stays[i] = 0;
-    }
     for (let i = 0; i < count; i++) {
       if (!weight[i]) continue;
-      const detail = detailAt(i);
-      const alpha = Math.max(0, Math.min(1, (inside[i] - 0.5) * 2)) * (1 - (stays?.[i] ?? 0));
+      const detail = Math.max(
+        DETAIL_RANGE[0],
+        Math.min(DETAIL_RANGE[1], refLum[i] / Math.max(1, refLight[i])),
+      );
+      const alpha = Math.max(0, Math.min(1, (inside[i] - 0.5) * 2));
       const j = at(i);
       for (let c = 0; c < 3; c++)
         out[j * 4 + c] = Math.round(data[i * 4 + c] * (1 - alpha) + channels[c][i] * detail * alpha);
@@ -564,16 +472,12 @@ export function restoreResultJoints(input: {
   restoreBelow?: number;
   /** How much of the model's light shape a restored face keeps (RESTORE_LIGHT_KEEP). */
   lightKeep?: number;
-  /** The band around fixtures, in light-blur radii (FIXTURE_BAND; 0 none). */
-  fixtureBand?: number;
-  /** Whether the model's own fixture stays in the band (FIXTURE_KEEP). */
-  fixtureKeep?: boolean;
   /**
    * The render with its fixtures hidden (their shadows kept), at the capture's size: the walls and
-   * floor behind the render's fixtures, where the model drew wall (model-fixtures.ts).
+   * floor behind the render's fixtures, for where the model drew wall there (fixture-outline.ts).
    */
   behind?: Pixels;
-  /** The result's regions where the model drew its fixtures (model-fixtures.ts), moved by its shift. */
+  /** The result's regions with the fixtures where the model drew them (fixture-outline.ts), moved by its shift. */
   resultMask?: RegionMask;
 }): JointRestore {
   const { capture, joints, mask, layout, result, frame } = input;
@@ -593,8 +497,6 @@ export function restoreResultJoints(input: {
     labels,
     frame,
     input.lightKeep ?? RESTORE_LIGHT_KEEP,
-    input.fixtureBand ?? FIXTURE_BAND,
-    input.fixtureKeep ?? FIXTURE_KEEP,
   );
   return { restored, scores, image };
 }

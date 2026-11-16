@@ -1208,12 +1208,14 @@ export class RoomViewerRenderer {
    * (one per scene surface, or per bare face), 255 a fixture (glass included). `outside` marks
    * the pixels where nothing of the room drew (the background, also through a hidden wall's open
    * side). Same camera and photo rectangle as export(). It draws into its own target with temporary flat materials and
-   * puts every material and renderer setting back, so other frames are unchanged.
+   * puts every material and renderer setting back, so other frames are unchanged. With
+   * `withoutFixtures` the fixtures are hidden: the faces behind them (for where the AI drew wall).
    */
   regionMask(
     width: number,
     height: number,
     view: RoomViewState,
+    options: { withoutFixtures?: boolean } = {},
   ): {
     width: number;
     height: number;
@@ -1275,6 +1277,7 @@ export class RoomViewerRenderer {
     const autoUpdate = this.renderer.shadowMap.autoUpdate;
     const previous = this.renderer.getRenderTarget();
     try {
+      if (options.withoutFixtures) after.fixtures.group.visible = false;
       // Nothing here casts or needs a shadow; the live shadow map stays as it was.
       this.renderer.shadowMap.autoUpdate = false;
       after.world.background = null;
@@ -1308,6 +1311,7 @@ export class RoomViewerRenderer {
       this.renderer.setScissorTest(false);
       this.renderer.setRenderTarget(previous);
       target.dispose();
+      after.fixtures.group.visible = true;
     }
   }
   /**

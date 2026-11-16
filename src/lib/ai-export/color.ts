@@ -540,9 +540,9 @@ export type CorrectionOptions = {
    */
   underFixtures?: boolean;
   /**
-   * The fixtures in the mask are where the model drew them (model-fixtures, on trial): the fades next
-   * to them (FADE_PX, FADE_L_PX), there because the model's fixture was not exactly where the
-   * render's is, shrink to this many pixels.
+   * The fixtures in the mask are where the model drew them (fixture-outline.ts): the fades next to
+   * them (FADE_PX, FADE_L_PX), there because the model's fixture was not exactly where the render's
+   * is, shrink to this many pixels.
    */
   fixtureFade?: number;
 };
@@ -731,8 +731,8 @@ export function reviewResultColors(input: {
   /** See CorrectionOptions.underFixtures: the composite's empty room. */
   underFixtures?: boolean;
   /**
-   * The result's own regions (model-fixtures.ts: where the model drew its fixtures), at its size and
-   * moved by its shift; by default the render's, moved.
+   * The result's own regions (fixture-outline.ts: where the model drew its fixtures), at its size and
+   * moved by its shift; by default the render's, moved. The fades next to fixtures are then 1 px.
    */
   resultMask?: RegionMask;
 }): ColorReview {

@@ -24,7 +24,7 @@
 
 1. 결과에서 제품 상자를 사방 30% 넓혀 자른다(`cutout.ts`).
 2. 앱의 컷아웃 모델(BiRefNet lite, 배경 지우기와 실험 C가 쓰는 것, 로컬 사본 `tmp/background-model`)로 AI가 그린 제품을 딴다. 자르기 하나에 약 1.1초(CPU) 걸린다.
-3. 결과 면 구분을 만든다(`model-mask.ts`).
+3. 결과 면 구분을 만든다(`model-mask.ts`, 11-16에 `src/lib/ai-export/fixture-outline.ts`로 옮김).
    - 컷아웃이 잡은 픽셀은 제품이다(AI 제품이 넘친 곳, 수전).
    - 렌더 제품인데 컷아웃이 안 잡은 픽셀은 둘레 AI 벽 색과 가까우면 뒤 면이 된다. 빈 방 그림의 면 구분을 쓴다(`behind.ts`, `exportLayers`의 `shadowed`, 제품 숨긴 `regionMask`).
    - 도기 컷아웃이 렌더 제품과 겹침 0.6 미만이면(흰 벽 앞 흰 물탱크를 놓친 경우) 그 제품은 지금처럼 렌더 윤곽을 쓴다.
@@ -86,13 +86,15 @@
 - **F1과 관계없는 AI 문제:** 물결 무늬 벽 90°에서 LL-802(정면이 원통 옆모습)를 AI가 금속 상자나 수건으로 그렸다. 지금 앱과 F1 모두 같다.
 - 여쭤볼 그림: `test-results/fixture-haze-question.jpg`(워크트리).
 
-## 5. 다음
+## 5. 앱에 넣음 (11-16, 사용자 결정)
 
-1. **사용자에게 여쭤볼 것(그림과 함께):** 앱에 넣을지, 그리고 넣으면 컷아웃 모델(약 98MB)을 변환 때 처음 한 번 받는 것을 괜찮게 여기시는지.
-2. **앱에 넣기(정하면):**
-   - 캡처에 `exportLayers`(빈 방)와 제품 숨긴 면 구분을 더한다(`regionMask` 선택값).
-   - `model-mask.ts`를 `src/lib/ai-export/`로 옮긴다.
-   - ai-export 다듬기 순서에 컷아웃을 더하고, 실패하면 지금처럼 동작하게 한다.
-   - 시험용 선택값 중 쓰지 않는 것(joints의 band·keep)은 걷어낸다. 테스트·문서를 갱신하고, main은 여쭤본 뒤 올린다.
+- 사용자 답(11-16): "앱에 넣기", 컷아웃 모델(약 98MB)은 "처음 한 번 받아도 됨".
+- 바꾼 것:
+  - `src/lib/ai-export/fixture-outline.ts`: 시험의 `model-mask.ts`를 옮겼다(규칙은 같음). 자르기(`outlineCrops`)도 여기에 있다.
+  - `src/lib/ai-export/current-refine.ts`: 지금 방식의 다듬기(줄눈 → 색 → 도기 밝기)를 한 함수로 묶었다. 윤곽이 없으면 이전과 같은 픽셀이다.
+  - 캡처(`editor.tsx`): 지금 방식에서도 `exportLayers`의 `shadowed`(제품을 숨긴 렌더)와 `regionMask(..., { withoutFixtures: true })`를 그린다. 보내지 않는다.
+  - 변환 창(`ai-export.tsx`): 결과가 오면 제품마다 컷아웃을 돌린다(실험 C와 같은 작업자, 처음에 모델을 받음, "AI가 그린 제품 윤곽을 찾는 중이에요."). 실패하면 렌더 윤곽으로 다듬는다.
+  - 시험용 선택값 중 쓰지 않는 joints의 band·keep(`FIXTURE_BAND`·`FIXTURE_KEEP`)을 걷어냈다.
+- 확인: `tests/fixture-outline.test.ts`. 시험 그림(`pictures.ts`가 앱 함수 사용) 60장이 이전 F1과 픽셀까지 같다. e2e `flux-export` 10개, `flux-refine` 3개(새 시험: 컷아웃 대역으로 지금 방식).
 
 - 원래 실패하는 테스트: 제품 방향 브라우저 5개, 이 작업 폴더의 reconstruction 단위 테스트(줄바꿈 형식·로컬 데이터).

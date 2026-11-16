@@ -40,6 +40,8 @@ async function installDoubles(page: Page) {
       }
       postMessage(message: { id: number; blob?: Blob }) {
         // The cut-out model double: whatever is not plain white is the product.
+        const counted = globalThis as unknown as { __cutouts?: number };
+        counted.__cutouts = (counted.__cutouts ?? 0) + 1;
         void (async () => {
           this.send({
             type: 'progress',
@@ -396,4 +398,55 @@ test('실험 C · 제품별 다듬기: 진행 중 취소하면 더 보내지 않
   // Nothing more is sent after the stop.
   await page.waitForTimeout(1500);
   expect(productRequests).toBe(1);
+});
+
+test('지금 방식: 결과에서 AI가 그린 제품 윤곽을 컷아웃으로 찾고(AI 호출 없음), 다듬은 결과를 보인다', async ({
+  page,
+}) => {
+  await installDoubles(page);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  let rooms = 0,
+    checks = 0,
+    products = 0;
+  await page.route('**/api/export/photoreal', async (route) => {
+    rooms++;
+    const form = await formOf(route.request());
+    const input = Buffer.from(await (form.get('image') as Blob).arrayBuffer());
+    const { width, height } = await sharp(input).metadata();
+    // The model's picture: the input, larger and darker (the walls get their colour back).
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: await sharp(input)
+        .resize(width! * 2, height! * 2)
+        .modulate({ brightness: 0.85 })
+        .png()
+        .toBuffer(),
+    });
+  });
+  await page.route('**/api/export/photoreal/check', (route) => {
+    checks++;
+    return route.fulfill({ json: { fixtures: [], extras: [] } });
+  });
+  await page.route('**/api/export/photoreal/product', (route) => {
+    products++;
+    return route.abort();
+  });
+  await placeStandardToilet(page);
+  await page.getByRole('button', { name: '내보내기', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '이미지 내보내기' });
+  await expect(
+    dialog.getByRole('group', { name: '변환 방식' }).getByRole('radio', { name: '지금 방식', exact: true }),
+  ).toBeChecked();
+  await dialog.getByRole('button', { name: 'AI 변환 · flux-2-klein-4b', exact: true }).click();
+  await expect(dialog.getByAltText('FLUX 4B 현장 사진 변환 결과')).toBeVisible({ timeout: 60000 });
+  // The darker walls are put back: the result shown is the corrected one.
+  await expect(dialog.getByTestId('flux-color-note')).toBeVisible({ timeout: 60000 });
+  await expect.poll(() => checks).toBe(1);
+  // One cut-out for the one fixture, on this computer; the server was asked for the room only.
+  expect(await page.evaluate(() => (globalThis as unknown as { __cutouts?: number }).__cutouts)).toBe(1);
+  expect(rooms).toBe(1);
+  expect(products).toBe(0);
+  expect(errors).toEqual([]);
 });

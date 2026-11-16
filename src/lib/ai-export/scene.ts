@@ -17,7 +17,7 @@ import { facingOfDirection, nearestHorizontalDirection, viewDirectionAngle } fro
 import { resolveBathRimFixture } from '../reconstruction/bath-rim';
 import { isStandardModelOfPhoto } from '../standard-model-view';
 import { hexToLinear, linearToHex } from '../reconstruction/photo-lighting';
-import type { RegionMask } from './color';
+import type { Pixels, RegionMask } from './color';
 import type { RoomLayers } from './composite';
 import type { ProductCrop } from './refine';
 import type { FluxInputLayout } from './contract';
@@ -304,6 +304,11 @@ export type FluxCaptureSource = {
    * sent, only for judging which faces' joints the model moved. Absent without a room.
    */
   joints?: Blob;
+  /**
+   * Today's method: the same frame with the fixtures hidden (their shadows kept) and its regions, for
+   * the finishing steps on where the model drew its fixtures (fixture-outline.ts). Never sent.
+   */
+  behind?: { image: Pixels; regions: RegionMask };
 };
 
 /**
