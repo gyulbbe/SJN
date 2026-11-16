@@ -1,7 +1,14 @@
 import type { RoomDimensions } from './room-types';
 import type { FixtureInstance, MaterialVersion } from './types';
 import { viewDirectionAngle } from './product-direction';
-import { findFreeSlot, type FreeSlot, type PlacedBox, type SlotBox } from './room-slot';
+import {
+  findFreeSlot,
+  fixtureSlotBox,
+  keepBoxInside,
+  type FreeSlot,
+  type PlacedBox,
+  type SlotBox,
+} from './room-slot';
 
 /**
  * A floor product against the wall behind it (docs/size-order-and-contact-results-20261024.md): the
@@ -62,9 +69,41 @@ export function wallContactPlace(
   if (!placement || !wall) return undefined;
   // Exact, not rounded: a rounded place could put the footprint a hair into the wall.
   const half = productDepthMm(fixture, materials) / 2;
-  if (wall === 'back') return { u: placement.u, v: clamp01(half / room.depthMm) };
+  // Along the wall it stays the user's place, kept inside the room (not into the side walls).
+  if (wall === 'back')
+    return insidePlace(room, fixture, materials, { u: placement.u, v: clamp01(half / room.depthMm) });
   const u = clamp01(half / room.widthMm);
-  return { u: wall === 'left' ? u : 1 - u, v: placement.v };
+  return insidePlace(room, fixture, materials, { u: wall === 'left' ? u : 1 - u, v: placement.v });
+}
+
+/**
+ * The place nearest `place` (by default the saved one) where a photo product's whole box is inside
+ * its face: on the floor its width across and its depth front to back (a product facing a side wall
+ * the other way round), on a wall its width and height. A standard model keeps its own fit
+ * (fitReconstructionFootprint), and a product whose material is not read yet keeps its place.
+ */
+export function insidePlace(
+  room: RoomDimensions,
+  fixture: FixtureInstance,
+  materials: Depths,
+  place?: { u: number; v: number },
+): { u: number; v: number } | undefined {
+  const placement = fixture.roomPlacement;
+  if (!placement) return undefined;
+  const at = place ?? { u: placement.u, v: placement.v };
+  if (fixture.reconstruction?.version === 2 || !materials[fixture.materialVersionId]) return at;
+  let box = fixtureSlotBox(fixture, materials);
+  if (!box) return at;
+  const quarter = (((Math.round(facingDegrees(fixture, materials) / 90) % 4) + 4) % 4) as 0 | 1 | 2 | 3;
+  if (placement.face === 'floor' && quarter % 2 === 1)
+    box = {
+      ...box,
+      widthMm: box.depthMm,
+      depthMm: box.widthMm,
+      anchor: { x: 0.5, y: 0.5 },
+      contentBounds: { left: 0, top: 0, right: 1, bottom: 1 },
+    };
+  return keepBoxInside(room, placement.face, box, at);
 }
 
 /** How far the back of a floor product's footprint is from the wall behind it (mm; none without one). */

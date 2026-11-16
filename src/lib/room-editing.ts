@@ -15,7 +15,7 @@ import {
   shownDirection,
   wallDrawnAt,
 } from './room-fixtures';
-import { applyWallContact, behindWall, WALL_SNAP_MM, wallDistanceMm } from './room-wall-contact';
+import { applyWallContact, behindWall, insidePlace, WALL_SNAP_MM, wallDistanceMm } from './room-wall-contact';
 import { validateWallFeatures, validateWallFeatureResize } from './wall-features';
 import type { ProjectDocument } from './types';
 
@@ -119,12 +119,39 @@ export function normalizeRoomScene(
       if (distance !== undefined && distance <= WALL_SNAP_MM) fixture.roomPlacement.againstWall = true;
       else if (distance !== undefined) delete fixture.roomPlacement.againstWall;
     }
+    // A photo product whose place, size or angle changed (dragged, typed, scaled, turned, new, or
+    // the room resized) stays whole inside the room, not half through a wall at its anchor's limit.
+    if (!fixture.reconstruction && (!sameRoom || movedOrResized(before, fixture))) {
+      const inside = insidePlace(next.room, fixture, materials);
+      if (inside) {
+        fixture.roomPlacement.u = inside.u;
+        fixture.roomPlacement.v = inside.v;
+      }
+    }
     syncReconstructionHeight(next.room, fixture, before);
     reprojectFixture(next.room, fixture, aspect, materials);
   }
   syncBathRimAttachments(next);
 }
 type Depths = Record<string, Pick<MaterialVersion, 'depthMm' | 'views'> | undefined>;
+/** Whether a fixture is new, or its place, size, picture or angle on its face changed. */
+function movedOrResized(before: FixtureInstance | undefined, fixture: FixtureInstance) {
+  const a = before?.roomPlacement,
+    b = fixture.roomPlacement!;
+  return (
+    !a ||
+    a.face !== b.face ||
+    a.u !== b.u ||
+    a.v !== b.v ||
+    a.scale !== b.scale ||
+    a.widthMm !== b.widthMm ||
+    a.heightMm !== b.heightMm ||
+    before!.viewIndex !== fixture.viewIndex ||
+    before!.materialVersionId !== fixture.materialVersionId ||
+    before!.anchor.x !== fixture.anchor.x ||
+    before!.anchor.y !== fixture.anchor.y
+  );
+}
 /**
  * Whether a photo product is drawn where its u/v draws it (a new photo or scale drew it again), so
  * its place is not read back from the drawing: the floor correction would add rounding each time.

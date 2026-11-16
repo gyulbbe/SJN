@@ -218,3 +218,48 @@ test('변기: 벽에 붙어 놓이고, 스위치·실행 취소·끌기·다시 
   expect(label.height).toBeGreaterThanOrEqual(44);
   await page.screenshot({ path: `${shots}/phone-375.png` });
 });
+
+test('변기를 왼쪽 벽 너머로 끌어도 제품 전체가 방 안에서 멈춘다(사용자 11-16)', async ({ page }) => {
+  app = await authenticatedApp(page);
+  await seedToilet(app);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '새 프로젝트', exact: true })).toBeEnabled({
+    timeout: 30000,
+  });
+  await page.getByRole('button', { name: '기본 공간으로 시작', exact: true }).click();
+  await page.getByRole('button', { name: '공간 만들기', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible({ timeout: 45000 });
+  await expect(page.locator('.canvas-loading')).toHaveCount(0, { timeout: 30000 });
+  const panel = page.locator('aside.catalog-panel');
+  await panel.getByRole('button', { name: '위생도기', exact: true }).click();
+  await panel.locator('button.material-tile').filter({ hasText: NAME }).click();
+  await expect(page.getByLabel('제품 배율', { exact: true })).toBeVisible();
+  await savedStatus(page);
+  const projectId = page.url().split('/').at(-1)!;
+  const fixture = async () => getActiveDesign(await app!.project(projectId))!.scene.fixtures.at(-1)!;
+  await expect.poll(async () => !!(await fixture())).toBe(true);
+  const placed = await fixture();
+  const room = getActiveDesign(await app!.project(projectId))!.scene.room!;
+  // Far to the left and to the front, well past the left wall.
+  const envelope = page.locator(`rect[data-entity="${placed.id}"]`);
+  const canvas = (await page.getByTestId('editor-canvas').boundingBox())!;
+  const box = (await envelope.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + 2, box.y + box.height / 2 + canvas.height * 0.3, { steps: 20 });
+  await page.mouse.up();
+  await savedStatus(page);
+  const moved = (await fixture()).roomPlacement!;
+  // The anchor is the photo's middle across: half of the 370 mm width is left of it.
+  expect(moved.u * room.widthMm).toBeGreaterThanOrEqual((370 * moved.scale) / 2 - 1);
+  expect(moved.u).toBeLessThan(0.2);
+  // The space viewer from the front: no "outside the room" notice.
+  await page.getByRole('button', { name: '공간 둘러보기', exact: true }).click();
+  const viewer = page.getByRole('dialog', { name: '공간 둘러보기', exact: true });
+  await expect(viewer).toBeVisible();
+  await viewer.getByRole('button', { name: 'After', exact: true }).click();
+  await page.waitForTimeout(1500);
+  await expect(viewer.getByText('제품이 방 밖으로 나가요', { exact: false })).toHaveCount(0);
+  await viewer.screenshot({ path: `${shots}/viewer-left-wall.png` });
+});

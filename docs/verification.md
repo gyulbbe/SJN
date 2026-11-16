@@ -2,6 +2,17 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-16 — 사진 제품이 방 밖으로 튀어나오지 않게
+
+- 무엇:
+  - 편집(끌기·위치 입력·배율·각도·벽에 붙이기)에서 사진 제품의 기준점만이 아니라 제품 전체(바닥은 폭·깊이, 옆을 보면 바꿔서, 벽은 폭·높이)가 방 안에 남는다(`room-slot.ts` `keepBoxInside`, `room-wall-contact.ts` `insidePlace`, `normalizeRoomScene`). 바뀐 제품만 고치고, 손대지 않은 저장본은 그대로다.
+  - 3D 그림(공간 둘러보기·AI 입력)은 보이는 영역이 방을 넘으면 바닥 제품은 좌우·앞뒤, 벽 제품은 벽을 따라 안으로 밀어 그린다(`seatProduct`, 저장은 그대로). 방보다 크면 가운데에 두고 안내한다. `DESIGN_RENDER_REVISION` 8 → 9.
+  - AI 호출·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - `tests/room-keep-inside.test.ts`, `tests/room-viewer-fixtures.test.ts`(방 밖 안내 시험을 안으로 미는 시험으로 바꿈), room·fixture 단위 시험
+  - 그림: `tests/keep-inside/render.ts`로 왼쪽 벽·앞쪽 구석의 사진 변기를 0°·90°·−90° AI 입력으로 고치기 전후 비교(사용자 그림의 경우가 방 안으로 들어옴)
+  - e2e `fixture-contact`(새 시험: 변기를 왼쪽 벽 너머로 끌어도 벽에 닿은 자리에서 멈춤), typecheck, lint
+
 ## 2026-11-16 — 지금 방식의 다듬기를 AI가 그린 제품 윤곽으로(제품 둘레 아지랑이 없앰)
 
 - 무엇:

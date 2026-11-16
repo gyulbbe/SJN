@@ -510,9 +510,32 @@ function seatProduct(product: Group, room: RoomDimensions, face: RoomFace, flat:
   // Tiny moves are rounding only: leave the anchor's exact place alone.
   for (const axis of ['x', 'y', 'z'] as const)
     if (Math.abs(move[axis]) > 1e-6) product.position[axis] += move[axis];
-  // What shows of it: a photo's transparent margin may reach into a wall.
+  // What shows of it stays inside the room across the floor (and along its wall): a place saved with
+  // its anchor at a wall would put half of it through that wall, seen in a view with that wall cut
+  // away (the AI input). Not across a wall (that is the wall's own seat above); a product larger than
+  // the room is centred and still said to reach beyond it.
   const corners = contentCorners(product);
   const seated = corners.length ? new Box3().setFromPoints(corners) : visibleBounds(product);
+  const along: ('x' | 'z')[] = face === 'floor' ? ['x', 'z'] : face === 'back' ? ['x'] : ['z'];
+  const limits = { x: [-wall, wall], z: [0, room.depthMm] } as const;
+  for (const axis of along) {
+    const [low, high] = limits[axis];
+    const min = seated.min[axis],
+      max = seated.max[axis];
+    const shift =
+      max - min > high - low
+        ? (low + high) / 2 - (min + max) / 2
+        : min < low
+          ? low - min
+          : max > high
+            ? high - max
+            : 0;
+    if (Math.abs(shift) > 1e-6) {
+      product.position[axis] += shift;
+      seated.min[axis] += shift;
+      seated.max[axis] += shift;
+    }
+  }
   const slack = 1;
   return (
     seated.min.z < -slack ||

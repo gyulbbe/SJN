@@ -70,6 +70,29 @@ function extent(face: RoomFace, box: SlotBox) {
   return { left, right, near: -share.y * box.heightMm, far: (1 - share.y) * box.heightMm };
 }
 
+/**
+ * The place nearest `place` where the whole box is on its face (the anchor alone used to be kept
+ * there, so a product dragged to a wall went half through it). A box larger than the face is centred
+ * on it. An unmoved place comes back exactly as it was.
+ */
+export function keepBoxInside(
+  room: RoomDimensions,
+  face: RoomFace,
+  box: SlotBox,
+  place: { u: number; v: number },
+): { u: number; v: number } {
+  const length = faceLengths(room, face);
+  if (!(length.u > 0 && length.v > 0) || !Number.isFinite(place.u) || !Number.isFinite(place.v)) return place;
+  const e = extent(face, box);
+  const fit = (at: number, low: number, high: number, size: number) =>
+    high - low > size ? size / 2 - (low + high) / 2 : Math.min(size - high, Math.max(-low, at));
+  const s = place.u * length.u,
+    t = place.v * length.v;
+  const s1 = fit(s, e.left, e.right, length.u),
+    t1 = fit(t, e.near, e.far, length.v);
+  return { u: s1 === s ? place.u : s1 / length.u, v: t1 === t ? place.v : t1 / length.v };
+}
+
 /** The box of a product that stands on a face: its placement and anchor, and the depth of its material. */
 export function slotBox(placement: RoomPlacement, anchor: Point, depthMm: number): SlotBox {
   const scale = Number.isFinite(placement.scale) && placement.scale > 0 ? placement.scale : 1;

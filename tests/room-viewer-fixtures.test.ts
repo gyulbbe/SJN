@@ -726,16 +726,39 @@ describe('angle names decide the way a product stands on its face', () => {
     built.dispose();
   });
 
-  it('says so when the product reaches beyond the room, and leaves the source alone', async () => {
-    // On the floor at the very edge of the left wall, half of the product's 400 width is outside it.
+  it('draws a product saved at a wall inside the room, and leaves the source alone', async () => {
+    // On the floor at the very edge of the left wall (u 0), half of the product's 400 width would be
+    // outside it: it is drawn against the wall's inside instead (the AI input cuts that wall away).
+    for (const [face, u] of [
+      ['floor', 0],
+      ['floor', 1],
+      ['back', 0],
+    ] as const) {
+      const f = placed(face, u);
+      const value = scene([f]),
+        original = structuredClone(value);
+      const cache = new ProductAssetCache(async () => undefined);
+      fakeImage(cache);
+      const result = await buildViewerFixtures(value, { m: material() }, async () => undefined, cache);
+      const b = bounds(result.group.children[0]);
+      expect(b.min.x).toBeGreaterThanOrEqual(-half - 1);
+      expect(b.max.x).toBeLessThanOrEqual(half + 1);
+      expect(result.notices.some((n) => n.message.includes('방 밖'))).toBe(false);
+      expect(value).toEqual(original);
+      result.dispose();
+    }
+  });
+
+  it('a product wider than the room is centred and still said to reach beyond it', async () => {
     const f = placed('floor', 0);
-    const value = scene([f]),
-      original = structuredClone(value);
+    f.roomPlacement!.scale = 8;
+    const value = scene([f]);
     const cache = new ProductAssetCache(async () => undefined);
     fakeImage(cache);
     const result = await buildViewerFixtures(value, { m: material() }, async () => undefined, cache);
+    const b = bounds(result.group.children[0]);
+    expect(Math.abs(b.min.x + b.max.x)).toBeLessThan(2);
     expect(result.notices.some((n) => n.message.includes('방 밖'))).toBe(true);
-    expect(value).toEqual(original);
     result.dispose();
   });
 
