@@ -4,7 +4,7 @@
  * render's fixture outline) and with F1 (`f1`: the same steps on the outline the model drew, cutout.ts
  * and model-mask.ts, with the render's walls behind its fixtures from behind.ts).
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-haze/pictures.ts [--set dev|holdout|new]
+ * Usage: node tests/run-browser-test.mjs tests/fixture-haze/pictures.ts [--set dev|holdout|new|new-holdout]
  * Output: test-results/fixture-haze-20261116/pictures/<id>.{p0,f1}.png, pictures-<set>.json
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -26,13 +26,13 @@ import type { FluxScene } from '../../src/lib/ai-export/scene-contract';
 import { appView, loadScene, pixels, png } from '../extra-ai/app-view';
 import { cutoutMask, type Cut } from './model-mask';
 import { OUT } from './paths.mjs';
-import { haze } from './sources';
+import { haze, type HazeSet } from './sources';
 
 const arg = (name: string, fallback = '') => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : fallback;
 };
-const set = arg('set', 'dev') as 'dev' | 'holdout' | 'new';
+const set = arg('set', 'dev') as HazeSet;
 /** As cutout.ts. */
 const PAD = 0.3;
 const dir = join(OUT as string, 'pictures');

@@ -4,7 +4,9 @@
  * fixtures hidden and their shadows kept (RoomViewerRenderer.exportLayers `shadowed`) and the region
  * mask with the fixtures hidden, drawn by today's renderer from the scene's spec.json.
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-haze/behind.ts [--holdout] [--gpu]
+ * With --new (or --new --holdout): this trial's own new scenes (scenes.ts, specs.ts), layers `n-<scene>`.
+ *
+ * Usage: node tests/run-browser-test.mjs tests/fixture-haze/behind.ts [--holdout] [--new] [--gpu]
  * Output: test-results/fixture-haze-20261116/behind/<t|x>-<scene>/{behind,mask-behind,full,empty,coverage}.png,
  *   regions-behind.json
  */
@@ -16,34 +18,49 @@ import sharp from 'sharp';
 import type { PublicRecord, SceneSpec } from '../export-photoreal/scene-builder';
 import { SNAPSHOT } from '../tile-ai/paths.mjs';
 import { sources } from '../tile-pattern/sources';
+import { trialCatalog } from './catalog';
+import { resolveSpecs } from './specs';
 import { OUT } from './paths.mjs';
 
 const gpu = process.argv.includes('--gpu');
 const holdout = process.argv.includes('--holdout');
+const fresh = process.argv.includes('--new');
 const only = (() => {
   const i = process.argv.indexOf('--only');
   return i > 0 ? new Set(process.argv[i + 1].split(',')) : undefined;
 })();
 
-const catalog = JSON.parse(readFileSync(join(SNAPSHOT as string, 'catalog.json'), 'utf8')) as {
-  placements: (PublicRecord & { materialId: string })[];
-};
-const records: Record<string, PublicRecord> = Object.fromEntries(
-  catalog.placements.map((p) => [p.materialId, p]),
-);
+// The snapshot, plus (for --new) the locally registered basins.
+const { records, files, imageFiles } = fresh
+  ? trialCatalog()
+  : (() => {
+      const catalog = JSON.parse(readFileSync(join(SNAPSHOT as string, 'catalog.json'), 'utf8')) as {
+        placements: (PublicRecord & { materialId: string })[];
+      };
+      const names = readdirSync(join(SNAPSHOT as string, 'images'));
+      return {
+        records: Object.fromEntries(catalog.placements.map((p) => [p.materialId, p])) as Record<
+          string,
+          PublicRecord
+        >,
+        files: Object.fromEntries(names.map((f) => [f, join(SNAPSHOT as string, 'images', f)])),
+        imageFiles: Object.fromEntries(names.map((f) => [f.replace(/\.[a-z]+$/, ''), f])),
+      };
+    })();
 const scenes = new Map<string, SceneSpec>();
-for (const source of sources(holdout ? 'holdout' : 'dev')) {
-  const key = `${source.trial === 'tile' ? 't' : 'x'}-${source.scene}`;
-  if (!scenes.has(key))
-    scenes.set(key, {
-      ...(JSON.parse(readFileSync(join(source.dir, 'spec.json'), 'utf8')) as SceneSpec),
-      id: key,
-    });
-}
+if (fresh)
+  for (const spec of resolveSpecs(Object.keys(records)).filter((spec) => !!spec.holdout === holdout))
+    scenes.set(`n-${spec.id}`, { ...spec, id: `n-${spec.id}` });
+else
+  for (const source of sources(holdout ? 'holdout' : 'dev')) {
+    const key = `${source.trial === 'tile' ? 't' : 'x'}-${source.scene}`;
+    if (!scenes.has(key))
+      scenes.set(key, {
+        ...(JSON.parse(readFileSync(join(source.dir, 'spec.json'), 'utf8')) as SceneSpec),
+        id: key,
+      });
+  }
 const SPECS = [...scenes.values()];
-const imageFiles = Object.fromEntries(
-  readdirSync(join(SNAPSHOT as string, 'images')).map((f) => [f.replace(/\.[a-z]+$/, ''), f]),
-);
 const bundle = await build({
   stdin: {
     contents: [
@@ -83,7 +100,7 @@ try {
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith('/images/'))
       return route.fulfill({
-        body: readFileSync(join(SNAPSHOT as string, 'images', decodeURIComponent(path.slice(8)))),
+        body: readFileSync(files[decodeURIComponent(path.slice(8))]),
       });
     return route.fulfill({ contentType: 'text/html', body: '<html><body></body></html>' });
   });

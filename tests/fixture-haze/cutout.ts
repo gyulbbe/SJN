@@ -5,7 +5,7 @@
  * tests/flux-product-refine-measure.ts does) cuts out what stands in front of the wall, and the
  * cut-outs are put together on the result's grid (the largest alpha where crops overlap).
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-haze/cutout.ts [--set dev|holdout|new]
+ * Usage: node tests/run-browser-test.mjs tests/fixture-haze/cutout.ts [--set dev|holdout|new|new-holdout]
  * Output: test-results/fixture-haze-20261116/cutout/<id>/{crop-<k>.png,cut-<k>.png,alpha.png}, cutout-<set>.json
  */
 import { chromium } from '@playwright/test';
@@ -15,14 +15,14 @@ import { createServer } from 'node:http';
 import path, { join } from 'node:path';
 import sharp from 'sharp';
 import type { FluxScene } from '../../src/lib/ai-export/scene-contract';
-import { haze } from './sources';
+import { haze, type HazeSet } from './sources';
 import { MODELS, OUT } from './paths.mjs';
 
 const arg = (name: string, fallback = '') => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : fallback;
 };
-const set = arg('set', 'dev') as 'dev' | 'holdout' | 'new';
+const set = arg('set', 'dev') as HazeSet;
 /** Each crop is the fixture box grown by this share of its size each way (the model's own may be larger). */
 const PAD = 0.3;
 const runtime = path.resolve('node_modules/onnxruntime-web/dist');

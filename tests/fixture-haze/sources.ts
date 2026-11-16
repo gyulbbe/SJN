@@ -1,14 +1,41 @@
 /**
  * The fixture-haze trial's results (docs/fixture-haze-20261116.md). `dev` and `holdout`: the earlier
  * trials' results with today's method on their scenes (tests/tile-pattern/sources.ts: the 11-13 tile
- * trial and the 11-14 added-objects trial; standard models, and one photo-product scene). `new`: this
- * trial's scenes with products whose direction photos are real (added when their results exist).
+ * trial and the 11-14 added-objects trial; standard models, and one photo-product scene). `new` (and
+ * `new-holdout`): this trial's scenes with products whose direction photos are real (fresh()).
  */
-import { sources, type Source } from '../tile-pattern/sources';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { SEEDS, sources, type Source } from '../tile-pattern/sources';
+import { OUT } from './paths.mjs';
 
 export type HazeSource = Source & { layers: string };
-export function haze(set: 'dev' | 'holdout' | 'new'): HazeSource[] {
-  if (set === 'new') return [];
+export type HazeSet = 'dev' | 'holdout' | 'new' | 'new-holdout';
+/** This trial's new scenes (scenes.ts) whose result is back (run.ts): `n-<scene>-<seed>`. */
+function fresh(holdout: boolean): HazeSource[] {
+  const NEW = join(OUT as string, 'new');
+  if (!existsSync(join(NEW, 'scenes'))) return [];
+  return readdirSync(join(NEW, 'scenes'))
+    .filter(
+      (scene) =>
+        !!(JSON.parse(readFileSync(join(NEW, 'scenes', scene, 'spec.json'), 'utf8')) as { holdout?: boolean })
+          .holdout === holdout,
+    )
+    .flatMap((scene) =>
+      SEEDS.map((seed) => ({
+        id: `n-${scene}-${seed}`,
+        trial: 'extra' as const,
+        scene,
+        seed,
+        dir: join(NEW, 'scenes', scene),
+        jointsFile: 'joints.png',
+        result: join(NEW, 'results', `${scene}-${seed}.png`),
+        layers: `n-${scene}`,
+      })),
+    );
+}
+export function haze(set: HazeSet): HazeSource[] {
+  if (set === 'new' || set === 'new-holdout') return fresh(set === 'new-holdout');
   return sources(set).map((source) => ({
     ...source,
     // The empty-room layers drawn for its scene (behind.ts).
