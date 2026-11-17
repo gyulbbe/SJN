@@ -21,6 +21,34 @@ describe('a product photo in the 3D room', () => {
     // The input is not changed.
     expect([...data.slice(4, 8)]).toEqual([30, 30, 30, 128]);
   });
+  it('keeps the own colour of a body that is mostly but not fully opaque, filling only its soft edge', () => {
+    // A row of 12 like LAUCHE LC-2100's side photo: transparent, a black-matted edge, a grey body only
+    // 87% opaque (alpha 222), and one fully opaque dark pixel (the seat's shadow) at the far end.
+    const pixel = (rgb: number, a: number) => [rgb, rgb, rgb, a];
+    const row = [
+      pixel(0, 0),
+      pixel(40, 90),
+      ...Array.from({ length: 9 }, () => pixel(180, 222)),
+      pixel(20, 255),
+    ];
+    const filled = edgeFilled(new Uint8ClampedArray(row.flat()), row.length, 1);
+    const at = (i: number) => [...filled.slice(i * 4, i * 4 + 4)];
+    // The body more than EDGE_RING steps from the soft edge keeps its grey (not the shadow's 20).
+    for (let i = 5; i <= 10; i++) expect(at(i)).toEqual([180, 180, 180, 222]);
+    // The soft edge and the body within the ring take the body's grey, with their own alpha.
+    expect(at(1)).toEqual([180, 180, 180, 90]);
+    for (let i = 2; i <= 4; i++) expect(at(i)).toEqual([180, 180, 180, 222]);
+    expect(at(11)).toEqual([20, 20, 20, 255]);
+  });
+  it('fills every soft pixel of a thin part from its opaque core, as before', () => {
+    // A 1-pixel-tall pipe is all edge: its 200-alpha pixels are within the ring and take the core's colour.
+    const data = new Uint8ClampedArray([
+      0, 0, 0, 0, 30, 30, 30, 200, 160, 150, 140, 255, 30, 30, 30, 200, 0, 0, 0, 0,
+    ]);
+    const filled = edgeFilled(data, 5, 1);
+    expect([...filled.slice(4, 8)]).toEqual([160, 150, 140, 200]);
+    expect([...filled.slice(12, 16)]).toEqual([160, 150, 140, 200]);
+  });
   it('leaves a photo without an opaque pixel as it is', () => {
     const data = new Uint8ClampedArray([10, 20, 30, 100, 0, 0, 0, 0]);
     expect([...edgeFilled(data, 2, 1)]).toEqual([...data]);

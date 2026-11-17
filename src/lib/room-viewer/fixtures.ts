@@ -64,30 +64,30 @@ type DecodedImage = {
 const SOLID_ALPHA = 128;
 /** A photo pixel at least this opaque keeps its own colour in the 3D texture (edgeFilled). */
 const EDGE_OPAQUE = 250;
+/** How far (4-neighbour steps) a cut-out's soft edge reaches into the product (edgeFilled). */
+const EDGE_RING = 3;
 
 /**
- * A product photo's pixels for the 3D texture, top row first: every pixel less than EDGE_OPAQUE keeps
- * its alpha but takes the colour of the nearest more opaque one. The catalogue's cut-out photos store
- * black under their transparent and soft edge pixels, and the 3D room draws a photo with an alpha
- * test (no blending), so those pixels showed as a 1 px black outline round every photo product (and
- * the AI export's model saw it, docs/photo-products-20261115.md). The 2D editor blends and never
- * showed it. A photo with no opaque pixel is returned as it is.
+ * Breadth first over a width × height grid from the pixels `seed` picks, at most `limit` steps: each
+ * reached pixel gets the seed it was reached from, every other pixel -1.
  */
-export function edgeFilled(data: Uint8ClampedArray, width: number, height: number): Uint8ClampedArray {
-  const out = Uint8ClampedArray.from(data);
+function spreadFrom(
+  seed: (i: number) => boolean,
+  width: number,
+  height: number,
+  limit = Infinity,
+): Int32Array {
   const n = width * height;
   const from = new Int32Array(n).fill(-1);
   let queue = new Int32Array(n),
+    next = new Int32Array(n),
     length = 0;
   for (let i = 0; i < n; i++)
-    if (data[i * 4 + 3] >= EDGE_OPAQUE) {
+    if (seed(i)) {
       from[i] = i;
       queue[length++] = i;
     }
-  if (!length) return out;
-  // Breadth first from the opaque pixels: each pixel takes the colour of the one it was reached from.
-  let next = new Int32Array(n);
-  while (length) {
+  for (let step = 0; length && step < limit; step++) {
     let nextLength = 0;
     for (let k = 0; k < length; k++) {
       const i = queue[k],
@@ -101,6 +101,39 @@ export function edgeFilled(data: Uint8ClampedArray, width: number, height: numbe
     [queue, next] = [next, queue];
     length = nextLength;
   }
+  return from;
+}
+
+/**
+ * A product photo's pixels for the 3D texture, top row first: every pixel whose colour cannot be
+ * trusted keeps its alpha but takes the colour of the nearest trusted one. The catalogue's cut-out
+ * photos store black under their transparent and soft edge pixels, and the 3D room draws a photo with
+ * an alpha test (no blending), so those pixels showed as a 1 px black outline round every photo product
+ * (and the AI export's model saw it, docs/photo-products-20261115.md). The 2D editor blends and never
+ * showed it.
+ *
+ * Trusted: at least EDGE_OPAQUE, or more than half opaque and more than EDGE_RING steps from any pixel
+ * that is not. Some cut-outs leave the whole body 80–95% opaque (LAUCHE LC-2100's side photos, 58% of
+ * their pixels); filling all of it from the few fully opaque pixels smeared the seat's shadow down the
+ * bowl as black stripes (docs/half-alpha-photos-20261117.md). A photo with no trusted pixel is returned
+ * as it is.
+ */
+export function edgeFilled(data: Uint8ClampedArray, width: number, height: number): Uint8ClampedArray {
+  const out = Uint8ClampedArray.from(data);
+  const n = width * height;
+  const alpha = (i: number) => data[i * 4 + 3];
+  const nearSoft = spreadFrom((i) => alpha(i) <= SOLID_ALPHA, width, height, EDGE_RING);
+  let trusted = 0;
+  const from = spreadFrom(
+    (i) => {
+      const keep = alpha(i) >= EDGE_OPAQUE || nearSoft[i] < 0;
+      if (keep) trusted++;
+      return keep;
+    },
+    width,
+    height,
+  );
+  if (!trusted) return out;
   for (let i = 0; i < n; i++) {
     const source = from[i];
     if (source === i || source < 0) continue;
