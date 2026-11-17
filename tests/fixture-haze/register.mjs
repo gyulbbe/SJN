@@ -8,6 +8,11 @@
 // Signs in with the local test account (the main checkout's test-results/e2e-flow, never printed); the
 // signed-in state is kept in the trial's folder only.
 //
+// The fixture-streaks trial (docs/fixture-streaks-20261117.md) adds two LAUCHE bathtubs (`louise`, `marta`)
+// the same way: the 2026-11-06 site photo's 정면 made by the app's guide on the second Cloudflare account
+// (tests/sanitary-guides/run.ts, A1 G and A3 C0, the reviewer's pick of two), 정면 only (a long product
+// gets no side photos in the app, and its scenes are seen from the front).
+//
 // Usage (worktree, dev server running): node tests/fixture-haze/register.mjs [keys]
 // Output: test-results/fixture-haze-20261116/register/<key>/{front,left,right}.png, shots, result.json
 import { chromium } from '@playwright/test';
@@ -21,6 +26,7 @@ const BASE = 'http://127.0.0.1:3000';
 const DIR = join(OUT, 'register');
 const SANITARY = join(ROOT, 'test-results', '위생도기-방향사진-20261107', 'runs', 'cf');
 const CATALOG = join(ROOT, 'test-results', 'catalog-match', 'snapshot', 'images');
+const BATHS = join(ROOT, 'test-results', '위생도기-방향사진-20261107', 'runs', 'cf');
 const STATE = join(DIR, 'state.json');
 mkdirSync(DIR, { recursive: true });
 
@@ -52,7 +58,27 @@ const BASINS = {
     installation: 'floor',
   },
 };
-const keys = (process.argv[2] ?? Object.keys(BASINS).join(',')).split(',');
+Object.assign(BASINS, {
+  louise: {
+    name: '시험용 루이즈 111 WH 욕조 (방향 사진)',
+    category: 'bath',
+    front: join(BATHS, 'A1', 'rep', 'G', 'front-1002.png'),
+    backdrop: true,
+    size: [1500, 600, 800],
+    installation: 'floor',
+    only: ['정면'],
+  },
+  marta: {
+    name: '시험용 마르타 6605 욕조 (방향 사진)',
+    category: 'bath',
+    front: join(BATHS, 'A3', 'rep', 'C0', 'front-1002.png'),
+    backdrop: true,
+    size: [1500, 600, 800],
+    installation: 'floor',
+    only: ['정면'],
+  },
+});
+const keys = (process.argv[2] ?? 'll821,ll802,z65l').split(',');
 
 // Photos as the form gets them.
 for (const key of keys) {
@@ -61,6 +87,7 @@ for (const key of keys) {
   const dir = join(DIR, key);
   mkdirSync(join(dir, 'shots'), { recursive: true });
   await sharp(b.front).png().toFile(join(dir, 'front.png'));
+  if (b.only) continue;
   await sharp(b.left).png().toFile(join(dir, 'left.png'));
   if (b.right) await sharp(b.right).png().toFile(join(dir, 'right.png'));
   else await sharp(b.left).flop().png().toFile(join(dir, 'right.png'));
@@ -138,7 +165,7 @@ try {
     await page.getByRole('button', { name: '자재 등록', exact: true }).first().click();
     const form = page.getByRole('dialog', { name: '자재 등록', exact: true });
     await form.getByLabel('상품명').fill(b.name);
-    await form.getByLabel('카테고리', { exact: true }).selectOption('basin');
+    await form.getByLabel('카테고리', { exact: true }).selectOption(b.category ?? 'basin');
     await form.getByLabel('가로 (mm)', { exact: true }).fill(String(b.size[0]));
     await form.getByLabel('높이 (mm)', { exact: true }).fill(String(b.size[1]));
     await form.getByLabel('깊이 (mm)', { exact: true }).fill(String(b.size[2]));
@@ -147,7 +174,7 @@ try {
       ['정면', 'front'],
       ['왼쪽', 'left'],
       ['오른쪽', 'right'],
-    ];
+    ].filter(([direction]) => !b.only || b.only.includes(direction));
     await form.getByLabel('+ 제품 이미지 올리기', { exact: true }).setInputFiles(
       views.map(([, file]) => ({
         name: `${key}-${file}.png`,

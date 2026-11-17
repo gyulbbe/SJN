@@ -6,7 +6,7 @@
  *
  * With --new (or --new --holdout): this trial's own new scenes (scenes.ts, specs.ts), layers `n-<scene>`.
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-haze/behind.ts [--holdout] [--new] [--gpu]
+ * Usage: node tests/run-browser-test.mjs tests/fixture-haze/behind.ts [--holdout] [--new [--group bath]] [--gpu]
  * Output: test-results/fixture-haze-20261116/behind/<t|x>-<scene>/{behind,mask-behind,full,empty,coverage}.png,
  *   regions-behind.json
  */
@@ -19,12 +19,13 @@ import type { PublicRecord, SceneSpec } from '../export-photoreal/scene-builder'
 import { SNAPSHOT } from '../tile-ai/paths.mjs';
 import { sources } from '../tile-pattern/sources';
 import { trialCatalog } from './catalog';
-import { resolveSpecs } from './specs';
+import { GROUP_PREFIX, groupArg, resolveSpecs } from './specs';
 import { OUT } from './paths.mjs';
 
 const gpu = process.argv.includes('--gpu');
 const holdout = process.argv.includes('--holdout');
 const fresh = process.argv.includes('--new');
+const group = groupArg(process.argv);
 const only = (() => {
   const i = process.argv.indexOf('--only');
   return i > 0 ? new Set(process.argv[i + 1].split(',')) : undefined;
@@ -49,8 +50,8 @@ const { records, files, imageFiles } = fresh
     })();
 const scenes = new Map<string, SceneSpec>();
 if (fresh)
-  for (const spec of resolveSpecs(Object.keys(records)).filter((spec) => !!spec.holdout === holdout))
-    scenes.set(`n-${spec.id}`, { ...spec, id: `n-${spec.id}` });
+  for (const spec of resolveSpecs(Object.keys(records), group).filter((spec) => !!spec.holdout === holdout))
+    scenes.set(`${GROUP_PREFIX[group]}-${spec.id}`, { ...spec, id: `${GROUP_PREFIX[group]}-${spec.id}` });
 else
   for (const source of sources(holdout ? 'holdout' : 'dev')) {
     const key = `${source.trial === 'tile' ? 't' : 'x'}-${source.scene}`;

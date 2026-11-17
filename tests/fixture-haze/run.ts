@@ -4,7 +4,7 @@
  * second Cloudflare account only, each once. Every call is in the ledger before the budget lets the next
  * one out (the same account's other trials count per UTC day); no retry, the first failure stops.
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-haze/run.ts [--holdout] [--dry]
+ * Usage: node tests/run-browser-test.mjs tests/fixture-haze/run.ts [--holdout] [--dry] [--group bath]
  * Output: test-results/fixture-haze-20261116/new/results/<scene>-<seed>.{png,json}, new/ledger.jsonl
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -18,11 +18,13 @@ import { OUT as NICHE_OUT } from '../niche-look/paths.mjs';
 import { OUT as PHOTO_OUT } from '../photo-products/paths.mjs';
 import { FLUX_4B, fluxRequest } from '../photo-products/methods';
 import { OUT as TRIAL } from './paths.mjs';
+import { groupArg } from './specs';
 
 const holdout = process.argv.includes('--holdout');
 const dry = process.argv.includes('--dry');
 const SEEDS = [424242, 777001];
-const OUT = join(TRIAL as string, 'new');
+const group = groupArg(process.argv);
+const OUT = join(TRIAL as string, group);
 const LEDGER = join(OUT, 'ledger.jsonl');
 const rows = (file: string): LedgerRow[] =>
   existsSync(file)
@@ -54,7 +56,7 @@ const pending = jobs.filter((job) => !existsSync(`${base(job.scene, job.seed)}.p
 const estimate = (job: Job) => fluxRequest('cur', sceneDir(job.scene)).estimate;
 const total = pending.reduce((s, job) => s + estimate(job), 0);
 console.log(
-  `fixture-haze second: ${jobs.length} jobs, ${pending.length} to send, about ${Math.round(total)} neurons; trial spent ${Math.round(spent(rows(LEDGER)))} of ${BUDGET_STOP}`,
+  `fixture-haze ${group} second: ${jobs.length} jobs, ${pending.length} to send, about ${Math.round(total)} neurons; trial spent ${Math.round(spent(rows(LEDGER)))} of ${BUDGET_STOP}`,
 );
 if (dry) {
   for (const job of pending) console.log(' ', job.scene, job.seed, Math.round(estimate(job)));
@@ -99,7 +101,7 @@ for (const job of pending) {
       model: FLUX_4B,
       neurons: request.estimate,
       status,
-      round: 'fixture-haze',
+      round: group === 'bath' ? 'fixture-streaks' : 'fixture-haze',
       method: 'cur',
       scene: job.scene,
       seed: job.seed,

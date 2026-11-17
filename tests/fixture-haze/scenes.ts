@@ -3,7 +3,7 @@
  * section 4): specs.ts drawn exactly as the export dialog captures them, as tests/photo-products/scenes.ts
  * does (its copy, with the trial's catalogue: the snapshot plus the locally registered basins).
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-haze/scenes.ts [--holdout] [--only id,id] [--gpu]
+ * Usage: node tests/run-browser-test.mjs tests/fixture-haze/scenes.ts [--holdout] [--only id,id] [--gpu] [--group bath]
  * Output: test-results/fixture-haze-20261116/new/scenes/<scene>/
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { build } from 'esbuild';
 import sharp from 'sharp';
 import { trialCatalog } from './catalog';
 import { OUT as TRIAL } from './paths.mjs';
-import { resolveSpecs } from './specs';
+import { groupArg, resolveSpecs } from './specs';
 
 const gpu = process.argv.includes('--gpu');
 const holdout = process.argv.includes('--holdout');
@@ -22,9 +22,11 @@ const only = (() => {
   return i > 0 ? new Set(process.argv[i + 1].split(',')) : undefined;
 })();
 
-const OUT = join(TRIAL as string, 'new');
+const group = groupArg(process.argv);
+// SCENES_OUT draws into another folder (to compare a renderer change with the scenes the model got).
+const OUT = process.env.SCENES_OUT ?? join(TRIAL as string, group);
 const { records, files, imageFiles } = trialCatalog();
-const SPECS = resolveSpecs(Object.keys(records)).filter((spec) => !!spec.holdout === holdout);
+const SPECS = resolveSpecs(Object.keys(records), group).filter((spec) => !!spec.holdout === holdout);
 const bundle = await build({
   stdin: {
     contents: [
