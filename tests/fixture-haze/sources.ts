@@ -14,7 +14,16 @@ import { OUT as MATERIAL } from '../fixture-material/paths.mjs';
 import { OUT } from './paths.mjs';
 
 export type HazeSource = Source & { layers: string };
-export type HazeSet = 'dev' | 'holdout' | 'new' | 'new-holdout' | 'bath' | 'reg' | 'mat-semi' | 'mat-china';
+export type HazeSet =
+  | 'dev'
+  | 'holdout'
+  | 'new'
+  | 'new-holdout'
+  | 'bath'
+  | 'reg'
+  | 'mat-semi'
+  | 'mat-china'
+  | 'mat-app';
 /** This trial's new scenes (scenes.ts) whose result is back (run.ts): `n-<scene>-<seed>`. */
 function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' = 'new'): HazeSource[] {
   const prefix = { new: 'n', bath: 'b', reg: 'r' }[group];
@@ -41,10 +50,18 @@ function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' = 'new'): HazeSou
 }
 /** The fixture-material sentence variants that are back, on their fixture-haze scenes. */
 function material(variant: string): HazeSource[] {
-  return (['new', 'reg'] as const).flatMap((group) => {
+  return (['new', 'reg', 'bath', 'dev', 'holdout'] as const).flatMap((group) => {
     const dir = join(MATERIAL as string, 'ai', group);
     if (!existsSync(dir)) return [];
-    const prefix = group === 'new' ? 'n' : 'r';
+    if (group === 'dev' || group === 'holdout')
+      return readdirSync(dir)
+        .filter((file) => file.endsWith(`.${variant}.png`))
+        .map((file) => {
+          const [, scene, seed] = /^(.*)-(\d+)\./.exec(file)!;
+          const base = haze(group).find((s) => s.scene === scene && s.seed === Number(seed))!;
+          return { ...base, id: `${base.id}-${variant}`, result: join(dir, file) };
+        });
+    const prefix = { new: 'n', reg: 'r', bath: 'b' }[group];
     return readdirSync(dir)
       .filter((file) => file.endsWith(`.${variant}.png`))
       .map((file) => {
@@ -63,7 +80,7 @@ function material(variant: string): HazeSource[] {
   });
 }
 export function haze(set: HazeSet): HazeSource[] {
-  if (set === 'mat-semi' || set === 'mat-china') return material(set.slice(4));
+  if (set === 'mat-semi' || set === 'mat-china' || set === 'mat-app') return material(set.slice(4));
   if (set === 'bath' || set === 'reg') return fresh(false, set);
   if (set === 'new' || set === 'new-holdout') return fresh(set === 'new-holdout');
   return sources(set).map((source) => ({

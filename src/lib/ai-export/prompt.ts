@@ -146,7 +146,21 @@ function fixtureSentence(fixture: FluxFixture, index: number, detailed: boolean)
   const keep = fixture.facing
     ? `in the same place, size and direction, facing ${facingPhrase(fixture.face, fixture.facing)}`
     : 'in the same place and size';
-  return `${index}. A ${colorWords(fixture.color)} ${fixture.finish} ${forms}${noun} ${where}${size}. It must remain a ${noun} ${keep}.`;
+  // A ceramic (docs/fixture-material-20261118.md): glossy is said semi-gloss, a light colour plain
+  // "white", and that it is china, not metal. A light grey glossy toilet came back chrome.
+  const ceramic = FLUX_CERAMIC_KINDS.includes(fixture.kind);
+  const light = ceramic && isLightColor(fixture.color);
+  const finish = ceramic && fixture.finish === 'glossy' ? 'semi-gloss' : fixture.finish;
+  const china = light ? ` ${FLUX_CHINA_SENTENCE}` : '';
+  return `${index}. A ${light ? 'white' : colorWords(fixture.color)} ${finish} ${forms}${noun} ${where}${size}. It must remain a ${noun} ${keep}.${china}`;
+}
+
+/** The fixtures said as ceramic in the prompt (toilet, washbasin, bathtub). */
+export const FLUX_CERAMIC_KINDS: readonly FluxFixtureKind[] = ['toilet', 'basin', 'bath'];
+export const FLUX_CHINA_SENTENCE = 'It is vitreous china, not metal or chrome.';
+/** Every channel at least 0xb0: a white ceramic, however grey the photo's average came out. */
+function isLightColor(hex: string): boolean {
+  return [1, 3, 5].every((k) => parseInt(hex.slice(k, k + 2), 16) >= 0xb0);
 }
 
 /**

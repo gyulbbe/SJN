@@ -2,8 +2,8 @@
  * Today's app picture (current-refine.ts) of each sentence-variant result (run-prompt.ts), named after
  * the scene's earlier result so the review puts it beside that one's app picture (no AI call).
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-material/variant-pictures.ts
- * Output: test-results/fixture-material-20261118/pictures/<n|r>-<scene>-<seed>.<semi|china>.png
+ * Usage: node tests/run-browser-test.mjs tests/fixture-material/variant-pictures.ts [--app]
+ * Output: test-results/fixture-material-20261118/pictures/<id>.<semi|china|app>.png
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +15,8 @@ import { OUT } from './paths.mjs';
 
 const dir = join(OUT as string, 'pictures');
 mkdirSync(dir, { recursive: true });
-for (const variant of ['semi', 'china'] as const)
+const only = process.argv.includes('--app') ? (['app'] as const) : (['semi', 'china'] as const);
+for (const variant of only)
   for (const source of haze(`mat-${variant}`)) {
     const loaded = await loadInput(source);
     const id = source.id.slice(0, -variant.length - 1);

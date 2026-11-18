@@ -9,7 +9,10 @@
  * - `china`: `semi`, and a light ceramic colour (every channel ≥ 0xb0) is called "white" (no hex), and
  *   each ceramic sentence ends with "It is white vitreous china, not metal or chrome."
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-material/run-prompt.ts [--dry]
+ * `app` (--confirm, user OK 11-18: about 12 calls, estimate about 1,300): the app's own prompt after the
+ * change (prompt.ts FLUX_CHINA_SENTENCE) on held-out, bathtub and standard-model scenes.
+ *
+ * Usage: node tests/run-browser-test.mjs tests/fixture-material/run-prompt.ts [--dry] [--confirm]
  * Output: test-results/fixture-material-20261118/ai/<group>/<scene>-<seed>.<variant>.{png,json}, ledger.jsonl
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -19,12 +22,15 @@ import { parseAccountFile, sendFlux } from '../direction-photo-methods/flux-send
 import { admit, BUDGET_STOP, isLimit, spent, type LedgerRow } from '../extra-ai/budget';
 import { ACCOUNT_FILES } from '../extra-ai/paths.mjs';
 import { OUT as HAZE } from '../fixture-haze/paths.mjs';
+import { haze } from '../fixture-haze/sources';
 import { FLUX_4B, fluxRequest } from '../photo-products/methods';
 import { OUT, ROOT } from './paths.mjs';
 
 const dry = process.argv.includes('--dry');
 const LEDGER = join(OUT as string, 'ledger.jsonl');
-const JOBS: { group: 'new' | 'reg'; scene: string; seed: number }[] = [
+const confirm = process.argv.includes('--confirm');
+type Group = 'new' | 'reg' | 'bath' | 'dev' | 'holdout';
+const SWEEP: { group: Group; scene: string; seed: number }[] = [
   { group: 'new', scene: 'white-0', seed: 777001 },
   { group: 'new', scene: 'white-0', seed: 424242 },
   { group: 'new', scene: 'white-90', seed: 424242 },
@@ -36,12 +42,28 @@ const JOBS: { group: 'new' | 'reg'; scene: string; seed: number }[] = [
   { group: 'reg', scene: 'charcoal-90', seed: 424242 },
   { group: 'reg', scene: 'waves-90', seed: 777001 },
 ];
-const VARIANTS = ['semi', 'china'] as const;
-type Variant = (typeof VARIANTS)[number];
+const CONFIRM: { group: Group; scene: string; seed: number }[] = [
+  { group: 'new', scene: 'cream-0', seed: 424242 },
+  { group: 'new', scene: 'cream-0', seed: 777001 },
+  { group: 'new', scene: 'glossy-90', seed: 424242 },
+  { group: 'new', scene: 'glossy-90', seed: 777001 },
+  { group: 'reg', scene: 'bath-white-0', seed: 777001 },
+  { group: 'reg', scene: 'bath-charcoal-0', seed: 424242 },
+  { group: 'bath', scene: 'white-0', seed: 777001 },
+  { group: 'dev', scene: 'white', seed: 777001 },
+  { group: 'dev', scene: 'scored', seed: 777001 },
+  { group: 'dev', scene: 'photos', seed: 777001 },
+  { group: 'holdout', scene: 'large', seed: 424242 },
+  { group: 'reg', scene: 'white-90', seed: 777001 },
+];
+const JOBS = confirm ? CONFIRM : SWEEP;
+const VARIANTS = (confirm ? ['app'] : ['semi', 'china']) as readonly Variant[];
+type Variant = 'semi' | 'china' | 'app';
 
 const CERAMIC = /(toilet|washbasin|bathtub)/;
 /** The prompt with its ceramic fixture sentences changed. */
 export function variantPrompt(prompt: string, variant: Variant): string {
+  if (variant === 'app') return prompt;
   // Fixture sentences start "N. A " and run to the next one or to "Image 0 contains exactly".
   return prompt.replace(/(\d+\. A [^]*?)(?=\s\d+\. A |\sImage 0 contains exactly)/g, (sentence) => {
     const head = sentence.slice(0, sentence.search(/ at | on the /) > 0 ? sentence.search(/ at | on the /) : sentence.length);
@@ -78,7 +100,10 @@ function others(): LedgerRow[] {
   walk(join(ROOT as string, 'test-results'), 0);
   return found.flatMap(rows);
 }
-const sceneDir = (job: (typeof JOBS)[number]) => join(HAZE as string, job.group, 'scenes', job.scene);
+const sceneDir = (job: (typeof JOBS)[number]) =>
+  job.group === 'dev' || job.group === 'holdout'
+    ? haze(job.group).find((s) => s.scene === job.scene && s.seed === job.seed)!.dir
+    : join(HAZE as string, job.group, 'scenes', job.scene);
 const base = (job: (typeof JOBS)[number], variant: Variant) =>
   join(OUT as string, 'ai', job.group, `${job.scene}-${job.seed}.${variant}`);
 const work = JOBS.flatMap((job) => VARIANTS.map((variant) => ({ job, variant })));
