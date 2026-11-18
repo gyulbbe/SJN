@@ -30,11 +30,13 @@ const keep = arg('keep', 'k25s04qw'),
 const sets = (arg('sets', 'dev,new,bath') || '').split(',');
 /** --whole: the whole pictures instead of the crops around the ceramics (the reviewer's ask 11-17). */
 const whole = process.argv.includes('--whole');
+/** --ids: exactly these pictures, the --keep candidate against `now` (o1: the outline trial, section 12). */
+const chosen = arg('ids') ? arg('ids').split(',') : undefined;
 const rows = sets
   .flatMap((s) => JSON.parse(readFileSync(join(OUT, `pictures-${s}.json`), 'utf8')))
-  .filter((r) => r.aligned && r[keep]);
+  .filter((r) => r.aligned && (chosen ? chosen.includes(r.id) : r[keep]));
 const CERAMIC = ['toilet', 'basin', 'bath'];
-const strongest = (row) => Math.max(...row[keep].fixtures.map((f) => f.spread));
+const strongest = (row) => (row[keep] ? Math.max(...row[keep].fixtures.map((f) => f.spread)) : 0);
 const baths = rows.filter((r) => r.boxes.some((b) => b.kind === 'bath')).map((r) => r.id);
 const others = rows
   .filter((r) => !baths.includes(r.id))
@@ -50,12 +52,16 @@ const shuffle = (list) => {
   }
   return list;
 };
-const pairs = [
+const pairs = chosen
+  ? chosen.map((source) => ({ source, candidate: keep }))
+  : [
   ...[...baths, ...others.slice(0, top)].map((source) => ({ source, candidate: keep })),
   ...(also ? [...baths, ...others.slice(0, alsoTop)].map((source) => ({ source, candidate: also })) : []),
 ];
 shuffle(pairs);
-for (const pair of pairs) pair.a = random() < 0.5 ? 'now' : pair.candidate;
+// Half of the pairs show `now` on the A side, in random order.
+const sides = shuffle(pairs.map((_, k) => k < pairs.length / 2));
+for (const [k, pair] of pairs.entries()) pair.a = sides[k] ? 'now' : pair.candidate;
 
 const dir = join(OUT, 'review', set);
 mkdirSync(join(dir, 'pic'), { recursive: true });
