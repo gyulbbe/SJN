@@ -31,7 +31,11 @@ setPieceRule(28, 0.7, 0.3);
 const RIM = { band: 3, gap: 6, lift: 0.8, inside: 0.08 };
 /** joint: R1 (the joints step restores a face fully next to a fixture); edge: edge-method.ts. */
 /** shadow: O1 also turns the model's shadow pieces to wall (outline-method.ts PIECE_SHADOW). */
-export const RULES: Record<string, { joint?: number; shadow?: boolean; edge?: EdgeRule; body?: BodyRule }> = {
+/** backdrop: the joints step also restores fully at the backdrop (joints-trial.ts backdropRim). */
+export const RULES: Record<
+  string,
+  { joint?: number; shadow?: boolean; backdrop?: boolean; faces?: boolean; edge?: EdgeRule; body?: BodyRule }
+> = {
   e1: { edge: { soft: true } },
   e2: { edge: { rim: RIM } },
   r1: { joint: 1 },
@@ -50,6 +54,30 @@ export const RULES: Record<string, { joint?: number; shadow?: boolean; edge?: Ed
     shadow: true,
     edge: { soft: true, rim: RIM },
     body: { dark: 0.5, bright: 0.8, lift: 1 },
+  },
+  bk: { backdrop: true },
+  sb5lk: {
+    joint: 0.5,
+    shadow: true,
+    backdrop: true,
+    edge: { soft: true, rim: RIM },
+    body: { dark: 0.5, bright: 0.8, lift: 1 },
+  },
+  sb5lkf: {
+    joint: 0.5,
+    shadow: true,
+    backdrop: true,
+    faces: true,
+    edge: { soft: true, rim: RIM },
+    body: { dark: 0.5, bright: 0.8, lift: 1 },
+  },
+  sb3lkf: {
+    joint: 0.5,
+    shadow: true,
+    backdrop: true,
+    faces: true,
+    edge: { soft: true, rim: RIM },
+    body: { dark: 0.3, bright: 0.6, lift: 1 },
   },
   sb3l: {
     joint: 0.5,
@@ -81,11 +109,15 @@ for (const source of haze(set)) {
   if (!loaded) continue;
   const { input } = loaded;
   JOINT_TRIAL.fixtureRim = 0;
+  JOINT_TRIAL.backdropRim = false;
+  JOINT_TRIAL.faceRim = false;
   PIECE_SHADOW.on = false;
   const trial = refineTrial({ ...input, pieces: true });
   const base = trial.shown ?? input.raw;
   if (!trial.outline) continue;
   JOINT_TRIAL.fixtureRim = 0;
+  JOINT_TRIAL.backdropRim = false;
+  JOINT_TRIAL.faceRim = false;
   PIECE_SHADOW.on = false;
   const same = refineShadow({ ...input, pieces: true }).shown ?? input.raw;
   if (differs(same, base)) mismatch++;
@@ -95,8 +127,13 @@ for (const source of haze(set)) {
     const rule = RULES[name];
     const started = performance.now();
     JOINT_TRIAL.fixtureRim = rule.joint ?? 0;
+    JOINT_TRIAL.backdropRim = !!rule.backdrop;
+    JOINT_TRIAL.faceRim = !!rule.faces;
     PIECE_SHADOW.on = !!rule.shadow;
-    const refined = rule.joint || rule.shadow ? refineShadow({ ...input, pieces: true }) : trial;
+    const refined =
+      rule.joint || rule.shadow || rule.backdrop || rule.faces
+        ? refineShadow({ ...input, pieces: true })
+        : trial;
     const shown = refined.shown ?? input.raw;
     const { image, log } = rule.edge
       ? edgeTrial({

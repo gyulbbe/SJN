@@ -29,8 +29,13 @@ import {
 import type { FluxInputLayout } from '../../src/lib/ai-export/contract';
 
 /** Trial switches (tests only): this file is a copy of src/lib/ai-export/joints.ts with them added. */
-/** fixtureRim: how much a fixture next to a face counts as the face (0 = the app, 1 = fully). */
-export const JOINT_TRIAL = { fixtureRim: 0 };
+/**
+ * fixtureRim: how much a fixture next to a face counts as the face (0 = the app, 1 = fully).
+ * backdropRim: the backdrop (label 0) next to a face counts as the face, and the face's pixels within
+ * 3 px of it give no light (the model often ends the room a few pixels short, on white).
+ * faceRim: another face next to a face counts as the face (no fade where two faces meet).
+ */
+export const JOINT_TRIAL = { fixtureRim: 0, backdropRim: false, faceRim: false };
 
 /** The widened capture's joints are at least this wide in the model input (pixels). */
 export const JOINT_MIN_INPUT_PX = 1.25;
@@ -419,14 +424,32 @@ export function restoreJoints(
     const objects = addedObjects(local, refLum, weight);
     const lit = new Float32Array(count);
     for (let i = 0; i < count; i++) lit[i] = weight[i] && !objects[i] ? 1 : 0;
+    if (JOINT_TRIAL.backdropRim) {
+      const outside = new Float32Array(count);
+      for (let i = 0; i < count; i++) if (mask.data[at(i)] === 0) outside[i] = 1;
+      const near = blurInside(outside, ones, w, h, 3).mean;
+      for (let i = 0; i < count; i++) if (near[i] > 0.001) lit[i] = 0;
+    }
     // Near the face's rim the detail fades in over a few pixels.
     // Trial R1 (docs/fixture-shadows-20261118.md): a fixture next to the face counts as inside, so the
     // face's pixels by a fixture are restored fully and do not keep the model's contact shadow.
     let rimWeight = weight;
-    if (JOINT_TRIAL.fixtureRim) {
+    if (JOINT_TRIAL.fixtureRim || JOINT_TRIAL.backdropRim || JOINT_TRIAL.faceRim) {
       rimWeight = new Float32Array(count);
-      for (let i = 0; i < count; i++)
-        rimWeight[i] = weight[i] ? 1 : mask.data[at(i)] === FIXTURE_REGION ? JOINT_TRIAL.fixtureRim : 0;
+      for (let i = 0; i < count; i++) {
+        const label = mask.data[at(i)];
+        rimWeight[i] = weight[i]
+          ? 1
+          : label === FIXTURE_REGION
+            ? JOINT_TRIAL.fixtureRim
+            : label === 0
+              ? JOINT_TRIAL.backdropRim
+                ? 1
+                : 0
+              : JOINT_TRIAL.faceRim
+                ? 1
+                : 0;
+      }
     }
     const inside = blurInside(rimWeight, ones, w, h, 2).mean;
     const channels = [0, 1, 2].map((c) => {
