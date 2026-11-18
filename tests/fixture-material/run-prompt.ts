@@ -12,7 +12,10 @@
  * `app` (--confirm, user OK 11-18: about 12 calls, estimate about 1,300): the app's own prompt after the
  * change (prompt.ts FLUX_CHINA_SENTENCE) on held-out, bathtub and standard-model scenes.
  *
- * Usage: node tests/run-browser-test.mjs tests/fixture-material/run-prompt.ts [--dry] [--confirm]
+ * `narrow` (--narrow, user OK 11-18: about 10 calls, estimate about 1,100): the app's prompt with the
+ * change narrowed to light ceramics not said white (a photo product's grey average).
+ *
+ * Usage: node tests/run-browser-test.mjs tests/fixture-material/run-prompt.ts [--dry] [--confirm | --narrow]
  * Output: test-results/fixture-material-20261118/ai/<group>/<scene>-<seed>.<variant>.{png,json}, ledger.jsonl
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -56,14 +59,27 @@ const CONFIRM: { group: Group; scene: string; seed: number }[] = [
   { group: 'holdout', scene: 'large', seed: 424242 },
   { group: 'reg', scene: 'white-90', seed: 777001 },
 ];
-const JOBS = confirm ? CONFIRM : SWEEP;
-const VARIANTS = (confirm ? ['app'] : ['semi', 'china']) as readonly Variant[];
-type Variant = 'semi' | 'china' | 'app';
+const narrow = process.argv.includes('--narrow');
+const NARROW: { group: Group; scene: string; seed: number }[] = [
+  { group: 'new', scene: 'cream-0', seed: 424242 },
+  { group: 'new', scene: 'cream-0', seed: 777001 },
+  { group: 'new', scene: 'glossy-90', seed: 424242 },
+  { group: 'new', scene: 'glossy-90', seed: 777001 },
+  { group: 'new', scene: 'white-0', seed: 777001 },
+  { group: 'new', scene: 'waves-90', seed: 777001 },
+  { group: 'reg', scene: 'streaks-90', seed: 424242 },
+  { group: 'reg', scene: 'charcoal-0', seed: 777001 },
+  { group: 'reg', scene: 'white-90', seed: 424242 },
+  { group: 'dev', scene: 'photos', seed: 424242 },
+];
+const JOBS = narrow ? NARROW : confirm ? CONFIRM : SWEEP;
+const VARIANTS = (narrow ? ['narrow'] : confirm ? ['app'] : ['semi', 'china']) as readonly Variant[];
+type Variant = 'semi' | 'china' | 'app' | 'narrow';
 
 const CERAMIC = /(toilet|washbasin|bathtub)/;
 /** The prompt with its ceramic fixture sentences changed. */
 export function variantPrompt(prompt: string, variant: Variant): string {
-  if (variant === 'app') return prompt;
+  if (variant === 'app' || variant === 'narrow') return prompt;
   // Fixture sentences start "N. A " and run to the next one or to "Image 0 contains exactly".
   return prompt.replace(/(\d+\. A [^]*?)(?=\s\d+\. A |\sImage 0 contains exactly)/g, (sentence) => {
     const head = sentence.slice(0, sentence.search(/ at | on the /) > 0 ? sentence.search(/ at | on the /) : sentence.length);

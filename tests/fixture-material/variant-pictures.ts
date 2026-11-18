@@ -15,7 +15,11 @@ import { OUT } from './paths.mjs';
 
 const dir = join(OUT as string, 'pictures');
 mkdirSync(dir, { recursive: true });
-const only = process.argv.includes('--app') ? (['app'] as const) : (['semi', 'china'] as const);
+const only = process.argv.includes('--narrow')
+  ? (['narrow'] as const)
+  : process.argv.includes('--app')
+    ? (['app'] as const)
+    : (['semi', 'china'] as const);
 for (const variant of only)
   for (const source of haze(`mat-${variant}`)) {
     const loaded = await loadInput(source);

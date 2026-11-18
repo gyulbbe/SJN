@@ -146,13 +146,17 @@ function fixtureSentence(fixture: FluxFixture, index: number, detailed: boolean)
   const keep = fixture.facing
     ? `in the same place, size and direction, facing ${facingPhrase(fixture.face, fixture.facing)}`
     : 'in the same place and size';
-  // A ceramic (docs/fixture-material-20261118.md): glossy is said semi-gloss, a light colour plain
-  // "white", and that it is china, not metal. A light grey glossy toilet came back chrome.
-  const ceramic = FLUX_CERAMIC_KINDS.includes(fixture.kind);
-  const light = ceramic && isLightColor(fixture.color);
-  const finish = ceramic && fixture.finish === 'glossy' ? 'semi-gloss' : fixture.finish;
-  const china = light ? ` ${FLUX_CHINA_SENTENCE}` : '';
-  return `${index}. A ${light ? 'white' : colorWords(fixture.color)} ${finish} ${forms}${noun} ${where}${size}. It must remain a ${noun} ${keep}.${china}`;
+  // A light ceramic whose colour is not said white (a photo product's average, "light grey"):
+  // said white, glossy as semi-gloss, and that it is china, not metal (docs/fixture-material-20261118.md:
+  // a light grey glossy toilet came back chrome). Ceramics already said white keep their sentence:
+  // changed too, they came back worse in unseen pictures.
+  const greyish =
+    FLUX_CERAMIC_KINDS.includes(fixture.kind) &&
+    isLightColor(fixture.color) &&
+    !colorWords(fixture.color).startsWith('white');
+  const finish = greyish && fixture.finish === 'glossy' ? 'semi-gloss' : fixture.finish;
+  const china = greyish ? ` ${FLUX_CHINA_SENTENCE}` : '';
+  return `${index}. A ${greyish ? 'white' : colorWords(fixture.color)} ${finish} ${forms}${noun} ${where}${size}. It must remain a ${noun} ${keep}.${china}`;
 }
 
 /** The fixtures said as ceramic in the prompt (toilet, washbasin, bathtub). */
