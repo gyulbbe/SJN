@@ -6,7 +6,13 @@
  */
 import { FIXTURE_REGION, type Pixels, type RegionMask } from '../../src/lib/ai-export/color';
 import { CERAMIC_KINDS, fixtureMask } from '../../src/lib/ai-export/fixture-light';
-import { MIN_IOU, WALL_NEAR, type Cut, type FixtureOutline, type FixtureVerdict } from '../../src/lib/ai-export/fixture-outline';
+import {
+  MIN_IOU,
+  WALL_NEAR,
+  type Cut,
+  type FixtureOutline,
+  type FixtureVerdict,
+} from '../../src/lib/ai-export/fixture-outline';
 import { blurInside } from '../../src/lib/ai-export/joints';
 import { FLUX_FIXTURE_KINDS, type FluxFixture } from '../../src/lib/ai-export/scene-contract';
 
@@ -21,7 +27,21 @@ const PIECE_MIN_BORDER = 12;
 /** A piece thinner than this (pixels ÷ border steps with the wall) is a ring along the outline: the pixel rule. */
 const PIECE_MIN_THICK = 3;
 /** Every judged piece of the last calls (for the trial's numbers). */
-export const PIECE_LOG: { fixture: number; kind: string; pixels: number; border: number; share: number; wall: boolean }[] = [];
+export const PIECE_LOG: {
+  fixture: number;
+  kind: string;
+  pixels: number;
+  border: number;
+  share: number;
+  wall: boolean;
+}[] = [];
+/**
+ * Shadow pieces (docs/fixture-shadows-20261118.md, off unless set): a piece under `ratio` of the
+ * lightness of both the model's wall around and its fixture beside it (and `gap` darker, 0..255) is a
+ * shadow the model drew by its fixture, so wall, whatever its border (a shadow has a strong edge too)
+ * or size.
+ */
+export const PIECE_SHADOW = { on: false, ratio: 0.5, gap: 12 };
 export function setPieceRule(line: number, share: number, wall: number) {
   PIECE_LINE = line;
   PIECE_LINE_SHARE = share;
@@ -103,6 +123,7 @@ export function cutoutMaskTrial(input: {
     const seen = new Uint8Array(n);
     const stack: number[] = [];
     const sample = (i: number) => [planes[0][i], planes[1][i], planes[2][i]];
+    const lum = (i: number) => 0.299 * planes[0][i] + 0.587 * planes[1][i] + 0.114 * planes[2][i];
     for (let s = 0; s < n; s++) {
       if (!candidate[s] || seen[s]) continue;
       const index = ownIndex(own[s]);
@@ -111,10 +132,18 @@ export function cutoutMaskTrial(input: {
       stack.push(s);
       seen[s] = 1;
       let border = 0,
-        lines = 0;
+        lines = 0,
+        pieceLum = 0,
+        wallLum = 0,
+        fixLum = 0,
+        fixSteps = 0;
       while (stack.length) {
         const i = stack.pop()!;
         members.push(i);
+        pieceLum += lum(i);
+        // The model's wall around (blurred over its faces, so a shadow by the fixture weighs little).
+        wallLum +=
+          0.299 * wallColour[0].mean[i] + 0.587 * wallColour[1].mean[i] + 0.114 * wallColour[2].mean[i];
         const x = i % width,
           y = (i - x) / width;
         for (const [dx, dy] of [
@@ -151,13 +180,57 @@ export function cutoutMaskTrial(input: {
               b = sample(oy * width + ox);
             border++;
             if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > PIECE_LINE) lines++;
+          } else if (claimed[j]) {
+            // The model's fixture beside the piece, 2 px into it.
+            const fx = nx + 2 * dx,
+              fy = ny + 2 * dy;
+            const f =
+              fx >= 0 && fy >= 0 && fx < width && fy < height && claimed[fy * width + fx]
+                ? fy * width + fx
+                : j;
+            fixLum += lum(f);
+            fixSteps++;
           }
+        }
+      }
+      if (PIECE_SHADOW.on && process.env.PIECE_DEBUG && members.length > 20)
+        console.log(
+          'piece',
+          index,
+          members.length,
+          border,
+          fixSteps,
+          (pieceLum / members.length).toFixed(0),
+          (wallLum / members.length).toFixed(0),
+          fixSteps ? (fixLum / fixSteps).toFixed(0) : '-',
+        );
+      if (PIECE_SHADOW.on && border >= 3 && fixSteps >= 3) {
+        const mean = pieceLum / members.length;
+        const beside = Math.min(wallLum / members.length, fixLum / fixSteps);
+        if (mean < beside * PIECE_SHADOW.ratio && beside - mean >= PIECE_SHADOW.gap) {
+          PIECE_LOG.push({
+            fixture: index,
+            kind: fixtures[index].kind,
+            pixels: members.length,
+            border,
+            share: -1,
+            wall: true,
+          });
+          for (const i of members) piece[i] = 1;
+          continue;
         }
       }
       if (border < PIECE_MIN_BORDER || members.length / border < PIECE_MIN_THICK) continue;
       const share = lines / border;
       const verdict = share > PIECE_LINE_SHARE ? -1 : share <= PIECE_WALL_SHARE ? 1 : 0;
-      PIECE_LOG.push({ fixture: index, kind: fixtures[index].kind, pixels: members.length, border, share: +share.toFixed(2), wall: verdict === 1 });
+      PIECE_LOG.push({
+        fixture: index,
+        kind: fixtures[index].kind,
+        pixels: members.length,
+        border,
+        share: +share.toFixed(2),
+        wall: verdict === 1,
+      });
       if (!verdict) continue;
       for (const i of members) piece[i] = verdict;
     }
