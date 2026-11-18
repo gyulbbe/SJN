@@ -3,7 +3,7 @@
  * outline label, the strongest used cut-out alpha. Usage:
  * node tests/run-browser-test.mjs tests/fixture-shadows/probe.ts --set reg --id <id> --y 0.75 --x 0.2,0.27
  */
-import { FIXTURE_REGION } from '../../src/lib/ai-export/color';
+import { FIXTURE_REGION, type Pixels } from '../../src/lib/ai-export/color';
 import { haze, type HazeSet } from '../fixture-haze/sources';
 import { setPieceRule } from '../fixture-streaks/outline-method';
 import { refineTrial } from '../fixture-streaks/refine-trial';
@@ -24,7 +24,7 @@ const [a, b] = arg('x')
   .split(',')
   .map((v) => Math.round(Number(v) * width));
 const used = new Set(trial.outline!.verdicts.filter((v) => v.used).map((v) => v.fixture));
-const lum = (d: Uint8ClampedArray, i: number) =>
+const lum = (d: Pixels['data'], i: number) =>
   Math.round(0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]);
 for (let x = a; x <= b; x++) {
   const i = y * width + x;

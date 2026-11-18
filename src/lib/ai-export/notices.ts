@@ -253,6 +253,11 @@ export type FluxNoticeInput = {
    * lightness back (fixture-light.ts); absent or 0 when none did. Shown only with the corrected result.
    */
   ceramics?: number;
+  /**
+   * The ceramics' shading was also narrowed toward the render's (fixture-body.ts, on the model's own
+   * fixture outline): `ceramics` then counts the ceramics it changed.
+   */
+  ceramicShading?: boolean;
   /** Tile-layout answers are shown only when they proved reliable enough. */
   showTiles: boolean;
   /** Walls with a region: another tile there is intended, so a tile-layout answer about them is no warning. */
@@ -409,7 +414,9 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
     while (at < infos.length && (infos[at].key === 'color' || infos[at].key === 'joints')) at++;
     infos.splice(at, 0, {
       key: 'ceramics',
-      text: `AI가 어둡게 그린 도기(세면대·변기·욕조) ${input.ceramics}개는 밝기를 설계 쪽으로 되돌렸어요.`,
+      text: input.ceramicShading
+        ? `도기(세면대·변기·욕조) ${input.ceramics}개는 AI가 칠한 회색·진한 그늘을 설계 밝기 쪽으로 옅게 했어요.`
+        : `AI가 어둡게 그린 도기(세면대·변기·욕조) ${input.ceramics}개는 밝기를 설계 쪽으로 되돌렸어요.`,
     });
   }
   if (check?.status === 'failed')

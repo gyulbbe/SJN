@@ -12,6 +12,11 @@
  * - a render fixture pixel no cut-out holds becomes the face the render has behind its fixtures (the
  *   render with them hidden) when the model's pixel there also looks like its wall around (WALL_NEAR):
  *   a tap the cut-out left out stays the model's;
+ * - for a ceramic whose cut-out is used, those pixels are first judged per connected piece
+ *   (`pieceVerdicts`, 11-17/18): a piece much darker than both sides is the model's shadow (wall); a
+ *   piece whose border with the wall is mostly a line the model drew is its fixture (a white tank on a
+ *   white wall the cut-out missed); one with hardly any line is wall (the model drew the fixture
+ *   elsewhere). Small and thin pieces keep the pixel rule;
  * - a ceramic cut-out that overlaps its render fixture under MIN_IOU (it missed part of the fixture,
  *   say a white tank on a white wall) is not used: that fixture keeps the render's outline, as before;
  * - a thin fitting (a shower rail, a tap; the cut-out rarely holds it) needs no cut-out: its render
@@ -33,6 +38,25 @@ export const WALL_NEAR = 30;
 export const OUTLINE_PAD = 0.3;
 /** A crop smaller than this on either side is not cut out. */
 const MIN_CROP = 8;
+/** A border step of a piece whose two sides differ this much (sRGB distance) is a line the model drew. */
+export const PIECE_LINE = 28;
+/** A piece whose border is more than this share of lines is the model's fixture. */
+export const PIECE_FIXTURE_SHARE = 0.7;
+/** A piece whose border is at most this share of lines is wall; in between, the pixel rule. */
+export const PIECE_WALL_SHARE = 0.3;
+/** A piece needs this many border steps to be judged by its lines (else the pixel rule). */
+const PIECE_MIN_BORDER = 12;
+/** A piece thinner than this (pixels ÷ border steps with the wall) is a ring along the outline: the pixel rule. */
+const PIECE_MIN_THICK = 3;
+/**
+ * A piece under this share of the lightness of both the model's wall around and its fixture beside
+ * it, and at least SHADOW_GAP darker (0..255), is a shadow the model drew by its fixture: wall,
+ * whatever its border (a shadow has a strong edge too) or size.
+ */
+export const SHADOW_SHARE = 0.5;
+const SHADOW_GAP = 12;
+const PIECE_WALL = 1,
+  PIECE_FIXTURE = -1;
 
 export type OutlineCrop = { fixture: number; left: number; top: number; width: number; height: number };
 /** A crop's cut-out alpha (one byte a pixel, top-down, the crop's size). */
@@ -151,12 +175,35 @@ export function cutoutMask(input: {
     apart[i] = wallColour[0].cover[i] > 0 ? Math.sqrt(d) : 255;
   }
   const apartSmooth = blurInside(apart, candidate, width, height, 1).mean;
+  const piece = pieceVerdicts({
+    planes,
+    wallColour,
+    wall,
+    candidate,
+    claimed,
+    reliable,
+    own,
+    ownIndex,
+    fixtures,
+    width,
+    height,
+  });
   const data = Uint8Array.from(renderMask.data);
   const colour = Uint8Array.from(renderMask.data);
   let added = 0,
     removed = 0;
   for (let i = 0; i < n; i++) {
     const render = renderMask.data[i] === FIXTURE_REGION;
+    if (piece[i] === PIECE_WALL) {
+      const face = behindMask.data[i];
+      if (face && face !== FIXTURE_REGION) {
+        data[i] = face;
+        colour[i] = face;
+        removed++;
+      }
+      continue;
+    }
+    if (piece[i] === PIECE_FIXTURE) continue;
     if (candidate[i] && apartSmooth[i] < WALL_NEAR * 2.5) {
       const face = behindMask.data[i];
       if (face && face !== FIXTURE_REGION) colour[i] = face;
@@ -180,4 +227,114 @@ export function cutoutMask(input: {
     added,
     removed,
   };
+}
+
+/**
+ * Per connected piece of a reliable ceramic's render pixels the cut-out does not hold (11-17/18,
+ * docs/fixture-streaks-20261117.md section 12, docs/fixture-shadows-20261118.md): all wall
+ * (PIECE_WALL), all the model's fixture (PIECE_FIXTURE) or the pixel rule (0). A piece much darker
+ * than both the model's wall around and its fixture beside it is a shadow, so wall. Otherwise a piece
+ * whose border with the wall is mostly a line the model drew (its fixture's outline) is fixture, one
+ * with hardly any line (the wall goes on) is wall; small and thin pieces keep the pixel rule.
+ */
+function pieceVerdicts(input: {
+  planes: Float32Array[];
+  wallColour: { mean: Float32Array }[];
+  wall: Float32Array;
+  candidate: Float32Array;
+  claimed: Uint8Array;
+  reliable: ReadonlySet<number>;
+  own: Uint8Array;
+  ownIndex: (label: number) => number;
+  fixtures: readonly FluxFixture[];
+  width: number;
+  height: number;
+}): Int8Array {
+  const { planes, wallColour, wall, candidate, claimed, reliable, own, ownIndex, fixtures, width, height } =
+    input;
+  const n = width * height;
+  const piece = new Int8Array(n);
+  const seen = new Uint8Array(n);
+  const stack: number[] = [];
+  const lum = (i: number) => 0.299 * planes[0][i] + 0.587 * planes[1][i] + 0.114 * planes[2][i];
+  const apart = (i: number, j: number) =>
+    Math.hypot(planes[0][i] - planes[0][j], planes[1][i] - planes[1][j], planes[2][i] - planes[2][j]);
+  const steps = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ];
+  for (let s = 0; s < n; s++) {
+    if (!candidate[s] || seen[s]) continue;
+    const index = ownIndex(own[s]);
+    if (!CERAMIC_KINDS.includes(fixtures[index].kind) || !reliable.has(index)) continue;
+    const members: number[] = [];
+    stack.push(s);
+    seen[s] = 1;
+    let border = 0,
+      lines = 0,
+      pieceLum = 0,
+      wallLum = 0,
+      fixLum = 0,
+      fixSteps = 0;
+    while (stack.length) {
+      const i = stack.pop()!;
+      members.push(i);
+      pieceLum += lum(i);
+      // The model's wall around (blurred over its faces, so a shadow by the fixture weighs little).
+      wallLum +=
+        0.299 * wallColour[0].mean[i] + 0.587 * wallColour[1].mean[i] + 0.114 * wallColour[2].mean[i];
+      const x = i % width,
+        y = (i - x) / width;
+      for (const [dx, dy] of steps) {
+        const nx = x + dx,
+          ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        const j = ny * width + nx;
+        if (candidate[j] && !seen[j] && ownIndex(own[j]) === index) {
+          seen[j] = 1;
+          stack.push(j);
+        } else if (wall[j]) {
+          // A step across the border: up to 2 px inside (no deeper than the piece goes, a thin
+          // piece's far side is the fixture) against 2 px outside.
+          let inside = i;
+          for (let d = 1; d <= 2; d++) {
+            const tx = x - d * dx,
+              ty = y - d * dy;
+            if (tx < 0 || ty < 0 || tx >= width || ty >= height) break;
+            const t = ty * width + tx;
+            if (!candidate[t] || ownIndex(own[t]) !== index) break;
+            inside = t;
+          }
+          const ox = nx + 2 * dx,
+            oy = ny + 2 * dy;
+          if (ox < 0 || oy < 0 || ox >= width || oy >= height) continue;
+          border++;
+          if (apart(inside, oy * width + ox) > PIECE_LINE) lines++;
+        } else if (claimed[j]) {
+          // The model's fixture beside the piece, 2 px into it.
+          const fx = nx + 2 * dx,
+            fy = ny + 2 * dy;
+          fixLum += lum(
+            fx >= 0 && fy >= 0 && fx < width && fy < height && claimed[fy * width + fx] ? fy * width + fx : j,
+          );
+          fixSteps++;
+        }
+      }
+    }
+    if (border >= 3 && fixSteps >= 3) {
+      const mean = pieceLum / members.length;
+      const beside = Math.min(wallLum / members.length, fixLum / fixSteps);
+      if (mean < beside * SHADOW_SHARE && beside - mean >= SHADOW_GAP) {
+        for (const i of members) piece[i] = PIECE_WALL;
+        continue;
+      }
+    }
+    if (border < PIECE_MIN_BORDER || members.length / border < PIECE_MIN_THICK) continue;
+    const share = lines / border;
+    const verdict = share > PIECE_FIXTURE_SHARE ? PIECE_FIXTURE : share <= PIECE_WALL_SHARE ? PIECE_WALL : 0;
+    if (verdict) for (const i of members) piece[i] = verdict;
+  }
+  return piece;
 }

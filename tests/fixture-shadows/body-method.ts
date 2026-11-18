@@ -21,8 +21,11 @@ import { fixtureMask } from '../../src/lib/ai-export/fixture-light';
 import { blurInside } from '../../src/lib/ai-export/joints';
 import type { FluxFixture } from '../../src/lib/ai-export/scene-contract';
 
-/** lift: the share of the gap by which a median darker than the render's is raised (0 none). */
-export type BodyRule = { dark: number; bright: number; lift?: number };
+/**
+ * lift: the share of the gap by which a median darker than the render's is raised (0 none).
+ * cap: when the result spreads wider than the render on a side, that side narrows at least to this.
+ */
+export type BodyRule = { dark: number; bright: number; lift?: number; cap?: number };
 export type BodyLog = { kind: string; fDark: number; fBright: number; median: number; refMedian: number }[];
 
 const quantile = (sorted: Float32Array, q: number) =>
@@ -66,22 +69,25 @@ export function bodyTrial(input: {
     const clamp = (v: number, low: number) => Math.max(low, Math.min(1, Number.isFinite(v) ? v : 1));
     const fDark = clamp((mRef - quantile(a, 0.1)) / Math.max(1, mRes - quantile(b, 0.1)), rule.dark);
     const fBright = clamp((quantile(a, 0.9) - mRef) / Math.max(1, quantile(b, 0.9) - mRes), rule.bright);
+    const capped = (f: number) => (rule.cap !== undefined && f < 1 ? Math.min(f, rule.cap) : f);
+    const dk = capped(fDark),
+      bt = capped(fBright);
     log.push({
       kind: ref.kinds[k - 1],
-      fDark: +fDark.toFixed(2),
-      fBright: +fBright.toFixed(2),
+      fDark: +dk.toFixed(2),
+      fBright: +bt.toFixed(2),
       median: Math.round(mRes),
       refMedian: Math.round(mRef),
     });
     const raise = mRes < mRef ? (mRef - mRes) * (rule.lift ?? 0) : 0;
-    if (fDark === 1 && fBright === 1 && !raise) continue;
+    if (dk === 1 && bt === 1 && !raise) continue;
     const label = new Float32Array(n),
       ones = new Float32Array(n).fill(1);
     for (const i of resIdx) label[i] = 1;
     const inside = blurInside(label, ones, width, height, 2).mean;
     for (const [j, i] of resIdx.entries()) {
       const [L, A, B] = labs[j];
-      const target = (L < mRes ? mRes - (mRes - L) * fDark : mRes + (L - mRes) * fBright) + raise;
+      const target = (L < mRes ? mRes - (mRes - L) * dk : mRes + (L - mRes) * bt) + raise;
       const w = Math.max(0, Math.min(1, (inside[i] - 0.5) * 2));
       const [r, g, bl] = labToRgb(L + (target - L) * w, A, B);
       out[i * 4] = r;

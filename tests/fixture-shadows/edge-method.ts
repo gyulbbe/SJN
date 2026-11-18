@@ -35,7 +35,7 @@ export function edgeTrial(input: {
   fixtures: readonly FluxFixture[];
   rule: EdgeRule;
 }): { image: Pixels; log: EdgeLog } {
-  const { raw, shown, outline, cuts, fixtures, rule } = input;
+  const { shown, outline, cuts, fixtures, rule } = input;
   const mask: RegionMask = outline.mask;
   const { width, height } = shown;
   const n = width * height;

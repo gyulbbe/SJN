@@ -2,6 +2,22 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-18 — 지금 방식 다듬기: 제품 둘레 검은 테두리·그림자 띠·도기 회색 줄이기
+
+- 무엇:
+  - `fixture-outline.ts`: 컷아웃 밖 렌더 도기 픽셀을 덩어리로 판단한다(그림자 덩어리는 벽, 선이 둘린 덩어리는 제품, 선 없는 덩어리는 벽).
+  - `joints.ts` `OUTLINE_RIMS`: AI 윤곽 경로에서 면을 제품 옆(절반)·바탕 옆·면 사이까지 되돌린다. 실험 A 합성 경로는 그대로다.
+  - 새 `fixture-edge.ts`(도기 가장자리 다시 섞기·검은 선 밝히기), `fixture-body.ts`(도기 음영 폭·중앙값을 렌더 쪽으로).
+  - `current-refine.ts`가 도기 밝기 다음에 둘을 부른다.
+  - `notices.ts`·`ai-export.tsx`: 도기 안내 문구를 바꿨다.
+  - AI 호출 수·보내는 그림·프롬프트·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - `tests/fixture-shadows.test.ts`(새 10개), `fixture-outline`·`flux-joints`·`flux-refine`·`fixture-light`·`wall-refinement` 시험, typecheck, lint
+  - 시험 그림: `tests/fixture-shadows/app-check.ts`가 앱 함수로 만든 그림이 시험 그림(`sb5lkf`)과 등록 제품 35장·마지막 확인 4장 모두 픽셀까지 같다. 표준 모형 장면 44장을 넓게 봤다(내 평가).
+  - 사용자 블라인드 평가 2회(그림 전체): 22쌍 낫다 4·비슷하다 18·못하다 0, 고친 뒤 15쌍 낫다 11·비슷하다 4·못하다 0
+  - 전체 vitest: 한꺼번에 돌리면 D1 시험 14개 파일이 실패한다(파일 병렬). D1 시험은 따로 돌린다(아래 결과). `reconstruction-corpus`·`reconstruction-source-plane-mapping`은 이번 변경과 무관하게 실패한다.
+- 결과: [결과 문서](fixture-shadows-20261118.md).
+
 ## 2026-11-17 — 반투명 방향 사진이 3D에서 검게 그려지지 않게
 
 - 무엇:

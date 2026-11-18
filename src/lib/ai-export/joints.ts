@@ -37,6 +37,19 @@ export const JOINT_MIN_INPUT_PX = 1.25;
 export const RESTORE_BELOW = Infinity;
 /** The blur that separates broad light from joints, as a share of the picture's width. */
 export const LIGHT_BLUR = 0.012;
+/**
+ * Where a restored face meets something else, how much that counts as the face, so the face is
+ * restored up to it (1) instead of fading to the model's own pixels over its last few pixels (0, the
+ * default). docs/fixture-shadows-20261118.md: by a fixture the model's pixels there are its contact
+ * shadow (a dark outline round the fixture), by the backdrop the white the model left where it drew
+ * the room a few pixels short, where two faces meet a white or dark line it drew along the corner.
+ * With `backdrop`, a face's pixels within 3 px of the backdrop also give no light (that white would
+ * glow into the wall).
+ */
+export type FaceRims = { fixture: number; backdrop: boolean; faces: boolean };
+/** The rims today's method uses on the model's own fixture outline (current-refine.ts). */
+export const OUTLINE_RIMS: FaceRims = { fixture: 0.5, backdrop: true, faces: true };
+
 /** How far the render's detail may darken or lighten the model's light. */
 const DETAIL_RANGE = [0.55, 1.5] as const;
 
@@ -360,6 +373,7 @@ export function restoreJoints(
   labels: ReadonlySet<number>,
   shift = { dx: 0, dy: 0 },
   lightKeep = RESTORE_LIGHT_KEEP,
+  rims?: FaceRims,
 ): Pixels {
   const { width, height } = result;
   const out = new Uint8ClampedArray(result.data);
@@ -415,8 +429,32 @@ export function restoreJoints(
     const objects = addedObjects(local, refLum, weight);
     const lit = new Float32Array(count);
     for (let i = 0; i < count; i++) lit[i] = weight[i] && !objects[i] ? 1 : 0;
-    // Near the face's rim the detail fades in over a few pixels.
-    const inside = blurInside(weight, ones, w, h, 2).mean;
+    if (rims?.backdrop) {
+      const outside = new Float32Array(count);
+      for (let i = 0; i < count; i++) if (mask.data[at(i)] === 0) outside[i] = 1;
+      const near = blurInside(outside, ones, w, h, 3).mean;
+      for (let i = 0; i < count; i++) if (near[i] > 0.001) lit[i] = 0;
+    }
+    // Near the face's rim the detail fades in over a few pixels (`rims`: not where it meets those).
+    let rimWeight = weight;
+    if (rims) {
+      rimWeight = new Float32Array(count);
+      for (let i = 0; i < count; i++) {
+        const other = mask.data[at(i)];
+        rimWeight[i] = weight[i]
+          ? 1
+          : other === FIXTURE_REGION
+            ? rims.fixture
+            : other === 0
+              ? rims.backdrop
+                ? 1
+                : 0
+              : rims.faces
+                ? 1
+                : 0;
+      }
+    }
+    const inside = blurInside(rimWeight, ones, w, h, 2).mean;
     const channels = [0, 1, 2].map((c) => {
       const plane = new Float32Array(count);
       for (let i = 0; i < count; i++) plane[i] = data[i * 4 + c];
@@ -479,6 +517,8 @@ export function restoreResultJoints(input: {
   behind?: Pixels;
   /** The result's regions with the fixtures where the model drew them (fixture-outline.ts), moved by its shift. */
   resultMask?: RegionMask;
+  /** How far each face is restored where it meets a fixture, the backdrop or another face (FaceRims). */
+  rims?: FaceRims;
 }): JointRestore {
   const { capture, joints, mask, layout, result, frame } = input;
   const below = input.restoreBelow ?? RESTORE_BELOW;
@@ -497,6 +537,7 @@ export function restoreResultJoints(input: {
     labels,
     frame,
     input.lightKeep ?? RESTORE_LIGHT_KEEP,
+    input.rims,
   );
   return { restored, scores, image };
 }

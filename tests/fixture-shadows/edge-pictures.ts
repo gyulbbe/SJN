@@ -71,6 +71,14 @@ export const RULES: Record<
     edge: { soft: true, rim: RIM },
     body: { dark: 0.5, bright: 0.8, lift: 1 },
   },
+  sb5lkfc: {
+    joint: 0.5,
+    shadow: true,
+    backdrop: true,
+    faces: true,
+    edge: { soft: true, rim: RIM },
+    body: { dark: 0.5, bright: 0.8, lift: 1, cap: 0.5 },
+  },
   sb3lkf: {
     joint: 0.5,
     shadow: true,

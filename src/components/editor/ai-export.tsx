@@ -202,6 +202,7 @@ export default function AiExport({
   const [jointFaces, setJointFaces] = useState(0);
   /** White ceramics whose lightness went back (fixture-light.ts); 0 when none did. */
   const [ceramicFixtures, setCeramicFixtures] = useState(0);
+  const [ceramicShading, setCeramicShading] = useState(false);
   const [shifted, setShifted] = useState(false);
   /** The model reframed an outside view, so its white margin could not be put back. */
   const [marginKept, setMarginKept] = useState(false);
@@ -291,6 +292,7 @@ export default function AiExport({
     setShowOriginal(false);
     setJointFaces(0);
     setCeramicFixtures(0);
+    setCeramicShading(false);
   }, []);
   function chooseMethod(next: FluxMethod) {
     if (busy || next === method) return;
@@ -353,6 +355,7 @@ export default function AiExport({
     setShowOriginal(false);
     setJointFaces(0);
     setCeramicFixtures(0);
+    setCeramicShading(false);
     setShifted(false);
     const started = performance.now();
     let timer = setTimeout(() => controller.abort(), 190_000);
@@ -591,6 +594,7 @@ export default function AiExport({
             joints,
             review,
             ceramics,
+            bodies,
             shown: shownPixels,
           } = refineCurrentResult({
             raw,
@@ -609,7 +613,16 @@ export default function AiExport({
             if (!live.current) return;
             setResult((previous) => (previous.url === url ? { ...previous, correctedUrl } : previous));
             setJointFaces(joints?.restored.length ?? 0);
-            setCeramicFixtures(ceramics?.image ? ceramics.fixtures.filter((f) => f.added > 0).length : 0);
+            // With the shading step (the model's outline) it counts the ceramics it changed, which
+            // include those the lightness step brightened.
+            setCeramicFixtures(
+              bodies?.length
+                ? bodies.length
+                : ceramics?.image
+                  ? ceramics.fixtures.filter((f) => f.added > 0).length
+                  : 0,
+            );
+            setCeramicShading(!!bodies?.length);
             if (review.corrected)
               setColors({ status: 'corrected', warnings: review.warnings, unmatched: review.unmatched });
           }
@@ -696,7 +709,7 @@ export default function AiExport({
     colors: colors?.status === 'corrected' && !result.correctedUrl ? undefined : colors,
     corrected: !showOriginal,
     ...(jointFaces ? { joints: jointFaces } : {}),
-    ...(ceramicFixtures ? { ceramics: ceramicFixtures } : {}),
+    ...(ceramicFixtures ? { ceramics: ceramicFixtures, ...(ceramicShading ? { ceramicShading } : {}) } : {}),
     showTiles: FLUX_SHOW_TILE_NOTICE,
     regionWalls: state.current.regionWalls,
     ...(mode ? { composite: { shifted, ...(refineSummary ? { refine: refineSummary } : {}) } } : {}),
