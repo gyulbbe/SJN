@@ -31,9 +31,10 @@ const shuffle = (list) => {
   }
   return list;
 };
-const pairs = shuffle(ids.map((source) => ({ source, candidate: keep, base })));
+// --keep may name several candidates (a,b): one pair per picture and candidate.
+const pairs = shuffle(ids.flatMap((source) => keep.split(',').map((candidate) => ({ source, candidate, base }))));
 const sides = shuffle(pairs.map((_, k) => k < pairs.length / 2));
-for (const [k, pair] of pairs.entries()) pair.a = sides[k] ? base : keep;
+for (const [k, pair] of pairs.entries()) pair.a = sides[k] ? base : pair.candidate;
 
 const dir = join(OUT, 'review', set);
 mkdirSync(join(dir, 'pic'), { recursive: true });
@@ -55,7 +56,7 @@ const designs = new Map();
 for (const [k, pair] of pairs.entries()) {
   if (!designs.has(pair.source))
     designs.set(pair.source, await copy(pair.source, 'ref', join(dir, 'pic', `design-${pair.source}.png`)));
-  const b = pair.a === base ? keep : base;
+  const b = pair.a === base ? pair.candidate : base;
   items.push({
     id: name(k),
     design: designs.get(pair.source),

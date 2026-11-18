@@ -54,3 +54,29 @@
   - 만들기: `node tests/fixture-material/review-build.mjs --set m1 --keep p1 --base sb5lkf --ids …`
   - 보기: `node tests/ledge-ai/review/server.mjs --root fixture-material-20261118 --set m1 --port 8794`
   - 채점: `node tests/fixture-material/review-score.mjs --set m1`
+- **결과(11-18):** P1이 **낫다 0, 비슷하다 6, 못하다 1**(`n-waves-0-424242`)이다.
+  - 글: "A, B 둘 다 변기 너무 삐까뻔쩍하잖아…"(`n-white-0-777001`).
+  - 벽의 작은 기구는 그림 전체에서 눈에 띄지 않았다. 사용자가 걸려 하는 것은 변기다.
+  - **P1은 쓰지 않는다.**
+
+## 5. 변기 반짝임: 다듬기로 더 줄이기 vs 문장 바꾸기 (사용자 결정 11-18)
+
+- **다듬기로 더 줄이기:** 음영 폭을 늘 0.5배·0.3배 이하로 줄인 그림을 보여 드렸다.
+  - 크롬 띠는 남고, 괜찮던 변기만 평평해졌다.
+  - 사용자 답: "문장 바꾸기 시험".
+- **원인 하나 더:** 이 변기는 사진 제품이라 색이 사진 평균인 "light grey (#cbcbca)"로 가고 마감은 "glossy"다([남은 문제](open-issues-20261116.md) 8번과 같은 원인). 앞부분 고정 문장에는 "metal reflections"도 있다.
+- **문장 후보**(`run-prompt.ts`, 도기 문장만 바꿈, 같은 seed):
+  - `semi`: 마감 "glossy" → "semi-gloss".
+  - `china`: `semi`에 더해 밝은 도기 색(세 채널 모두 0xb0 이상)을 "white"로 부르고(hex 뺌), 도기 문장 끝에 "It is white vitreous china, not metal or chrome."을 붙인다.
+    - 2,447자로 앱 한도 2,400자를 넘는다. 넣는다면 줄여야 한다.
+- **호출:** 두 번째 계정 20회, 추정 2,191뉴런, 모두 200, 다시 보낸 것 없음.
+  - 장면: `n-white-0` 두 seed, `n-white-90-424242`, `n-charcoal-0-777001`, `n-streaks-0-777001`, `r-white-0-777001`, `r-bath-white-0-424242`, `r-waves-0-424242`, `r-charcoal-90-424242`, `r-waves-90-777001`
+  - 컷아웃: `fixture-haze/cutout.ts --set mat-semi|mat-china`
+  - 앱 그림: `variant-pictures.ts`
+- **내가 본 것(그림 전체):**
+  - 두 후보 모두 `n-white-0-777001`의 크롬 변기를 하얀 도기로 그렸다.
+  - `r-white-0-777001`·`n-charcoal-0-777001`의 회색 변기·세면대도 하얘졌다.
+  - `china`는 옆벽 얇은 세면대를 흰 판으로 그린 장면이 늘었다. 몇 장은 방 밝기가 달라졌지만 다듬기가 되돌린다.
+  - 20장 모두 구도가 유지돼 다듬어졌다.
+- **세트 `m2`:** 지금 앱 대 `semi` 10쌍, 지금 앱 대 `china` 10쌍. 그림 전체, 좌우 반반.
+  - 만들기: `review-build.mjs --set m2 --keep semi,china --base sb5lkf --ids …`
