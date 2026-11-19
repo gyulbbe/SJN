@@ -47,3 +47,18 @@
   - 만들기: `node tests/fixture-glare/review-build.mjs --set g1 --keep soft,nometal,baseg1 --base base --ids …`
   - 보기: `node tests/ledge-ai/review/server.mjs --root fixture-glare-20261119 --set g1 --port 8794`
   - 채점: `node tests/fixture-glare/review-score.mjs --set g1`
+- **결과(11-19, `review-score.mjs --set g1`):**
+
+| 후보 | 낫다 | 비슷하다 | 못하다 |
+| --- | --- | --- | --- |
+| `soft` (9쌍) | 3 (`r-white-90-424242`, `t-large-424242`, `x-side-424242`) | 5 | 1 (`n-waves-90-777001`) |
+| `nometal` (10쌍) | 2 (`x-side-424242`, `r-white-90-424242`) | 7 | 1 (`n-waves-90-777001`) |
+| G1 (10쌍) | 0 | 10 | 0 |
+
+  - 글:
+    - "둘 다 변기 유광 비침이 너무 강하다"(`r-white-90-424242`, G1 쌍)
+    - "A는 좀 이상한데? 변기에 세면대가 달리고 수건이 걸려있고…"(`n-waves-90-777001`, A = `soft`)
+  - **사용자 목표(11-19):** "내가 궁극적으로 원하는 것은 유광 자재들 빛 비침이 적은 것을 원해. 이걸 위주로 보고 평가했어."
+    - 도기만이 아니라 유광 타일 등 유광 자재 전체의 비침이다([남은 문제](open-issues-20261116.md) 4번과 이어진다).
+  - G1은 그림 전체에서 느껴지지 않아 쓰지 않는다.
+  - 두 문장은 효과가 작다. `soft`는 다른 물건으로 바꾼 장면이 있다.
