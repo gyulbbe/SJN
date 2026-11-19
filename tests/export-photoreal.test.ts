@@ -146,6 +146,20 @@ function withCeramics(prompt: string, fixtures: readonly FluxFixture[]): string 
     },
   );
 }
+/**
+ * Since 2026-11-19 the fixed instruction asks for soft diffuse light on glossy tiles and ceramics, and
+ * every glossy or polished finish is said semi-gloss (docs/fixture-glare-20261119.md, "diffsemi").
+ */
+function withSoftLight(prompt: string): string {
+  const old =
+    'physically plausible lighting, contact shadows, subtle material texture, ceramic glaze, metal reflections and transparent glass.';
+  const head = FLUX_PROMPT.replace(
+    'soft diffuse lighting, contact shadows and subtle material texture; glossy tiles and ceramics show only faint, soft highlights, with no mirror-like reflections, light streaks or glare; transparent glass.',
+    old,
+  );
+  expect(prompt.startsWith(head)).toBe(true);
+  return FLUX_PROMPT + prompt.slice(head.length).replace(/ (glossy|polished) /g, ' semi-gloss ');
+}
 const built = existsSync(join(root, 'white', 'grounding.json'));
 describe.skipIf(!built)('export-photoreal current method = the app request', () => {
   it.each(SPECS.filter((s) => !s.holdout).map((s) => s.id))('%s: same prompt and input size', (id) => {
@@ -154,13 +168,19 @@ describe.skipIf(!built)('export-photoreal current method = the app request', () 
     const request = fluxRequest('current', dir);
     // The scenes were drawn before the added-objects sentence went into the app (2026-11-14): the app's
     // prompt is theirs with that sentence at the end, shortened the way that trial did, and since
-    // 2026-11-19 with the ceramic sentences (withCeramics).
+    // 2026-11-19 with the ceramic sentences (withCeramics) and the soft light (withSoftLight), before the
+    // shortening (the longer instruction leaves less room).
     const added = addedObjectsSentence(
       scene.fixtures.map((fixture: { kind: FluxFixtureKind }) => fixture.kind),
     );
-    expect(withSentence(withCeramics(request.prompt, scene.fixtures), added.full, added.compact, 'end')).toBe(
-      buildFluxPrompt(scene),
-    );
+    expect(
+      withSentence(
+        withSoftLight(withCeramics(request.prompt, scene.fixtures)),
+        added.full,
+        added.compact,
+        'end',
+      ),
+    ).toBe(buildFluxPrompt(scene));
     const capture = pngSize(readFileSync(join(dir, 'capture.png')));
     const layout = fluxInputLayout(capture.width, capture.height);
     expect(pngSize(request.images[0])).toEqual({ width: layout.width, height: layout.height });

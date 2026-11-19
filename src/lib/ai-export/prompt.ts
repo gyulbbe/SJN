@@ -1,5 +1,12 @@
 import { FLUX_PROMPT } from './contract';
-import type { FluxCeiling, FluxFixture, FluxFixtureKind, FluxScene, FluxSurface } from './scene-contract';
+import type {
+  FluxCeiling,
+  FluxFinish,
+  FluxFixture,
+  FluxFixtureKind,
+  FluxScene,
+  FluxSurface,
+} from './scene-contract';
 
 /** Workers AI does not document a prompt limit; stay well inside typical text-encoder budgets. */
 export const FLUX_PROMPT_MAX_CHARS = 2400;
@@ -154,9 +161,18 @@ function fixtureSentence(fixture: FluxFixture, index: number, detailed: boolean)
     FLUX_CERAMIC_KINDS.includes(fixture.kind) &&
     isLightColor(fixture.color) &&
     !colorWords(fixture.color).startsWith('white');
-  const finish = greyish && fixture.finish === 'glossy' ? 'semi-gloss' : fixture.finish;
+  const finish = finishWord(fixture.finish);
   const china = greyish ? ` ${FLUX_CHINA_SENTENCE}` : '';
   return `${index}. A ${greyish ? 'white' : colorWords(fixture.color)} ${finish} ${forms}${noun} ${where}${size}. It must remain a ${noun} ${keep}.${china}`;
+}
+
+/**
+ * A glossy or polished finish is said semi-gloss (docs/fixture-glare-20261119.md: with the soft light
+ * sentence, the reviewer saw less glare on registered glossy tiles and ceramics, 4 better, 8 same, 0
+ * worse). The scene still records the real finish.
+ */
+export function finishWord(finish: FluxFinish): FluxFinish {
+  return finish === 'glossy' || finish === 'polished' ? 'semi-gloss' : finish;
 }
 
 /** The fixtures said as ceramic in the prompt (toilet, washbasin, bathtub). */
@@ -169,9 +185,10 @@ function isLightColor(hex: string): boolean {
 
 /**
  * One tile surface, colour first and held to image 0. `compact` keeps only the colour, for long
- * prompts: the colour sentence is the last thing to go.
+ * prompts: the colour sentence is the last thing to go. `soft` says a glossy or polished tile semi-gloss
+ * (the fixture prompt since 2026-11-19); the empty-room prompts keep the finish as it is.
  */
-function surfaceSentence(surface: FluxSurface, compact = false): string {
+function surfaceSentence(surface: FluxSurface, compact = false, soft = true): string {
   const faces = surface.faces.map((face) => FACE_WORDS[face]).join(' and ');
   const name = `${faces[0].toUpperCase()}${faces.slice(1)}`;
   const keep = achromatic(surface.color)
@@ -189,7 +206,7 @@ function surfaceSentence(surface: FluxSurface, compact = false): string {
     surface.groutMm > 0
       ? `, ${colorWords(surface.groutColor)} grout ${Math.round(surface.groutMm * 10) / 10} mm`
       : ', no visible grout';
-  const tiles = `${colorWords(surface.color)} ${surface.finish} tiles, ${surface.tileMm.map((value) => Math.round(value)).join(' × ')} mm, ${surface.pattern === 'brick' ? 'staggered' : 'grid'} layout${grout}`;
+  const tiles = `${colorWords(surface.color)} ${soft ? finishWord(surface.finish) : surface.finish} tiles, ${surface.tileMm.map((value) => Math.round(value)).join(' × ')} mm, ${surface.pattern === 'brick' ? 'staggered' : 'grid'} layout${grout}`;
   return area
     ? `${area} ${tiles}; the rest of the ${faces} keeps its own tiles. ${keep}`
     : `${name}: ${tiles}. ${keep}`;
@@ -224,7 +241,7 @@ function buildEmptyRoomPrompt(scene: FluxScene, mode: NonNullable<FluxScene['mod
       FLUX_EMPTY_ROOM_PROMPT,
       scene.view === 'cutaway' ? FLUX_CUTAWAY_SENTENCE : '',
       mode === 'placeholders' ? FLUX_PLACEHOLDER_SENTENCE : '',
-      ...scene.surfaces.map((surface) => surfaceSentence(surface, compact)),
+      ...scene.surfaces.map((surface) => surfaceSentence(surface, compact, false)),
       scene.ceiling ? ceilingSentence(scene.ceiling) : '',
     ]
       .filter(Boolean)

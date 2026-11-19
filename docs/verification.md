@@ -2,6 +2,20 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-19 — 유광 도기·타일의 빛 비침 줄이기(고정 문장의 빛 부분, semi-gloss)
+
+- 무엇:
+  - `contract.ts` `FLUX_PROMPT`: 빛 부분을 "soft diffuse lighting, … glossy tiles and ceramics show only faint, soft highlights, with no mirror-like reflections, light streaks or glare; transparent glass."로 바꿨다.
+  - `prompt.ts` `finishWord`: 설비·타일 문장의 glossy·polished를 semi-gloss로 말한다. 빈 방 합성 문장은 그대로다.
+  - 장면 계약·저장 형식·API·SQL·결과 확인·다듬기는 그대로다. AI 호출 수도 같다.
+- 확인:
+  - `tests/flux-prompt.test.ts`(새 1개, 짧은 문장 순서 시험을 설비 2~7개로), `tests/flux-regions.test.ts`, `tests/export-photoreal.test.ts`(옛 장면 글에 빛 문장·마감 말을 바꾸고 줄이면 지금 앱 글과 같음)
+  - 시험 호출(두 번째 계정, 11-19 UTC): 1차 20회, 2차 24회, 등록 자재 장면 24회. 내용 필터 거절 3회는 다시 보내지 않았다.
+  - 사용자 블라인드 평가(등록 자재만, 비침 위주): 낫다 4·비슷하다 8·못하다 0
+  - 시험 장면 20개 중 9개는 앱 글이 시험 때 보낸 글과 다르다(마지막 설비 위치·크기가 빠짐, `tests/fixture-glare/app-prompt-check.ts`). 아직 앱 글 그대로 보내 보지 않았다.
+  - typecheck, lint, 단위 시험, D1 시험(따로)
+- 결과: [결과 문서](fixture-glare-20261119.md).
+
 ## 2026-11-19 — 사진 평균 회색 도기를 흰 자기 도기로 말하기(크롬 변기 줄이기)
 
 - 무엇:

@@ -57,11 +57,11 @@ describe('buildFluxPrompt', () => {
       `1. A white semi-gloss floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size. ${FLUX_CHINA_SENTENCE} 2.`,
     );
     // Already said white: as before (changed too, these came back worse in unseen pictures).
-    expect(text).toContain('2. A white (#ffffff) glossy wall-hung washbasin');
+    expect(text).toContain('2. A white (#ffffff) semi-gloss wall-hung washbasin');
     expect(text.split(FLUX_CHINA_SENTENCE)).toHaveLength(2);
     // A dark ceramic and a light faucet keep their words.
     const dark = buildFluxPrompt({ ...scene, fixtures: [{ ...toilet, color: '#3a3a3a' }, basin] });
-    expect(dark).toContain('1. A dark grey (#3a3a3a) glossy floor-standing toilet');
+    expect(dark).toContain('1. A dark grey (#3a3a3a) semi-gloss floor-standing toilet');
     expect(dark).not.toContain(FLUX_CHINA_SENTENCE);
     const faucet = buildFluxPrompt({
       ...scene,
@@ -69,6 +69,19 @@ describe('buildFluxPrompt', () => {
     });
     expect(faucet).not.toContain(FLUX_CHINA_SENTENCE);
     expect(faucet).toContain('light grey (#cbcbca) metal');
+  });
+
+  it('says glossy and polished tiles and fixtures semi-gloss in the fixture prompt only (soft light, 2026-11-19)', () => {
+    const glossy = { ...scene, surfaces: [{ ...scene.surfaces[0], finish: 'glossy' as const }] };
+    const polished = { ...toilet, finish: 'polished' as const };
+    const text = buildFluxPrompt({ ...glossy, fixtures: [polished, basin] });
+    expect(text).toContain('light grey (#cfd0cc) semi-gloss tiles');
+    expect(text).toContain('1. A white (#f2f1ec) semi-gloss floor-standing toilet');
+    expect(FLUX_PROMPT).toContain('glossy tiles and ceramics show only faint, soft highlights');
+    expect(text.slice(FLUX_PROMPT.length)).not.toMatch(/ (glossy|polished) /);
+    // The empty-room prompts (the composite export) keep the finish as it is.
+    const empty = buildFluxPrompt({ ...glossy, fixtures: [], mode: 'empty-room' });
+    expect(empty).toContain('light grey (#cfd0cc) glossy tiles');
   });
 
   it('keeps the original instruction when nothing is known about the scene', () => {
@@ -80,9 +93,9 @@ describe('buildFluxPrompt', () => {
     const text = buildFluxPrompt(scene);
     expect(text.startsWith(FLUX_PROMPT)).toBe(true);
     expect(text).toContain(
-      '1. A white (#f2f1ec) glossy floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size. 2.',
+      '1. A white (#f2f1ec) semi-gloss floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size. 2.',
     );
-    expect(text).toContain('2. A white (#ffffff) glossy wall-hung washbasin at the left side of image 0');
+    expect(text).toContain('2. A white (#ffffff) semi-gloss wall-hung washbasin at the left side of image 0');
     expect(text).toContain('Image 0 contains exactly these fixtures: 1 toilet, 1 washbasin.');
     expect(text).toContain(
       'Back wall and left wall and right wall: light grey (#cfd0cc) matte tiles, 600 × 600 mm, grid layout',
@@ -102,7 +115,9 @@ describe('buildFluxPrompt', () => {
     expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
     // Every count survives even when later fixtures are no longer listed one by one.
     expect(text).toContain('Image 0 contains exactly these fixtures: 12 washbasins.');
-    expect(text).toContain('1. A white (#ffffff) glossy wall-hung washbasin at the left side of image 0.');
+    expect(text).toContain(
+      '1. A white (#ffffff) semi-gloss wall-hung washbasin at the left side of image 0.',
+    );
   });
 
   it('puts the wall and floor colours first, held to image 0, and keeps them when shortening', () => {
@@ -352,20 +367,32 @@ describe('the objects not to add (added-objects trial 2026-11-14)', () => {
   });
 
   it('takes its compact form before any fixture loses its detail, and stays within the limit', () => {
-    // Five fixtures: every one keeps its place and size with the compact sentence (not with the whole).
-    const five: FluxScene = {
-      ...scene,
-      fixtures: [
-        toilet,
-        basin,
-        ...[0, 1, 2].map((i) => ({ ...basin, box: [i / 13, 0.5, (i + 1) / 13, 0.6] })),
-      ],
-    } as FluxScene;
-    expect(fluxSceneSchema.safeParse(five).success).toBe(true);
-    const text = buildFluxPrompt(five);
-    expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
-    expect(text.endsWith(` ${addedObjectsSentence(['toilet', 'basin']).compact}`)).toBe(true);
-    expect(text.match(/ \(x \d+–\d+%, y \d+–\d+%\)/g)).toHaveLength(5);
+    // Two to seven fixtures: wherever a fixture has lost its place and size, the sentence is already
+    // compact (a fixed five-fixture case stopped fitting when the soft light sentence of 2026-11-19 made
+    // the instruction longer). Two and three keep the whole sentence and every detail.
+    const { full, compact } = addedObjectsSentence(['toilet', 'basin']);
+    const kept: number[] = [];
+    for (let count = 2; count <= 7; count++) {
+      const crowd: FluxScene = {
+        ...scene,
+        fixtures: [
+          toilet,
+          basin,
+          ...Array.from({ length: count - 2 }, (_, i) => ({
+            ...basin,
+            box: [i / 13, 0.5, (i + 1) / 13, 0.6],
+          })),
+        ],
+      } as FluxScene;
+      expect(fluxSceneSchema.safeParse(crowd).success).toBe(true);
+      const text = buildFluxPrompt(crowd);
+      expect(text.length).toBeLessThanOrEqual(FLUX_PROMPT_MAX_CHARS);
+      const detailed = text.match(/ \(x \d+–\d+%, y \d+–\d+%\)/g)?.length ?? 0;
+      kept.push(detailed);
+      if (detailed < count) expect(text.endsWith(` ${compact}`)).toBe(true);
+      if (count <= 3) expect(text).toContain(full);
+    }
+    expect(kept.slice(0, 2)).toEqual([2, 3]);
   });
 
   it('shortens fixtures for the compact sentence in a crowded prompt and never cuts the count summary', () => {

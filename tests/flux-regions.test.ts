@@ -136,7 +136,7 @@ describe('regions in the AI conversion', () => {
     };
     const text = buildFluxPrompt(scene);
     expect(text).toContain(
-      'On the back wall, the rectangular area at x 40–60%, y 30–55% of image 0 has dark blue (#1d3557) glossy tiles, 300 × 600 mm, grid layout, white (#ffffff) grout 2 mm; the rest of the back wall keeps its own tiles.',
+      'On the back wall, the rectangular area at x 40–60%, y 30–55% of image 0 has dark blue (#1d3557) semi-gloss tiles, 300 × 600 mm, grid layout, white (#ffffff) grout 2 mm; the rest of the back wall keeps its own tiles.',
     );
     expect(buildFluxPrompt(scene)).toBe(text);
     expect(

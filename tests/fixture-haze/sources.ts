@@ -93,7 +93,8 @@ export function haze(set: HazeSet): HazeSource[] {
     return material(set.slice(4));
   if (set === 'bath' || set === 'reg' || set === 'gloss') return fresh(false, set);
   if (set === 'new' || set === 'new-holdout') return fresh(set === 'new-holdout');
-  return sources(set).map((source) => ({
+  // The glare sets went back above (startsWith does not narrow the type).
+  return sources(set as 'dev' | 'holdout').map((source) => ({
     ...source,
     // The empty-room layers drawn for its scene (behind.ts).
     layers: `${source.trial === 'tile' ? 't' : 'x'}-${source.scene}`,

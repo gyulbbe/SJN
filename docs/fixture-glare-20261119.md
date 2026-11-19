@@ -116,3 +116,35 @@
     - "A처럼 세면대 손잡이가 생긴다든가 이런 게 너무 많다"(`g-beige-90-424242`, A = 지금 앱: AI가 지어낸 수전)
     - "둘 다 변기 윗 부분 물 넣는 곳 이 찌그러져 있지?"(`g-olive-0-424242`), "변기 윗부분 두 사진 다 찌그러져있음"(`g-black-0-424242`): 두 쪽 공통, 문장과 다른 문제
   - **`diffsemi`가 앞선다.** 못하다가 없다. `diffuse`는 못하다 3에 내용 필터 거절도 잦다.
+
+## 6. 앱에 넣기 (사용자 결정 11-19: "diffsemi 앱에 + 3D 반사 시험")
+
+- **바뀐 것** (`src/lib/ai-export/contract.ts`·`prompt.ts`):
+  - 고정 문장의 빛 부분을 "soft diffuse lighting, contact shadows and subtle material texture; glossy tiles and ceramics show only faint, soft highlights, with no mirror-like reflections, light streaks or glare; transparent glass."로 바꿨다.
+  - 설비 문장과 타일 문장에서 `glossy`·`polished` 마감을 `semi-gloss`로 말한다(`finishWord`). 금속(`metal`) 설비는 그대로다.
+  - 빈 방 문장(합성 내보내기, `FLUX_EMPTY_ROOM_PROMPT`)은 그대로 둔다. 시험하지 않았다.
+- **길이:** 고정 문장이 75자 길어졌다.
+  - 2,400자를 넘는 장면은 전처럼 뒤 설비부터 위치·크기를 뺀다.
+  - 시험 장면 20개 중 9개는 앱 글이 시험 때 보낸 글과 다르다. 마지막 설비 하나의 위치·크기가 빠진다(`tests/fixture-glare/app-prompt-check.ts`).
+  - 대상: `b-charcoal-0`, `g-beige-90`, `g-black-0`(seed 둘 다), `g-olive-90`, `n-waves-90`, `n-white-90`, `r-streaks-90`, `r-white-90`.
+  - 이 9개는 앱 글 그대로 다시 보내 확인할 것(호출 필요, 여쭤본 뒤).
+- **시험:**
+  - `tests/flux-prompt.test.ts`: 반광 말하기, 빈 방은 그대로. 짧은 문장 시험은 고정 5개 설비 대신 설비 2~7개로 순서를 본다.
+  - `tests/export-photoreal.test.ts`: 옛 장면의 글에 `withSoftLight`를 거친 뒤 줄여서 앱 글과 같다.
+- **다음:** AI에 보내는 3D 그림의 유광 반사 줄이기 시험(벽의 천장 조명 반사 점). 장면 다시 그리기, 약 16회·추정 1,760, UTC 날짜가 바뀐 뒤 여쭤보고 보낸다.
+
+## 7. AI에 보내는 3D 그림의 유광 반사 줄이기 (AI 없음, 11-19)
+
+- **까닭:** 유광 벽에 남는 천장 조명 반사 점은 3D 그림(캡처)에 있고, 줄눈 되돌리기가 렌더의 결을 다시 넣어 결과에도 남는다(5장).
+- **방법:** `tests/fixture-haze/scenes.ts`에 `SCENES_SOFTEN`을 더했다. 캡처와 줄눈 넓힌 그림 두 뷰어에서 금속이 아닌 면의 거칠기를 정한 값까지 올리거나 환경 반사를 줄인다. 앱 코드는 그대로다.
+  - `base`: 그대로. 앞서 AI에 보낸 장면과 픽셀까지 같다(5장면).
+  - `r45`: 거칠기 0.45 미만(유광 0.24·폴리싱 0.12)을 0.45로(반광 값)
+  - `r60`: 0.6으로
+  - `env05`: 환경 반사 세기 절반
+  - 그림: `test-results/fixture-glare-20261119/soft-scenes/<후보>/gloss/scenes/`, `sheet.png`, `spots.png`(뒷벽 위쪽 확대)
+- **내가 본 것(유광 타일 장면 5개):**
+  - `r45`: 올리브·베이지 벽의 조명 점이 없어진다. 검정 벽은 넓고 옅은 빛이 남는다. 타일 결·줄눈은 그대로다.
+  - `r60`: 셋 다 점이 없다. 베이지 옆벽이 조금 밝아진다.
+  - `env05`: 점은 그대로고 방 전체가 어두워진다. 뺀다.
+  - 숫자: 줄눈과 흰 바탕이 섞여 넓은 범위의 밝기 분위수로는 차이가 잡히지 않았다. 그림으로 판단했다.
+- **다음(AI 호출 필요, 여쭤본 뒤):** `r45`·`r60` 캡처로 지금 앱 문장(diffsemi)을 보내 결과의 벽 비침과 타일 모양을 본다.

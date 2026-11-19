@@ -4,6 +4,7 @@
  * does (its copy, with the trial's catalogue: the snapshot plus the locally registered basins).
  *
  * Usage: node tests/run-browser-test.mjs tests/fixture-haze/scenes.ts [--holdout] [--only id,id] [--gpu] [--group bath]
+ *   (SCENES_OUT=<dir> to draw elsewhere, SCENES_SOFTEN='{"roughness":0.45}' to soften glossy reflections)
  * Output: test-results/fixture-haze-20261116/new/scenes/<scene>/
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -25,6 +26,12 @@ const only = (() => {
 const group = groupArg(process.argv);
 // SCENES_OUT draws into another folder (to compare a renderer change with the scenes the model got).
 const OUT = process.env.SCENES_OUT ?? join(TRIAL as string, group);
+// SCENES_SOFTEN (fixture-glare trial, docs/fixture-glare-20261119.md section 7): the capture with every
+// non-metal surface glossier than {"roughness"} made that rough, and the room's environment reflection
+// times {"environment"} (both viewers: the capture and the widened-joints one).
+const soften = process.env.SCENES_SOFTEN
+  ? (JSON.parse(process.env.SCENES_SOFTEN) as { roughness?: number; environment?: number })
+  : undefined;
 const { records, files, imageFiles } = trialCatalog();
 const SPECS = resolveSpecs(Object.keys(records), group).filter((spec) => !!spec.holdout === holdout);
 const bundle = await build({
@@ -86,7 +93,7 @@ try {
     const used = Object.fromEntries([...needed].map((m) => [m, records[m]]));
     const started = Date.now();
     const r = await page.evaluate(
-      async ({ spec, used }) => {
+      async ({ spec, used, soften }) => {
         type Lib = typeof import('../../src/lib/room-viewer/renderer') &
           typeof import('../export-photoreal/scene-builder') &
           typeof import('../../src/lib/ai-export/scene') &
@@ -116,9 +123,36 @@ try {
           height: Math.min(edge, (edge * height) / width),
         };
         // As editor.tsx captureAiInput: one plain After frame, its regions, boxes and region boxes.
+        type Soft = { roughness: number; metalness: number; needsUpdate: boolean };
+        const softenViewer = (renderer: InstanceType<typeof lib.RoomViewerRenderer>) => {
+          if (!soften) return;
+          const world = (
+            renderer as unknown as {
+              prepared: {
+                after: {
+                  world: {
+                    environmentIntensity: number;
+                    traverse(f: (node: { material?: Soft | Soft[] }) => void): void;
+                  };
+                };
+              };
+            }
+          ).prepared.after.world;
+          if (soften.environment !== undefined) world.environmentIntensity *= soften.environment;
+          const target = soften.roughness;
+          if (target === undefined) return;
+          world.traverse((node) => {
+            for (const material of [node.material ?? []].flat())
+              if ('roughness' in material && material.metalness < 0.5 && material.roughness < target) {
+                material.roughness = target;
+                material.needsUpdate = true;
+              }
+          });
+        };
         const viewer = new lib.RoomViewerRenderer();
         try {
           await viewer.setSnapshot(snapshot, reader, { background: lib.FLUX_BACKDROP });
+          softenViewer(viewer);
           const blob = await viewer.export(view, { format: 'png', mode: 'after', longEdge: edge });
           const regions = viewer.regionMask(frame.width, frame.height, view);
           const boxes = viewer.fixtureBounds(width, height, view);
@@ -141,6 +175,7 @@ try {
             await widened.setSnapshot(lib.widenJoints(snapshot, lib.widenedJointMm(perMm)), reader, {
               background: lib.FLUX_BACKDROP,
             });
+            softenViewer(widened);
             joints = await widened.export(view, { format: 'png', mode: 'after', longEdge: edge });
           } finally {
             widened.dispose();
@@ -179,7 +214,7 @@ try {
           viewer.dispose();
         }
       },
-      { spec, used },
+      { spec, used, soften },
     );
     if (errors.length) throw new Error(errors.join('\n'));
     const dir = join(OUT, 'scenes', spec.id);
