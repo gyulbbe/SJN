@@ -10,6 +10,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SEEDS, sources, type Source } from '../tile-pattern/sources';
+import { OUT as GLARE } from '../fixture-glare/paths.mjs';
 import { OUT as MATERIAL } from '../fixture-material/paths.mjs';
 import { OUT } from './paths.mjs';
 
@@ -24,7 +25,9 @@ export type HazeSet =
   | 'mat-semi'
   | 'mat-china'
   | 'mat-app'
-  | 'mat-narrow';
+  | 'mat-narrow'
+  | 'glare-soft'
+  | 'glare-nometal';
 /** This trial's new scenes (scenes.ts) whose result is back (run.ts): `n-<scene>-<seed>`. */
 function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' = 'new'): HazeSource[] {
   const prefix = { new: 'n', bath: 'b', reg: 'r' }[group];
@@ -50,9 +53,9 @@ function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' = 'new'): HazeSou
     );
 }
 /** The fixture-material sentence variants that are back, on their fixture-haze scenes. */
-function material(variant: string): HazeSource[] {
+function material(variant: string, root: string = MATERIAL as string): HazeSource[] {
   return (['new', 'reg', 'bath', 'dev', 'holdout'] as const).flatMap((group) => {
-    const dir = join(MATERIAL as string, 'ai', group);
+    const dir = join(root, 'ai', group);
     if (!existsSync(dir)) return [];
     if (group === 'dev' || group === 'holdout')
       return readdirSync(dir)
@@ -81,6 +84,7 @@ function material(variant: string): HazeSource[] {
   });
 }
 export function haze(set: HazeSet): HazeSource[] {
+  if (set === 'glare-soft' || set === 'glare-nometal') return material(set.slice(6), GLARE as string);
   if (set === 'mat-semi' || set === 'mat-china' || set === 'mat-app' || set === 'mat-narrow')
     return material(set.slice(4));
   if (set === 'bath' || set === 'reg') return fresh(false, set);
