@@ -202,29 +202,71 @@ const REG: {
     azimuths: [0],
   },
 ];
-/** Which new scenes: this trial's (`new`), the fixture-streaks trial's standard bathtubs (`bath`) or its registered products (`reg`). */
-export type Group = 'new' | 'bath' | 'reg';
+/**
+ * The fixture-glare trial's scenes (`gloss`, docs/fixture-glare-20261119.md, the reviewer's ask 11-19:
+ * "실제 등록된 자재 이미지로 테스트 하게 해줘. 너가 3d로 만들지 말고"): registered glossy and polished
+ * tiles on the walls with registered photo products only (no standard 3D models).
+ */
+const GLOSS_TILE = {
+  olive: '9d4e3ac5-bbca-4a25-96c8-cd2ba51701b6', // SI ROMAN OLVIE-G, olive glossy brick
+  black: '1997a51c', // HE 비셀라도 니그로 브릴로, black glossy
+  beige: '8e8c1545', // 타일의 기준 6134P, beige polished porcelain
+  white: '21ddf554', // HSC DW 9467, white glossy ceramic
+};
+const GLOSS: typeof REG = [
+  {
+    id: 'olive',
+    wall: GLOSS_TILE.olive,
+    floor: TILE.greyFloor,
+    products: [floorBasin(MORE_BASIN.z08l), toilet(MORE_TOILET.lc3200)],
+    azimuths: AZIMUTHS,
+  },
+  {
+    id: 'black',
+    wall: GLOSS_TILE.black,
+    floor: TILE.stoneFloor,
+    products: [basin(BASIN.ll821), toilet(MORE_TOILET.lc2200)],
+    azimuths: [0],
+  },
+  {
+    id: 'beige',
+    wall: GLOSS_TILE.beige,
+    floor: TILE.greyFloor,
+    products: [floorBasin(MORE_BASIN.z23l), toilet(MORE_TOILET.lc3100j)],
+    azimuths: [90],
+  },
+  {
+    id: 'white',
+    wall: GLOSS_TILE.white,
+    floor: TILE.stoneFloor,
+    products: [floorBasin(MORE_BASIN.z01l), toilet(MORE_TOILET.hsc606)],
+    azimuths: [0],
+  },
+];
+/** Which new scenes: this trial's (`new`), the fixture-streaks trial's standard bathtubs (`bath`), its registered products (`reg`) or the fixture-glare trial's glossy tiles with registered products (`gloss`). */
+export type Group = 'new' | 'bath' | 'reg' | 'gloss';
 export function groupArg(argv: readonly string[]): Group {
   const i = argv.indexOf('--group');
-  return i > 0 && (argv[i + 1] === 'bath' || argv[i + 1] === 'reg') ? (argv[i + 1] as Group) : 'new';
+  return i > 0 && ['bath', 'reg', 'gloss'].includes(argv[i + 1]) ? (argv[i + 1] as Group) : 'new';
 }
 /** Layer and result id prefix of a group's scenes. */
-export const GROUP_PREFIX: Record<Group, string> = { new: 'n', bath: 'b', reg: 'r' };
+export const GROUP_PREFIX: Record<Group, string> = { new: 'n', bath: 'b', reg: 'r', gloss: 'g' };
 
 /** Every scene at each side (`<id>-<azimuth>`); the held-out ones at their one side. */
 export function resolveSpecs(materialIds: readonly string[], group: Group = 'new'): SceneSpec[] {
-  if (group === 'reg') {
+  if (group === 'reg' || group === 'gloss') {
+    const list = group === 'gloss' ? GLOSS : REG;
     const one = (prefix: string) => {
       const found = materialIds.filter((id) => id.startsWith(prefix));
       if (found.length !== 1) throw new Error(`product ${prefix}: ${found.length} matches`);
       return found[0];
     };
-    return REG.flatMap((d) =>
+    return list.flatMap((d) =>
       d.azimuths.map((azimuth) => ({
         id: `${d.id}-${azimuth}`,
-        label: `reg ${d.id} ${azimuth}°`,
+        label: `${group} ${d.id} ${azimuth}°`,
         room: d.room ?? ROOM,
-        wall: d.wall,
+        wall: d.wall.length < 36 ? one(d.wall) : d.wall,
         floor: d.floor,
         products: d.products.map((p) => ({
           id: p.id,

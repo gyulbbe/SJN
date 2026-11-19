@@ -22,6 +22,7 @@ export type HazeSet =
   | 'new-holdout'
   | 'bath'
   | 'reg'
+  | 'gloss'
   | 'mat-semi'
   | 'mat-china'
   | 'mat-app'
@@ -29,10 +30,11 @@ export type HazeSet =
   | 'glare-soft'
   | 'glare-nometal'
   | 'glare-diffuse'
-  | 'glare-diffsemi';
+  | 'glare-diffsemi'
+  | 'glare-app';
 /** This trial's new scenes (scenes.ts) whose result is back (run.ts): `n-<scene>-<seed>`. */
-function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' = 'new'): HazeSource[] {
-  const prefix = { new: 'n', bath: 'b', reg: 'r' }[group];
+function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' | 'gloss' = 'new'): HazeSource[] {
+  const prefix = { new: 'n', bath: 'b', reg: 'r', gloss: 'g' }[group];
   const NEW = join(OUT as string, group);
   if (!existsSync(join(NEW, 'scenes'))) return [];
   return readdirSync(join(NEW, 'scenes'))
@@ -56,7 +58,7 @@ function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' = 'new'): HazeSou
 }
 /** The fixture-material sentence variants that are back, on their fixture-haze scenes. */
 function material(variant: string, root: string = MATERIAL as string): HazeSource[] {
-  return (['new', 'reg', 'bath', 'dev', 'holdout'] as const).flatMap((group) => {
+  return (['new', 'reg', 'bath', 'gloss', 'dev', 'holdout'] as const).flatMap((group) => {
     const dir = join(root, 'ai', group);
     if (!existsSync(dir)) return [];
     if (group === 'dev' || group === 'holdout')
@@ -67,7 +69,7 @@ function material(variant: string, root: string = MATERIAL as string): HazeSourc
           const base = haze(group).find((s) => s.scene === scene && s.seed === Number(seed))!;
           return { ...base, id: `${base.id}-${variant}`, result: join(dir, file) };
         });
-    const prefix = { new: 'n', reg: 'r', bath: 'b' }[group];
+    const prefix = { new: 'n', reg: 'r', bath: 'b', gloss: 'g' }[group];
     return readdirSync(dir)
       .filter((file) => file.endsWith(`.${variant}.png`))
       .map((file) => {
@@ -89,7 +91,7 @@ export function haze(set: HazeSet): HazeSource[] {
   if (set.startsWith('glare-')) return material(set.slice(6), GLARE as string);
   if (set === 'mat-semi' || set === 'mat-china' || set === 'mat-app' || set === 'mat-narrow')
     return material(set.slice(4));
-  if (set === 'bath' || set === 'reg') return fresh(false, set);
+  if (set === 'bath' || set === 'reg' || set === 'gloss') return fresh(false, set);
   if (set === 'new' || set === 'new-holdout') return fresh(set === 'new-holdout');
   return sources(set).map((source) => ({
     ...source,
