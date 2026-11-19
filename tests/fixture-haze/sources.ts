@@ -27,7 +27,9 @@ export type HazeSet =
   | 'mat-app'
   | 'mat-narrow'
   | 'glare-soft'
-  | 'glare-nometal';
+  | 'glare-nometal'
+  | 'glare-diffuse'
+  | 'glare-diffsemi';
 /** This trial's new scenes (scenes.ts) whose result is back (run.ts): `n-<scene>-<seed>`. */
 function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' = 'new'): HazeSource[] {
   const prefix = { new: 'n', bath: 'b', reg: 'r' }[group];
@@ -84,7 +86,7 @@ function material(variant: string, root: string = MATERIAL as string): HazeSourc
   });
 }
 export function haze(set: HazeSet): HazeSource[] {
-  if (set === 'glare-soft' || set === 'glare-nometal') return material(set.slice(6), GLARE as string);
+  if (set.startsWith('glare-')) return material(set.slice(6), GLARE as string);
   if (set === 'mat-semi' || set === 'mat-china' || set === 'mat-app' || set === 'mat-narrow')
     return material(set.slice(4));
   if (set === 'bath' || set === 'reg') return fresh(false, set);

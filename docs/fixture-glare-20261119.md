@@ -62,3 +62,20 @@
     - 도기만이 아니라 유광 타일 등 유광 자재 전체의 비침이다([남은 문제](open-issues-20261116.md) 4번과 이어진다).
   - G1은 그림 전체에서 느껴지지 않아 쓰지 않는다.
   - 두 문장은 효과가 작다. `soft`는 다른 물건으로 바꾼 장면이 있다.
+
+## 4. 유광 자재 전체 비침 (사용자 결정 11-19: "유광 자재 전체 비침 시험")
+
+- **후보(`run-glare2.ts`):** 고정 문장의 빛 부분 "physically plausible lighting, contact shadows, subtle material texture, ceramic glaze, metal reflections and transparent glass."를 바꾼다.
+  - `diffuse`: "soft diffuse lighting, contact shadows and subtle material texture; glossy tiles and ceramics show only faint, soft highlights, with no mirror-like reflections, light streaks or glare; transparent glass."
+  - `diffsemi`: `diffuse`에 더해 타일·제품의 "glossy"·"polished"를 "semi-gloss"로 말한다.
+  - 두 문장 모두 2,400자 안이다.
+- **3D 그림의 환경 반사 줄이기:** 렌더러(`render/finish.ts` 유광 거칠기 0.24)에 시험용 설정을 넣고 장면·빈 방 그림을 모두 다시 그려야 해서 이번에는 하지 않았다. 문장으로 부족하면 다음에 한다.
+- **호출:** 두 번째 계정 24회, 추정 2,630뉴런. 23회 200이다. `dev charcoal 777001 diffuse` 1회는 내용 필터 거절이라 다시 보내지 않았다.
+  - 장면: 유광 타일 `n-glossy-90-424242`·`t-scored-424242`·`t-subway-777001`·`x-structure-424242`·`t-marble-424242`(폴리싱)·`t-roman-424242`(올리브 유광 벽돌, 마지막 확인), 도기 `r-white-90-424242`·`r-streaks-90-424242`·`n-white-90-424242`·`t-charcoal-777001`·`b-charcoal-0-424242`, 물건이 바뀌던 `n-waves-90-777001`
+  - `n-white-90-424242`의 `base`는 11-18 그림이다(좁힌 문장 결과가 없음).
+  - 11-19(UTC) 이 계정 사용 추정은 4,821이다.
+- **내가 본 것:**
+  - 두 문장 모두 도기가 눈에 띄게 덜 반짝인다(`r-white-90-424242` 변기의 세로 반사 띠가 크게 준다).
+  - 유광 타일 벽은 앱 다듬기가 이미 빛을 1/4만 남겨 세 그림이 비슷하다.
+  - 다른 물건으로 바뀐 것은 못 찾았다.
+- **세트 `g2`:** 지금 앱 대 `diffuse` 11쌍, `diffsemi` 12쌍. 질문: "어느 쪽 유광 자재(도기·유광 타일)의 빛 비침이 더 적고 자연스럽나".
