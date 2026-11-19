@@ -157,3 +157,21 @@
   - `r45`·`r60` 각 8회: 3차의 유광 타일 장면 8개(5장면, 비교할 seed가 있는 것만)
 - 기록은 `round4/ledger.jsonl`에 따로 둔다(따로 승인받은 회차라 시험 합계를 새로 센다). 앞 회차 기록은 그날 계정 사용량에 그대로 들어간다(하루 9,000).
 - 그림: `variant-pictures.ts --variants final,r45,r60`. `r45`·`r60`은 부드럽게 그린 장면과 배경 층으로 다듬는다(`sources.ts` `glare-r45`·`glare-r60`).
+
+## 9. 이어서 할 일 (11-19 밤 정리, PC 끔)
+
+- **상태:** 브랜치 `claude/fixture-glare`(워크트리 `C:\dev\SJN-wall-drawing`), 로컬 커밋까지. main(`aee02c7`)에는 아직 안 올렸다. 4차 호출은 **보내지 않았다**(기다리던 작업을 멈춤, `round4/` 기록 없음).
+- **1. 4차 호출 보내기**(사용자 승인 있음, UTC 11-20 이후):
+  - 먼저 `--dry`로 25회·추정 약 2,739인지, 그날 계정 사용량을 본다.
+  - `node tests/run-browser-test.mjs tests/fixture-glare/run-glare4.ts`
+  - 429면 멈추고 다시 보내지 않는다. 내용 필터 거절은 건너뛴다.
+- **2. 그림:** `node tests/run-browser-test.mjs tests/fixture-glare/variant-pictures.ts --variants final,r45,r60`
+- **3. 내 평가:**
+  - `final` 9개는 다른 물건으로 바뀌거나 나빠진 것이 없는지 본다. 비교 대상은 `diffsemi`와 지금 main 앱(`app`).
+  - `r45`·`r60`은 벽 조명 점·타일 모양을 본다. 비교 대상은 같은 장면의 `final`(있으면) 또는 `diffsemi`.
+- **4. 사용자 블라인드 세트:** 새 세트 이름(`g4` 등)으로 만든다. 이미 평가한 세트는 한 번 눌러도 완료되기 때문이다.
+  - 만들기: `review-build.mjs --set g4 --keep … --base …`
+  - 보기: `node tests/ledge-ai/review/server.mjs --root fixture-glare-20261119 --set g4 --port 8794`
+  - 질문: 유광 자재 빛 비침 위주
+- **5. main에 올리기:** `final` 확인이 괜찮으면 사용자에게 여쭤본 뒤 올린다(자동 배포).
+  - `r45`·`r60`이 나으면, 앱의 AI 캡처(`editor.tsx` `captureAiInput`, 배경 층 포함)에 같은 거칠기를 넣는 것을 따로 제안한다.
