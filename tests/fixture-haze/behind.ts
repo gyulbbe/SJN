@@ -23,6 +23,11 @@ import { GROUP_PREFIX, groupArg, resolveSpecs } from './specs';
 import { OUT } from './paths.mjs';
 
 const gpu = process.argv.includes('--gpu');
+// BEHIND_OUT draws into another root, SCENES_SOFTEN as scenes.ts (the fixture-glare trial, section 7).
+const ROOT_OUT = process.env.BEHIND_OUT ?? (OUT as string);
+const soften = process.env.SCENES_SOFTEN
+  ? (JSON.parse(process.env.SCENES_SOFTEN) as { roughness?: number; environment?: number })
+  : undefined;
 const holdout = process.argv.includes('--holdout');
 const fresh = process.argv.includes('--new');
 const group = groupArg(process.argv);
@@ -121,7 +126,7 @@ try {
     const used = Object.fromEntries([...needed].map((m) => [m, records[m]]));
     const started = Date.now();
     const r = await page.evaluate(
-      async ({ spec, used }) => {
+      async ({ spec, used, soften }) => {
         type Lib = typeof import('../../src/lib/room-viewer/renderer') &
           typeof import('../export-photoreal/scene-builder') &
           typeof import('../../src/lib/ai-export/scene') &
@@ -153,6 +158,31 @@ try {
         const viewer = new lib.RoomViewerRenderer();
         try {
           await viewer.setSnapshot(snapshot, reader, { background: lib.FLUX_BACKDROP });
+          if (soften) {
+            type Soft = { roughness: number; metalness: number; needsUpdate: boolean };
+            const world = (
+              viewer as unknown as {
+                prepared: {
+                  after: {
+                    world: {
+                      environmentIntensity: number;
+                      traverse(f: (node: { material?: Soft | Soft[] }) => void): void;
+                    };
+                  };
+                };
+              }
+            ).prepared.after.world;
+            if (soften.environment !== undefined) world.environmentIntensity *= soften.environment;
+            const target = soften.roughness;
+            if (target !== undefined)
+              world.traverse((node) => {
+                for (const material of [node.material ?? []].flat())
+                  if ('roughness' in material && material.metalness < 0.5 && material.roughness < target) {
+                    material.roughness = target;
+                    material.needsUpdate = true;
+                  }
+              });
+          }
           const layers = viewer.exportLayers(view, { longEdge: edge });
           const canvas = document.createElement('canvas');
           canvas.width = layers.width;
@@ -200,10 +230,10 @@ try {
           viewer.dispose();
         }
       },
-      { spec, used },
+      { spec, used, soften },
     );
     if (errors.length) throw new Error(errors.join('\n'));
-    const dir = join(OUT as string, 'behind', spec.id);
+    const dir = join(ROOT_OUT, 'behind', spec.id);
     mkdirSync(dir, { recursive: true });
     const buf = (b: string) => Buffer.from(b, 'base64');
     writeFileSync(join(dir, 'behind.png'), buf(r.behind));

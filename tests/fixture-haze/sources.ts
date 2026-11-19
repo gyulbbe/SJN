@@ -8,7 +8,7 @@
  * variants of some `new`/`reg` scenes (tests/fixture-material/run-prompt.ts), ids `<n|r>-<scene>-<seed>-<variant>`.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { SEEDS, sources, type Source } from '../tile-pattern/sources';
 import { OUT as GLARE } from '../fixture-glare/paths.mjs';
 import { OUT as MATERIAL } from '../fixture-material/paths.mjs';
@@ -31,7 +31,10 @@ export type HazeSet =
   | 'glare-nometal'
   | 'glare-diffuse'
   | 'glare-diffsemi'
-  | 'glare-app';
+  | 'glare-app'
+  | 'glare-final'
+  | 'glare-r45'
+  | 'glare-r60';
 /** This trial's new scenes (scenes.ts) whose result is back (run.ts): `n-<scene>-<seed>`. */
 function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' | 'gloss' = 'new'): HazeSource[] {
   const prefix = { new: 'n', bath: 'b', reg: 'r', gloss: 'g' }[group];
@@ -88,6 +91,15 @@ function material(variant: string, root: string = MATERIAL as string): HazeSourc
   });
 }
 export function haze(set: HazeSet): HazeSource[] {
+  // The softer 3D captures (fixture-glare section 7): their own scene folder and layers.
+  if (set === 'glare-r45' || set === 'glare-r60') {
+    const variant = set.slice(6);
+    return material(variant, GLARE as string).map((source) => ({
+      ...source,
+      dir: join(GLARE as string, 'soft-scenes', variant, 'gloss', 'scenes', source.scene),
+      layers: `../../${basename(GLARE as string)}/soft-scenes/${variant}/behind/${source.layers}`,
+    }));
+  }
   if (set.startsWith('glare-')) return material(set.slice(6), GLARE as string);
   if (set === 'mat-semi' || set === 'mat-china' || set === 'mat-app' || set === 'mat-narrow')
     return material(set.slice(4));
