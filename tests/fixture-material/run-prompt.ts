@@ -82,14 +82,20 @@ export function variantPrompt(prompt: string, variant: Variant): string {
   if (variant === 'app' || variant === 'narrow') return prompt;
   // Fixture sentences start "N. A " and run to the next one or to "Image 0 contains exactly".
   return prompt.replace(/(\d+\. A [^]*?)(?=\s\d+\. A |\sImage 0 contains exactly)/g, (sentence) => {
-    const head = sentence.slice(0, sentence.search(/ at | on the /) > 0 ? sentence.search(/ at | on the /) : sentence.length);
+    const head = sentence.slice(
+      0,
+      sentence.search(/ at | on the /) > 0 ? sentence.search(/ at | on the /) : sentence.length,
+    );
     if (!CERAMIC.test(head)) return sentence;
     let out = sentence.replace(/ glossy /, ' semi-gloss ');
     if (variant === 'china') {
-      out = out.replace(/^(\d+\. A )([a-z -]+?) \(#([0-9a-f]{6})\) /, (whole, start: string, _name: string, hex: string) => {
-        const light = [0, 2, 4].every((k) => parseInt(hex.slice(k, k + 2), 16) >= 0xb0);
-        return light ? `${start}white ` : whole;
-      });
+      out = out.replace(
+        /^(\d+\. A )([a-z -]+?) \(#([0-9a-f]{6})\) /,
+        (whole, start: string, _name: string, hex: string) => {
+          const light = [0, 2, 4].every((k) => parseInt(hex.slice(k, k + 2), 16) >= 0xb0);
+          return light ? `${start}white ` : whole;
+        },
+      );
       out = `${out} It is white vitreous china, not metal or chrome.`;
     }
     return out;
@@ -132,7 +138,9 @@ if (dry) {
   const sample = fluxRequest('cur', sceneDir(JOBS[0]));
   for (const variant of VARIANTS) {
     const text = variantPrompt(sample.prompt, variant);
-    console.log(`--- ${variant} (${text.length} chars)\n${text.slice(text.indexOf('1. A '), text.indexOf('Image 0 contains'))}`);
+    console.log(
+      `--- ${variant} (${text.length} chars)\n${text.slice(text.indexOf('1. A '), text.indexOf('Image 0 contains'))}`,
+    );
   }
   process.exit(0);
 }
@@ -194,7 +202,11 @@ for (const { job, variant } of pending) {
   await sharp(Buffer.from(image, 'base64')).png().toFile(`${file}.png`);
   writeFileSync(
     `${file}.json`,
-    JSON.stringify({ round: 'fixture-material', variant, ...job, ms, estimate: request.estimate, prompt }, null, 1),
+    JSON.stringify(
+      { round: 'fixture-material', variant, ...job, ms, estimate: request.estimate, prompt },
+      null,
+      1,
+    ),
   );
   console.log('ok', job.group, job.scene, job.seed, variant, `${ms} ms`);
 }

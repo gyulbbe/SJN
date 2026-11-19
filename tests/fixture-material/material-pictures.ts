@@ -38,7 +38,9 @@ for (const source of haze(set)) {
   if (!app.shown) continue;
   const started = performance.now();
   const scores = metalScores(input, app);
-  const metal = new Set(scores.filter((s) => s.bands >= minBands && s.ratio >= minRatio).map((s) => s.fixture));
+  const metal = new Set(
+    scores.filter((s) => s.bands >= minBands && s.ratio >= minRatio).map((s) => s.fixture),
+  );
   const pasted = metal.size ? pasteRender(input, metal) : undefined;
   const p1 = pasted?.image ?? app.shown;
   // F1 on top: on the picture P1 made (its own outline), else on the app's.

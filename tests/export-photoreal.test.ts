@@ -5,8 +5,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { fluxInputLayout, FLUX_PROMPT } from '../src/lib/ai-export/contract';
-import { addedObjectsSentence, buildFluxPrompt, FLUX_CUTAWAY_SENTENCE } from '../src/lib/ai-export/prompt';
-import type { FluxFixtureKind } from '../src/lib/ai-export/scene-contract';
+import {
+  addedObjectsSentence,
+  buildFluxPrompt,
+  colorWords,
+  FLUX_CERAMIC_KINDS,
+  FLUX_CHINA_SENTENCE,
+  FLUX_CUTAWAY_SENTENCE,
+} from '../src/lib/ai-export/prompt';
+import type { FluxFixture, FluxFixtureKind } from '../src/lib/ai-export/scene-contract';
 import {
   budgetCheck,
   fluxNeurons,
@@ -117,6 +124,28 @@ describe('export-photoreal scenes and variants', () => {
 
 // The scene folders are written by scenes.ts (test-results, outside git); checked when present.
 const root = join(process.cwd(), '..', 'SJN', 'test-results', 'export-photoreal', 'scenes');
+/**
+ * Since 2026-11-19 a light ceramic not said white (a photo product's grey average) is said white,
+ * semi-gloss and vitreous china (docs/fixture-material-20261118.md): the old prompt's sentence as the
+ * app writes it now.
+ */
+function withCeramics(prompt: string, fixtures: readonly FluxFixture[]): string {
+  return prompt.replace(
+    /(\d+)\. A ([^.]*?) glossy ([^.]*\. It must remain [^.]*\.)/g,
+    (whole, n: string, colour: string, rest: string) => {
+      const fixture = fixtures[Number(n) - 1];
+      const light = [1, 3, 5].every((k) => parseInt(fixture.color.slice(k, k + 2), 16) >= 0xb0);
+      if (
+        !FLUX_CERAMIC_KINDS.includes(fixture.kind) ||
+        !light ||
+        colorWords(fixture.color).startsWith('white')
+      )
+        return whole;
+      expect(colour).toBe(colorWords(fixture.color));
+      return `${n}. A white semi-gloss ${rest} ${FLUX_CHINA_SENTENCE}`;
+    },
+  );
+}
 const built = existsSync(join(root, 'white', 'grounding.json'));
 describe.skipIf(!built)('export-photoreal current method = the app request', () => {
   it.each(SPECS.filter((s) => !s.holdout).map((s) => s.id))('%s: same prompt and input size', (id) => {
@@ -124,11 +153,14 @@ describe.skipIf(!built)('export-photoreal current method = the app request', () 
     const { scene } = JSON.parse(readFileSync(join(dir, 'grounding.json'), 'utf8'));
     const request = fluxRequest('current', dir);
     // The scenes were drawn before the added-objects sentence went into the app (2026-11-14): the app's
-    // prompt is theirs with that sentence at the end, shortened the way that trial did.
+    // prompt is theirs with that sentence at the end, shortened the way that trial did, and since
+    // 2026-11-19 with the ceramic sentences (withCeramics).
     const added = addedObjectsSentence(
       scene.fixtures.map((fixture: { kind: FluxFixtureKind }) => fixture.kind),
     );
-    expect(withSentence(request.prompt, added.full, added.compact, 'end')).toBe(buildFluxPrompt(scene));
+    expect(withSentence(withCeramics(request.prompt, scene.fixtures), added.full, added.compact, 'end')).toBe(
+      buildFluxPrompt(scene),
+    );
     const capture = pngSize(readFileSync(join(dir, 'capture.png')));
     const layout = fluxInputLayout(capture.width, capture.height);
     expect(pngSize(request.images[0])).toEqual({ width: layout.width, height: layout.height });

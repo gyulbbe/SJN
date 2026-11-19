@@ -116,6 +116,11 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 바로 뒤에 타일 면 문장을 쓴다. 예: "Left wall and back wall and right wall: white (#ecebe6) matte tiles, 300 × 600 mm, grid layout, light grey (#d9d8d2) grout 2 mm. Keep this exact white as it appears in image 0; do not warm, yellow or tint it." 유채색은 "…; do not change its hue or saturation."이다.
   - 방 안 입력이면 다음에 천장 문장을 쓴다: "The ceiling is plain white (#f3f2ee) paint with one flat square light panel." SMC 천장은 "The ceiling is a moulded <색> SMC bathroom ceiling with one flat square light panel."이고, 조명을 끄면 끝이 "with no light fixture."다.
   - 다음에 설비마다 "N. A white (#f2f1ec) glossy floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size." 형식의 한 문장을 쓴다.
+  - 밝은데(세 채널 모두 0xb0 이상) "white"로 말하지 않는 도기(변기·세면대·욕조)는 "white"라 하고, glossy는 "semi-gloss"로, 문장 끝에 "It is vitreous china, not metal or chrome."(`FLUX_CHINA_SENTENCE`)을 붙인다(2026-11-19, [결과](fixture-material-20261118.md)).
+    - 사진 제품의 사진 평균색("light grey (#cbcbca)")과 glossy를 받은 변기를 AI가 크롬처럼 그렸다.
+    - 사용자 블라인드 평가(도기만 보고): 낫다 4·비슷하다 5·못하다 1. 처음 보는 장면과 마지막 확인 장면이 섞여 있다.
+    - 모든 밝은 도기에 넣은 형태는 원래 white인 표준 모형 도기에서 나빠져(낫다 4·비슷하다 3·못하다 5) 범위를 좁혔다.
+    - 장면 계약·저장·결과 확인은 그대로다. 문장이 길어져 끝의 "놓지 않은 물건" 문장이 짧은 꼴이 되는 장면이 늘었다.
   - 다음에 "Image 0 contains exactly these fixtures: 1 toilet, 1 washbasin." 요약을 붙인다. 장면이 비어 있으면 기존 고정 지시문 그대로다.
   - 설비가 있으면 맨 끝에 놓지 않은 흔한 욕실 물건을 이름으로 막는 문장을 붙인다(2026-11-14): "These objects are not in this design and must not appear anywhere in the picture: no toilet-paper holder, towel bar, hook, shelf, mirror, wall cabinet, glass shower screen, window, door or door handle, and no second toilet or washbasin." 놓은 종류는 빼고(거울·문·유리 칸막이 등), 두 번째는 놓은 변기·세면대만 말한다. 시험에서 없던 물건이 생긴 그림이 16장 중 3장 → 1장(사용자 평가)이었고, 사실감·설계는 같았다. 같은 문장을 단면 문장 바로 뒤에 두면 놓은 세면대가 사라져 끝에 둔다([결과](extra-ai-trials-20261114.md)).
   - 2026-09-27 전에는 타일 면 문장이 맨 끝이었고 "off-white"를 썼다.

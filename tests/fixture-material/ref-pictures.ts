@@ -19,6 +19,9 @@ for (const source of haze(set)) {
   const loaded = await loadInput(source);
   if (!loaded) continue;
   const { raw, capture, layout } = loaded.input;
-  writeFileSync(join(OUT as string, 'pictures', `${source.id}.ref.png`), await png(projectCapture(capture, layout, { width: raw.width, height: raw.height })));
+  writeFileSync(
+    join(OUT as string, 'pictures', `${source.id}.ref.png`),
+    await png(projectCapture(capture, layout, { width: raw.width, height: raw.height })),
+  );
   console.log(source.id);
 }

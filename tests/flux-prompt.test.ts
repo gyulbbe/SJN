@@ -5,6 +5,7 @@ import {
   buildFluxPrompt,
   ceilingSentence,
   colorWords,
+  FLUX_CHINA_SENTENCE,
   FLUX_CUTAWAY_SENTENCE,
   FLUX_EMPTY_ROOM_PROMPT,
   FLUX_PLACEHOLDER_SENTENCE,
@@ -48,6 +49,28 @@ const scene: FluxScene = {
 };
 
 describe('buildFluxPrompt', () => {
+  it('says a light grey ceramic white, semi-gloss and vitreous china (a photo average), and leaves white, dark and metal ones', () => {
+    const grey = { ...toilet, color: '#cbcbca' };
+    const text = buildFluxPrompt({ ...scene, fixtures: [grey, basin] });
+    expect(colorWords('#cbcbca')).toMatch(/^light grey/);
+    expect(text).toContain(
+      `1. A white semi-gloss floor-standing toilet at the lower right of image 0 (x 62–71%, y 70–93%), on the floor, about 380 × 720 × 700 mm (W × H × D). It must remain a toilet in the same place and size. ${FLUX_CHINA_SENTENCE} 2.`,
+    );
+    // Already said white: as before (changed too, these came back worse in unseen pictures).
+    expect(text).toContain('2. A white (#ffffff) glossy wall-hung washbasin');
+    expect(text.split(FLUX_CHINA_SENTENCE)).toHaveLength(2);
+    // A dark ceramic and a light faucet keep their words.
+    const dark = buildFluxPrompt({ ...scene, fixtures: [{ ...toilet, color: '#3a3a3a' }, basin] });
+    expect(dark).toContain('1. A dark grey (#3a3a3a) glossy floor-standing toilet');
+    expect(dark).not.toContain(FLUX_CHINA_SENTENCE);
+    const faucet = buildFluxPrompt({
+      ...scene,
+      fixtures: [{ ...basin, kind: 'faucet', forms: [], color: '#cbcbca', finish: 'metal' }],
+    });
+    expect(faucet).not.toContain(FLUX_CHINA_SENTENCE);
+    expect(faucet).toContain('light grey (#cbcbca) metal');
+  });
+
   it('keeps the original instruction when nothing is known about the scene', () => {
     expect(buildFluxPrompt(undefined)).toBe(FLUX_PROMPT);
     expect(buildFluxPrompt({ version: 1, fixtures: [], surfaces: [] })).toBe(FLUX_PROMPT);

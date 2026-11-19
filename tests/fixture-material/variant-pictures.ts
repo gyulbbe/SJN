@@ -32,5 +32,9 @@ for (const variant of only)
     const app = refineCurrentResult(loaded.input);
     writeFileSync(join(dir, `${id}.${variant}.png`), await png(app.shown ?? loaded.input.raw));
     writeFileSync(join(dir, `${id}.${variant}-raw.png`), await png(loaded.input.raw));
-    console.log(source.id.padEnd(30), `${Math.round(performance.now() - started)} ms`, `bodies ${app.bodies?.length ?? 0}`);
+    console.log(
+      source.id.padEnd(30),
+      `${Math.round(performance.now() - started)} ms`,
+      `bodies ${app.bodies?.length ?? 0}`,
+    );
   }

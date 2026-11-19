@@ -170,7 +170,8 @@ export function liftFeet(
   const n = width * height;
   const size = { width, height };
   const { dx, dy } = app.review.framing;
-  const render = fixtureMask(shiftMask(projectMask(input.mask, input.layout, size), dx, dy), input.fixtures).mask.data;
+  const render = fixtureMask(shiftMask(projectMask(input.mask, input.layout, size), dx, dy), input.fixtures)
+    .mask.data;
   const res = fixtureMask(app.outline.colourMask, input.fixtures);
   const out = new Uint8ClampedArray(shown.data);
   let lifted = 0;
@@ -181,7 +182,8 @@ export function liftFeet(
       if (render[i] === k) {
         const x = i % width;
         bottom[x] = Math.max(bottom[x], Math.floor(i / width));
-        if (res.mask.data[i] === k) body.push(rgbToLab(shown.data[i * 4], shown.data[i * 4 + 1], shown.data[i * 4 + 2])[0]);
+        if (res.mask.data[i] === k)
+          body.push(rgbToLab(shown.data[i * 4], shown.data[i * 4 + 1], shown.data[i * 4 + 2])[0]);
       }
     if (body.length < 300) continue;
     const median = Float32Array.from(body).sort()[Math.floor(body.length / 2)];

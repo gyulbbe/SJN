@@ -88,7 +88,8 @@ for (const set of arg('sets', 'new,reg,dev,bath').split(',') as HazeSet[]) {
       }
       const refVals: number[] = [];
       for (let i = 0; i < n; i++)
-        if (ref.mask.data[i] === k) refVals.push(rgbToLab(capture.data[i * 4], capture.data[i * 4 + 1], capture.data[i * 4 + 2])[0]);
+        if (ref.mask.data[i] === k)
+          refVals.push(rgbToLab(capture.data[i * 4], capture.data[i * 4 + 1], capture.data[i * 4 + 2])[0]);
       if (vals.length < 200 || refVals.length < 200) continue;
       const s = Float32Array.from(vals).sort(),
         r = Float32Array.from(refVals).sort();

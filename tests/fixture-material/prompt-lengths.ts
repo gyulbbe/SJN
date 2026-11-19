@@ -14,8 +14,10 @@ import { fluxRequest } from '../photo-products/methods';
 const dirs = new Map<string, string>();
 for (const group of ['new', 'reg', 'bath'])
   if (existsSync(join(HAZE as string, group, 'scenes')))
-    for (const scene of readdirSync(join(HAZE as string, group, 'scenes'))) dirs.set(`${group}/${scene}`, join(HAZE as string, group, 'scenes', scene));
-for (const set of ['dev', 'holdout'] as const) for (const s of haze(set)) dirs.set(`${set}/${s.scene}`, s.dir);
+    for (const scene of readdirSync(join(HAZE as string, group, 'scenes')))
+      dirs.set(`${group}/${scene}`, join(HAZE as string, group, 'scenes', scene));
+for (const set of ['dev', 'holdout'] as const)
+  for (const s of haze(set)) dirs.set(`${set}/${s.scene}`, s.dir);
 for (const [name, dir] of dirs) {
   let prompt: string;
   try {
@@ -27,5 +29,11 @@ for (const [name, dir] of dirs) {
   const china = prompt.split(FLUX_CHINA_SENTENCE).length - 1;
   const compact = !prompt.includes('These objects are not in this design');
   const dropped = !/\(x \d+–\d+%/.test(prompt.slice(prompt.lastIndexOf(' A '))) ? 'last fixture short' : '';
-  console.log(name.padEnd(28), prompt.length, `china ${china}`, compact ? 'compact added-objects' : '', dropped);
+  console.log(
+    name.padEnd(28),
+    prompt.length,
+    `china ${china}`,
+    compact ? 'compact added-objects' : '',
+    dropped,
+  );
 }
