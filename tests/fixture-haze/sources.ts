@@ -12,6 +12,8 @@ import { basename, join } from 'node:path';
 import { SEEDS, sources, type Source } from '../tile-pattern/sources';
 import { OUT as GLARE } from '../fixture-glare/paths.mjs';
 import { OUT as MATERIAL } from '../fixture-material/paths.mjs';
+import { OUT as PHOTO_PRODUCTS, PHOTOS_RESULTS, PHOTOS_SCENE } from '../photo-products/paths.mjs';
+import { OUT as REFINE_LEVEL } from '../refine-level/paths.mjs';
 import { OUT } from './paths.mjs';
 
 export type HazeSource = Source & { layers: string };
@@ -34,7 +36,9 @@ export type HazeSet =
   | 'glare-app'
   | 'glare-final'
   | 'glare-r45'
-  | 'glare-r60';
+  | 'glare-r60'
+  | 'pp-cur'
+  | 'pp-final';
 /** This trial's new scenes (scenes.ts) whose result is back (run.ts): `n-<scene>-<seed>`. */
 function fresh(holdout: boolean, group: 'new' | 'bath' | 'reg' | 'gloss' = 'new'): HazeSource[] {
   const prefix = { new: 'n', bath: 'b', reg: 'r', gloss: 'g' }[group];
@@ -90,7 +94,31 @@ function material(variant: string, root: string = MATERIAL as string): HazeSourc
       });
   });
 }
+/**
+ * The photo-product trial's results of today's method (docs/photo-products-20261115.md, 11-15 prompt),
+ * the scenes that also have an empty-room composite (experiment A): `pp-<scene>-<seed>`, its layers.
+ */
+function photoProducts(final = false): HazeSource[] {
+  return ['angled', 'black', 'column', 'round', 'strip', 'photos'].flatMap((scene) =>
+    SEEDS.map((seed) => ({
+      id: `pp-${scene}-${seed}${final ? '-final' : ''}`,
+      trial: 'extra' as const,
+      scene,
+      seed,
+      dir: scene === 'photos' ? (PHOTOS_SCENE as string) : join(PHOTO_PRODUCTS as string, 'scenes', scene),
+      jointsFile: 'joints.png',
+      result: final
+        ? join(REFINE_LEVEL as string, 'ai', 'pp', `${scene}-${seed}.final.png`)
+        : scene === 'photos'
+          ? join(PHOTOS_RESULTS as string, 'cur', `photos-${seed}.png`)
+          : join(PHOTO_PRODUCTS as string, 'results', 'cur', `${scene}-${seed}.png`),
+      // loadInput reads the layers under fixture-haze's behind folder: this trial's, beside it.
+      layers: `../../${basename(PHOTO_PRODUCTS as string)}/behind/${scene}`,
+    })),
+  );
+}
 export function haze(set: HazeSet): HazeSource[] {
+  if (set === 'pp-cur' || set === 'pp-final') return photoProducts(set === 'pp-final');
   // The softer 3D captures (fixture-glare section 7): their own scene folder and layers.
   if (set === 'glare-r45' || set === 'glare-r60') {
     const variant = set.slice(6);
