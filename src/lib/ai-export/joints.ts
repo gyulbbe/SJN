@@ -374,6 +374,12 @@ export function restoreJoints(
   shift = { dx: 0, dy: 0 },
   lightKeep = RESTORE_LIGHT_KEEP,
   rims?: FaceRims,
+  /**
+   * How much of the model's own fine detail (its pixel over its broad light) a restored face keeps
+   * against the render's, in log: 0 (the default) the render's only, 1 the model's only
+   * (docs/refine-level-20261120.md: the model's surface texture back over the design's joints).
+   */
+  aiDetail = 0,
 ): Pixels {
   const { width, height } = result;
   const out = new Uint8ClampedArray(result.data);
@@ -468,13 +474,25 @@ export function restoreJoints(
       }
       return light;
     });
+    // The model's own fine detail, against its broad light before that light is changed.
+    const own = aiDetail > 0 ? new Float32Array(count) : undefined;
+    if (own)
+      for (let i = 0; i < count; i++) {
+        if (!weight[i]) continue;
+        const lit = 0.2126 * channels[0][i] + 0.7152 * channels[1][i] + 0.0722 * channels[2][i];
+        own[i] = Math.max(
+          DETAIL_RANGE[0],
+          Math.min(DETAIL_RANGE[1], luminance(data, i * 4) / Math.max(1, lit)),
+        );
+      }
     if (lightKeep !== 1) keepLightDifference(channels, refLight, weight, lightKeep);
     for (let i = 0; i < count; i++) {
       if (!weight[i]) continue;
-      const detail = Math.max(
+      const designed = Math.max(
         DETAIL_RANGE[0],
         Math.min(DETAIL_RANGE[1], refLum[i] / Math.max(1, refLight[i])),
       );
+      const detail = own ? designed ** (1 - aiDetail) * own[i] ** aiDetail : designed;
       const alpha = Math.max(0, Math.min(1, (inside[i] - 0.5) * 2));
       const j = at(i);
       for (let c = 0; c < 3; c++)
@@ -510,6 +528,8 @@ export function restoreResultJoints(input: {
   restoreBelow?: number;
   /** How much of the model's light shape a restored face keeps (RESTORE_LIGHT_KEEP). */
   lightKeep?: number;
+  /** How much of the model's own fine detail a restored face keeps (restoreJoints; 0 by default). */
+  aiDetail?: number;
   /**
    * The render with its fixtures hidden (their shadows kept), at the capture's size: the walls and
    * floor behind the render's fixtures, for where the model drew wall there (fixture-outline.ts).
@@ -538,6 +558,7 @@ export function restoreResultJoints(input: {
     frame,
     input.lightKeep ?? RESTORE_LIGHT_KEEP,
     input.rims,
+    input.aiDetail ?? 0,
   );
   return { restored, scores, image };
 }

@@ -118,6 +118,8 @@ export function restoreFixtureLightness(input: {
   frame: { dx: number; dy: number };
   /** The result's regions where the model drew its fixtures (fixture-outline.ts), moved by its shift. */
   resultMask?: RegionMask;
+  /** How much of the lightness the walls' rule gives back a ceramic gets (1 by default). */
+  share?: number;
 }): { image?: Pixels; fixtures: FixtureLight[] } {
   const size = { width: input.result.width, height: input.result.height };
   const { mask, kinds } = fixtureMask(projectMask(input.mask, input.layout, size), input.fixtures);
@@ -133,7 +135,7 @@ export function restoreFixtureLightness(input: {
     const ref = before[k],
       res = after[k];
     if (!ref || !res || ref.n < MIN_FIXTURE_PIXELS || res.n < MIN_FIXTURE_PIXELS) continue;
-    const added = Math.max(0, lightnessReturn(ref.lab, res.lab));
+    const added = Math.max(0, lightnessReturn(ref.lab, res.lab)) * (input.share ?? 1);
     fixtures.push({ kind: kinds[k], pixels: res.n, reference: ref.lab, result: res.lab, added });
     if (added <= 0) continue;
     // Lightness only: the reference's a*, b* are the result's, so the colour stays the model's.

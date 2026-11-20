@@ -46,6 +46,11 @@ export function finishFixtureBodies(input: {
   layout: FluxInputLayout;
   fixtures: readonly FluxFixture[];
   resultMask: RegionMask;
+  /** The least factors the spread below and above the median may get (BODY_DARK, BODY_BRIGHT). */
+  dark?: number;
+  bright?: number;
+  /** How much of a darker median is raised to the render's (1 by default). */
+  raise?: number;
 }): { image?: Pixels; fixtures: FixtureBody[] } {
   const { result } = input;
   const { width, height } = result;
@@ -74,9 +79,15 @@ export function finishFixtureBodies(input: {
       mRes = quantile(b, 0.5);
     if (mRef < BODY_MIN_L) continue;
     const clamp = (v: number, low: number) => Math.max(low, Math.min(1, Number.isFinite(v) ? v : 1));
-    const dark = clamp((mRef - quantile(a, 0.1)) / Math.max(1, mRes - quantile(b, 0.1)), BODY_DARK);
-    const bright = clamp((quantile(a, 0.9) - mRef) / Math.max(1, quantile(b, 0.9) - mRes), BODY_BRIGHT);
-    const raise = mRes < mRef ? mRef - mRes : 0;
+    const dark = clamp(
+      (mRef - quantile(a, 0.1)) / Math.max(1, mRes - quantile(b, 0.1)),
+      input.dark ?? BODY_DARK,
+    );
+    const bright = clamp(
+      (quantile(a, 0.9) - mRef) / Math.max(1, quantile(b, 0.9) - mRes),
+      input.bright ?? BODY_BRIGHT,
+    );
+    const raise = mRes < mRef ? (mRef - mRes) * (input.raise ?? 1) : 0;
     if (dark === 1 && bright === 1 && !raise) continue;
     changed.push({
       kind: ref.kinds[k - 1],

@@ -62,6 +62,24 @@ export type CurrentRefine = {
   metal?: number[];
 };
 
+/**
+ * How far the steps take the model's picture back toward the design (docs/refine-level-20261120.md);
+ * every field absent keeps the app's own values.
+ */
+export type RefineTuning = {
+  /** A restored face's share of the model's light shape (joints.ts RESTORE_LIGHT_KEEP). */
+  lightKeep?: number;
+  /** A restored face's share of the model's own fine detail (joints.ts restoreJoints, 0). */
+  aiDetail?: number;
+  /** The least a ceramic's shading below and above its median is narrowed to (fixture-body.ts). */
+  bodyDark?: number;
+  bodyBright?: number;
+  /** How much of a darker ceramic median is raised to the render's (fixture-body.ts, 1). */
+  bodyRaise?: number;
+  /** How much of the lightness the walls' rule gives back a ceramic gets (fixture-light.ts, 1). */
+  ceramicShare?: number;
+};
+
 type RefineInput = {
   /** The model's picture, its backdrop restored. */
   raw: Pixels;
@@ -74,6 +92,7 @@ type RefineInput = {
   /** The capture with the fixtures hidden (their shadows kept) and its regions. */
   behind?: { image: Pixels; mask: RegionMask };
   cuts?: readonly Cut[];
+  tuning?: RefineTuning;
 };
 
 export function refineCurrentResult(input: RefineInput): CurrentRefine {
@@ -95,6 +114,7 @@ export function refineCurrentResult(input: RefineInput): CurrentRefine {
 
 function refineSteps(input: RefineInput): CurrentRefine {
   const { raw, capture, mask, layout, fixtures } = input;
+  const tuning = input.tuning ?? {};
   const size = { width: raw.width, height: raw.height };
   const frame =
     input.joints || input.behind ? framing(projectCapture(capture, layout, size), raw) : undefined;
@@ -126,6 +146,8 @@ function refineSteps(input: RefineInput): CurrentRefine {
           result: raw,
           frame,
           ...(outline ? { behind: input.behind!.image, resultMask: outline.mask, rims: OUTLINE_RIMS } : {}),
+          ...(tuning.lightKeep !== undefined ? { lightKeep: tuning.lightKeep } : {}),
+          ...(tuning.aiDetail ? { aiDetail: tuning.aiDetail } : {}),
         })
       : undefined;
   const review = reviewResultColors({
@@ -147,6 +169,7 @@ function refineSteps(input: RefineInput): CurrentRefine {
         result: corrected ?? raw,
         frame: review.framing,
         ...(outline ? { resultMask: outline.colourMask } : {}),
+        ...(tuning.ceramicShare !== undefined ? { share: tuning.ceramicShare } : {}),
       })
     : undefined;
   const finished = ceramics?.image ?? corrected;
@@ -161,6 +184,9 @@ function refineSteps(input: RefineInput): CurrentRefine {
     layout,
     fixtures,
     resultMask: outline.colourMask,
+    ...(tuning.bodyDark !== undefined ? { dark: tuning.bodyDark } : {}),
+    ...(tuning.bodyBright !== undefined ? { bright: tuning.bodyBright } : {}),
+    ...(tuning.bodyRaise !== undefined ? { raise: tuning.bodyRaise } : {}),
   });
   return {
     joints,
