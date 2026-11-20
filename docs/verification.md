@@ -2,6 +2,22 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-20 — 지금 방식 다듬기: AI가 지어낸 수전 지우기(T1), 금속으로 그린 도기 되돌리기(P1)
+
+- 무엇:
+  - 새 `fixture-shape.ts`
+    - T1: 컷아웃에서 렌더 제품 위로 가늘게 솟은 조각(수전)을 빼서 벽으로 되돌린다.
+    - P1: 띠 점수로 금속처럼 그린 도기(얇은 옆모습 세면대)를 골라, 그 도기만 컷아웃 없이 다시 다듬고 렌더 도기를 AI 빛에 맞춰 올린다.
+  - `current-refine.ts`가 둘을 부른다. `notices.ts`·`ai-export.tsx`에 안내 한 줄을 더했다.
+  - AI 호출 수·프롬프트·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - `tests/fixture-shape.test.ts`(새 7개), `fixture-shadows`·`fixture-outline`·`flux-joints`·`flux-refine`·`fixture-light`·`flux-notices`
+  - `tests/fixture-shape/app-check.ts`: 앱 함수 그림이 시험 그림과 등록 제품 결과 44장 모두 픽셀까지 같다.
+  - 평가: 등록 제품 13쌍 내 평가(사용자가 맡김) 낫다 11·비슷하다 2·못하다 0.
+  - 변기 문장 시험(두 번째 계정 16회, 추정 1,753)은 사용자 평가 0·8·0·0·8·0이라 넣지 않았다.
+  - typecheck, lint, 단위 시험(알려진 실패만: `reconstruction-*`, 병렬에서 시간 초과하는 `fixture-outline` 1개), D1 시험(따로, 163 통과), e2e `flux-export`·`flux-refine` 13 통과
+- 결과: [결과 문서](fixture-shape-20261120.md).
+
 ## 2026-11-19 — 유광 도기·타일의 빛 비침 줄이기(고정 문장의 빛 부분, semi-gloss)
 
 - 무엇:
