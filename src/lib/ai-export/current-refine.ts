@@ -40,6 +40,7 @@ import {
   metalCeramics,
   metalScores,
   pasteRenderFixtures,
+  recolouredCeramics,
   trimProtrusions,
   type TrimmedPiece,
 } from './fixture-shape';
@@ -101,6 +102,8 @@ export function refineCurrentResult(input: RefineInput): CurrentRefine {
   const metal = metalCeramics(
     metalScores({ ...input, shown: first.shown, colourMask: first.outline.colourMask }),
   );
+  // A white ceramic the model drew in another colour (black) goes back the same way.
+  for (const k of recolouredCeramics({ ...input, colourMask: first.outline.colourMask })) metal.add(k);
   if (!metal.size) return first;
   const again = refineSteps({ ...input, cuts: input.cuts.filter((cut) => !metal.has(cut.fixture)) });
   if (!again.shown || !again.review.framing.aligned) return first;

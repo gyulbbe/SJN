@@ -206,6 +206,51 @@ export function metalScores(input: {
   return scores;
 }
 
+/** A white ceramic (render median L* at least this) … */
+export const RECOLOUR_WHITE_L = 70;
+/** … the model drew this dark (its median L* under this) is another colour, not shading. */
+export const RECOLOUR_DARK_L = 30;
+
+/**
+ * The white ceramics the model drew in another colour (2026-11-20, docs/refine-level-20261120.md: a
+ * white toilet drawn black beside a black basin, "이거 변기 너무 이상한데?"; the lightness steps then
+ * lifted it to a glassy grey): median L* where the model drew it (`colourMask`, on `raw`, the model's
+ * own picture) under RECOLOUR_DARK_L where the render's is at least RECOLOUR_WHITE_L. Put back as the
+ * render's, as P1.
+ */
+export function recolouredCeramics(input: {
+  raw: Pixels;
+  colourMask: RegionMask;
+  capture: Pixels;
+  mask: RegionMask;
+  layout: FluxInputLayout;
+  fixtures: readonly FluxFixture[];
+}): Set<number> {
+  const { raw, fixtures } = input;
+  const { width, height } = raw;
+  const size = { width, height };
+  const res = fixtureMask(input.colourMask, fixtures).mask;
+  const ref = fixtureMask(projectMask(input.mask, input.layout, size), fixtures).mask;
+  const capture = projectCapture(input.capture, input.layout, size);
+  const chosen = fixtures
+    .map((f, index) => ({ f, index }))
+    .filter(({ f }) => f.box && CERAMIC_KINDS.includes(f.kind));
+  const median = (v: number[]) => (v.sort((a, b) => a - b), v[v.length >> 1]);
+  const found = new Set<number>();
+  for (let k = 1; k <= chosen.length; k++) {
+    const a: number[] = [],
+      b: number[] = [];
+    for (let i = 0; i < width * height; i++) {
+      if (res.data[i] === k) a.push(rgbToLab(raw.data[i * 4], raw.data[i * 4 + 1], raw.data[i * 4 + 2])[0]);
+      if (ref.data[i] === k)
+        b.push(rgbToLab(capture.data[i * 4], capture.data[i * 4 + 1], capture.data[i * 4 + 2])[0]);
+    }
+    if (a.length < 200 || b.length < 200) continue;
+    if (median(b) >= RECOLOUR_WHITE_L && median(a) < RECOLOUR_DARK_L) found.add(chosen[k - 1].index);
+  }
+  return found;
+}
+
 /** The ceramics that look metal. */
 export function metalCeramics(scores: readonly MetalScore[]): Set<number> {
   return new Set(

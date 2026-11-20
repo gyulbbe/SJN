@@ -8,6 +8,7 @@ import {
   metalCeramics,
   metalScores,
   pasteRenderFixtures,
+  recolouredCeramics,
   trimProtrusions,
 } from '../src/lib/ai-export/fixture-shape';
 import { fluxResultNotices } from '../src/lib/ai-export/notices';
@@ -114,6 +115,17 @@ describe('P1: a ceramic the model drew as metal goes back as the render', () => 
     expect(metal[0].ratio).toBeGreaterThan(METAL_RATIO);
     expect([...metalCeramics(metal)]).toEqual([0]);
     expect([...metalCeramics(metalScores({ ...input, shown: plain }))]).toEqual([]);
+  });
+
+  it('finds a white ceramic the model drew black, and not one it only shaded', () => {
+    const input = { colourMask: mask, capture, mask, layout, fixtures: [basin] };
+    const black = image((x, y) => (inBasin(x, y) ? 20 : 150));
+    const shaded = image((x, y) => (inBasin(x, y) ? 140 : 150));
+    expect([...recolouredCeramics({ ...input, raw: black })]).toEqual([0]);
+    expect([...recolouredCeramics({ ...input, raw: shaded })]).toEqual([]);
+    // A ceramic the design has dark (a black basin) is the model's to draw dark.
+    const darkDesign = image((x, y) => (inBasin(x, y) ? 30 : 150));
+    expect([...recolouredCeramics({ ...input, capture: darkDesign, raw: black })]).toEqual([]);
   });
 
   it("puts the render's pixels in the model's light at the fixture only", () => {

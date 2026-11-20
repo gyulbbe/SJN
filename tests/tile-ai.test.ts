@@ -199,6 +199,43 @@ describe('putting the joints back', () => {
     expect(left).toBeLessThan(right - 5);
     expect(left).toBeGreaterThan(right - 20);
   });
+  it("keeps the model's own fine detail only as far as aiDetail says (refine-level trial, 0 by default)", () => {
+    // The design's joints every 24 px, the model's every 34 px: with aiDetail 0 the model's lines go.
+    const reference = room(24, true);
+    const result = room(34, true);
+    const joints = (image: { data: Uint8ClampedArray | Uint8Array }) =>
+      summary(
+        faceScores(
+          reference.image,
+          { ...result.image, data: image.data as Uint8ClampedArray },
+          reference.mask,
+        ),
+      ).wall;
+    const lines = (image: { data: Uint8ClampedArray | Uint8Array }) => {
+      // How dark the model's own joint column (x = 34·3) is against the wall beside it.
+      let line = 0,
+        beside = 0;
+      for (let y = 10; y < 50; y++) {
+        line += image.data[(y * 240 + 102) * 4];
+        beside += image.data[(y * 240 + 108) * 4];
+      }
+      return (beside - line) / 40;
+    };
+    const none = restoreJoints(reference.image, result.image, reference.mask, new Set([1]));
+    const half = restoreJoints(
+      reference.image,
+      result.image,
+      reference.mask,
+      new Set([1]),
+      { dx: 0, dy: 0 },
+      0.25,
+      undefined,
+      0.5,
+    );
+    expect(joints(none)).toBeGreaterThan(0.8);
+    expect(lines(half)).toBeGreaterThan(lines(none) + 5);
+    expect(joints(half)).toBeLessThan(joints(none));
+  });
   it('changes nothing when no face is named', () => {
     const reference = room(24);
     const result = room(34);
