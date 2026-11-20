@@ -211,7 +211,8 @@ export default function AiExport({
   const [method, setMethod] = useState<FluxMethod>(() => {
     if (!room) return 'current';
     const saved = savedMethod();
-    if (room.photoProducts && (saved ?? 'current') === 'current') return 'empty-room';
+    // A design with photo products opened on experiment A from 2026-11-15 to 2026-11-20; it opens on
+    // the current method since (docs/refine-level-20261120.md: better 8, worse 4 against A).
     return saved ?? (room.refineByDefault ? 'refine' : 'current');
   });
   const refining = !!room && method === 'refine';
@@ -807,7 +808,7 @@ export default function AiExport({
               ? refineNote(room?.refinable ?? 0, variant)
               : mode
                 ? mode === 'empty-room' && room?.photoProducts
-                  ? `사진으로 등록한 제품이 있어 이 방식으로 열었어요. AI에는 제품을 뺀 빈 방을 보내고, 결과 위에 제품을 등록한 사진 그대로 같은 자리·크기로 올려요. AI가 제품 모양이나 색을 바꾸지 않아요.`
+                  ? `AI에는 제품을 뺀 빈 방을 보내고, 결과 위에 제품을 등록한 사진 그대로 같은 자리·크기로 올려요. AI가 제품 모양이나 색을 바꾸지 않지만, 제품은 변환 전 그림처럼 보여요.`
                   : `실험: AI에는 제품을 뺀 빈 방${mode === 'placeholders' ? '(제품 자리는 회색 표시)' : ''}을 보내고, 결과 위에 3D 렌더의 제품을 같은 자리·크기 그대로 올려요. 제품 모양은 그대로지만 매끈한 3D 질감으로 보일 수 있어요.`
                 : '제품까지 AI가 다시 그려요. 사진 같지만 제품 모양이 바뀌거나 없던 물건이 생길 수 있어요.'}
             {result.url ? ' 방식을 바꾸면 지금 결과는 지워지니 먼저 저장해 주세요.' : ''}
