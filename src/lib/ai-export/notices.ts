@@ -258,6 +258,11 @@ export type FluxNoticeInput = {
    * fixture outline): `ceramics` then counts the ceramics it changed.
    */
   ceramicShading?: boolean;
+  /**
+   * What the corrected result changed in the shapes the model drew (fixture-shape.ts): ceramics drawn
+   * as metal put back as the design's (P1), thin pieces sticking up out of fixtures taken out (T1).
+   */
+  shapes?: { metal: number; trimmed: number };
   /** Tile-layout answers are shown only when they proved reliable enough. */
   showTiles: boolean;
   /** Walls with a region: another tile there is intended, so a tile-layout answer about them is no warning. */
@@ -418,6 +423,19 @@ export function fluxResultNotices(input: FluxNoticeInput): FluxNotices {
         ? `도기(세면대·변기·욕조) ${input.ceramics}개는 AI가 칠한 회색·진한 그늘을 설계 밝기 쪽으로 옅게 했어요.`
         : `AI가 어둡게 그린 도기(세면대·변기·욕조) ${input.ceramics}개는 밝기를 설계 쪽으로 되돌렸어요.`,
     });
+  }
+  if (input.shapes && input.corrected && (input.shapes.metal || input.shapes.trimmed)) {
+    let at = 0;
+    while (at < infos.length && ['color', 'joints', 'ceramics'].includes(infos[at].key)) at++;
+    const parts = [
+      input.shapes.metal
+        ? `AI가 금속 물건처럼 그린 도기 ${input.shapes.metal}개는 설계 그림의 도기로 되돌렸어요.`
+        : '',
+      input.shapes.trimmed
+        ? `제품 위로 가늘게 솟은 것(AI가 지어낸 수전 등) ${input.shapes.trimmed}개는 지우고 벽으로 되돌렸어요.`
+        : '',
+    ];
+    infos.splice(at, 0, { key: 'shapes', text: parts.filter(Boolean).join(' ') });
   }
   if (check?.status === 'failed')
     infos.push({

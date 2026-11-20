@@ -203,6 +203,7 @@ export default function AiExport({
   /** White ceramics whose lightness went back (fixture-light.ts); 0 when none did. */
   const [ceramicFixtures, setCeramicFixtures] = useState(0);
   const [ceramicShading, setCeramicShading] = useState(false);
+  const [shapes, setShapes] = useState<{ metal: number; trimmed: number }>();
   const [shifted, setShifted] = useState(false);
   /** The model reframed an outside view, so its white margin could not be put back. */
   const [marginKept, setMarginKept] = useState(false);
@@ -293,6 +294,7 @@ export default function AiExport({
     setJointFaces(0);
     setCeramicFixtures(0);
     setCeramicShading(false);
+    setShapes(undefined);
   }, []);
   function chooseMethod(next: FluxMethod) {
     if (busy || next === method) return;
@@ -356,6 +358,7 @@ export default function AiExport({
     setJointFaces(0);
     setCeramicFixtures(0);
     setCeramicShading(false);
+    setShapes(undefined);
     setShifted(false);
     const started = performance.now();
     let timer = setTimeout(() => controller.abort(), 190_000);
@@ -595,6 +598,8 @@ export default function AiExport({
             review,
             ceramics,
             bodies,
+            metal,
+            trimmed,
             shown: shownPixels,
           } = refineCurrentResult({
             raw,
@@ -623,6 +628,9 @@ export default function AiExport({
                   : 0,
             );
             setCeramicShading(!!bodies?.length);
+            setShapes(
+              metal || trimmed ? { metal: metal?.length ?? 0, trimmed: trimmed?.length ?? 0 } : undefined,
+            );
             if (review.corrected)
               setColors({ status: 'corrected', warnings: review.warnings, unmatched: review.unmatched });
           }
@@ -710,6 +718,7 @@ export default function AiExport({
     corrected: !showOriginal,
     ...(jointFaces ? { joints: jointFaces } : {}),
     ...(ceramicFixtures ? { ceramics: ceramicFixtures, ...(ceramicShading ? { ceramicShading } : {}) } : {}),
+    ...(shapes ? { shapes } : {}),
     showTiles: FLUX_SHOW_TILE_NOTICE,
     regionWalls: state.current.regionWalls,
     ...(mode ? { composite: { shifted, ...(refineSummary ? { refine: refineSummary } : {}) } } : {}),

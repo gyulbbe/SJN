@@ -15,6 +15,11 @@
  * shadows, the white it left by the backdrop and its lines along the corners do not stay as outlines;
  * then the ceramics' edges are mixed again over the finished wall (fixture-edge.ts) and their shading
  * narrowed toward the render's (fixture-body.ts).
+ *
+ * Since 2026-11-20 (docs/fixture-shape-20261120.md, fixture-shape.ts) a thin piece the model drew
+ * sticking up out of a fixture (an invented tap) leaves its cut-out (T1), and a ceramic the model drew
+ * as metal (a thin side-on basin drawn as a towel bar) goes back as the render's fixture: the steps run
+ * again without its cut-out and the render's pixels go on, in the model's light (P1).
  */
 import {
   framing,
@@ -31,6 +36,13 @@ import { finishFixtureBodies, type FixtureBody } from './fixture-body';
 import { finishFixtureEdges } from './fixture-edge';
 import { restoreFixtureLightness } from './fixture-light';
 import { cutoutMask, type Cut, type FixtureOutline } from './fixture-outline';
+import {
+  metalCeramics,
+  metalScores,
+  pasteRenderFixtures,
+  trimProtrusions,
+  type TrimmedPiece,
+} from './fixture-shape';
 import { OUTLINE_RIMS, restoreResultJoints, type JointRestore } from './joints';
 import type { FluxFixture } from './scene-contract';
 
@@ -44,9 +56,13 @@ export type CurrentRefine = {
   outline?: FixtureOutline;
   /** The ceramics whose shading was narrowed toward the render's (on the model's outline only). */
   bodies?: FixtureBody[];
+  /** Thin pieces taken out of the cut-outs (T1). */
+  trimmed?: TrimmedPiece[];
+  /** The ceramics the model drew as metal, put back as the render's (P1). */
+  metal?: number[];
 };
 
-export function refineCurrentResult(input: {
+type RefineInput = {
   /** The model's picture, its backdrop restored. */
   raw: Pixels;
   capture: Pixels;
@@ -58,19 +74,46 @@ export function refineCurrentResult(input: {
   /** The capture with the fixtures hidden (their shadows kept) and its regions. */
   behind?: { image: Pixels; mask: RegionMask };
   cuts?: readonly Cut[];
-}): CurrentRefine {
+};
+
+export function refineCurrentResult(input: RefineInput): CurrentRefine {
+  const first = refineSteps(input);
+  if (!first.outline || !first.shown || !input.cuts) return first;
+  const metal = metalCeramics(
+    metalScores({ ...input, shown: first.shown, colourMask: first.outline.colourMask }),
+  );
+  if (!metal.size) return first;
+  const again = refineSteps({ ...input, cuts: input.cuts.filter((cut) => !metal.has(cut.fixture)) });
+  if (!again.shown || !again.review.framing.aligned) return first;
+  const { dx, dy } = again.review.framing;
+  return {
+    ...again,
+    shown: pasteRenderFixtures({ ...input, shown: again.shown, metal, dx, dy }),
+    metal: [...metal],
+  };
+}
+
+function refineSteps(input: RefineInput): CurrentRefine {
   const { raw, capture, mask, layout, fixtures } = input;
   const size = { width: raw.width, height: raw.height };
   const frame =
     input.joints || input.behind ? framing(projectCapture(capture, layout, size), raw) : undefined;
+  const renderMask = frame?.aligned
+    ? shiftMask(projectMask(mask, layout, size), frame.dx, frame.dy)
+    : undefined;
+  const trim =
+    input.behind && input.cuts && renderMask
+      ? trimProtrusions({ cuts: input.cuts, renderMask, fixtures })
+      : undefined;
+  const cuts = trim?.cuts ?? input.cuts;
   const outline =
-    input.behind && input.cuts && frame?.aligned
+    input.behind && cuts && frame?.aligned && renderMask
       ? cutoutMask({
           model: raw,
-          renderMask: shiftMask(projectMask(mask, layout, size), frame.dx, frame.dy),
+          renderMask,
           behindMask: shiftMask(projectMask(input.behind.mask, layout, size), frame.dx, frame.dy),
           fixtures,
-          cuts: input.cuts,
+          cuts,
         })
       : undefined;
   const joints =
@@ -107,9 +150,10 @@ export function refineCurrentResult(input: {
       })
     : undefined;
   const finished = ceramics?.image ?? corrected;
-  if (!outline || !finished || !input.cuts)
-    return { joints, review, ceramics, shown: finished, ...(outline ? { outline } : {}) };
-  const edges = finishFixtureEdges({ shown: finished, outline, cuts: input.cuts, fixtures });
+  const trimmed = trim?.trimmed.length ? { trimmed: trim.trimmed } : {};
+  if (!outline || !finished || !cuts)
+    return { joints, review, ceramics, shown: finished, ...(outline ? { outline } : {}), ...trimmed };
+  const edges = finishFixtureEdges({ shown: finished, outline, cuts, fixtures });
   const bodies = finishFixtureBodies({
     result: edges.image,
     capture,
@@ -118,5 +162,13 @@ export function refineCurrentResult(input: {
     fixtures,
     resultMask: outline.colourMask,
   });
-  return { joints, review, ceramics, shown: bodies.image ?? edges.image, outline, bodies: bodies.fixtures };
+  return {
+    joints,
+    review,
+    ceramics,
+    shown: bodies.image ?? edges.image,
+    outline,
+    bodies: bodies.fixtures,
+    ...trimmed,
+  };
 }

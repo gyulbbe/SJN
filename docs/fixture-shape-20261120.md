@@ -90,3 +90,33 @@
   - P1은 렌더 도기라 조금 평평하고 가장자리가 1px 계단진다.
   - T1은 테두리 안쪽의 수전 밑동이 남는다.
   - `n-white-0-424242`의 왼쪽 가는 금속 선(AI 금속이 렌더 윤곽 바로 밖에 남음)이 남는다.
+
+## 5. 앱에 넣기 (사용자 결정 11-20: "앱에 넣기")
+
+- 새 모듈 `src/lib/ai-export/fixture-shape.ts`를 만들었다.
+  - `trimProtrusions`(T1), `metalScores`·`metalCeramics`·`pasteRenderFixtures`(P1). 시험 코드와 같은 계산이다.
+- `current-refine.ts`:
+  - 다듬기 단계(`refineSteps`)가 컷아웃마다 T1을 먼저 적용한다.
+  - 다 다듬은 뒤 금속 도기가 있으면 그 컷아웃을 빼고 한 번 더 다듬어 P1을 올린다.
+  - 결과에 `trimmed`·`metal`이 붙는다.
+- 안내 문구는 `notices.ts` `shapes`, `ai-export.tsx`에서 띄운다.
+- AI 호출 수·프롬프트·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - `tests/fixture-shape/app-check.ts`: 등록 제품 결과 44장이 시험 그림(`p1t1`)과 픽셀까지 같다.
+  - `tests/fixture-shape.test.ts`(새 7개), `fixture-shadows`·`fixture-outline`·`flux-joints`·`flux-refine`·`fixture-light`·`flux-notices`
+
+## 6. 변기 문장 시험 (사용자 승인 11-20: "16회 시험")
+
+- `run-shape.ts`: 지금 앱 문장의 변기 문장 바로 뒤에 한 문장을 넣는다.
+  - 등록 유광 타일 장면 8개(같은 seed), 문장마다 1회씩 보낸다.
+  - 두 번째 계정, 16회 모두 200이다. 추정 1,753이고, 그날 앞의 4차 2,739와 더해 약 4,492다.
+  - `tka`: "Its tank keeps the width and flat top image 0 shows."
+  - `tkb`: "It is seen from exactly the same angle as in image 0, not turned."
+  - 글 길이가 2,400자를 넘는 장면이 있다(최대 2,464). 앱에 넣으면 줄이는 규칙을 따라야 한다.
+- 컷아웃(`cutout.ts --set glare-tka|glare-tkb`)을 먼저 돌린 뒤 그림을 만들었다. 변기 컷아웃은 모두 쓰였다.
+- **내가 본 것**(`toilet-sentences.png`, 설계 | 지금 앱 | A | B):
+  - 차이가 작다.
+  - A는 올리브 424242·흰 벽에서 물탱크가 더 넓고 평평하다. 검정 424242에서는 물내림 손잡이가 생겼다.
+  - B는 올리브 777001에서 정면에 더 가깝다.
+  - 옆 시점(베이지·올리브 90°)은 거의 같다.
+- **세트 `sh2`:** 16쌍, 지금 앱(P1+T1, 같은 문장) 대 A·B, 좌우 반반이다. 질문은 "어느 쪽 변기가 설계에 더 맞나(물탱크 모양)".
