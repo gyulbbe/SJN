@@ -31,18 +31,20 @@ const shuffle = (list) => {
   }
   return list;
 };
-// --keep may name several candidates (a,b): one pair per picture and candidate.
-// Only where the candidate picture exists (one call was refused by the provider).
+// --keep may name several candidates (a,b): one pair per picture and candidate; `cand@base` gives that
+// candidate its own baseline. Only where both pictures exist (one call was refused by the provider).
+const has = (source, rule) => existsSync(join(OUT, 'pictures', `${source}.${rule}.png`));
 const pairs = shuffle(
   ids.flatMap((source) =>
     keep
       .split(',')
-      .filter((candidate) => existsSync(join(OUT, 'pictures', `${source}.${candidate}.png`)))
-      .map((candidate) => ({ source, candidate, base })),
+      .map((entry) => entry.split('@'))
+      .map(([candidate, own]) => ({ source, candidate, base: own ?? base }))
+      .filter((pair) => has(pair.source, pair.candidate) && (pair.base === 'base' || has(pair.source, pair.base))),
   ),
 );
 const sides = shuffle(pairs.map((_, k) => k < pairs.length / 2));
-for (const [k, pair] of pairs.entries()) pair.a = sides[k] ? base : pair.candidate;
+for (const [k, pair] of pairs.entries()) pair.a = sides[k] ? pair.base : pair.candidate;
 
 const dir = join(OUT, 'review', set);
 mkdirSync(join(dir, 'pic'), { recursive: true });
@@ -64,7 +66,7 @@ const designs = new Map();
 for (const [k, pair] of pairs.entries()) {
   if (!designs.has(pair.source))
     designs.set(pair.source, await copy(pair.source, 'ref', join(dir, 'pic', `design-${pair.source}.png`)));
-  const b = pair.a === base ? pair.candidate : base;
+  const b = pair.a === pair.base ? pair.candidate : pair.base;
   items.push({
     id: name(k),
     design: designs.get(pair.source),
