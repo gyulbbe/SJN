@@ -116,7 +116,8 @@ Cloudflare klein 편집 가이드의 512px 미만 입력 이미지 조건에 맞
   - 그 지시의 빛 부분은 2026-11-19부터 "soft diffuse lighting, contact shadows and subtle material texture; glossy tiles and ceramics show only faint, soft highlights, with no mirror-like reflections, light streaks or glare; transparent glass."다([도기 비침](fixture-glare-20261119.md)).
     - 예전 "physically plausible lighting, … ceramic glaze, metal reflections …"에서 유광 도기·타일이 크게 반짝였다(사용자: "유광 비침이 너무 강하다").
     - 같은 때부터 설비·타일의 glossy·polished 마감을 "semi-gloss"로 말한다(`finishWord`). 빈 방 합성 문장(`FLUX_EMPTY_ROOM_PROMPT`)과 그 타일 문장은 그대로다.
-    - 사용자 블라인드 평가(등록 제품·등록 유광 타일 장면만, 비침 위주): 낫다 4·비슷하다 8·못하다 0.
+    - 사용자 블라인드 평가(등록 제품·등록 유광 타일 장면만, 비침 위주): 낫다 4·비슷하다 8·못하다 0. 앱 글 그대로 보낸 것은 낫다 5·비슷하다 2·못하다 1.
+    - AI에 보내는 3D 그림의 유광 반사를 줄이는 것(거칠기 0.45·0.6)은 낫다 1·비슷하다 5·못하다 2라 넣지 않았다.
     - 고정 문장이 75자 길어져, 긴 장면은 마지막 설비의 위치·크기가 전보다 먼저 빠진다.
   - 바로 뒤에 타일 면 문장을 쓴다. 예: "Left wall and back wall and right wall: white (#ecebe6) matte tiles, 300 × 600 mm, grid layout, light grey (#d9d8d2) grout 2 mm. Keep this exact white as it appears in image 0; do not warm, yellow or tint it." 유채색은 "…; do not change its hue or saturation."이다.
   - 방 안 입력이면 다음에 천장 문장을 쓴다: "The ceiling is plain white (#f3f2ee) paint with one flat square light panel." SMC 천장은 "The ceiling is a moulded <색> SMC bathroom ceiling with one flat square light panel."이고, 조명을 끄면 끝이 "with no light fixture."다.
