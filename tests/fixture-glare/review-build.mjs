@@ -22,7 +22,8 @@ const keep = arg('keep'),
 const ids = arg('ids').split(',').filter(Boolean);
 if (!keep || !ids.length) throw new Error('--keep <rule> --ids a,b');
 
-let state = 20261120;
+// --seed: another order for a set rebuilt from the same pictures.
+let state = Number(arg('seed', '20261120'));
 const random = () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
 const shuffle = (list) => {
   for (let k = list.length - 1; k > 0; k--) {
@@ -40,7 +41,9 @@ const pairs = shuffle(
       .split(',')
       .map((entry) => entry.split('@'))
       .map(([candidate, own]) => ({ source, candidate, base: own ?? base }))
-      .filter((pair) => has(pair.source, pair.candidate) && (pair.base === 'base' || has(pair.source, pair.base))),
+      .filter(
+        (pair) => has(pair.source, pair.candidate) && (pair.base === 'base' || has(pair.source, pair.base)),
+      ),
   ),
 );
 const sides = shuffle(pairs.map((_, k) => k < pairs.length / 2));
@@ -50,7 +53,12 @@ const dir = join(OUT, 'review', set);
 mkdirSync(join(dir, 'pic'), { recursive: true });
 const rel = (path) => relative(OUT, path).replace(/\\/g, '/');
 const picture = (id, rule) => {
-  const file = [join(OUT, 'pictures'), join(MATERIAL, 'pictures'), join(SHADOWS, 'pictures'), join(STREAKS, 'pictures')]
+  const file = [
+    join(OUT, 'pictures'),
+    join(MATERIAL, 'pictures'),
+    join(SHADOWS, 'pictures'),
+    join(STREAKS, 'pictures'),
+  ]
     .map((d) => join(d, `${id}.${rule}.png`))
     .find((f) => existsSync(f));
   if (!file) throw new Error(`no picture ${id}.${rule}`);
