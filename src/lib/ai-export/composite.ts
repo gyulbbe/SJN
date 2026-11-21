@@ -342,10 +342,17 @@ export function placeholderRoom(layers: RoomLayers, inset = 3): Pixels {
 /** Beyond this many capture pixels (at 1024 wide) of floor-line offset, fixtures may look afloat. */
 export const MAX_FLOOR_OFFSET = 6;
 /**
+ * Rows (odd) on each side of a floor-line candidate whose median light is compared: more than twice
+ * the grout and joint rows one tile row has as the model draws them (a brick sheet's grout every
+ * ~10 capture rows, 1–4 rows wide).
+ */
+const FLOOR_STEP_ROWS = 11;
+/**
  * How far the model moved the wall–floor line: for sampled columns, the row of the render's first
- * floor pixel under a wall, then the strongest vertical edge within ±`reach` rows of the model's
- * room there. Columns near a fixture are skipped. The median offset (positive: model's line lower)
- * and how many columns agreed. `reach` was 24 until 2026-11-21: with the evener 3D room light
+ * floor pixel under a wall, then the strongest vertical step within ±`reach` rows of the model's
+ * room there (a step in the median light of FLOOR_STEP_ROWS rows, so a tile joint or grout line is
+ * not one). Columns near a fixture are skipped. The median offset (positive: model's line lower) and
+ * how many columns agreed. `reach` was 24 until 2026-11-21: with the evener 3D room light
  * (docs/side-tile-20261121.md) a plain room's wall and floor are closer in brightness, and a room
  * moved about 25 px down was no longer told from one in place.
  */
@@ -388,18 +395,46 @@ export function floorLineOffset(
         if (coverage[y * width + xx] > 0) near = true;
       }
     if (near) continue;
-    let best = 0,
-      at = 0;
-    // The step into row y (the first floor row, as the mask's line is), not a centred difference,
-    // which ties between the two rows of a sharp edge.
-    for (let y = line - reach; y <= line + reach; y++) {
-      const edge = Math.abs(lum(x, y) - lum(x, y - 1));
-      if (edge > best) {
-        best = edge;
+    // The step into row y: the median light of the FLOOR_STEP_ROWS rows from y down against that of
+    // the rows just above. A tile joint or a grout line is a few rows with the same tile on both
+    // sides, so its medians agree; until 2026-11-21 the single-row step was used, and with the wider
+    // reach a joint or bright grout line near the floor line outdid a soft wall–floor step
+    // (tests/flux-joints.test.ts, the olive brick room of docs/side-tile-20261121.md).
+    const half = (FLOOR_STEP_ROWS - 1) / 2;
+    const from = line - reach - half,
+      to = line + reach + half;
+    // This column's light, rows from − STEP_ROWS … to + STEP_ROWS (clamped to the picture).
+    const top = from - FLOOR_STEP_ROWS;
+    const column = Array.from({ length: to - from + 2 * FLOOR_STEP_ROWS }, (_, i) =>
+      lum(x, Math.max(0, Math.min(height - 1, top + i))),
+    );
+    const median = (start: number) => {
+      const rows = column.slice(start - top, start - top + FLOOR_STEP_ROWS).sort((a, b) => a - b);
+      return rows[half];
+    };
+    const score = Array.from({ length: to - from + 1 }, (_, i) =>
+      Math.abs(median(from + i) - median(from + i - FLOOR_STEP_ROWS)),
+    );
+    let peak = 0;
+    for (let i = 1; i < score.length; i++) if (score[i] > score[peak]) peak = i;
+    // A step keeps its medians apart while the line is within half the rows of y: the rows where the
+    // score stays near its peak. The line is the sharpest single-row step among them (the step into
+    // row y, as the mask's line is the first floor row; a centred difference ties between the two
+    // rows of a sharp edge).
+    let first = peak,
+      last = peak;
+    while (first > 0 && score[first - 1] >= 0.75 * score[peak]) first--;
+    while (last < score.length - 1 && score[last + 1] >= 0.75 * score[peak]) last++;
+    let at = from + first,
+      sharpest = -1;
+    for (let y = from + first; y <= from + last; y++) {
+      const edge = Math.abs(column[y - top] - column[y - 1 - top]);
+      if (edge > sharpest) {
+        sharpest = edge;
         at = y;
       }
     }
-    if (best > 3) offsets.push(at - line);
+    if (score[peak] > 3 && Math.abs(at - line) <= reach) offsets.push(at - line);
   }
   if (!offsets.length) return { offset: 0, columns: 0 };
   offsets.sort((a, b) => a - b);

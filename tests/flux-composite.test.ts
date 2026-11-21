@@ -261,6 +261,47 @@ describe('floor line', () => {
     expect(Math.abs(found.offset - 10)).toBeLessThanOrEqual(1);
     expect(found.columns).toBeGreaterThan(50);
   });
+  it('tells tile joints from the floor line in a tiled room, in place and moved about 25 px', () => {
+    // Wall and floor tiles of 40 rows with 2-row dark joints, wall and floor close in light (the
+    // evener 3D room light): a joint row 30 above the line is darker than the line's own step.
+    const width = 256,
+      height = 200,
+      maskLine = 120;
+    /** Joints at rows line + `phase` + 40k (2 rows each), the whole room moved down `shift`. */
+    const tiled = (shift: number, phase: number) => {
+      const data = new Uint8ClampedArray(width * height * 4);
+      const labels = new Uint8Array(width * height);
+      for (let y = 0; y < height; y++)
+        for (let x = 0; x < width; x++) {
+          const yy = y - shift;
+          const joint = (yy - maskLine - phase + 400) % 40 < 2 || x % 40 < 2;
+          const v = joint ? 150 : yy >= maskLine ? 190 : 200;
+          data.set([v, v, v, 255], (y * width + x) * 4);
+          labels[y * width + x] = y >= maskLine ? 2 : 1;
+        }
+      const mask: RegionMask = {
+        width,
+        height,
+        regions: [
+          { key: 'face:back', kind: 'wall' },
+          { key: 'face:floor', kind: 'floor' },
+        ],
+        data: labels,
+      };
+      return floorLineOffset({ width, height, data }, mask, new Uint8Array(width * height));
+    };
+    // Joints 10 rows above the line and 30 below (and 30 above the moved one): never the line.
+    const kept = tiled(0, 30);
+    expect(kept.offset).toBe(0);
+    expect(kept.columns).toBeGreaterThan(50);
+    const moved = tiled(25, 30);
+    expect(Math.abs(moved.offset - 25)).toBeLessThanOrEqual(1);
+    expect(moved.columns).toBeGreaterThan(50);
+    // A joint lying on the line (the wall's last row of tiles ends there): the line is somewhere in
+    // the joint's own two rows, well within MAX_FLOOR_OFFSET, and a moved room still reads as moved.
+    expect(Math.abs(tiled(0, -2).offset)).toBeLessThanOrEqual(2);
+    expect(Math.abs(tiled(25, -2).offset - 25)).toBeLessThanOrEqual(2);
+  });
 });
 
 describe('one composed result', () => {

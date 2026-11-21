@@ -5,8 +5,11 @@
  * other image, the scene's prompt, twice the input's size) at each seed. Same scene, prompt and seed for
  * `before` and `after`; only the input picture differs. An answer already on disk is not asked again.
  *
- * Usage: node tests/run-browser-test.mjs tests/side-tile-ai/flux.ts [--only olive-0,...] [--seeds 424242]
- * Output: test-results/side-tile-ai-20261121/<rev>/raw/<scene>-<seed>.{png,json}, ledger.jsonl
+ * With --composite: the empty-room inputs of composite-capture.ts instead (input-empty.png and
+ * prompt-empty.txt, as "실험 A · 빈 방 합성" sends them), only where they were drawn.
+ *
+ * Usage: node tests/run-browser-test.mjs tests/side-tile-ai/flux.ts [--composite] [--rev after] [--only olive-0,...] [--seeds 424242]
+ * Output: test-results/side-tile-ai-20261121/<rev>/{raw|composite-raw}/<scene>-<seed>.{png,json}, ledger.jsonl
  */
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -22,6 +25,11 @@ const arg = (name: string) => {
 };
 const only = arg('only')?.split(',');
 const seeds = arg('seeds')?.split(',').map(Number) ?? (SEEDS as number[]);
+const composite = process.argv.includes('--composite');
+const revs = arg('rev')?.split(',') ?? Object.keys(REVISIONS as Record<string, string>);
+const [sceneDir, inputFile, promptFile, rawDir] = composite
+  ? ['composite', 'input-empty.png', 'prompt-empty.txt', 'composite-raw']
+  : ['scenes', 'input.png', 'prompt.txt', 'raw'];
 const LEDGER = join(OUT as string, 'ledger.jsonl');
 const sha = (b: Buffer | string) => createHash('sha256').update(b).digest('hex').slice(0, 16);
 
@@ -29,15 +37,16 @@ const health = (await (await fetch('http://127.0.0.1:8798/health')).json()) as {
   meta?: Record<string, unknown>;
 };
 if (health.meta?.engine !== 'local') throw new Error('no local FLUX on 127.0.0.1:8798');
-for (const rev of Object.keys(REVISIONS as Record<string, string>)) {
-  const scenes = join(OUT as string, rev, 'scenes');
+for (const rev of revs) {
+  const scenes = join(OUT as string, rev, sceneDir);
+  if (!existsSync(scenes)) continue;
   for (const scene of readdirSync(scenes)) {
     if (only && !only.includes(scene)) continue;
-    const input = readFileSync(join(scenes, scene, 'input.png'));
-    const prompt = readFileSync(join(scenes, scene, 'prompt.txt'), 'utf8');
+    const input = readFileSync(join(scenes, scene, inputFile));
+    const prompt = readFileSync(join(scenes, scene, promptFile), 'utf8');
     const { width, height } = await sharp(input).metadata();
     for (const seed of seeds) {
-      const dir = join(OUT as string, rev, 'raw');
+      const dir = join(OUT as string, rev, rawDir);
       mkdirSync(dir, { recursive: true });
       const base = join(dir, `${scene}-${seed}`);
       if (existsSync(`${base}.png`)) continue;
@@ -53,6 +62,7 @@ for (const rev of Object.keys(REVISIONS as Record<string, string>)) {
       const row = {
         at: new Date().toISOString(),
         engine: 'local',
+        ...(composite ? { method: 'empty-room' } : {}),
         rev,
         commit: (REVISIONS as Record<string, string>)[rev],
         scene,
