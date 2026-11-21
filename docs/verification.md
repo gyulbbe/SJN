@@ -2,6 +2,19 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-21 — 줄눈 되돌리기: 검정·진회색 타일의 밝은 줄눈 지키기
+
+- 무엇:
+  - `joints.ts` `DETAIL_MAX` 6: 렌더 잔무늬가 빛을 밝게 하는 위 한도를 1.5에서 6으로 올렸다(어둡게 하는 쪽 0.55와 AI 잔무늬 `DETAIL_RANGE`는 그대로).
+  - 시험용 `tuning.detailMax`(`current-refine.ts`)와 `tuning.lightnessBand`(`color.ts` `CorrectionOptions`, 넣지 않음)
+  - AI 호출 수·프롬프트·보내는 그림·저장 형식·API·SQL·안내 문구는 그대로다.
+- 확인:
+  - 사용자 블라인드 `gt1`: 낫다 2(검정 타일 둘)·비슷하다 6·못하다 0. 등록 결과 중 바뀐 것은 줄눈이 밝은 어두운 타일 8장뿐이다(면 픽셀 2~5%).
+  - 앱 기본값 그림이 시험 그림과 픽셀까지 같다(4장).
+  - `tests/tile-ai.test.ts`(새 1개), `flux-joints`·`fixture-*`·`flux-refine`·`flux-color`·`flux-notices`, typecheck, lint, e2e `flux-export`·`flux-refine`
+  - 올리브 문장 시험: 두 번째 계정 5회(추정 548, 모두 200, 사용자 OK).
+- 결과: [결과 문서](glossy-tile-20261121.md).
+
 ## 2026-11-21 — 지금 방식 다듬기: AI가 세면대에 지어낸 짧은 수전과 그 줄기 지우기(T2)
 
 - 무엇:

@@ -545,6 +545,8 @@ export type CorrectionOptions = {
    * is, shrink to this many pixels.
    */
   fixtureFade?: number;
+  /** The faces' LIGHTNESS_BAND instead (docs/glossy-tile-20261121.md, trial: not in the app). */
+  lightnessBand?: number;
 };
 /** The mask's labels with each fixture pixel given the face nearest to it (chamfer propagation). */
 function fillFixtures(mask: RegionMask): Uint8Array {
@@ -590,9 +592,9 @@ function fillFixtures(mask: RegionMask): Uint8Array {
  * what lies beyond it (at most MAX_SHIFT_L), either way. A light tile (render L* above LIGHT_TILE_L)
  * the model dimmed gets at least half of the dimming back, at most LIGHT_TILE_MAX_L.
  */
-export function lightnessReturn(reference: Lab, result: Lab): number {
+export function lightnessReturn(reference: Lab, result: Lab, band = LIGHTNESS_BAND): number {
   const missing = reference[0] - result[0];
-  let back = Math.min(MAX_SHIFT_L, Math.max(0, Math.abs(missing) - LIGHTNESS_BAND) * LIGHTNESS_RETURN);
+  let back = Math.min(MAX_SHIFT_L, Math.max(0, Math.abs(missing) - band) * LIGHTNESS_RETURN);
   back *= Math.sign(missing);
   if (reference[0] > LIGHT_TILE_L && missing > 0)
     back = Math.max(back, Math.min(LIGHT_TILE_MAX_L, missing * LIGHTNESS_SHARE));
@@ -623,7 +625,11 @@ export function correctFaces(
     }
     // Never past white or black.
     const from = change.result[0];
-    const dL = Math.min(100, Math.max(0, from + lightnessReturn(change.reference, change.result))) - from;
+    const dL =
+      Math.min(
+        100,
+        Math.max(0, from + lightnessReturn(change.reference, change.result, options.lightnessBand)),
+      ) - from;
     shifts.set(change.region, [da, db, dL]);
   }
   const open = distanceTo(
@@ -735,6 +741,8 @@ export function reviewResultColors(input: {
    * moved by its shift; by default the render's, moved. The fades next to fixtures are then 1 px.
    */
   resultMask?: RegionMask;
+  /** See CorrectionOptions.lightnessBand. */
+  lightnessBand?: number;
 }): ColorReview {
   const size = { width: input.result.width, height: input.result.height };
   const reference = projectCapture(input.capture, input.layout, size);
@@ -750,6 +758,7 @@ export function reviewResultColors(input: {
   const corrected = correctFaces(input.result, resultMask, changes, {
     underFixtures: input.underFixtures,
     ...(input.resultMask ? { fixtureFade: 1 } : {}),
+    ...(input.lightnessBand !== undefined ? { lightnessBand: input.lightnessBand } : {}),
   });
   const residual = compareFaces(reference, corrected, referenceMask, resultMask);
   const unmatched = residual.filter((change) => Math.abs(change.lightnessDelta) > LIGHTNESS_RESIDUAL_L);

@@ -35,6 +35,7 @@ export type HazeSet =
   | 'glare-diffsemi'
   | 'glare-app'
   | 'glare-final'
+  | 'glare-olive'
   | 'glare-r45'
   | 'glare-r60'
   | 'pp-cur'

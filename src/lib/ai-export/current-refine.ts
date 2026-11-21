@@ -92,6 +92,10 @@ export type RefineTuning = {
   ceramicShare?: number;
   /** The lumps of a restored face's finished broad light, at most (joints.ts GLARE_LIGHT_CAP; Infinity: none). */
   lightCap?: number;
+  /** How far the render's detail may lighten a restored face's light, at most (joints.ts DETAIL_MAX). */
+  detailMax?: number;
+  /** The walls' and floor's LIGHTNESS_BAND (color.ts) instead. */
+  lightnessBand?: number;
   /**
    * docs/photo-shape-20261121.md (S2): a basin whose outline score (fixture-shape.ts outlineScores)
    * is under this goes back as the render's, as P1 does (absent: none). `shapeFallback`: also when
@@ -207,6 +211,7 @@ function refineSteps(input: RefineInput): CurrentRefine {
           ...(tuning.lightKeep !== undefined ? { lightKeep: tuning.lightKeep } : {}),
           ...(tuning.aiDetail ? { aiDetail: tuning.aiDetail } : {}),
           ...(tuning.lightCap !== undefined ? { lightCap: tuning.lightCap } : {}),
+          ...(tuning.detailMax !== undefined ? { detailMax: tuning.detailMax } : {}),
           ...(input.soft ? { reference: input.soft } : {}),
         })
       : undefined;
@@ -218,6 +223,7 @@ function refineSteps(input: RefineInput): CurrentRefine {
     // The same shift the joints were put back at (the search would only find it again).
     ...((joints?.image || outline) && frame ? { alignment: { dx: frame.dx, dy: frame.dy } } : {}),
     ...(outline ? { resultMask: outline.colourMask } : {}),
+    ...(tuning.lightnessBand !== undefined ? { lightnessBand: tuning.lightnessBand } : {}),
   });
   const corrected = review.corrected ?? joints?.image;
   const ceramics = review.framing.aligned

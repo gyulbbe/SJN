@@ -307,6 +307,38 @@ describe('putting the joints back', () => {
     expect(lift(fromGlossy)).toBeGreaterThan(1.04);
     expect(lift(fromSoft)).toBeLessThan(1.01);
   });
+  it('keeps a light grout on a black tile light (glossy-tile, 11-21: DETAIL_MAX)', () => {
+    // A black wall (20) with light grey grout (150) every 24 px; the model drew it plain black (24).
+    const black = (grout: boolean) => {
+      const { image, mask } = room(0);
+      for (let y = 0; y < 110; y++)
+        for (let x = 0; x < 240; x++) {
+          const value = grout && (x % 24 < 2 || y % 24 < 2) ? 150 : grout ? 20 : 24;
+          image.data.set([value, value, value, 255], (y * 240 + x) * 4);
+        }
+      return { image, mask };
+    };
+    const reference = black(true);
+    const result = black(false);
+    // Grout over tile, beside each other in the middle of the wall.
+    const contrast = (out: { data: ArrayLike<number> }) =>
+      out.data[(60 * 240 + 120) * 4] / Math.max(1, out.data[(60 * 240 + 132) * 4]);
+    const restored = restoreJoints(reference.image, result.image, reference.mask, new Set([1]));
+    const before = restoreJoints(
+      reference.image,
+      result.image,
+      reference.mask,
+      new Set([1]),
+      undefined,
+      undefined,
+      undefined,
+      0,
+      undefined,
+      1.5,
+    );
+    expect(contrast(before)).toBeLessThan(3);
+    expect(contrast(restored)).toBeGreaterThan(4.5);
+  });
   it('changes nothing when no face is named', () => {
     const reference = room(24);
     const result = room(34);

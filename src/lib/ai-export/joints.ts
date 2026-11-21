@@ -55,8 +55,14 @@ export type FaceRims = { fixture: number; backdrop: boolean; faces: boolean };
 /** The rims today's method uses on the model's own fixture outline (current-refine.ts). */
 export const OUTLINE_RIMS: FaceRims = { fixture: 0.5, backdrop: true, faces: true };
 
-/** How far the render's detail may darken or lighten the model's light. */
-const DETAIL_RANGE = [0.55, 1.5] as const;
+/** How far the model's own detail (aiDetail) may darken or lighten its light; the render's darkens as far. */
+export const DETAIL_RANGE = [0.55, 1.5] as const;
+/**
+ * How far the render's detail may lighten the light (docs/glossy-tile-20261121.md, 2026-11-21): a
+ * light grout on a black or charcoal tile is about 5 × the face's broad light, and at 1.5 it went dark
+ * (blind 2/6/0, both better on black tiles).
+ */
+export const DETAIL_MAX = 6;
 /**
  * docs/wall-glare-20261121.md (2026-11-21): a restored face's finished broad light (the model's
  * quarter and the render's rest) may stand at most this share over its surroundings, so the glow the
@@ -445,6 +451,8 @@ export function restoreJoints(
    * share (GLARE_LIGHT_CAP; Infinity: no limit). Only the broad light is touched.
    */
   lightCap = GLARE_LIGHT_CAP,
+  /** How far the render's detail may lighten the light, at most (DETAIL_MAX). */
+  detailMax: number = DETAIL_MAX,
 ): Pixels {
   const { width, height } = result;
   const out = new Uint8ClampedArray(result.data);
@@ -568,10 +576,7 @@ export function restoreJoints(
     }
     for (let i = 0; i < count; i++) {
       if (!weight[i]) continue;
-      const designed = Math.max(
-        DETAIL_RANGE[0],
-        Math.min(DETAIL_RANGE[1], refLum[i] / Math.max(1, refLight[i])),
-      );
+      const designed = Math.max(DETAIL_RANGE[0], Math.min(detailMax, refLum[i] / Math.max(1, refLight[i])));
       const detail = own ? designed ** (1 - aiDetail) * own[i] ** aiDetail : designed;
       const alpha = Math.max(0, Math.min(1, (inside[i] - 0.5) * 2));
       const j = at(i);
@@ -621,6 +626,8 @@ export function restoreResultJoints(input: {
   rims?: FaceRims;
   /** The lumps of the finished broad light a restored face keeps, at most (GLARE_LIGHT_CAP). */
   lightCap?: number;
+  /** How far the render's detail may lighten the light, at most (DETAIL_MAX). */
+  detailMax?: number;
   /**
    * The render the faces' light and detail come from instead of `behind` (or `capture`), at the
    * capture's size: the room behind the fixtures drawn at GLARE_SOFT_ROUGHNESS.
@@ -647,6 +654,7 @@ export function restoreResultJoints(input: {
     input.rims,
     input.aiDetail ?? 0,
     input.lightCap ?? GLARE_LIGHT_CAP,
+    input.detailMax ?? DETAIL_MAX,
   );
   return { restored, scores, image };
 }
