@@ -236,6 +236,77 @@ describe('putting the joints back', () => {
     expect(lines(half)).toBeGreaterThan(lines(none) + 5);
     expect(joints(half)).toBeLessThan(joints(none));
   });
+  it('cuts a glow on a restored face to GLARE_LIGHT_CAP and keeps the joints (wall-glare, 11-21)', () => {
+    // The model drew a bright glow round (60, 40) on the wall; a quarter of its light shape is kept.
+    const reference = room(24);
+    const result = room(24);
+    for (let y = 0; y < 160; y++)
+      for (let x = 0; x < 240; x++) {
+        const glow = 1 + 0.6 * Math.exp(-((x - 60) ** 2 + (y - 40) ** 2) / (2 * 6 ** 2));
+        for (let c = 0; c < 3; c++) {
+          const o = (y * 240 + x) * 4 + c;
+          result.image.data[o] = Math.min(255, Math.round(result.image.data[o] * 0.8 * glow));
+        }
+      }
+    const lift = (out: { data: ArrayLike<number> }) =>
+      out.data[(40 * 240 + 60) * 4] / out.data[(40 * 240 + 180) * 4];
+    const kept = restoreJoints(
+      reference.image,
+      result.image,
+      reference.mask,
+      new Set([1]),
+      undefined,
+      undefined,
+      undefined,
+      0,
+      Infinity,
+    );
+    const capped = restoreJoints(reference.image, result.image, reference.mask, new Set([1]));
+    expect(lift(kept)).toBeGreaterThan(1.08);
+    expect(lift(capped)).toBeLessThan(1.04);
+    expect(summary(faceScores(reference.image, capped, reference.mask)).wall).toBeGreaterThan(0.8);
+  });
+  it('takes the light from the reference it is given (the room drawn with less gloss)', () => {
+    // The render's reflection of the ceiling light: a bright spot round (60, 40) on the wall.
+    const glossy = room(24);
+    for (let y = 0; y < 110; y++)
+      for (let x = 0; x < 240; x++) {
+        const spot = 1 + 0.5 * Math.exp(-((x - 60) ** 2 + (y - 40) ** 2) / (2 * 4 ** 2));
+        for (let c = 0; c < 3; c++) {
+          const o = (y * 240 + x) * 4 + c;
+          glossy.image.data[o] = Math.min(255, Math.round(glossy.image.data[o] * 0.8 * spot));
+        }
+      }
+    const soft = room(24);
+    const result = room(0);
+    const lift = (out: { data: ArrayLike<number> }) =>
+      out.data[(40 * 240 + 60) * 4] / out.data[(40 * 240 + 180) * 4];
+    const fromGlossy = restoreJoints(
+      glossy.image,
+      result.image,
+      glossy.mask,
+      new Set([1]),
+      undefined,
+      undefined,
+      undefined,
+      0,
+      Infinity,
+    );
+    const fromSoft = restoreJoints(
+      soft.image,
+      result.image,
+      soft.mask,
+      new Set([1]),
+      undefined,
+      undefined,
+      undefined,
+      0,
+      Infinity,
+    );
+    // The white wall is near 255, so the spot can lift it only a little.
+    expect(lift(fromGlossy)).toBeGreaterThan(1.04);
+    expect(lift(fromSoft)).toBeLessThan(1.01);
+  });
   it('changes nothing when no face is named', () => {
     const reference = room(24);
     const result = room(34);

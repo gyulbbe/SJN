@@ -82,7 +82,7 @@ import {
   type FluxCaptureSource,
 } from '@/lib/ai-export/scene';
 import { FLUX_BACKDROP, fluxRoom } from '@/lib/ai-export/view';
-import { inputPxPerMm, widenedJointMm, widenJoints } from '@/lib/ai-export/joints';
+import { GLARE_SOFT_ROUGHNESS, inputPxPerMm, widenedJointMm, widenJoints } from '@/lib/ai-export/joints';
 import { fluxInputLayout } from '@/lib/ai-export/contract';
 import type { RoomViewState } from '@/lib/room-viewer/view-state';
 import type { PhotoCompositor } from '@/lib/render/compositor';
@@ -1544,6 +1544,14 @@ function EditorWorkspace({ id, adminContext, guestContext, layoutStudio }: Edito
             image: { width: own.width, height: own.height, data: own.shadowed },
             regions: roomRenderer.regionMask(regions.width, regions.height, view, { withoutFixtures: true }),
           };
+          // The same room with less gloss: the walls' light without the glossy tiles' reflection of
+          // the ceiling light, for the finishing steps (docs/wall-glare-20261121.md). Never sent.
+          try {
+            const soft = roomRenderer.exportLayers(view, { longEdge: edge, roughness: GLARE_SOFT_ROUGHNESS });
+            behind.soft = { width: soft.width, height: soft.height, data: soft.shadowed };
+          } catch {
+            // Without it the walls' light comes from the room as drawn.
+          }
         } catch {
           behind = undefined;
         }

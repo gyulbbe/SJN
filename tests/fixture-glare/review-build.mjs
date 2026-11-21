@@ -35,16 +35,18 @@ const shuffle = (list) => {
 // --keep may name several candidates (a,b): one pair per picture and candidate; `cand@base` gives that
 // candidate its own baseline. Only where both pictures exist (one call was refused by the provider).
 const has = (source, rule) => existsSync(join(OUT, 'pictures', `${source}.${rule}.png`));
+// An id may carry its own candidates (`id=cand@base`, several with `+`) instead of --keep's.
 const pairs = shuffle(
-  ids.flatMap((source) =>
-    keep
+  ids.flatMap((entry) => {
+    const [source, own] = entry.split('=');
+    return (own ? own.split('+').join(',') : keep)
       .split(',')
       .map((entry) => entry.split('@'))
-      .map(([candidate, own]) => ({ source, candidate, base: own ?? base }))
+      .map(([candidate, mine]) => ({ source, candidate, base: mine ?? base }))
       .filter(
         (pair) => has(pair.source, pair.candidate) && (pair.base === 'base' || has(pair.source, pair.base)),
-      ),
-  ),
+      );
+  }),
 );
 const sides = shuffle(pairs.map((_, k) => k < pairs.length / 2));
 for (const [k, pair] of pairs.entries()) pair.a = sides[k] ? pair.base : pair.candidate;
@@ -87,11 +89,13 @@ writeFileSync(
   JSON.stringify(
     {
       set,
-      title: 'AI 결과 도기 비침 평가',
+      title: arg('title', 'AI 결과 도기 비침 평가'),
       flags: [],
-      pairQuestion: '어느 쪽 유광 자재(도기·유광 타일)의 빛 비침이 더 적고 자연스럽나',
-      pairHint:
+      pairQuestion: arg('question', '어느 쪽 유광 자재(도기·유광 타일)의 빛 비침이 더 적고 자연스럽나'),
+      pairHint: arg(
+        'hint',
         '유광 자재(변기·세면대·욕조, 유광 타일)의 빛 비침·반짝임·반사를 위주로 봐 주세요. 제품이 다른 물건으로 바뀌었거나 평평하고 어색하면 글로 적어 주세요.',
+      ),
       singles: [],
       pairs: items,
     },

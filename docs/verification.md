@@ -2,6 +2,19 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-21 — 유광 벽의 천장 조명 반사 줄이기(덜 반짝이는 배경 층, 빛 덩어리 낮추기)
+
+- 무엇:
+  - `renderer.ts` `exportLayers` `roughness`: 비금속 면을 그 거칠기 이상으로 그린 층(끝나면 되돌림).
+  - `editor.tsx` `captureAiInput`: 배경 층을 거칠기 0.6(`GLARE_SOFT_ROUGHNESS`)으로 한 번 더 그려 `behind.soft`로 넘긴다(보내지 않음).
+  - `joints.ts`: 줄눈 되돌리기가 그 층에서 빛·잔무늬를 가져오고(`reference`), 넓은 빛이 둘레보다 2% 넘게 솟은 곳을 낮춘다(`GLARE_LIGHT_CAP`). `current-refine.ts` `soft`, `ai-export.tsx` 연결.
+  - AI 호출 수·프롬프트·보내는 그림·저장 형식·API·SQL은 그대로다. 편집 화면 3D도 그대로다.
+- 확인:
+  - 사용자 블라인드 `wg1`: 덜 반짝이는 층 + 빛 덩어리 낮추기 대 지금 낫다 4·비슷하다 9·못하다 0, 빛 덩어리 낮추기만(사진 제품) 1·11·0.
+  - 앱 경로(`exportLayers` `roughness`)로 그린 층이 시험 층과 픽셀까지 같다(2장면, `behind.ts` `BEHIND_APP_SOFT`).
+  - `tests/tile-ai.test.ts`(새 2개), `flux-joints`(빛 덩어리 낮추기가 고른 빛·줄눈 벽을 어둡게 하던 것을 이 시험이 잡아 고침), `fixture-*`·`flux-*` 관련 단위 시험, e2e `flux-export`·`flux-refine`
+- 결과: [결과 문서](wall-glare-20261121.md).
+
 ## 2026-11-21 — 사진 제품 설계도 지금 방식으로 열기, 색을 바꿔 그린 흰 도기 되돌리기
 
 - 무엇:

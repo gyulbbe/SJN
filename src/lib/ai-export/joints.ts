@@ -16,6 +16,11 @@
  * the render's (`RESTORE_LIGHT_KEEP`): the model drew sun-like streaks, big shadows and glare the
  * render's one ceiling light does not have, and the reviewer chose the quarter over today's light in
  * 15 of 16 and 8 of 8 unseen pictures (docs/ai-light-20261115.md).
+ *
+ * Since 2026-11-21 (docs/wall-glare-20261121.md) the light and detail come from the room drawn with
+ * less gloss when the capture has it (GLARE_SOFT_ROUGHNESS), so a glossy wall's reflection of the
+ * ceiling light is not put back, and a lump of the finished broad light is cut to GLARE_LIGHT_CAP over
+ * its surroundings (the glow the model drew there); blind 4 better, 9 the same, 0 worse.
  */
 import type { RenderSnapshot } from '../types';
 import {
@@ -52,6 +57,61 @@ export const OUTLINE_RIMS: FaceRims = { fixture: 0.5, backdrop: true, faces: tru
 
 /** How far the render's detail may darken or lighten the model's light. */
 const DETAIL_RANGE = [0.55, 1.5] as const;
+/**
+ * docs/wall-glare-20261121.md (2026-11-21): a restored face's finished broad light (the model's
+ * quarter and the render's rest) may stand at most this share over its surroundings, so the glow the
+ * model drew where a glossy wall faces the ceiling light (and what is left of the render's) goes. The
+ * joints and the render's detail stay.
+ */
+export const GLARE_LIGHT_CAP = 0.02;
+/**
+ * The render the faces' light and detail come from is drawn with every non-metal surface at least
+ * this rough (RoomViewerRenderer.exportLayers `roughness`): without the glossy tiles' reflection of
+ * the ceiling light, which the joints step otherwise put back on the result.
+ */
+export const GLARE_SOFT_ROUGHNESS = 0.6;
+
+/**
+ * A grey opening (the least over a square of `radius`, then the most) of `value` inside `weight`:
+ * lines thinner than the square go, lumps wider than it stay.
+ */
+function openInside(
+  value: Float32Array,
+  weight: Float32Array,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  // Sliding least/most over each line (a queue of candidates), pixels outside the weight skipped.
+  const pass = (source: Float32Array, horizontal: boolean, least: boolean) => {
+    const out = new Float32Array(source.length);
+    const lines = horizontal ? height : width,
+      length = horizontal ? width : height,
+      step = horizontal ? 1 : width;
+    const queue = new Int32Array(length);
+    const better = (a: number, b: number) => (least ? a <= b : a >= b);
+    for (let line = 0; line < lines; line++) {
+      const start = horizontal ? line * width : line;
+      let head = 0,
+        tail = 0,
+        next = 0;
+      for (let i = 0; i < length; i++) {
+        for (; next < length && next <= i + radius; next++) {
+          const k = start + next * step;
+          if (!weight[k]) continue;
+          while (tail > head && better(source[k], source[start + queue[tail - 1] * step])) tail--;
+          queue[tail++] = next;
+        }
+        while (tail > head && queue[head] < i - radius) head++;
+        const k = start + i * step;
+        out[k] = weight[k] && tail > head ? source[start + queue[head] * step] : source[k];
+      }
+    }
+    return out;
+  };
+  const eroded = pass(pass(value, true, true), false, true);
+  return pass(pass(eroded, true, false), false, false);
+}
 
 // ---------- the widened capture ----------
 /** The joint width (mm) that is JOINT_MIN_INPUT_PX in a model input of `inputPxPerMm`. */
@@ -380,6 +440,11 @@ export function restoreJoints(
    * (docs/refine-level-20261120.md: the model's surface texture back over the design's joints).
    */
   aiDetail = 0,
+  /**
+   * How much brighter than its surroundings a lump of the face's finished broad light may be, as a
+   * share (GLARE_LIGHT_CAP; Infinity: no limit). Only the broad light is touched.
+   */
+  lightCap = GLARE_LIGHT_CAP,
 ): Pixels {
   const { width, height } = result;
   const out = new Uint8ClampedArray(result.data);
@@ -486,6 +551,21 @@ export function restoreJoints(
         );
       }
     if (lightKeep !== 1) keepLightDifference(channels, refLight, weight, lightKeep);
+    if (Number.isFinite(lightCap)) {
+      // The light smoothed past the joints (it still dips a little at each joint, which the opening
+      // below would take for the level), and its surroundings: opened over a square wider than a
+      // glow (lumps go), then smoothed.
+      const lit = new Float32Array(count);
+      for (let i = 0; i < count; i++)
+        lit[i] = 0.2126 * channels[0][i] + 0.7152 * channels[1][i] + 0.0722 * channels[2][i];
+      const smooth = blurInside(lit, weight, w, h, radius * 2).mean;
+      const wide = blurInside(openInside(smooth, weight, w, h, radius * 6), weight, w, h, radius * 2).mean;
+      for (let i = 0; i < count; i++) {
+        if (!weight[i] || smooth[i] <= wide[i] * (1 + lightCap)) continue;
+        const factor = (wide[i] * (1 + lightCap)) / smooth[i];
+        for (const channel of channels) channel[i] *= factor;
+      }
+    }
     for (let i = 0; i < count; i++) {
       if (!weight[i]) continue;
       const designed = Math.max(
@@ -539,6 +619,13 @@ export function restoreResultJoints(input: {
   resultMask?: RegionMask;
   /** How far each face is restored where it meets a fixture, the backdrop or another face (FaceRims). */
   rims?: FaceRims;
+  /** The lumps of the finished broad light a restored face keeps, at most (GLARE_LIGHT_CAP). */
+  lightCap?: number;
+  /**
+   * The render the faces' light and detail come from instead of `behind` (or `capture`), at the
+   * capture's size: the room behind the fixtures drawn at GLARE_SOFT_ROUGHNESS.
+   */
+  reference?: Pixels;
 }): JointRestore {
   const { capture, joints, mask, layout, result, frame } = input;
   const below = input.restoreBelow ?? RESTORE_BELOW;
@@ -551,7 +638,7 @@ export function restoreResultJoints(input: {
     restored.map((face) => mask.regions.findIndex((region) => region.key === face.key) + 1),
   );
   const image = restoreJoints(
-    projectCapture(input.behind ?? capture, layout, size),
+    projectCapture(input.reference ?? input.behind ?? capture, layout, size),
     input.onto ?? result,
     input.resultMask ?? shiftMask(projected, frame.dx, frame.dy),
     labels,
@@ -559,6 +646,7 @@ export function restoreResultJoints(input: {
     input.lightKeep ?? RESTORE_LIGHT_KEEP,
     input.rims,
     input.aiDetail ?? 0,
+    input.lightCap ?? GLARE_LIGHT_CAP,
   );
   return { restored, scores, image };
 }

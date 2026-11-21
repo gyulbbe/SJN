@@ -20,6 +20,9 @@
  * sticking up out of a fixture (an invented tap) leaves its cut-out (T1), and a ceramic the model drew
  * as metal (a thin side-on basin drawn as a towel bar) goes back as the render's fixture: the steps run
  * again without its cut-out and the render's pixels go on, in the model's light (P1).
+ *
+ * Since 2026-11-21 (docs/wall-glare-20261121.md) the joints step takes the walls' light from `soft`
+ * (the room drawn with less gloss) and cuts the glow left on a glossy wall (joints.ts).
  */
 import {
   framing,
@@ -79,6 +82,8 @@ export type RefineTuning = {
   bodyRaise?: number;
   /** How much of the lightness the walls' rule gives back a ceramic gets (fixture-light.ts, 1). */
   ceramicShare?: number;
+  /** The lumps of a restored face's finished broad light, at most (joints.ts GLARE_LIGHT_CAP; Infinity: none). */
+  lightCap?: number;
 };
 
 type RefineInput = {
@@ -92,6 +97,11 @@ type RefineInput = {
   fixtures: readonly FluxFixture[];
   /** The capture with the fixtures hidden (their shadows kept) and its regions. */
   behind?: { image: Pixels; mask: RegionMask };
+  /**
+   * The capture with the fixtures hidden, drawn with less gloss (joints.ts GLARE_SOFT_ROUGHNESS): the
+   * walls' light and detail come from it, without the glossy tiles' reflection of the ceiling light.
+   */
+  soft?: Pixels;
   cuts?: readonly Cut[];
   tuning?: RefineTuning;
 };
@@ -151,6 +161,8 @@ function refineSteps(input: RefineInput): CurrentRefine {
           ...(outline ? { behind: input.behind!.image, resultMask: outline.mask, rims: OUTLINE_RIMS } : {}),
           ...(tuning.lightKeep !== undefined ? { lightKeep: tuning.lightKeep } : {}),
           ...(tuning.aiDetail ? { aiDetail: tuning.aiDetail } : {}),
+          ...(tuning.lightCap !== undefined ? { lightCap: tuning.lightCap } : {}),
+          ...(input.soft ? { reference: input.soft } : {}),
         })
       : undefined;
   const review = reviewResultColors({

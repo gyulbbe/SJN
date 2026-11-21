@@ -243,8 +243,11 @@ export default function AiExport({
       mask: RegionMask;
       layout: FluxInputLayout;
       joints?: Pixels;
-      /** Today's method: the render with its fixtures hidden and its regions (fixture-outline.ts). */
-      behind?: { image: Pixels; mask: RegionMask };
+      /**
+       * Today's method: the render with its fixtures hidden and its regions (fixture-outline.ts), and
+       * the same drawn with less gloss (current-refine.ts `soft`).
+       */
+      behind?: { image: Pixels; mask: RegionMask; soft?: Pixels };
     };
     /** Walls in the captured view, asked about in the result check. */
     walls?: FluxCheckWall[];
@@ -387,7 +390,15 @@ export default function AiExport({
             mask: source.regions,
             layout: fluxInputLayout(pixels.width, pixels.height),
             ...(source.joints ? { joints: await readPixels(source.joints) } : {}),
-            ...(source.behind ? { behind: { image: source.behind.image, mask: source.behind.regions } } : {}),
+            ...(source.behind
+              ? {
+                  behind: {
+                    image: source.behind.image,
+                    mask: source.behind.regions,
+                    ...(source.behind.soft ? { soft: source.behind.soft } : {}),
+                  },
+                }
+              : {}),
           };
           state.current.walls = visibleWalls(source.regions, source.snapshot.scene);
           state.current.regionWalls = [
@@ -610,6 +621,7 @@ export default function AiExport({
             fixtures,
             ...(color.joints ? { joints: color.joints } : {}),
             ...(color.behind && cuts ? { behind: color.behind, cuts } : {}),
+            ...(color.behind?.soft ? { soft: color.behind.soft } : {}),
           });
           if (!live.current) return;
           if (!review.framing.aligned) setColors({ status: 'reframed' });

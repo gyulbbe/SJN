@@ -307,8 +307,10 @@ export type FluxCaptureSource = {
   /**
    * Today's method: the same frame with the fixtures hidden (their shadows kept) and its regions, for
    * the finishing steps on where the model drew its fixtures (fixture-outline.ts). Never sent.
+   * `soft`: the same drawn with less gloss (joints.ts GLARE_SOFT_ROUGHNESS), the walls' light without
+   * the glossy tiles' reflection of the ceiling light (docs/wall-glare-20261121.md).
    */
-  behind?: { image: Pixels; regions: RegionMask };
+  behind?: { image: Pixels; regions: RegionMask; soft?: Pixels };
 };
 
 /**

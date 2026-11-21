@@ -28,6 +28,9 @@ const ROOT_OUT = process.env.BEHIND_OUT ?? (OUT as string);
 const soften = process.env.SCENES_SOFTEN
   ? (JSON.parse(process.env.SCENES_SOFTEN) as { roughness?: number; environment?: number })
   : undefined;
+// BEHIND_APP_SOFT=1: SCENES_SOFTEN's roughness through the app's own path (exportLayers `roughness`,
+// docs/wall-glare-20261121.md), to check it draws what this trial's own softening drew.
+const appSoft = !!process.env.BEHIND_APP_SOFT;
 const holdout = process.argv.includes('--holdout');
 const fresh = process.argv.includes('--new');
 const group = groupArg(process.argv);
@@ -126,7 +129,7 @@ try {
     const used = Object.fromEntries([...needed].map((m) => [m, records[m]]));
     const started = Date.now();
     const r = await page.evaluate(
-      async ({ spec, used, soften }) => {
+      async ({ spec, used, soften, appSoft }) => {
         type Lib = typeof import('../../src/lib/room-viewer/renderer') &
           typeof import('../export-photoreal/scene-builder') &
           typeof import('../../src/lib/ai-export/scene') &
@@ -158,7 +161,7 @@ try {
         const viewer = new lib.RoomViewerRenderer();
         try {
           await viewer.setSnapshot(snapshot, reader, { background: lib.FLUX_BACKDROP });
-          if (soften) {
+          if (soften && !appSoft) {
             type Soft = { roughness: number; metalness: number; needsUpdate: boolean };
             const world = (
               viewer as unknown as {
@@ -183,7 +186,10 @@ try {
                   }
               });
           }
-          const layers = viewer.exportLayers(view, { longEdge: edge });
+          const layers = viewer.exportLayers(view, {
+            longEdge: edge,
+            ...(appSoft && soften?.roughness !== undefined ? { roughness: soften.roughness } : {}),
+          });
           const canvas = document.createElement('canvas');
           canvas.width = layers.width;
           canvas.height = layers.height;
@@ -230,7 +236,7 @@ try {
           viewer.dispose();
         }
       },
-      { spec, used, soften },
+      { spec, used, soften, appSoft },
     );
     if (errors.length) throw new Error(errors.join('\n'));
     const dir = join(ROOT_OUT, 'behind', spec.id);

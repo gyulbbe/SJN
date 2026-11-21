@@ -1326,10 +1326,44 @@ export class RoomViewerRenderer {
    * With these, full = fixture·coverage + shadowed·(1 − coverage) solves for the fixtures' own
    * colours, and shadowed ÷ empty is the shadow they cast. RGBA rows are top-down.
    */
-  exportLayers(view: RoomViewState, options: { longEdge: number }): RoomExportLayers {
+  exportLayers(
+    view: RoomViewState,
+    options: {
+      longEdge: number;
+      /**
+       * Every non-metal surface at least this rough while the layers are drawn, put back after: the
+       * room without the glossy tiles' reflection of the ceiling light, for the AI result's finishing
+       * steps only (docs/wall-glare-20261121.md). Absent: as the frame is.
+       */
+      roughness?: number;
+    },
+  ): RoomExportLayers {
     this.assertOpen();
     if (!this.snapshot || !this.prepared) throw new Error('공간을 먼저 준비해 주세요.');
     if (this.accumulating) throw new Error('다른 이미지를 만드는 중이에요. 잠시 뒤 다시 시도해 주세요.');
+    if (options.roughness !== undefined) {
+      const changed: { material: Material & { roughness: number }; roughness: number }[] = [];
+      const target = options.roughness;
+      this.prepared.after.world.traverse((node) => {
+        for (const material of [(node as { material?: Material | Material[] }).material ?? []].flat()) {
+          const own = material as Material & { roughness?: number; metalness?: number };
+          if (typeof own.roughness !== 'number' || (own.metalness ?? 0) >= 0.5 || own.roughness >= target)
+            continue;
+          if (changed.some((entry) => entry.material === own)) continue;
+          changed.push({ material: own as Material & { roughness: number }, roughness: own.roughness });
+          own.roughness = target;
+        }
+      });
+      try {
+        return this.exportLayers(view, { longEdge: options.longEdge });
+      } finally {
+        for (const entry of changed) entry.material.roughness = entry.roughness;
+        // The frame shown before is drawn again with its own gloss.
+        const shown = this.lastFrame;
+        if (shown && !this.disposed)
+          this.render(shown.width, shown.height, shown.view, shown.mode, shown.split);
+      }
+    }
     const previous = this.lastFrame;
     const { width, height } = this.exportSize(options.longEdge, 'after');
     const after = this.prepared.after;
