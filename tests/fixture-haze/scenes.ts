@@ -10,7 +10,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from '@playwright/test';
-import { build } from 'esbuild';
+import { build, type Plugin } from 'esbuild';
 import sharp from 'sharp';
 import { trialCatalog } from './catalog';
 import { OUT as TRIAL } from './paths.mjs';
@@ -32,6 +32,28 @@ const OUT = process.env.SCENES_OUT ?? join(TRIAL as string, group);
 const soften = process.env.SCENES_SOFTEN
   ? (JSON.parse(process.env.SCENES_SOFTEN) as { roughness?: number; environment?: number })
   : undefined;
+// SCENES_PATCH (side-tile trial, docs/side-tile-20261121.md): source text swaps for the bundle,
+// {"<file name>": [["from", "to"], ...]}, to draw a renderer constant at another value.
+const patches = process.env.SCENES_PATCH
+  ? (JSON.parse(process.env.SCENES_PATCH) as Record<string, [string, string][]>)
+  : {};
+const patchPlugin: Plugin = {
+  name: 'scenes-patch',
+  setup(b) {
+    b.onLoad({ filter: /[.]ts$/ }, (args) => {
+      const path = args.path.replace(/\\/g, '/');
+      const swaps = Object.entries(patches).find(([name]) => path.endsWith(name))?.[1];
+      if (!swaps) return undefined;
+      // The checkout may have CRLF line ends; the swaps are written with LF.
+      let text = readFileSync(args.path, 'utf8').replace(/\r\n/g, '\n');
+      for (const [from, to] of swaps) {
+        if (!text.includes(from)) throw new Error(`SCENES_PATCH: no "${from}" in ${args.path}`);
+        text = text.replace(from, to);
+      }
+      return { contents: text, loader: 'ts' };
+    });
+  },
+};
 const { records, files, imageFiles } = trialCatalog();
 const SPECS = resolveSpecs(Object.keys(records), group).filter((spec) => !!spec.holdout === holdout);
 const bundle = await build({
@@ -55,6 +77,7 @@ const bundle = await build({
   platform: 'browser',
   format: 'iife',
   globalName: 'Lib',
+  plugins: [patchPlugin],
 });
 const browser = await chromium.launch({
   channel: 'chrome',

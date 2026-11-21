@@ -2,6 +2,23 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-21 — 3D 그림: 같은 타일이 정면 벽과 옆벽에서 같게 보이기
+
+- 무엇:
+  - `room-viewer/surfaces.ts` `GRAZING_REFLECTION_KEEP` 0: 방 면의 반사 세기와 남는 확산광을 정면에서 본 것처럼 계산한다(반사 방향은 그대로).
+  - `render/realistic-lighting.ts` `ENVIRONMENT_WALL` 2: 반사 환경의 네 벽을 같은 밝기로 했다(카메라 쪽만 2.15, 나머지 `#cccccc`였음).
+  - `DESIGN_RENDER_REVISION` 11(브라우저 미리보기 캐시만)
+  - `ai-export/composite.ts` `floorLineOffset` 찾는 범위 24 → 32행. 빈 방(실험 A)에서 AI가 방을 내렸는지 보는 바닥선 검사다. 무늬 없는 방의 벽·바닥 밝기가 가까워져, e2e의 약 25px 내린 방을 놓쳤다(범위 끝에 걸쳐 겨우 잡히던 것).
+  - 시험 도구: `tests/fixture-haze/scenes.ts`·`tests/side-wall/render.ts`의 `SCENES_PATCH`(상수를 바꿔 그림), `tests/side-tile/face-stats.mjs`
+  - 편집 화면 2D, AI 호출 수·프롬프트·저장 형식·API·SQL은 그대로다. AI에 보내는 3D 그림은 바뀐다.
+- 확인:
+  - 면별 숫자: 유광 5장면·등록 제품 10장면 모두 벽끼리 채도 85% 이상, L\* 차 8 이하(지금은 15장면 중 2장면)
+  - 앱 기본값 그림 = 시험 그림(픽셀 같음)
+  - 사용자 결정(그림): A 다음 B
+  - 단위 시험(`room-viewer-surfaces`·`room-shadow`·`design-preview-*`·`flux-view`·`wall-*`·`ledge-join` 등 11개 파일), `test:webgl`, typecheck, lint, e2e `flux-export`·`flux-refine`·`simple-editor`·`room-fixtures`
+  - `tests/tile-mipmap-browser.ts`는 11-05 밉맵 변경 전 기준 그림과 비교하는 시험이라(줄무늬 깨짐 절반 등) 이 변경에는 맞지 않는다.
+- 결과: [결과 문서](side-tile-20261121.md).
+
 ## 2026-11-21 — 줄눈 되돌리기: 검정·진회색 타일의 밝은 줄눈 지키기
 
 - 무엇:

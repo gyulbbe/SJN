@@ -278,6 +278,20 @@ float sjnContactOcclusion(){
  return o*m;
 }
 `;
+/**
+ * How much of what a slanted view does to a room surface's room light (Fresnel: more reflection, and
+ * as much less diffuse light) it keeps: 1 is the physical change, 0 a wall seen at a slant reflects
+ * and takes light as a wall seen face on. The reflection still comes from where the view bounces;
+ * only its strength is the face-on one.
+ * 2026-11-21 (docs/side-tile-20261121.md): a glossy side wall mirrored the grey room and lost half
+ * its colour (an olive brick sheet read as grey, a black tile as charcoal), and as much diffuse
+ * light; with the evener room light (createInteriorEnvironment) every wall of one tile now reads
+ * alike. The floor too (seen low from the AI capture's orbit it stays as light as before).
+ */
+export const GRAZING_REFLECTION_KEEP = 0;
+// Between lights_fragment_maps (the radiance, along the real view) and lights_fragment_end (where
+// the reflection's weight and the diffuse left over come from the view's angle).
+const grazingSource = `geometryViewDir=normalize(mix(geometryNormal,geometryViewDir,${GRAZING_REFLECTION_KEEP.toFixed(3)}));\n`;
 function surfaceMaterial(
   room: RoomDefinition,
   patch: ViewerSurfacePatch,
@@ -326,7 +340,8 @@ function surfaceMaterial(
       // glossy tile is not washed out into a grey mirror of its surroundings.
       .replace(
         '#include <lights_fragment_end>',
-        '#include <lights_fragment_end>\nreflectedLight.directSpecular*=.6;reflectedLight.indirectSpecular*=.6;',
+        (GRAZING_REFLECTION_KEEP < 1 ? grazingSource : '') +
+          '#include <lights_fragment_end>\nreflectedLight.directSpecular*=.6;reflectedLight.indirectSpecular*=.6;',
       );
     if (!product || !atlas || !surface) return;
     const tile = surface.tile;

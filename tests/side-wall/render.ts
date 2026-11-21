@@ -27,7 +27,7 @@ const gpu = process.argv.includes('--gpu');
 const withRef = process.argv.includes('--ref');
 const only = new Set(arg('only', 'small,roman,scored,marble,patchwork,subway,beige').split(','));
 const suffix = gpu ? '-gpu' : '';
-const dir = join(OUT as string, variant + suffix),
+const dir = join(OUT as string, (arg('name') || variant) + suffix),
   refDir = join(OUT as string, 'ref' + suffix),
   maskDir = join(OUT as string, 'masks');
 for (const d of [dir, refDir, maskDir]) mkdirSync(d, { recursive: true });
@@ -44,6 +44,21 @@ const redirect: Plugin = {
   name: 'side-wall-atlas',
   setup(b) {
     b.onResolve({ filter: /tile-atlas$/ }, (args) => (args.importer === shim ? undefined : { path: shim }));
+    // SCENES_PATCH (side-tile trial, docs/side-tile-20261121.md): as tests/fixture-haze/scenes.ts.
+    const patches = process.env.SCENES_PATCH
+      ? (JSON.parse(process.env.SCENES_PATCH) as Record<string, [string, string][]>)
+      : {};
+    b.onLoad({ filter: /[.]ts$/ }, (args) => {
+      const path = args.path.replace(/\\/g, '/');
+      const swaps = Object.entries(patches).find(([name]) => path.endsWith(name))?.[1];
+      if (!swaps) return undefined;
+      let text = readFileSync(args.path, 'utf8').replace(/\r\n/g, '\n');
+      for (const [from, to] of swaps) {
+        if (!text.includes(from)) throw new Error(`SCENES_PATCH: no "${from}" in ${args.path}`);
+        text = text.replace(from, to);
+      }
+      return { contents: text, loader: 'ts' };
+    });
   },
 };
 const bundle = await build({

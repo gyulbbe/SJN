@@ -345,13 +345,15 @@ export const MAX_FLOOR_OFFSET = 6;
  * How far the model moved the wall–floor line: for sampled columns, the row of the render's first
  * floor pixel under a wall, then the strongest vertical edge within ±`reach` rows of the model's
  * room there. Columns near a fixture are skipped. The median offset (positive: model's line lower)
- * and how many columns agreed.
+ * and how many columns agreed. `reach` was 24 until 2026-11-21: with the evener 3D room light
+ * (docs/side-tile-20261121.md) a plain room's wall and floor are closer in brightness, and a room
+ * moved about 25 px down was no longer told from one in place.
  */
 export function floorLineOffset(
   ai: Pixels,
   mask: RegionMask,
   coverage: Uint8Array,
-  reach = 24,
+  reach = 32,
 ): { offset: number; columns: number } {
   const { width, height } = ai;
   const floor = new Set(mask.regions.flatMap((r, i) => (r.kind === 'floor' ? [i + 1] : [])));

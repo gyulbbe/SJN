@@ -48,6 +48,12 @@ const BOUNCE = 0.66;
 const MODEL_BOUNCE = 0.58;
 // Neutral white: any warm or cool cast would shift every tile colour the user compares.
 const LIGHT_COLOR = '#ffffff';
+/**
+ * The environment's four walls (× white). Until 2026-11-21 only the camera side (+z, a doorway
+ * behind a photographer) was 2.15 and the rest #cccccc, so a wall facing it got about 2.5 × the bounce
+ * of the side walls and the same tile looked like two (docs/side-tile-20261121.md).
+ */
+const ENVIRONMENT_WALL = 2;
 
 /**
  * Room-fixed interior lighting: one ceiling downlight casting soft shadows plus ambient bounce.
@@ -138,17 +144,13 @@ export function createInteriorEnvironment(renderer: WebGLRenderer): InteriorEnvi
     return undefined;
   const scene = new Scene();
   const geometries = [new BoxGeometry(10, 6, 10), new PlaneGeometry(2.2, 2.2)];
-  // BoxGeometry groups: +x, -x, +y (ceiling), -y (floor), +z, -z. Nearly even bounce so walls and
-  // floor receive similar ambient light; the panel mainly shows up as a reflection on glossy tiles.
-  // +z is the open front of the room (the camera side), lit like the doorway behind a photographer.
-  const faces = [
-    '#cccccc',
-    '#cccccc',
-    '#e6e6e6',
-    '#888888',
-    new Color(1, 1, 1).multiplyScalar(2.15),
-    '#cccccc',
-  ].map((color) => new MeshBasicMaterial({ color, side: BackSide }));
+  // BoxGeometry groups: +x, -x, +y (ceiling), -y (floor), +z, -z. The four walls are equally bright
+  // (ENVIRONMENT_WALL) so every room wall gets the same bounce whichever way it faces; the panel
+  // mainly shows up as a reflection on glossy tiles.
+  const wall = new Color(1, 1, 1).multiplyScalar(ENVIRONMENT_WALL);
+  const faces = [wall, wall, '#e6e6e6', '#888888', wall, wall].map(
+    (color) => new MeshBasicMaterial({ color, side: BackSide }),
+  );
   const panel = new MeshBasicMaterial({ color: new Color(1, 1, 1).multiplyScalar(3) });
   const room = new Mesh(geometries[0], faces);
   const light = new Mesh(geometries[1], panel);
