@@ -9,6 +9,9 @@ import {
   metalScores,
   pasteRenderFixtures,
   recolouredCeramics,
+  TAP_RISE,
+  TAP_THIN,
+  trimBasinTaps,
   trimProtrusions,
 } from '../src/lib/ai-export/fixture-shape';
 import { fluxResultNotices } from '../src/lib/ai-export/notices';
@@ -83,6 +86,55 @@ describe('T1: a thin piece sticking up out of a fixture leaves its cut-out', () 
     // Reaches 6 px from the basin, but its far part (more than 4 px away) is 2 px tall.
     const { trimmed } = trimProtrusions({ cuts: [cut(short)], renderMask, fixtures: [basin] });
     expect(trimmed).toEqual([]);
+  });
+});
+
+describe('T2: a tap the model drew on a basin leaves its cut-out with its stem', () => {
+  // A 200 × 120 result (rise: 4 px); the render's basin at x 80–120, y 60–100 (thin: 8 px).
+  // The model drew its basin a little lower (from y 66), so a tap's stem shows between y 60 and 66.
+  const W = 200,
+    H = 120;
+  const renderMask = maskOf(W, H, (x, y) => (x >= 80 && x < 120 && y >= 60 && y < 100 ? FIXTURE_REGION : 1));
+  const basin = fact('basin', [80 / W, 60 / H, 120 / W, 100 / H]);
+  const toilet = fact('toilet', [80 / W, 60 / H, 120 / W, 100 / H]);
+  const modelBasin = (x: number, y: number) => x >= 80 && x < 120 && y >= 66 && y < 100;
+  const cut = (extra: (x: number, y: number) => boolean): Cut => {
+    const crop = { fixture: 0, left: 60, top: 10, width: 80, height: 100 };
+    const alpha = new Uint8Array(crop.width * crop.height);
+    for (let y = 0; y < crop.height; y++)
+      for (let x = 0; x < crop.width; x++) {
+        const px = crop.left + x,
+          py = crop.top + y;
+        if (modelBasin(px, py) || extra(px, py)) alpha[y * crop.width + x] = 255;
+      }
+    return { ...crop, alpha };
+  };
+  const held = (c: Cut, x: number, y: number) => c.alpha[(y - c.top) * c.width + x - c.left] >= 128;
+  const limits = { rise: TAP_RISE, thin: TAP_THIN };
+
+  it('takes out a short tap T1 leaves (rises 6 px) and its stem down to the model rim', () => {
+    const tap = (x: number, y: number) => x >= 98 && x < 102 && y >= 54 && y < 66;
+    const original = cut(tap);
+    expect(trimProtrusions({ cuts: [original], renderMask, fixtures: [basin] }).trimmed).toEqual([]);
+    const { cuts, trimmed } = trimBasinTaps({ cuts: [original], renderMask, fixtures: [basin], ...limits });
+    expect(trimmed).toEqual([expect.objectContaining({ fixture: 0, width: 4, height: 6 })]);
+    for (let y = 54; y < 66; y++) expect(held(cuts[0], 100, y)).toBe(false);
+    // The model's basin stays.
+    expect(held(cuts[0], 100, 66)).toBe(true);
+    expect(held(cuts[0], 81, 99)).toBe(true);
+  });
+
+  it('keeps a wide bump, a piece under the rise and a tap on another kind of fixture', () => {
+    const wide = (x: number, y: number) => x >= 85 && x < 115 && y >= 50 && y < 66;
+    const low = (x: number, y: number) => x >= 98 && x < 102 && y >= 57 && y < 66;
+    for (const extra of [wide, low]) {
+      const original = cut(extra);
+      const { cuts, trimmed } = trimBasinTaps({ cuts: [original], renderMask, fixtures: [basin], ...limits });
+      expect(trimmed).toEqual([]);
+      expect(cuts[0]).toBe(original);
+    }
+    const tap = cut((x, y) => x >= 98 && x < 102 && y >= 54 && y < 66);
+    expect(trimBasinTaps({ cuts: [tap], renderMask, fixtures: [toilet], ...limits }).trimmed).toEqual([]);
   });
 });
 

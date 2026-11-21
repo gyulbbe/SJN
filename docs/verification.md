@@ -2,6 +2,17 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-21 — 지금 방식 다듬기: AI가 세면대에 지어낸 짧은 수전과 그 줄기 지우기(T2)
+
+- 무엇:
+  - `fixture-shape.ts` `trimBasinTaps`(`TAP_RISE` 0.008, `TAP_THIN` 0.2): 세면대 컷아웃에서 렌더 윗줄보다 솟은 가는 조각과 그 아래 좁은 줄기를 뺀다.
+  - `current-refine.ts`: T1 앞에 기본으로 돈다(`tuning.taps: false`면 끔). 시험용 `shapeBelow`·`shapeFallback`(S2, 넣지 않음)과 `outlineScores`도 남긴다.
+  - AI 호출 수·프롬프트·보내는 그림·저장 형식·API·SQL·안내 문구는 그대로다.
+- 확인:
+  - 블라인드 `pt1`(등록 제품만 10쌍, 내 평가, 사용자가 맡김): 낫다 7·비슷하다 3·못하다 0. 바뀐 픽셀은 장당 13~576px이고 모두 세면대 위다.
+  - `tests/fixture-shape.test.ts`(새 2개), `fixture-outline`·`fixture-shadows`·`flux-joints`·`flux-refine`·`fixture-light`·`flux-notices`·`tile-ai`, typecheck, lint, e2e `flux-export`·`flux-refine`
+- 결과: [결과 문서](photo-shape-20261121.md).
+
 ## 2026-11-21 — 유광 벽의 천장 조명 반사 줄이기(덜 반짝이는 배경 층, 빛 덩어리 낮추기)
 
 - 무엇:

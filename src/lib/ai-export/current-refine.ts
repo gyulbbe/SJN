@@ -19,7 +19,9 @@
  * Since 2026-11-20 (docs/fixture-shape-20261120.md, fixture-shape.ts) a thin piece the model drew
  * sticking up out of a fixture (an invented tap) leaves its cut-out (T1), and a ceramic the model drew
  * as metal (a thin side-on basin drawn as a towel bar) goes back as the render's fixture: the steps run
- * again without its cut-out and the render's pixels go on, in the model's light (P1).
+ * again without its cut-out and the render's pixels go on, in the model's light (P1). Since 2026-11-21
+ * (docs/photo-shape-20261121.md, T2) a shorter or wider tap the model drew on a basin leaves it too,
+ * with its stem down to the basin's rim.
  *
  * Since 2026-11-21 (docs/wall-glare-20261121.md) the joints step takes the walls' light from `soft`
  * (the room drawn with less gloss) and cuts the glow left on a glossy wall (joints.ts).
@@ -42,8 +44,12 @@ import { cutoutMask, type Cut, type FixtureOutline } from './fixture-outline';
 import {
   metalCeramics,
   metalScores,
+  outlineScores,
   pasteRenderFixtures,
   recolouredCeramics,
+  TAP_RISE,
+  TAP_THIN,
+  trimBasinTaps,
   trimProtrusions,
   type TrimmedPiece,
 } from './fixture-shape';
@@ -64,6 +70,8 @@ export type CurrentRefine = {
   trimmed?: TrimmedPiece[];
   /** The ceramics the model drew as metal, put back as the render's (P1). */
   metal?: number[];
+  /** Of those, the basins put back for the shape the model drew (S2). */
+  reshaped?: number[];
 };
 
 /**
@@ -84,6 +92,18 @@ export type RefineTuning = {
   ceramicShare?: number;
   /** The lumps of a restored face's finished broad light, at most (joints.ts GLARE_LIGHT_CAP; Infinity: none). */
   lightCap?: number;
+  /**
+   * docs/photo-shape-20261121.md (S2): a basin whose outline score (fixture-shape.ts outlineScores)
+   * is under this goes back as the render's, as P1 does (absent: none). `shapeFallback`: also when
+   * its cut-out was not used (the render's outline).
+   */
+  shapeBelow?: number;
+  shapeFallback?: boolean;
+  /**
+   * docs/photo-shape-20261121.md (T2): taps the model drew on a basin leave its cut-out with their
+   * stem (fixture-shape.ts trimBasinTaps); absent: TAP_RISE / TAP_THIN, false: T1 only.
+   */
+  taps?: { rise: number; thin: number } | false;
 };
 
 type RefineInput = {
@@ -114,6 +134,24 @@ export function refineCurrentResult(input: RefineInput): CurrentRefine {
   );
   // A white ceramic the model drew in another colour (black) goes back the same way.
   for (const k of recolouredCeramics({ ...input, colourMask: first.outline.colourMask })) metal.add(k);
+  // A basin the model redrew as another shape goes back the same way (trial, S2).
+  const reshaped = new Set<number>();
+  const below = input.tuning?.shapeBelow;
+  if (below !== undefined && first.review.framing.aligned) {
+    const { width, height } = input.raw;
+    const { dx, dy } = first.review.framing;
+    const renderMask = shiftMask(projectMask(input.mask, input.layout, { width, height }), dx, dy);
+    const { cuts } = trimProtrusions({ cuts: input.cuts, renderMask, fixtures: input.fixtures });
+    const used = new Set(first.outline.verdicts.filter((v) => v.used).map((v) => v.fixture));
+    for (const score of outlineScores({ cuts, renderMask, fixtures: input.fixtures }))
+      if (
+        score.kind === 'basin' &&
+        score.shape < below &&
+        (used.has(score.fixture) || input.tuning?.shapeFallback)
+      )
+        reshaped.add(score.fixture);
+    for (const k of reshaped) metal.add(k);
+  }
   if (!metal.size) return first;
   const again = refineSteps({ ...input, cuts: input.cuts.filter((cut) => !metal.has(cut.fixture)) });
   if (!again.shown || !again.review.framing.aligned) return first;
@@ -122,6 +160,7 @@ export function refineCurrentResult(input: RefineInput): CurrentRefine {
     ...again,
     shown: pasteRenderFixtures({ ...input, shown: again.shown, metal, dx, dy }),
     metal: [...metal],
+    ...(reshaped.size ? { reshaped: [...reshaped] } : {}),
   };
 }
 
@@ -134,10 +173,16 @@ function refineSteps(input: RefineInput): CurrentRefine {
   const renderMask = frame?.aligned
     ? shiftMask(projectMask(mask, layout, size), frame.dx, frame.dy)
     : undefined;
+  const tapLimits = tuning.taps ?? { rise: TAP_RISE, thin: TAP_THIN };
+  const taps =
+    tapLimits && input.behind && input.cuts && renderMask
+      ? trimBasinTaps({ cuts: input.cuts, renderMask, fixtures, ...tapLimits })
+      : undefined;
   const trim =
     input.behind && input.cuts && renderMask
-      ? trimProtrusions({ cuts: input.cuts, renderMask, fixtures })
+      ? trimProtrusions({ cuts: taps?.cuts ?? input.cuts, renderMask, fixtures })
       : undefined;
+  if (trim && taps?.trimmed.length) trim.trimmed.unshift(...taps.trimmed);
   const cuts = trim?.cuts ?? input.cuts;
   const outline =
     input.behind && cuts && frame?.aligned && renderMask

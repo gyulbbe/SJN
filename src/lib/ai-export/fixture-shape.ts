@@ -35,6 +35,9 @@ export const PROTRUSION_FAR = 0.01;
 /** A piece at most this × the render fixture's width wide. */
 export const PROTRUSION_THIN = 0.15;
 /** Metal: the ceramic's bands at least this, and at least METAL_RATIO × the render's. */
+/** T2 (trimBasinTaps): a tap rises at least this × the picture's width and is at most TAP_THIN × the basin's width wide. */
+export const TAP_RISE = 0.008;
+export const TAP_THIN = 0.2;
 export const METAL_BANDS = 6.5;
 export const METAL_RATIO = 3;
 
@@ -140,6 +143,123 @@ export function trimProtrusions(input: {
       changed = true;
       trimmed.push({ fixture: cut.fixture, pixels: stem.size, width: pieceWidth, height: pMaxY - pMinY + 1 });
     }
+    return changed ? { ...cut, alpha } : cut;
+  });
+  return { cuts, trimmed };
+}
+
+/**
+ * docs/photo-shape-20261121.md (T2, in the app since 2026-11-21): a tap the model drew on a basin. Of each basin's cut-out,
+ * the 4-connected pieces above the render's basin top that rise at least `rise` × the picture's width
+ * and are at most `thin` × the basin's width wide leave the cut-out, and below each the cut-out's
+ * row runs under it that stay that narrow (its stem, down to where the model's own rim widens, at most
+ * half the basin's height). T1 leaves a tap that rises less than twice its `far`, or the stem inside
+ * the render's outline, which the ceramic steps then paint white.
+ */
+export function trimBasinTaps(input: {
+  cuts: readonly Cut[];
+  renderMask: RegionMask;
+  fixtures: readonly FluxFixture[];
+  rise: number;
+  thin: number;
+}): { cuts: Cut[]; trimmed: TrimmedPiece[] } {
+  const { renderMask, fixtures } = input;
+  const { width, height } = renderMask;
+  const n = width * height;
+  const own = fixtureMask(renderMask, fixtures, FLUX_FIXTURE_KINDS).mask.data;
+  const chosen = fixtures.filter((f) => f.box && FLUX_FIXTURE_KINDS.includes(f.kind));
+  const minRise = Math.max(4, Math.round(width * input.rise));
+  const trimmed: TrimmedPiece[] = [];
+  const cuts = input.cuts.map((cut) => {
+    const fixture = fixtures[cut.fixture];
+    const label = chosen.indexOf(fixture) + 1;
+    if (!label || fixture.kind !== 'basin') return cut;
+    let top = height,
+      bottom = -1,
+      minX = width,
+      maxX = -1;
+    for (let i = 0; i < n; i++)
+      if (own[i] === label && renderMask.data[i] === FIXTURE_REGION) {
+        const y = Math.floor(i / width);
+        top = Math.min(top, y);
+        bottom = Math.max(bottom, y);
+        minX = Math.min(minX, i % width);
+        maxX = Math.max(maxX, i % width);
+      }
+    if (maxX < 0) return cut;
+    const limit = input.thin * (maxX - minX + 1);
+    const alpha = Uint8Array.from(cut.alpha);
+    const at = (x: number, y: number) => {
+      const cx = x - cut.left,
+        cy = y - cut.top;
+      return cx >= 0 && cy >= 0 && cx < cut.width && cy < cut.height ? cy * cut.width + cx : -1;
+    };
+    const on = (x: number, y: number) => {
+      const k = at(x, y);
+      return k >= 0 && alpha[k] >= 128;
+    };
+    // The cut-out's pieces above the render's top row.
+    const seen = new Uint8Array(cut.width * cut.height);
+    let changed = false;
+    for (let sy = cut.top; sy < Math.min(top, cut.top + cut.height); sy++)
+      for (let sx = cut.left; sx < cut.left + cut.width; sx++) {
+        const k0 = at(sx, sy);
+        if (k0 < 0 || seen[k0] || alpha[k0] < 128) continue;
+        const piece: [number, number][] = [];
+        const stack: [number, number][] = [[sx, sy]];
+        seen[k0] = 1;
+        while (stack.length) {
+          const [x, y] = stack.pop()!;
+          piece.push([x, y]);
+          for (const [nx, ny] of [
+            [x - 1, y],
+            [x + 1, y],
+            [x, y - 1],
+            [x, y + 1],
+          ]) {
+            if (ny >= top) continue;
+            const k = at(nx, ny);
+            if (k >= 0 && !seen[k] && alpha[k] >= 128) {
+              seen[k] = 1;
+              stack.push([nx, ny]);
+            }
+          }
+        }
+        let x0 = width,
+          x1 = -1,
+          y0 = height;
+        for (const [x, y] of piece) {
+          x0 = Math.min(x0, x);
+          x1 = Math.max(x1, x);
+          y0 = Math.min(y0, y);
+        }
+        if (top - y0 < minRise || x1 - x0 + 1 > limit) continue;
+        for (const [x, y] of piece) alpha[at(x, y)] = 0;
+        let pixels = piece.length;
+        // Its stem: the narrow row runs under it, down to where the model's rim widens.
+        let a = x0,
+          b = x1;
+        for (let y = top; y <= top + (bottom - top) / 2; y++) {
+          let run0 = -1;
+          for (let x = a - 1; x <= b + 1; x++)
+            if (on(x, y)) {
+              run0 = x;
+              break;
+            }
+          if (run0 < 0) break;
+          let r0 = run0,
+            r1 = run0;
+          while (on(r0 - 1, y)) r0--;
+          while (on(r1 + 1, y)) r1++;
+          if (r1 - r0 + 1 > limit) break;
+          for (let x = r0; x <= r1; x++) alpha[at(x, y)] = 0;
+          pixels += r1 - r0 + 1;
+          a = r0;
+          b = r1;
+        }
+        changed = true;
+        trimmed.push({ fixture: cut.fixture, pixels, width: x1 - x0 + 1, height: top - y0 });
+      }
     return changed ? { ...cut, alpha } : cut;
   });
   return { cuts, trimmed };
@@ -252,6 +372,92 @@ export function recolouredCeramics(input: {
 }
 
 /** The ceramics that look metal. */
+/**
+ * docs/photo-shape-20261121.md (S1): how alike the outline the model drew (its cut-out, after T1) and
+ * the render's fixture are, each stretched to its own box on a 32 × 32 grid (a cell counts when half
+ * of it is covered), as overlap over union: the outline alone, not its place or size. A basin the
+ * model redrew as another shape (a square pedestal as a round column, a black vessel as a lump, a
+ * trapezoid as a round basin with a tap) scores lower than one it kept.
+ */
+export type OutlineScore = { fixture: number; kind: FluxFixture['kind']; shape: number };
+
+const OUTLINE_GRID = 32;
+function stretched(
+  set: (i: number) => boolean,
+  box: { l: number; t: number; r: number; b: number },
+  width: number,
+) {
+  const grid = new Float32Array(OUTLINE_GRID * OUTLINE_GRID),
+    count = new Float32Array(OUTLINE_GRID * OUTLINE_GRID);
+  const bw = box.r - box.l + 1,
+    bh = box.b - box.t + 1;
+  for (let y = box.t; y <= box.b; y++)
+    for (let x = box.l; x <= box.r; x++) {
+      const k =
+        Math.min(OUTLINE_GRID - 1, Math.floor(((y - box.t) / bh) * OUTLINE_GRID)) * OUTLINE_GRID +
+        Math.min(OUTLINE_GRID - 1, Math.floor(((x - box.l) / bw) * OUTLINE_GRID));
+      count[k]++;
+      if (set(y * width + x)) grid[k]++;
+    }
+  return grid.map((v, k) => (count[k] && v / count[k] >= 0.5 ? 1 : 0));
+}
+
+/** `cuts` after T1; `renderMask` as trimProtrusions takes it. */
+export function outlineScores(input: {
+  cuts: readonly Cut[];
+  renderMask: RegionMask;
+  fixtures: readonly FluxFixture[];
+}): OutlineScore[] {
+  const { renderMask, fixtures } = input;
+  const { width, height } = renderMask;
+  const own = fixtureMask(renderMask, fixtures, FLUX_FIXTURE_KINDS).mask.data;
+  const chosen = fixtures.filter((f) => f.box && FLUX_FIXTURE_KINDS.includes(f.kind));
+  const scores: OutlineScore[] = [];
+  for (const cut of input.cuts) {
+    const label = chosen.indexOf(fixtures[cut.fixture]) + 1;
+    if (!label) continue;
+    const isRender = (i: number) => own[i] === label && renderMask.data[i] === FIXTURE_REGION;
+    const isCut = (i: number) => {
+      const x = (i % width) - cut.left,
+        y = Math.floor(i / width) - cut.top;
+      return x >= 0 && y >= 0 && x < cut.width && y < cut.height && cut.alpha[y * cut.width + x] >= 128;
+    };
+    const boxOf = (set: (i: number) => boolean) => {
+      let l = width,
+        t = height,
+        r = -1,
+        b = -1;
+      for (let i = 0; i < width * height; i++)
+        if (set(i)) {
+          const x = i % width,
+            y = Math.floor(i / width);
+          if (x < l) l = x;
+          if (x > r) r = x;
+          if (y < t) t = y;
+          if (y > b) b = y;
+        }
+      return r < 0 ? undefined : { l, t, r, b };
+    };
+    const rb = boxOf(isRender),
+      cb = boxOf(isCut);
+    if (!rb || !cb) continue;
+    const a = stretched(isCut, cb, width),
+      b = stretched(isRender, rb, width);
+    let both = 0,
+      either = 0;
+    for (let k = 0; k < a.length; k++) {
+      if (a[k] && b[k]) both++;
+      if (a[k] || b[k]) either++;
+    }
+    scores.push({
+      fixture: cut.fixture,
+      kind: fixtures[cut.fixture].kind,
+      shape: +(both / Math.max(1, either)).toFixed(3),
+    });
+  }
+  return scores;
+}
+
 export function metalCeramics(scores: readonly MetalScore[]): Set<number> {
   return new Set(
     scores.filter((s) => s.bands >= METAL_BANDS && s.ratio >= METAL_RATIO).map((s) => s.fixture),
