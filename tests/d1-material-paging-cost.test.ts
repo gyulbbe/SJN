@@ -418,6 +418,32 @@ const PATHS: Path[] = [
       ),
   },
   {
+    // GET /api/catalog/placement?ids=… (no login): the records of given materials, as a guest copy
+    // and the side-tile trial's catalogue (tests/side-tile-ai/catalog-sync.mjs) read them.
+    name: '공개 배치 ids 10개',
+    kind: 'single',
+    run: (db, p) =>
+      measure(
+        db,
+        async (env) => {
+          const ids = [
+            ...Array.from({ length: 6 }, (_, i) => id('1', i + 1)),
+            ...Array.from({ length: 4 }, (_, i) => id('4', i + 1)),
+          ];
+          const response = await publicPlacement(
+            env,
+            new Request('https://sjn.test/api/catalog/placement?ids=' + ids.join(',')),
+          );
+          const { placements } = (await response.json()) as { placements: { materialId: string }[] };
+          // Exactly the asked materials (the route keeps no order).
+          const got = placements.map((row) => row.materialId).sort();
+          if (got.join() !== [...ids].sort().join()) throw new Error('공개 배치 ids: ' + got.join());
+          return placements.length;
+        },
+        p,
+      ),
+  },
+  {
     name: '공개 이미지 1장',
     kind: 'single',
     run: (db, p) =>
