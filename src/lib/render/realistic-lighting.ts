@@ -96,6 +96,16 @@ export function createModelLights(): Object3D[] {
 const OCCLUSION_RADIUS_MM = 260;
 const OCCLUSION = 0.45;
 const CEILING_OCCLUSION = 0.25;
+/**
+ * More shade into the vertical wall–wall corners, on walls only (not the floor or ceiling), in the
+ * viewer's surfaces (editor 3D and the AI input) — 1 − k·exp(−d / r) on top of the corner term.
+ * 2026-11-23 (docs/room-depth-20261123.md): since every wall gets the same light (3037c8e,
+ * docs/side-tile-20261121.md) walls were told apart only by the 260 mm shade, and the AI's pictures
+ * read flat at the corners (blind 0 / 9 / 1); this (c6) beat it 8 / 0 / 2 with the same tile colour
+ * on every wall. The 2D background (room-background.ts, a saved PNG) keeps cornerOcclusion as it was.
+ */
+export const WALL_CORNER_OCCLUSION = 0.5;
+export const WALL_CORNER_RADIUS_MM = 650;
 
 /** `axis` is the face normal's axis; planes parallel to the face do not occlude it. */
 export function cornerOcclusion(
@@ -117,13 +127,14 @@ export function cornerOcclusion(
 export const CORNER_OCCLUSION_GLSL = `
 uniform vec3 sjnRoom;uniform vec3 sjnFaceAxis;varying vec3 sjnWorld;
 float sjnCornerTerm(float distance,float strength){return 1.-strength*exp(-max(distance,0.)/${OCCLUSION_RADIUS_MM.toFixed(1)});}
+float sjnWallCornerTerm(float distance){return sjnFaceAxis.y<.5?1.-${WALL_CORNER_OCCLUSION.toFixed(3)}*exp(-max(distance,0.)/${WALL_CORNER_RADIUS_MM.toFixed(1)}):1.;}
 float sjnCornerOcclusion(){
  vec3 p=sjnWorld;
  // Recessed wall-feature pieces lie outside the room box; they keep plain bounce light.
  if(p.z<-1.||abs(p.x)>sjnRoom.x*.5+1.||p.y<-1.||p.y>sjnRoom.y+1.)return 1.;
  float o=1.;
- if(sjnFaceAxis.x<.5)o*=sjnCornerTerm(sjnRoom.x*.5-abs(p.x),${OCCLUSION.toFixed(3)});
- if(sjnFaceAxis.z<.5)o*=sjnCornerTerm(p.z,${OCCLUSION.toFixed(3)});
+ if(sjnFaceAxis.x<.5)o*=sjnCornerTerm(sjnRoom.x*.5-abs(p.x),${OCCLUSION.toFixed(3)})*sjnWallCornerTerm(sjnRoom.x*.5-abs(p.x));
+ if(sjnFaceAxis.z<.5)o*=sjnCornerTerm(p.z,${OCCLUSION.toFixed(3)})*sjnWallCornerTerm(p.z);
  if(sjnFaceAxis.y<.5)o*=sjnCornerTerm(p.y,${OCCLUSION.toFixed(3)})*sjnCornerTerm(sjnRoom.y-p.y,${CEILING_OCCLUSION.toFixed(3)});
  return o;
 }
