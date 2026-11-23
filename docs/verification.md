@@ -2,6 +2,17 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-23 — 3D 그림: 벽–벽 세로 모서리 그늘(방 입체감)
+
+- 무엇: `render/realistic-lighting.ts` `CORNER_OCCLUSION_GLSL`의 벽–벽 항에 `1 − 0.5·exp(−d / 650 mm)`을 더 곱한다(`WALL_CORNER_OCCLUSION`·`WALL_CORNER_RADIUS_MM`, 벽 면에만, 간접광에만). `DESIGN_RENDER_REVISION` 12. 결정 B(`GRAZING_REFLECTION_KEEP` 0, `ENVIRONMENT_WALL` 2)는 그대로. 2D 편집 배경(`room-background.ts` PNG), AI 호출 수·문장·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - 앱 AI 입력이 시험 후보 c6과 5장면 모두 픽셀까지 같다. 편집 화면 3D(`defaultRoomView`)에서 모서리 그늘 확인
+  - 감독 가린 평가: 로컬 FLUX c6 대 지금 8 / 0 / 2, Cloudflare(seed 424242, 4장면, 5회 + 11-21 답 재사용) 4 / 0 / 0
+  - 최종 그림 면별 검사(같은 타일) Cloudflare 4/4 유지, 모서리 차 4.4 → 6.3, 밝은 점 12.91 → 12.59%
+  - 단위 `room-depth`(새로 만듦)·`room-shadow`·`room-viewer-*`·`design-preview*`·`flux-view`·`wall-*`·`ledge-join`·`render-math` 323개, `test:webgl`, typecheck, lint
+  - e2e `flux-export`·`flux-refine`·`simple-editor`·`room-fixtures`: 14개 통과, `flux-export:523` 1개는 다른 무거운 작업과 함께 돌 때 경고 시간 초과였고 혼자 다시 돌려 통과
+- 결과: [방 입체감](room-depth-20261123.md).
+
 ## 2026-11-23 — 새 3D 그림(정면·옆벽 같은 빛)으로 받은 AI 결과 확인
 
 - 무엇: 3037c8e 3D 그림으로 AI 결과가 나아졌는지 확인했다. 앱 코드 변경 없음(시험 도구만 `tests/side-tile-ai/`).
