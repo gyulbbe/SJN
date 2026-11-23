@@ -2,6 +2,16 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-23 — 편집 화면 3D: 천장 조명의 벽 하이라이트를 화면 표시에서만 넓고 옅게
+
+- 무엇: `room-viewer/surfaces.ts` `LIVE_DIRECT_ROUGHNESS` 0.5. 셰이더 `lights_fragment_begin`에서만 벽 거칠기를 `max(원래, sjnLiveDirectRoughness)`로 보고, 주변 반사 전에 되돌린다. `renderer.ts` `export()`·`exportLayers()` 동안 `setLiveLook(false)`(uniform 0). 결정 B·모서리 그늘·AI 호출·문장·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - AI 입력(capture·input·joints·behind·soft·mask·문장·grounding)이 main e86f980과 5장면 모두 바이트까지 같다.
+  - 편집 화면 3D(`defaultRoomView`)가 시험 후보 r50과 4방 모두 픽셀까지 같다. 점 봉우리 26.9~42.1 → 1.1~7.9 L*
+  - 감독 가린 평가 r50 대 지금 3 / 0 / 1
+  - 단위 `editor-glare`(새로 만듦)와 렌더 관련 22파일 328개, `test:webgl`, typecheck, lint, e2e `flux-export`·`flux-refine`·`simple-editor`·`room-fixtures`
+- 결과: [편집 화면 반사 점](editor-glare-20261123.md).
+
 ## 2026-11-23 — 3D 그림: 벽–벽 세로 모서리 그늘(방 입체감)
 
 - 무엇: `render/realistic-lighting.ts` `CORNER_OCCLUSION_GLSL`의 벽–벽 항에 `1 − 0.5·exp(−d / 650 mm)`을 더 곱한다(`WALL_CORNER_OCCLUSION`·`WALL_CORNER_RADIUS_MM`, 벽 면에만, 간접광에만). `DESIGN_RENDER_REVISION` 12. 결정 B(`GRAZING_REFLECTION_KEEP` 0, `ENVIRONMENT_WALL` 2)는 그대로. 2D 편집 배경(`room-background.ts` PNG), AI 호출 수·문장·저장 형식·API·SQL은 그대로다.

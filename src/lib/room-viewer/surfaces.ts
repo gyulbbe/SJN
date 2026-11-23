@@ -301,8 +301,9 @@ const grazingSource = `geometryViewDir=normalize(mix(geometryNormal,geometryView
  * instead of a bright spot high on the back wall, while the room's reflection (the environment) keeps
  * the tile's own gloss. Exports — the AI input and its layers, downloads, previews — keep the spot
  * (sjnLiveDirectRoughness 0 there: max(roughness, 0) is the roughness itself).
- * 2026-11-23 (docs/editor-glare-20261123.md): user "앱 그림에도 상단에 빛이 비치는 거야 왜?"; r50 beat
- * today 6 / 0 / 2 (the two ties white tiles, where the spot hardly shows).
+ * 2026-11-23 (docs/editor-glare-20261123.md): user "앱 그림에도 상단에 빛이 비치는 거야 왜?"; in the
+ * blind check r50 beat today 3 / 0 / 1 and r35 3 / 0 / 1 (the ties white tiles, where the spot hardly
+ * shows); r50 cleared the black tile's spot better.
  */
 export const LIVE_DIRECT_ROUGHNESS = 0.5;
 const liveDirectSource =
