@@ -81,4 +81,6 @@ export const CANDIDATES = {
     note: 'wall–wall corner shade +0.5, 650 mm',
     patch: { 'realistic-lighting.ts': wallCorner(0.5, 650) },
   },
+  /** The app as checked out (c6 is in the app since 2026-11-23): its own renderer, no swap. */
+  app: { base: 'HEAD', note: 'the app as checked out', patch: {} },
 };

@@ -69,6 +69,7 @@ const bundle = await build({
       "export { buildFluxPrompt } from './src/lib/ai-export/prompt';",
       "export { fluxOrbitView, snapFluxOrbit, FLUX_BACKDROP } from './src/lib/ai-export/view';",
       "export { VIEWER_CEILING_COLOR } from './src/lib/room-viewer/ceiling';",
+      "export { defaultRoomView } from './src/lib/room-viewer/view-state';",
       "export { GLARE_SOFT_ROUGHNESS, inputPxPerMm, widenedJointMm, widenJoints } from './src/lib/ai-export/joints';",
     ].join(''),
     resolveDir: process.cwd(),
@@ -121,6 +122,7 @@ try {
           typeof import('../../src/lib/ai-export/prompt') &
           typeof import('../../src/lib/ai-export/view') &
           typeof import('../../src/lib/room-viewer/ceiling') &
+          typeof import('../../src/lib/room-viewer/view-state') &
           typeof import('../../src/lib/ai-export/joints');
         const lib = (window as unknown as { Lib: Lib }).Lib;
         const base64 = (bytes: Uint8Array | Uint8ClampedArray) => {
@@ -191,7 +193,15 @@ try {
           });
           const size = { width: bitmap.width, height: bitmap.height };
           bitmap.close();
+          // The editor's own 3D view (view-state defaultRoomView, as tests/side-wall/render.ts draws it).
+          const editorFrame = viewer.render(1200, 800, lib.defaultRoomView(), 'after');
+          const editorCopy = document.createElement('canvas');
+          editorCopy.width = editorFrame.width;
+          editorCopy.height = editorFrame.height;
+          editorCopy.getContext('2d')!.drawImage(editorFrame, 0, 0);
+          const editor = editorCopy.toDataURL('image/png').split(',')[1];
           return {
+            editor,
             capture: await blob64(blob),
             input: await blob64(await lib.prepareFluxImage(blob)),
             joints: await blob64(joints),
@@ -223,6 +233,7 @@ try {
     mkdirSync(dir, { recursive: true });
     const buf = (b: string) => Buffer.from(b, 'base64');
     writeFileSync(join(dir, 'capture.png'), buf(r.capture));
+    writeFileSync(join(dir, 'editor-3d.png'), buf(r.editor));
     writeFileSync(join(dir, 'input.png'), buf(r.input));
     writeFileSync(join(dir, 'joints.png'), buf(r.joints));
     for (const [name, layer] of [

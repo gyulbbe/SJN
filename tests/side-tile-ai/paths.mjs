@@ -6,9 +6,12 @@ import { join, resolve } from 'node:path';
 export const ROOT = resolve(
   execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim(),
 );
-export const OUT = join(ROOT, 'test-results', 'side-tile-ai-20261121');
+/** SIDE_TILE_OUT: another results tree for the same tools (the room-depth Cloudflare check). */
+export const OUT = process.env.SIDE_TILE_OUT
+  ? resolve(process.env.SIDE_TILE_OUT)
+  : join(ROOT, 'test-results', 'side-tile-ai-20261121');
 /** The public catalogue records and list images of the scenes' materials only (catalog.mjs). */
-export const CATALOG = join(OUT, 'catalog');
+export const CATALOG = join(ROOT, 'test-results', 'side-tile-ai-20261121', 'catalog');
 /** The app's cut-out model (BiRefNet lite fp16, the pinned file the app itself downloads). */
 export const BACKGROUND_MODEL = join(ROOT, 'tmp', 'background-model');
 /** The two renderers compared: before (6e0ca52) and after (3037c8e) the 3D light change. */
