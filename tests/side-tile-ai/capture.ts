@@ -9,12 +9,13 @@
  *   capture.png input.png joints.png behind.png soft.png mask.png mask-outside.png regions.json
  *   mask-behind.png regions-behind.json grounding.json prompt.txt layout.json spec.json
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium } from '@playwright/test';
-import { build } from 'esbuild';
+import { build, type Plugin } from 'esbuild';
 import sharp from 'sharp';
 import { trialCatalog } from './catalog';
+import { CANDIDATES } from '../room-depth/candidates.mjs';
 import { OUT, REVISIONS } from './paths.mjs';
 import { revisionPlugin } from './revision';
 import { trialSpecs } from './specs';
@@ -23,14 +24,37 @@ const arg = (name: string) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : undefined;
 };
-const rev = arg('rev') as keyof typeof REVISIONS;
-if (!(rev in REVISIONS)) throw new Error('--rev before|after');
+// A room-depth candidate (tests/room-depth/candidates.mjs): its base renderer with source text swaps.
+const rev = arg('rev') as string;
+const candidate = (
+  CANDIDATES as unknown as Record<string, { base: string; patch: Record<string, [string, string][]> }>
+)[rev];
+if (!(rev in REVISIONS) && !candidate) throw new Error('--rev before|after|<candidate>');
+const commit = candidate ? candidate.base : (REVISIONS as Record<string, string>)[rev];
 const only = arg('only')?.split(',');
 const gpu = process.argv.includes('--gpu');
-const { plugin, swapped } = revisionPlugin((REVISIONS as Record<string, string>)[rev]);
-console.log(
-  `${rev} (${(REVISIONS as Record<string, string>)[rev]}): swapped ${swapped.join(', ') || 'none'}`,
-);
+const { plugin, swapped } = revisionPlugin(commit);
+const patched = Object.keys(candidate?.patch ?? {});
+if (swapped.some((path) => patched.some((name) => path.endsWith(name))))
+  throw new Error('a patched file differs between the base commit and HEAD');
+const patchPlugin: Plugin = {
+  name: 'room-depth-patch',
+  setup(b) {
+    b.onLoad({ filter: /[.]ts$/ }, (args) => {
+      const path = args.path.replace(/\\/g, '/');
+      const swaps = Object.entries(candidate?.patch ?? {}).find(([name]) => path.endsWith(name))?.[1];
+      if (!swaps) return undefined;
+      // The checkout may have CRLF line ends; the swaps are written with LF.
+      let text = readFileSync(args.path, 'utf8').replace(/\r\n/g, '\n');
+      for (const [from, to] of swaps) {
+        if (!text.includes(from)) throw new Error(`patch: no "${from}" in ${args.path}`);
+        text = text.replace(from, to);
+      }
+      return { contents: text, loader: 'ts' };
+    });
+  },
+};
+console.log(`${rev} (${commit}${candidate ? ' + patch' : ''}): swapped ${swapped.join(', ') || 'none'}`);
 
 const { records, files, imageFiles } = trialCatalog();
 const SPECS = trialSpecs(Object.keys(records)).filter((s) => !only || only.includes(s.id));
@@ -54,7 +78,7 @@ const bundle = await build({
   platform: 'browser',
   format: 'iife',
   globalName: 'Lib',
-  plugins: [plugin],
+  plugins: [patchPlugin, plugin],
 });
 const browser = await chromium.launch({
   channel: 'chrome',
@@ -235,5 +259,5 @@ try {
 }
 writeFileSync(
   join(OUT as string, rev, 'capture-summary.json'),
-  JSON.stringify({ rev: (REVISIONS as Record<string, string>)[rev], swapped, gpu, summary }, null, 1),
+  JSON.stringify({ rev: commit, patch: candidate?.patch, swapped, gpu, summary }, null, 1),
 );

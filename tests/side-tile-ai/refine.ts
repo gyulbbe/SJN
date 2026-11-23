@@ -34,6 +34,11 @@ import { cropPixels, outlineCrops, type Cut } from '../../src/lib/ai-export/fixt
 import type { FluxScene } from '../../src/lib/ai-export/scene-contract';
 import { BACKGROUND_MODEL, OUT, REVISIONS } from './paths.mjs';
 
+// --rev a,b: these result folders only (a room-depth candidate's too); default the two revisions.
+const revs = (() => {
+  const i = process.argv.indexOf('--rev');
+  return i > 0 ? process.argv[i + 1].split(',') : Object.keys(REVISIONS as Record<string, string>);
+})();
 const only = (() => {
   const i = process.argv.indexOf('--only');
   return i > 0 ? process.argv[i + 1].split(',') : undefined;
@@ -178,7 +183,7 @@ try {
     return out;
   };
 
-  for (const rev of Object.keys(REVISIONS as Record<string, string>)) {
+  for (const rev of revs) {
     const root = join(OUT as string, rev);
     for (const sub of ['original', 'refined', 'cuts']) mkdirSync(join(root, sub), { recursive: true });
     for (const file of readdirSync(join(root, 'raw')).filter((f) => f.endsWith('.png'))) {
@@ -262,4 +267,7 @@ try {
   await browser.close();
   server.close();
 }
-writeFileSync(join(OUT as string, 'refine.json'), JSON.stringify(summary, null, 1));
+writeFileSync(
+  join(OUT as string, process.argv.includes('--rev') ? `refine-${revs.join('-')}.json` : 'refine.json'),
+  JSON.stringify(summary, null, 1),
+);

@@ -26,6 +26,17 @@ const lstar = (r, g, b) => {
   const Y = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
   return Y > 216 / 24389 ? 116 * Math.cbrt(Y) - 16 : (24389 / 27) * Y;
 };
+const fl = (t) => (t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116);
+/** CIE a*, b* (D65), as tests/side-tile-ai/stats.mjs. */
+const ab = (r, g, b) => {
+  const R = lin(r),
+    G = lin(g),
+    B = lin(b);
+  const X = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047,
+    Y = 0.2126 * R + 0.7152 * G + 0.0722 * B,
+    Z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
+  return [500 * (fl(X) - fl(Y)), 200 * (fl(Y) - fl(Z))];
+};
 
 /** The capture's labels on a picture's own pixel grid (the capture itself, or a 2× result). */
 async function labelsFor(dir, width, height) {
@@ -100,6 +111,7 @@ async function depth(file, dir) {
   };
   const fixtureNear = near(fixture, 6);
   const faces = {};
+  const walls = [];
   for (const id of ids) {
     const others = near(
       Uint8Array.from(labels, (v) => (v && v !== id && v !== 255 ? 1 : 0)),
@@ -107,7 +119,26 @@ async function depth(file, dir) {
     );
     const m = mean((i) => masks[id][i] && !others[i] && !fixtureNear[i]);
     if (m && m.n > 500) faces[id] = +m.L.toFixed(1);
+    if (m && m.n > 500 && regions[id - 1].kind === 'wall') {
+      let sa = 0,
+        sb = 0,
+        n = 0;
+      for (let i = 0; i < L.length; i++)
+        if (masks[id][i] && !others[i] && !fixtureNear[i]) {
+          const [a, b] = ab(img.data[i * 3], img.data[i * 3 + 1], img.data[i * 3 + 2]);
+          sa += a;
+          sb += b;
+          n++;
+        }
+      walls.push({ L: m.L, C: Math.hypot(sa / n, sb / n) });
+    }
   }
+  // Item 1's check (tests/side-tile/face-stats.mjs): every wall's chroma at least 85% of the most
+  // saturated wall's, mean L* within 8.
+  const maxC = Math.max(...walls.map((x) => x.C)),
+    Ls = walls.map((x) => x.L);
+  const sameTile =
+    walls.every((x) => maxC < 2 || x.C >= 0.85 * maxC) && Math.max(...Ls) - Math.min(...Ls) <= 8;
   const band = (a, b) => {
     const far = near(masks[b], 12),
       close = near(masks[b], 2);
@@ -133,6 +164,8 @@ async function depth(file, dir) {
   const avg = (a) => (a.length ? +(a.reduce((s, v) => s + v, 0) / a.length).toFixed(1) : null);
   return {
     faces,
+    wallChroma: walls.map((x) => +x.C.toFixed(1)),
+    sameTile,
     corner: avg(corners),
     corners,
     floor: avg(floors),
@@ -147,11 +180,15 @@ const add = async (row, file, dir) => {
   const r = await depth(file, dir);
   rows.push({ ...row, ...r });
   console.log(
-    `${row.set.padEnd(14)} ${row.id.padEnd(16)} ${row.rev.padEnd(6)} ${row.kind.padEnd(6)} corner ${String(r.corner).padStart(5)} floor ${String(r.floor).padStart(5)} contact ${String(r.contact).padStart(5)}  faces ${Object.values(r.faces).join(' ')}`,
+    `${row.set.padEnd(14)} ${row.id.padEnd(16)} ${row.rev.padEnd(6)} ${row.kind.padEnd(6)} corner ${String(r.corner).padStart(5)} floor ${String(r.floor).padStart(5)} contact ${String(r.contact).padStart(5)} ${r.sameTile ? 'same' : 'DIFF'}  faces ${Object.values(r.faces).join(' ')}`,
   );
 };
 const scenes = ['olive-0', 'olive-90', 'black-0', 'beige-90', 'white-0'];
-for (const rev of ['before', 'after']) {
+// --revs a,b,…: the 3D renderers to read (before, after, room-depth candidates); default before,after.
+const revsAt = process.argv.indexOf('--revs');
+const revs = revsAt > 0 ? process.argv[revsAt + 1].split(',') : ['before', 'after'];
+const tag = revsAt > 0 ? `-${revs.join('-')}` : '';
+for (const rev of revs) {
   for (const s of scenes) {
     const dir = join(TRIAL, rev, 'scenes', s);
     await add({ set: 'input', id: s, rev, kind: 'input' }, join(dir, 'capture.png'), dir);
@@ -162,7 +199,7 @@ for (const rev of ['before', 'after']) {
         dir,
       );
   }
-  for (const s of ['olive-0', 'olive-90', 'white-0']) {
+  for (const s of ['before', 'after'].includes(rev) ? ['olive-0', 'olive-90', 'white-0'] : []) {
     const dir = join(CLOUD, rev, 'scenes', s);
     await add(
       { set: 'cloud', id: `${s}-424242`, rev, kind: 'final' },
@@ -178,7 +215,7 @@ for (const rev of ['before', 'after']) {
     );
   }
 }
-writeFileSync(join(OUT, 'depth.json'), JSON.stringify(rows, null, 1));
+writeFileSync(join(OUT, `depth${tag}.json`), JSON.stringify(rows, null, 1));
 // Old against new, per set and kind: the means of corner, floor and contact.
 const summary = {};
 for (const r of rows) {
@@ -192,7 +229,7 @@ console.log('\nmeans (set/rev: corner floor contact, n)');
 for (const [k, s] of Object.entries(summary))
   console.log(`${k.padEnd(22)} ${avg(s.corner)} ${avg(s.floor)} ${avg(s.contact)}  n=${s.n}`);
 writeFileSync(
-  join(OUT, 'depth-summary.json'),
+  join(OUT, `depth-summary${tag}.json`),
   JSON.stringify(
     Object.fromEntries(
       Object.entries(summary).map(([k, s]) => [
