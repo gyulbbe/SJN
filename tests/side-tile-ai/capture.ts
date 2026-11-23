@@ -15,7 +15,11 @@ import { chromium } from '@playwright/test';
 import { build, type Plugin } from 'esbuild';
 import sharp from 'sharp';
 import { trialCatalog } from './catalog';
-import { CANDIDATES } from '../room-depth/candidates.mjs';
+import { GLARE_CANDIDATES } from '../editor-glare/candidates.mjs';
+import { CANDIDATES as DEPTH_CANDIDATES } from '../room-depth/candidates.mjs';
+
+/** Renderer candidates by name: room depth (item 2) and editor glare (item 3). */
+const CANDIDATES = { ...DEPTH_CANDIDATES, ...GLARE_CANDIDATES };
 import { OUT, REVISIONS } from './paths.mjs';
 import { revisionPlugin } from './revision';
 import { trialSpecs } from './specs';
