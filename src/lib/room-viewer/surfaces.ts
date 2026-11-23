@@ -251,6 +251,8 @@ const adjustment = (value: ColorAdjust) => {
 };
 const MAX_CONTACTS = 8;
 type ContactUniforms = {
+  /** LIVE_DIRECT_ROUGHNESS while a frame is shown live, 0 while one is exported (setLiveLook). */
+  sjnLiveDirectRoughness: { value: number };
   sjnContacts: { value: Vector4[] };
   sjnContactHeights: { value: number[] };
   /** 1: this box is one body with the box before it (ledges that touch). */
@@ -264,6 +266,7 @@ export type ViewerContact = Box3 & { contactGroup?: number };
 // Bodies multiply; the boxes of one body count once, as its nearest (two shades would add up into a
 // dark patch before the joint of two ledges). Without joined boxes this is the plain product.
 const contactSource = `
+uniform float sjnLiveDirectRoughness;
 uniform vec4 sjnContacts[${MAX_CONTACTS}];uniform float sjnContactHeights[${MAX_CONTACTS}];uniform float sjnContactJoins[${MAX_CONTACTS}];uniform int sjnContactCount;
 float sjnContactOcclusion(){
  if(sjnFaceAxis.y<.5)return 1.;
@@ -292,6 +295,18 @@ export const GRAZING_REFLECTION_KEEP = 0;
 // Between lights_fragment_maps (the radiance, along the real view) and lights_fragment_end (where
 // the reflection's weight and the diffuse left over come from the view's angle).
 const grazingSource = `geometryViewDir=normalize(mix(geometryNormal,geometryViewDir,${GRAZING_REFLECTION_KEEP.toFixed(3)}));\n`;
+/**
+ * In a frame shown live (the editor's 3D view, the 3D tour, the AI dialog's 3D preview) the walls look
+ * at least this rough to the direct lights only: the ceiling light's highlight spreads into a soft sheen
+ * instead of a bright spot high on the back wall, while the room's reflection (the environment) keeps
+ * the tile's own gloss. Exports — the AI input and its layers, downloads, previews — keep the spot
+ * (sjnLiveDirectRoughness 0 there: max(roughness, 0) is the roughness itself).
+ * 2026-11-23 (docs/editor-glare-20261123.md): user "앱 그림에도 상단에 빛이 비치는 거야 왜?"; r50 beat
+ * today 6 / 0 / 2 (the two ties white tiles, where the spot hardly shows).
+ */
+export const LIVE_DIRECT_ROUGHNESS = 0.5;
+const liveDirectSource =
+  'float sjnOwnRoughness=material.roughness;if(sjnFaceAxis.y<.5)material.roughness=max(sjnOwnRoughness,sjnLiveDirectRoughness);\n#include <lights_fragment_begin>\nmaterial.roughness=sjnOwnRoughness;';
 function surfaceMaterial(
   room: RoomDefinition,
   patch: ViewerSurfacePatch,
@@ -331,6 +346,9 @@ function surfaceMaterial(
         '#include <opaque_fragment>',
         'outgoingLight=sjnToneMap(sjnAdjust(outgoingLight));\n#include <opaque_fragment>',
       )
+      // Live frames: the direct lights see a rougher wall (LIVE_DIRECT_ROUGHNESS); restored before the
+      // environment's reflection (lights_fragment_maps) is read.
+      .replace('#include <lights_fragment_begin>', liveDirectSource)
       // Corners and the wall/floor joint receive less bounce light; direct light keeps its shadow map.
       .replace(
         '#include <aomap_fragment>',
@@ -407,6 +425,7 @@ export async function buildViewerSurfaces(
   const ownedGeometry = new Set<BufferGeometry>();
   const ownedMaterials = new Set<MeshStandardMaterial>();
   const contacts: ContactUniforms = {
+    sjnLiveDirectRoughness: { value: LIVE_DIRECT_ROUGHNESS },
     sjnContacts: { value: Array.from({ length: MAX_CONTACTS }, () => new Vector4()) },
     sjnContactHeights: { value: new Array<number>(MAX_CONTACTS).fill(0) },
     sjnContactJoins: { value: new Array<number>(MAX_CONTACTS).fill(0) },
@@ -574,6 +593,10 @@ export async function buildViewerSurfaces(
     group,
     notices,
     structureBounds: features?.structureBounds.clone() ?? new Box3(),
+    /** Live frames spread the ceiling light's spot on walls (LIVE_DIRECT_ROUGHNESS); exports do not. */
+    setLiveLook(live: boolean) {
+      contacts.sjnLiveDirectRoughness.value = live ? LIVE_DIRECT_ROUGHNESS : 0;
+    },
     /** World-space boxes of objects standing on the floor; the largest footprints are kept. */
     setContacts(boxes: readonly ViewerContact[]) {
       const largest = [...boxes]

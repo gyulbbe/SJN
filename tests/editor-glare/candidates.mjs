@@ -52,4 +52,6 @@ export const GLARE_CANDIDATES = {
     note: 'walls: direct specular × 0.3',
     patch: { 'surfaces.ts': after('if(sjnFaceAxis.y<.5)reflectedLight.directSpecular*=.3;') },
   },
+  /** The app as checked out with the live look in the renderer (step 14). */
+  live: { base: 'HEAD', note: 'the app as checked out (working tree)', patch: {} },
 };

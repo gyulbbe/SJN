@@ -1380,6 +1380,8 @@ export class RoomViewerRenderer {
     const autoUpdate = this.renderer.shadowMap.autoUpdate;
     let full: Uint8ClampedArray, shadowed: Uint8ClampedArray, empty: Uint8ClampedArray;
     try {
+      // The layers are AI input: the ceiling light's highlight as exports have it.
+      this.setLiveLook(false);
       this.renderer.shadowMap.autoUpdate = true;
       full = frame();
       // Same shadow map, cast with the fixtures: their shadows stay while they are hidden.
@@ -1390,6 +1392,7 @@ export class RoomViewerRenderer {
       after.surfaces.setContacts([]);
       empty = frame();
     } finally {
+      this.setLiveLook(true);
       after.fixtures.group.visible = true;
       after.surfaces.setContacts(after.contacts);
       this.renderer.shadowMap.autoUpdate = autoUpdate;
@@ -1783,6 +1786,8 @@ export class RoomViewerRenderer {
         ? { fallbackReason: '이 브라우저는 float 렌더 타깃이 없어 한 장으로 내보냈어요.' }
         : {}),
     };
+    // Exported pixels (AI input, downloads, previews) keep the ceiling light's highlight as it is.
+    this.setLiveLook(false);
     if (samples > 1 && floatTargets) {
       try {
         Object.assign(
@@ -1816,6 +1821,7 @@ export class RoomViewerRenderer {
         };
         context.drawImage(this.exportFrame(output.width, output.height, state, options), 0, 0);
       } finally {
+        this.setLiveLook(true);
         // The canvas still shows the live frame; draw only one the page asked for meanwhile, later
         // and on its own (on a software renderer a live frame is slow too), so the export (or its
         // cancel) settles first.
@@ -1844,6 +1850,7 @@ export class RoomViewerRenderer {
       try {
         context.drawImage(this.exportFrame(output.width, output.height, state, options), 0, 0);
       } finally {
+        this.setLiveLook(true);
         if (previous && !this.disposed)
           this.render(previous.width, previous.height, previous.view, previous.mode, previous.split);
       }
@@ -1885,6 +1892,11 @@ export class RoomViewerRenderer {
     if (!options.effects) return this.render(width, height, view, options.mode);
     this.assertOpen();
     return this.drawFrame(width, height, view, options.mode, 0.5, options.effects);
+  }
+  /** Live frames spread the ceiling light's spot on walls; exports (AI input, downloads) keep it. */
+  private setLiveLook(live: boolean) {
+    for (const side of this.prepared ? [this.prepared.before, this.prepared.after] : [])
+      side.surfaces.setLiveLook(live);
   }
   diagnostics() {
     const gl = this.renderer.getContext(),
