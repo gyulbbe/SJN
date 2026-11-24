@@ -120,12 +120,22 @@ export function cutoutMask(input: {
    * and its wall there, with grout lines along the render's outline). Absent: as before.
    */
   wallLike?: { kinds: readonly FluxFixture['kind'][]; near: number };
+  /**
+   * Trial (item 6): the same fixtures with their boxes moved by the model's shift (as `renderMask` is).
+   * A render fixture pixel outside every box of `fixtures` takes its fixture from these instead of
+   * belonging to none (a band of a moved fixture otherwise keeps the model's pixels).
+   */
+  movedFixtures?: readonly FluxFixture[];
 }): FixtureOutline {
   const { renderMask, behindMask, fixtures, cuts } = input;
   const { width, height } = renderMask;
   const n = width * height;
   // Each render fixture pixel's own fixture (the smallest box holding it), 1-based over `fixtures`.
   const own = fixtureMask(renderMask, fixtures, FLUX_FIXTURE_KINDS).mask.data;
+  if (input.movedFixtures) {
+    const moved = fixtureMask(renderMask, input.movedFixtures, FLUX_FIXTURE_KINDS).mask.data;
+    for (let i = 0; i < own.length; i++) if (!own[i]) own[i] = moved[i];
+  }
   const chosen = fixtures.filter((f) => f.box && FLUX_FIXTURE_KINDS.includes(f.kind));
   const ownIndex = (label: number) => (label ? fixtures.indexOf(chosen[label - 1]) : -1);
   const claimed = new Uint8Array(n),

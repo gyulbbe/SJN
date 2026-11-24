@@ -87,7 +87,7 @@ export type RefineTuning = {
   /** Trial (item 6): pieces of these fixtures this near the wall colour are wall (fixture-outline.ts). */
   wallLike?: { kinds: readonly FluxFixture['kind'][]; near: number };
   /** Trial (item 6): move the fixtures' boxes by the model's shift where they meet the shifted render mask. */
-  moveBoxes?: boolean;
+  moveBoxes?: boolean | 'outline' | 'fallback';
   bodyDark?: number;
   bodyBright?: number;
   /** How much of a darker ceramic median is raised to the render's (fixture-body.ts, 1). */
@@ -199,14 +199,16 @@ function refineSteps(input: RefineInput): CurrentRefine {
             : f,
         )
       : fixtures;
+  // 'outline': the moved boxes only for the cut-out rule (the render pixels' owner); true: the trims too.
+  const trimOwned = tuning.moveBoxes === 'outline' || tuning.moveBoxes === 'fallback' ? fixtures : owned;
   const tapLimits = tuning.taps ?? { rise: TAP_RISE, thin: TAP_THIN };
   const taps =
     tapLimits && input.behind && input.cuts && renderMask
-      ? trimBasinTaps({ cuts: input.cuts, renderMask, fixtures: owned, ...tapLimits })
+      ? trimBasinTaps({ cuts: input.cuts, renderMask, fixtures: trimOwned, ...tapLimits })
       : undefined;
   const trim =
     input.behind && input.cuts && renderMask
-      ? trimProtrusions({ cuts: taps?.cuts ?? input.cuts, renderMask, fixtures: owned })
+      ? trimProtrusions({ cuts: taps?.cuts ?? input.cuts, renderMask, fixtures: trimOwned })
       : undefined;
   if (trim && taps?.trimmed.length) trim.trimmed.unshift(...taps.trimmed);
   const cuts = trim?.cuts ?? input.cuts;
@@ -216,7 +218,9 @@ function refineSteps(input: RefineInput): CurrentRefine {
           model: raw,
           renderMask,
           behindMask: shiftMask(projectMask(input.behind.mask, layout, size), frame.dx, frame.dy),
-          fixtures: owned,
+          // 'fallback': today's owner where a box holds the pixel, the moved boxes only where none does.
+          fixtures: tuning.moveBoxes === 'fallback' ? fixtures : owned,
+          ...(tuning.moveBoxes === 'fallback' && owned !== fixtures ? { movedFixtures: owned } : {}),
           cuts,
           ...(tuning.wallLike ? { wallLike: tuning.wallLike } : {}),
         })
