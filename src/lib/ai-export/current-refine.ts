@@ -84,6 +84,10 @@ export type RefineTuning = {
   /** A restored face's share of the model's own fine detail (joints.ts restoreJoints, 0). */
   aiDetail?: number;
   /** The least a ceramic's shading below and above its median is narrowed to (fixture-body.ts). */
+  /** Trial (item 6): pieces of these fixtures this near the wall colour are wall (fixture-outline.ts). */
+  wallLike?: { kinds: readonly FluxFixture['kind'][]; near: number };
+  /** Trial (item 6): move the fixtures' boxes by the model's shift where they meet the shifted render mask. */
+  moveBoxes?: boolean;
   bodyDark?: number;
   bodyBright?: number;
   /** How much of a darker ceramic median is raised to the render's (fixture-body.ts, 1). */
@@ -177,14 +181,32 @@ function refineSteps(input: RefineInput): CurrentRefine {
   const renderMask = frame?.aligned
     ? shiftMask(projectMask(mask, layout, size), frame.dx, frame.dy)
     : undefined;
+  // Trial (item 6): the fixtures' boxes moved by the model's shift, as the render mask is; else a
+  // band of a moved fixture lies outside its box, belongs to no fixture and keeps the model's pixels.
+  const owned =
+    tuning.moveBoxes && frame?.aligned && (frame.dx || frame.dy)
+      ? fixtures.map((f) =>
+          f.box
+            ? {
+                ...f,
+                box: [
+                  f.box[0] + frame.dx / size.width,
+                  f.box[1] + frame.dy / size.height,
+                  f.box[2] + frame.dx / size.width,
+                  f.box[3] + frame.dy / size.height,
+                ] as typeof f.box,
+              }
+            : f,
+        )
+      : fixtures;
   const tapLimits = tuning.taps ?? { rise: TAP_RISE, thin: TAP_THIN };
   const taps =
     tapLimits && input.behind && input.cuts && renderMask
-      ? trimBasinTaps({ cuts: input.cuts, renderMask, fixtures, ...tapLimits })
+      ? trimBasinTaps({ cuts: input.cuts, renderMask, fixtures: owned, ...tapLimits })
       : undefined;
   const trim =
     input.behind && input.cuts && renderMask
-      ? trimProtrusions({ cuts: taps?.cuts ?? input.cuts, renderMask, fixtures })
+      ? trimProtrusions({ cuts: taps?.cuts ?? input.cuts, renderMask, fixtures: owned })
       : undefined;
   if (trim && taps?.trimmed.length) trim.trimmed.unshift(...taps.trimmed);
   const cuts = trim?.cuts ?? input.cuts;
@@ -194,8 +216,9 @@ function refineSteps(input: RefineInput): CurrentRefine {
           model: raw,
           renderMask,
           behindMask: shiftMask(projectMask(input.behind.mask, layout, size), frame.dx, frame.dy),
-          fixtures,
+          fixtures: owned,
           cuts,
+          ...(tuning.wallLike ? { wallLike: tuning.wallLike } : {}),
         })
       : undefined;
   const joints =

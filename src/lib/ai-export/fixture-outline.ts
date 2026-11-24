@@ -114,6 +114,12 @@ export function cutoutMask(input: {
   behindMask: RegionMask;
   fixtures: readonly FluxFixture[];
   cuts: readonly Cut[];
+  /**
+   * Trial (backlog item 6): for these kinds, a piece whose mean colour is this near (sRGB) the model's
+   * wall colour around is wall whatever its border lines (the model drew the fixture lower or narrower
+   * and its wall there, with grout lines along the render's outline). Absent: as before.
+   */
+  wallLike?: { kinds: readonly FluxFixture['kind'][]; near: number };
 }): FixtureOutline {
   const { renderMask, behindMask, fixtures, cuts } = input;
   const { width, height } = renderMask;
@@ -187,6 +193,7 @@ export function cutoutMask(input: {
     fixtures,
     width,
     height,
+    wallLike: input.wallLike,
   });
   const data = Uint8Array.from(renderMask.data);
   const colour = Uint8Array.from(renderMask.data);
@@ -249,6 +256,7 @@ function pieceVerdicts(input: {
   fixtures: readonly FluxFixture[];
   width: number;
   height: number;
+  wallLike?: { kinds: readonly FluxFixture['kind'][]; near: number };
 }): Int8Array {
   const { planes, wallColour, wall, candidate, claimed, reliable, own, ownIndex, fixtures, width, height } =
     input;
@@ -272,6 +280,8 @@ function pieceVerdicts(input: {
     const members: number[] = [];
     stack.push(s);
     seen[s] = 1;
+    const pieceRgb = [0, 0, 0],
+      wallRgb = [0, 0, 0];
     let border = 0,
       lines = 0,
       pieceLum = 0,
@@ -282,6 +292,10 @@ function pieceVerdicts(input: {
       const i = stack.pop()!;
       members.push(i);
       pieceLum += lum(i);
+      for (let c = 0; c < 3; c++) {
+        pieceRgb[c] += planes[c][i];
+        wallRgb[c] += wallColour[c].mean[i];
+      }
       // The model's wall around (blurred over its faces, so a shadow by the fixture weighs little).
       wallLum +=
         0.299 * wallColour[0].mean[i] + 0.587 * wallColour[1].mean[i] + 0.114 * wallColour[2].mean[i];
@@ -327,6 +341,14 @@ function pieceVerdicts(input: {
       const mean = pieceLum / members.length;
       const beside = Math.min(wallLum / members.length, fixLum / fixSteps);
       if (mean < beside * SHADOW_SHARE && beside - mean >= SHADOW_GAP) {
+        for (const i of members) piece[i] = PIECE_WALL;
+        continue;
+      }
+    }
+    const like = input.wallLike;
+    if (like && like.kinds.includes(fixtures[index].kind)) {
+      const near = Math.hypot(...pieceRgb.map((v, c) => (v - wallRgb[c]) / members.length));
+      if (near < like.near) {
         for (const i of members) piece[i] = PIECE_WALL;
         continue;
       }
