@@ -22,7 +22,7 @@ import { CANDIDATES as DEPTH_CANDIDATES } from '../room-depth/candidates.mjs';
 const CANDIDATES = { ...DEPTH_CANDIDATES, ...GLARE_CANDIDATES };
 import { OUT, REVISIONS } from './paths.mjs';
 import { revisionPlugin } from './revision';
-import { trialSpecs } from './specs';
+import { sceneSpecs } from './specs';
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -61,7 +61,7 @@ const patchPlugin: Plugin = {
 console.log(`${rev} (${commit}${candidate ? ' + patch' : ''}): swapped ${swapped.join(', ') || 'none'}`);
 
 const { records, files, imageFiles } = trialCatalog();
-const SPECS = trialSpecs(Object.keys(records)).filter((s) => !only || only.includes(s.id));
+const SPECS = sceneSpecs(Object.keys(records)).filter((s) => !only || only.includes(s.id));
 const bundle = await build({
   stdin: {
     contents: [

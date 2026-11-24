@@ -39,6 +39,17 @@ const revs = (() => {
   const i = process.argv.indexOf('--rev');
   return i > 0 ? process.argv[i + 1].split(',') : Object.keys(REVISIONS as Record<string, string>);
 })();
+// --tuning '{json}': refineCurrentResult tuning (trial only); --suffix s: write refined-s/ instead of refined/.
+const tuning = (() => {
+  const i = process.argv.indexOf('--tuning');
+  return i > 0
+    ? (JSON.parse(process.argv[i + 1]) as Parameters<typeof refineCurrentResult>[0]['tuning'])
+    : undefined;
+})();
+const refinedDir = (() => {
+  const i = process.argv.indexOf('--suffix');
+  return i > 0 ? `refined-${process.argv[i + 1]}` : 'refined';
+})();
 const only = (() => {
   const i = process.argv.indexOf('--only');
   return i > 0 ? process.argv[i + 1].split(',') : undefined;
@@ -185,7 +196,7 @@ try {
 
   for (const rev of revs) {
     const root = join(OUT as string, rev);
-    for (const sub of ['original', 'refined', 'cuts']) mkdirSync(join(root, sub), { recursive: true });
+    for (const sub of ['original', refinedDir, 'cuts']) mkdirSync(join(root, sub), { recursive: true });
     for (const file of readdirSync(join(root, 'raw')).filter((f) => f.endsWith('.png'))) {
       const id = file.slice(0, -4);
       const scene = id.replace(/-\d+$/, '');
@@ -249,9 +260,10 @@ try {
         behind: { image: await rgba(join(dir, 'behind.png')), mask: behindMask },
         cuts,
         soft: await rgba(join(dir, 'soft.png')),
+        ...(tuning ? { tuning } : {}),
       });
       const shown = refined.shown;
-      if (shown) writeFileSync(join(root, 'refined', file), await png(shown));
+      if (shown) writeFileSync(join(root, refinedDir, file), await png(shown));
       summary[`${rev}/${id}`] = {
         aligned: refined.review.framing.aligned,
         backdrop: !!restored,

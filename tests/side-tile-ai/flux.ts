@@ -33,10 +33,11 @@ const [sceneDir, inputFile, promptFile, rawDir] = composite
 const LEDGER = join(OUT as string, 'ledger.jsonl');
 const sha = (b: Buffer | string) => createHash('sha256').update(b).digest('hex').slice(0, 16);
 
-const health = (await (await fetch('http://127.0.0.1:8798/health')).json()) as {
+const LOCAL = process.env.LOCAL_FLUX_URL ?? 'http://127.0.0.1:8798';
+const health = (await (await fetch(`${LOCAL}/health`)).json()) as {
   meta?: Record<string, unknown>;
 };
-if (health.meta?.engine !== 'local') throw new Error('no local FLUX on 127.0.0.1:8798');
+if (health.meta?.engine !== 'local') throw new Error(`no local FLUX on ${LOCAL}`);
 for (const rev of revs) {
   const scenes = join(OUT as string, rev, sceneDir);
   if (!existsSync(scenes)) continue;

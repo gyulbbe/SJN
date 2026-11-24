@@ -44,7 +44,8 @@ export async function sendFlux(
   const width = p.out?.width ?? p.width * 2,
     height = p.out?.height ?? p.height * 2;
   if (engine === 'local') {
-    const response = await fetch('http://127.0.0.1:8798', {
+    // LOCAL_FLUX_URL: another port when Windows reserves 8798 (excluded port ranges after a restart).
+    const response = await fetch(process.env.LOCAL_FLUX_URL ?? 'http://127.0.0.1:8798', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
