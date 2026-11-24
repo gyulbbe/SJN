@@ -21,6 +21,10 @@
  *   say a white tank on a white wall) is not used: that fixture keeps the render's outline, as before;
  * - a thin fitting (a shower rail, a tap; the cut-out rarely holds it) needs no cut-out: its render
  *   pixels that look like the model's wall are wall.
+ * - 2026-11-24 (docs/big-fixture-edges-20261124.md): a bath's piece the colour of the model's wall
+ *   around (BATH_WALL_LIKE) is wall whatever its lines — the model drew the bath lower or narrower and
+ *   a shadow or its wall there; and a render fixture pixel no box holds takes the fixture of the boxes
+ *   moved by the model's shift (`movedFixtures`), not none.
  *
  * `colourMask` also makes every pixel a little like the wall (WALL_NEAR × 2.5) a face for the colour
  * steps only, so it takes the wall's colour change and shows no lighter or darker patch; the joints
@@ -34,6 +38,16 @@ import { FLUX_FIXTURE_KINDS, type FluxFixture } from './scene-contract';
 export const MIN_IOU = 0.6;
 /** A render fixture pixel becomes wall only this near (sRGB distance, a few pixels' mean) the model's wall colour around. */
 export const WALL_NEAR = 30;
+/**
+ * A bath's piece whose mean colour is this near (sRGB) the model's wall colour around is wall, whatever
+ * its border lines (2026-11-24: a wedge the model shaded by the rim, the model's wall where the render's
+ * rim is higher; blind 5 / 0 / 7 with the moved boxes). Toilets keep the line rule (a white tank on a
+ * white wall the cut-out missed).
+ */
+export const BATH_WALL_LIKE: { kinds: readonly FluxFixture['kind'][]; near: number } = {
+  kinds: ['bath'],
+  near: 70,
+};
 /** Each crop is the fixture box grown by this share of its size each way (the model's may be larger). */
 export const OUTLINE_PAD = 0.3;
 /** A crop smaller than this on either side is not cut out. */
@@ -115,13 +129,12 @@ export function cutoutMask(input: {
   fixtures: readonly FluxFixture[];
   cuts: readonly Cut[];
   /**
-   * Trial (backlog item 6): for these kinds, a piece whose mean colour is this near (sRGB) the model's
-   * wall colour around is wall whatever its border lines (the model drew the fixture lower or narrower
-   * and its wall there, with grout lines along the render's outline). Absent: as before.
+   * For these kinds, a piece whose mean colour is this near (sRGB) the model's wall colour around is
+   * wall whatever its border lines (BATH_WALL_LIKE; absent: no such rule).
    */
   wallLike?: { kinds: readonly FluxFixture['kind'][]; near: number };
   /**
-   * Trial (item 6): the same fixtures with their boxes moved by the model's shift (as `renderMask` is).
+   * The same fixtures with their boxes moved by the model's shift (as `renderMask` is).
    * A render fixture pixel outside every box of `fixtures` takes its fixture from these instead of
    * belonging to none (a band of a moved fixture otherwise keeps the model's pixels).
    */

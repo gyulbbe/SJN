@@ -40,7 +40,7 @@ import type { FluxInputLayout } from './contract';
 import { finishFixtureBodies, type FixtureBody } from './fixture-body';
 import { finishFixtureEdges } from './fixture-edge';
 import { restoreFixtureLightness } from './fixture-light';
-import { cutoutMask, type Cut, type FixtureOutline } from './fixture-outline';
+import { BATH_WALL_LIKE, cutoutMask, type Cut, type FixtureOutline } from './fixture-outline';
 import {
   metalCeramics,
   metalScores,
@@ -83,11 +83,14 @@ export type RefineTuning = {
   lightKeep?: number;
   /** A restored face's share of the model's own fine detail (joints.ts restoreJoints, 0). */
   aiDetail?: number;
+  /**
+   * A render fixture pixel no box holds takes its fixture from the boxes moved by the model's shift
+   * (fixture-outline.ts `movedFixtures`); default on (2026-11-24), false: off.
+   */
+  moveBoxes?: boolean;
+  /** Pieces of these fixtures this near the model's wall colour are wall (fixture-outline.ts BATH_WALL_LIKE; false: off). */
+  wallLike?: { kinds: readonly FluxFixture['kind'][]; near: number } | false;
   /** The least a ceramic's shading below and above its median is narrowed to (fixture-body.ts). */
-  /** Trial (item 6): pieces of these fixtures this near the wall colour are wall (fixture-outline.ts). */
-  wallLike?: { kinds: readonly FluxFixture['kind'][]; near: number };
-  /** Trial (item 6): move the fixtures' boxes by the model's shift where they meet the shifted render mask. */
-  moveBoxes?: boolean | 'outline' | 'fallback';
   bodyDark?: number;
   bodyBright?: number;
   /** How much of a darker ceramic median is raised to the render's (fixture-body.ts, 1). */
@@ -181,10 +184,12 @@ function refineSteps(input: RefineInput): CurrentRefine {
   const renderMask = frame?.aligned
     ? shiftMask(projectMask(mask, layout, size), frame.dx, frame.dy)
     : undefined;
-  // Trial (item 6): the fixtures' boxes moved by the model's shift, as the render mask is; else a
-  // band of a moved fixture lies outside its box, belongs to no fixture and keeps the model's pixels.
-  const owned =
-    tuning.moveBoxes && frame?.aligned && (frame.dx || frame.dy)
+  // The fixtures' boxes moved by the model's shift, as the render mask is: a band of a moved fixture
+  // outside every box otherwise belongs to no fixture and keeps the model's pixels (a grey bar behind a
+  // bath the model drew lower, docs/big-fixture-edges-20261124.md). Only for pixels no box holds: moving
+  // every box flips the owner where two boxes overlap (a toilet before a bath).
+  const moved =
+    (tuning.moveBoxes ?? true) && frame?.aligned && (frame.dx || frame.dy)
       ? fixtures.map((f) =>
           f.box
             ? {
@@ -198,17 +203,15 @@ function refineSteps(input: RefineInput): CurrentRefine {
               }
             : f,
         )
-      : fixtures;
-  // 'outline': the moved boxes only for the cut-out rule (the render pixels' owner); true: the trims too.
-  const trimOwned = tuning.moveBoxes === 'outline' || tuning.moveBoxes === 'fallback' ? fixtures : owned;
+      : undefined;
   const tapLimits = tuning.taps ?? { rise: TAP_RISE, thin: TAP_THIN };
   const taps =
     tapLimits && input.behind && input.cuts && renderMask
-      ? trimBasinTaps({ cuts: input.cuts, renderMask, fixtures: trimOwned, ...tapLimits })
+      ? trimBasinTaps({ cuts: input.cuts, renderMask, fixtures, ...tapLimits })
       : undefined;
   const trim =
     input.behind && input.cuts && renderMask
-      ? trimProtrusions({ cuts: taps?.cuts ?? input.cuts, renderMask, fixtures: trimOwned })
+      ? trimProtrusions({ cuts: taps?.cuts ?? input.cuts, renderMask, fixtures })
       : undefined;
   if (trim && taps?.trimmed.length) trim.trimmed.unshift(...taps.trimmed);
   const cuts = trim?.cuts ?? input.cuts;
@@ -218,11 +221,10 @@ function refineSteps(input: RefineInput): CurrentRefine {
           model: raw,
           renderMask,
           behindMask: shiftMask(projectMask(input.behind.mask, layout, size), frame.dx, frame.dy),
-          // 'fallback': today's owner where a box holds the pixel, the moved boxes only where none does.
-          fixtures: tuning.moveBoxes === 'fallback' ? fixtures : owned,
-          ...(tuning.moveBoxes === 'fallback' && owned !== fixtures ? { movedFixtures: owned } : {}),
+          fixtures,
+          ...(moved ? { movedFixtures: moved } : {}),
           cuts,
-          ...(tuning.wallLike ? { wallLike: tuning.wallLike } : {}),
+          ...(tuning.wallLike !== false ? { wallLike: tuning.wallLike ?? BATH_WALL_LIKE } : {}),
         })
       : undefined;
   const joints =
