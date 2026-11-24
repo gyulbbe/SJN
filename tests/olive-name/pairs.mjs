@@ -1,11 +1,14 @@
-// Backlog item 5, step 27: blind pairs of the model's raw answers (local FLUX klein 4B, no refine) under
-// two olive wall sentences (prepare.mjs), the same scene, input and seed on both sides:
-//   - n2 "olive" against today's "grey", every scene and seed (12);
-//   - n1 "olive grey" against n2 "olive", one seed a scene (6).
+// Backlog item 5: blind pairs of the model's raw answers (local FLUX klein 4B, no refine) under two olive
+// wall sentences (prepare.mjs), the same scene, input and seed on both sides. Every scene (two walls'
+// views of the registered toilet, the bath at 0° and 90°, two basins) once in each comparison, the seeds
+// alternating, so each scene shows both seeds (step 28, 12 pairs, the supervisor's limit):
+//   - n2 "olive" against today's "grey": seed 424242 on even scenes, 777001 on odd ones (6);
+//   - n1 "olive grey" against n2 "olive": the other seed (6).
+// With --step 27: the first set of 18 pairs (n2 against today at both seeds, 12, and the same 6 n1 pairs).
 // Each pair-NN.png: the app picture (설계) on the left, A and B beside it, and below them the middle of
 // the back wall of all three enlarged (colour, grout pattern, reflections).
-// Usage: node tests/olive-name/pairs.mjs [--seed 20261127]
-// Output: docs/plans/pictures/5/blind-step-27/pair-NN.png, key.json
+// Usage: node tests/olive-name/pairs.mjs [--step 28] [--seed 20261127]
+// Output: docs/plans/pictures/5/blind-step-<step>/pair-NN.png, key.json
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -15,7 +18,9 @@ import { OUT } from './prepare.mjs';
 const at = process.argv.indexOf('--seed');
 let state = at > 0 ? Number(process.argv[at + 1]) : 20261127;
 const random = () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
-const dir = join(ROOT, 'docs', 'plans', 'pictures', '5', 'blind-step-27');
+const stepAt = process.argv.indexOf('--step');
+const step = stepAt > 0 ? process.argv[stepAt + 1] : '28';
+const dir = join(ROOT, 'docs', 'plans', 'pictures', '5', `blind-step-${step}`);
 rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
 const SCENES = [
@@ -27,10 +32,17 @@ const SCENES = [
   'basin-thin-olive-0',
 ];
 const NAMES = { cur: 'today "grey"', n1: 'n1 "olive grey"', n2: 'n2 "olive"' };
-const pairs = [
-  ...SCENES.flatMap((s) => [424242, 777001].map((seed) => ({ id: `${s}-${seed}`, x: 'n2', y: 'cur' }))),
-  ...SCENES.map((s, i) => ({ id: `${s}-${i % 2 ? 777001 : 424242}`, x: 'n1', y: 'n2' })),
-];
+const seedOf = (i, other = false) => ((i % 2 === 1) !== other ? 777001 : 424242);
+const pairs =
+  step === '27'
+    ? [
+        ...SCENES.flatMap((s) => [424242, 777001].map((seed) => ({ id: `${s}-${seed}`, x: 'n2', y: 'cur' }))),
+        ...SCENES.map((s, i) => ({ id: `${s}-${seedOf(i)}`, x: 'n1', y: 'n2' })),
+      ]
+    : [
+        ...SCENES.map((s, i) => ({ id: `${s}-${seedOf(i)}`, x: 'n2', y: 'cur' })),
+        ...SCENES.map((s, i) => ({ id: `${s}-${seedOf(i, true)}`, x: 'n1', y: 'n2' })),
+      ];
 for (let i = pairs.length - 1; i > 0; i--) {
   const j = Math.floor(random() * (i + 1));
   [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
