@@ -2,6 +2,15 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-24 — 다듬기: 큰 제품(욕조) 가장자리
+
+- 무엇: `ai-export/current-refine.ts`가 AI 이동만큼 옮긴 제품 상자를 `fixture-outline.ts` `cutoutMask`의 `movedFixtures`로 넘긴다(어느 상자에도 없는 렌더 제품 픽셀만 그 소유). `BATH_WALL_LIKE`(욕조 조각이 AI 벽색과 70 안이면 벽). AI에 보내는 그림·문장·AI 호출 수·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - 앱 다듬기 = 시험 후보 F2, 큰 방 12장·정상 18장 바이트 같음. 정상 장면 18장 중 바뀐 것 1장 9픽셀
+  - 감독 가린 평가: 로컬 F2 5 / 0 / 7, Cloudflare 0 / 0 / 4(4회, 기존 문제 재현 안 됨)
+  - 단위 `big-fixture-edges`(새로 만듦)·`fixture-outline`·`flux-refine*`·`fixture-*`·`flux-joints`·`flux-composite`·`tile-ai`·`side-tile-ai` 142개, typecheck, lint, e2e `flux-export`·`flux-refine`(`flux-export:523` 경고 대기 시간 초과는 흔들리는 시험, 혼자 다시 돌려 통과)
+- 결과: [큰 제품 가장자리](big-fixture-edges-20261124.md).
+
 ## 2026-11-23 — 편집 화면 3D: 천장 조명의 벽 하이라이트를 화면 표시에서만 넓고 옅게
 
 - 무엇: `room-viewer/surfaces.ts` `LIVE_DIRECT_ROUGHNESS` 0.5. 셰이더 `lights_fragment_begin`에서만 벽 거칠기를 `max(원래, sjnLiveDirectRoughness)`로 보고, 주변 반사 전에 되돌린다. `renderer.ts` `export()`·`exportLayers()` 동안 `setLiveLook(false)`(uniform 0). 결정 B·모서리 그늘·AI 호출·문장·저장 형식·API·SQL은 그대로다.
