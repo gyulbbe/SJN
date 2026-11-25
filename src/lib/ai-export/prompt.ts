@@ -63,15 +63,47 @@ export function facingPhrase(_face: FluxFixture['face'], facing: NonNullable<Flu
   }[facing];
 }
 
-/** Whether a colour reads as grey/white/black (low saturation), the case the model tends to warm. */
-function achromatic(hex: string) {
+/**
+ * A dark, muted olive (backlog item 5, 2026-11-25): hue 40–65° (the range `colorWords` calls olive),
+ * lightness at most 0.45, saturation 0.10–0.14, so below the grey threshold. Called grey with "do not warm,
+ * yellow or tint it", the registered olive brick (#6a6b51) came back as grey stone; "olive" kept its colour
+ * but came back 10–20 L* lighter, and on Cloudflare the bath-front scene got a wide reflection (step 29,
+ * rejected). "dark olive" kept the design's darkness and halved the finished wall's reflections locally
+ * (step 30, blind 12/0/0). Warm greys (hue below 40°), lighter or fainter tints and every other colour keep
+ * their words.
+ */
+export const DARK_MUTED_OLIVE = { hue: [40, 65], maxLight: 0.45, saturation: [0.1, 0.14] } as const;
+
+function hsl(hex: string) {
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
   const max = Math.max(r, g, b),
     min = Math.min(r, g, b),
     light = (max + min) / 2,
     delta = max - min;
   const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * light - 1));
-  return saturation < 0.14 || delta < 0.06;
+  const hue =
+    delta === 0
+      ? 0
+      : (max === r ? ((g - b) / delta + 6) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4) * 60;
+  return { hue, saturation, light, delta };
+}
+
+function darkMutedOlive(hex: string) {
+  const { hue, saturation, light, delta } = hsl(hex);
+  return (
+    delta >= 0.06 &&
+    hue >= DARK_MUTED_OLIVE.hue[0] &&
+    hue < DARK_MUTED_OLIVE.hue[1] &&
+    light <= DARK_MUTED_OLIVE.maxLight &&
+    saturation >= DARK_MUTED_OLIVE.saturation[0] &&
+    saturation < DARK_MUTED_OLIVE.saturation[1]
+  );
+}
+
+/** Whether a colour reads as grey/white/black (low saturation), the case the model tends to warm. */
+function achromatic(hex: string) {
+  const { saturation, delta } = hsl(hex);
+  return (saturation < 0.14 || delta < 0.06) && !darkMutedOlive(hex);
 }
 
 /**
@@ -85,7 +117,8 @@ export function colorWords(hex: string): string {
     light = (max + min) / 2,
     delta = max - min;
   let word: string;
-  if (achromatic(hex))
+  if (darkMutedOlive(hex)) word = 'dark olive';
+  else if (achromatic(hex))
     word =
       light > 0.86
         ? 'white'
