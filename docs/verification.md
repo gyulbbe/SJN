@@ -2,6 +2,16 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-25 — 다듬기: 지금 방식의 벽·바닥 밝기 허용 폭 0
+
+- 무엇: `ai-export/current-refine.ts` `FACE_LIGHTNESS_BAND` 0을 색 단계(`reviewResultColors`)에 넘긴다. 벽·바닥 면 평균 밝기 변화를 ±8 없이 90% 되돌린다. `color.ts` `LIGHTNESS_BAND` 8, 도기 밝기 규칙, 합성 방식, AI에 보내는 그림·문장·호출 수·저장 형식·API·SQL은 그대로다.
+- 확인:
+  - 감독 가린 평가(같은 AI 답, 앱 최종 12쌍): 폭 0 6 / 0 / 0, 폭 4 4 / 0 / 2
+  - 저장 답 24장(Cloudflare 4는 오늘 입력·main 문장과 해시 같음, 로컬 8, 큰 방 12)에서 앱 기본 다듬기 = 채택 그림, 픽셀 같음 24/24
+  - 앱이 잰 올리브 벽: 약 +9 → +1.6(Cloudflare)·+1.2(로컬). 34단계의 "+4"는 AI 그림 이동을 따르지 않은 측정 오차
+  - 단위 `flux-color`(새 1)·`fixture-outline`(기대값 폭 0)·다듬기 관련 11파일, typecheck, lint. e2e `flux-export`·`flux-refine` 12/13: `flux-export:523` 829행 경고 30초 대기 초과는 다듬기 파일을 main 것으로 되돌려도 같은 줄에서 실패
+- 결과: [올리브 벽 밝기](olive-light-20261125.md).
+
 ## 2026-11-25 — AI 프롬프트: 올리브 벽 이름 시험(앱 변경 없음)
 
 - 무엇: 올리브 벽(#6a6b51)을 "olive"·"dark olive"로 부르는 `ai-export/prompt.ts` 규칙을 작업 줄기에서 시험했다. 둘 다 되돌려 앱 코드·AI에 보내는 그림·문장은 main과 같다(`git diff origin/main -- src` 비어 있음).
