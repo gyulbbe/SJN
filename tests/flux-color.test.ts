@@ -24,6 +24,7 @@ import {
   type RegionMask,
 } from '../src/lib/ai-export/color';
 import { fluxInputLayout } from '../src/lib/ai-export/contract';
+import { FACE_LIGHTNESS_BAND } from '../src/lib/ai-export/current-refine';
 import { deltaE2000 as referenceDeltaE, type Rgb } from './helpers/delta-e';
 
 /**
@@ -356,6 +357,22 @@ describe('lightness', () => {
     );
     expect(lightnessReturn(ref(84), ref(84 - 5))).toBeCloseTo(5 * LIGHTNESS_SHARE, 6);
     expect(lightnessReturn(ref(84), ref(84 - 14))).toBeCloseTo(LIGHT_TILE_MAX_L * 0.7, 6);
+  });
+
+  it("today's method gives the walls and floor no band: 90% of any lightness change goes back", () => {
+    const ref = (L: number): [number, number, number] => [L, 0, 2];
+    expect(FACE_LIGHTNESS_BAND).toBe(0);
+    // The olive brick wall (design L* about 43) the model drew about 18 lighter: +1.8 stays, not +9.
+    expect(lightnessReturn(ref(43), ref(61), FACE_LIGHTNESS_BAND)).toBeCloseTo(-18 * LIGHTNESS_RETURN, 6);
+    expect(lightnessReturn(ref(43), ref(61))).toBeCloseTo(-(18 - LIGHTNESS_BAND) * LIGHTNESS_RETURN, 6);
+    // Inside the old band too, either way; the light-tile rule and MAX_SHIFT_L still hold.
+    expect(lightnessReturn(ref(40), ref(45), FACE_LIGHTNESS_BAND)).toBeCloseTo(-5 * LIGHTNESS_RETURN, 6);
+    expect(lightnessReturn(ref(60), ref(55), FACE_LIGHTNESS_BAND)).toBeCloseTo(5 * LIGHTNESS_RETURN, 6);
+    expect(lightnessReturn(ref(84), ref(84 - 5), FACE_LIGHTNESS_BAND)).toBeCloseTo(
+      Math.max(5 * LIGHTNESS_RETURN, 5 * LIGHTNESS_SHARE),
+      6,
+    );
+    expect(lightnessReturn(ref(20), ref(95), FACE_LIGHTNESS_BAND)).toBe(-MAX_SHIFT_L);
   });
 
   const dark: Rgb = [48, 49, 52],

@@ -31,7 +31,7 @@ const lab = (r, g, b) => {
     Z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
   return [116 * f(Y) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))];
 };
-async function faces(image, dir) {
+export async function faces(image, dir) {
   const regions = JSON.parse(readFileSync(join(dir, 'regions.json'), 'utf8')).regions;
   const pic = await sharp(image).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const mask = await sharp(join(dir, 'mask.png'))

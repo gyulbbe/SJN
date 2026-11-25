@@ -264,6 +264,38 @@ try {
       });
       const shown = refined.shown;
       if (shown) writeFileSync(join(root, refinedDir, file), await png(shown));
+      // REFINE_STAGES=1: also the picture after the joints step and after the colour step, and the
+      // colour step's own face measures (before and after, as the app measures them; item 4).
+      if (process.env.REFINE_STAGES === '1') {
+        const face = (c: { region: number; kind: string; reference: number[]; result: number[] }) => ({
+          region: c.region,
+          kind: c.kind,
+          design: +c.reference[0].toFixed(2),
+          got: +c.result[0].toFixed(2),
+        });
+        mkdirSync(join(root, `${refinedDir}-faces`), { recursive: true });
+        writeFileSync(
+          join(root, `${refinedDir}-faces`, file.replace(/\.png$/, '.json')),
+          JSON.stringify(
+            {
+              frame: refined.review.framing,
+              before: refined.review.changes.map(face),
+              after: (refined.review.residual ?? []).map(face),
+            },
+            null,
+            1,
+          ),
+        );
+      }
+      if (process.env.REFINE_STAGES === '1')
+        for (const [stage, image] of [
+          ['joints', refined.joints?.image],
+          ['colour', refined.review.corrected],
+        ] as const)
+          if (image) {
+            mkdirSync(join(root, `${refinedDir}-${stage}`), { recursive: true });
+            writeFileSync(join(root, `${refinedDir}-${stage}`, file), await png(image));
+          }
       summary[`${rev}/${id}`] = {
         aligned: refined.review.framing.aligned,
         backdrop: !!restored,

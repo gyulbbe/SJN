@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FIXTURE_REGION, reviewResultColors, type Pixels, type RegionMask } from '../src/lib/ai-export/color';
 import { restoreFixtureLightness } from '../src/lib/ai-export/fixture-light';
 import { fluxInputLayout } from '../src/lib/ai-export/contract';
-import { refineCurrentResult } from '../src/lib/ai-export/current-refine';
+import { FACE_LIGHTNESS_BAND, refineCurrentResult } from '../src/lib/ai-export/current-refine';
 import {
   cropPixels,
   cutoutMask,
@@ -193,7 +193,14 @@ describe('the finishing steps of today\x27s method', () => {
     expect(plain.shown).toBeDefined();
     expect(failed.shown!.data).toEqual(plain.shown!.data);
     // The steps as the dialog ran them before (no widened joints here: colours, then ceramics).
-    const review = reviewResultColors({ capture, mask: captureMask, layout, result: raw });
+    // Today's method gives the faces no lightness band (FACE_LIGHTNESS_BAND, 2026-11-25).
+    const review = reviewResultColors({
+      capture,
+      mask: captureMask,
+      layout,
+      result: raw,
+      lightnessBand: FACE_LIGHTNESS_BAND,
+    });
     const before =
       restoreFixtureLightness({
         capture,

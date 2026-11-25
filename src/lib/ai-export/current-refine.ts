@@ -75,6 +75,15 @@ export type CurrentRefine = {
 };
 
 /**
+ * The walls' and floor's LIGHTNESS_BAND in today's method (backlog item 4, 2026-11-25): none, so every
+ * face's mean lightness change goes back by LIGHTNESS_RETURN. With color.ts's 8 the olive brick wall
+ * stayed about +10 L* lighter than the design (grey floors +8–10, white walls −4); band 0 won the
+ * supervisor's blind set 6 / 0 / 0 (band 4: 4 / 0 / 2), docs/olive-light-20261125.md. The ceramics' rule
+ * (fixture-light.ts) and the other methods keep LIGHTNESS_BAND.
+ */
+export const FACE_LIGHTNESS_BAND = 0;
+
+/**
  * How far the steps take the model's picture back toward the design (docs/refine-level-20261120.md);
  * every field absent keeps the app's own values.
  */
@@ -101,7 +110,7 @@ export type RefineTuning = {
   lightCap?: number;
   /** How far the render's detail may lighten a restored face's light, at most (joints.ts DETAIL_MAX). */
   detailMax?: number;
-  /** The walls' and floor's LIGHTNESS_BAND (color.ts) instead. */
+  /** The walls' and floor's lightness band instead of FACE_LIGHTNESS_BAND (8: color.ts LIGHTNESS_BAND, before 2026-11-25). */
   lightnessBand?: number;
   /**
    * docs/photo-shape-20261121.md (S2): a basin whose outline score (fixture-shape.ts outlineScores)
@@ -252,7 +261,7 @@ function refineSteps(input: RefineInput): CurrentRefine {
     // The same shift the joints were put back at (the search would only find it again).
     ...((joints?.image || outline) && frame ? { alignment: { dx: frame.dx, dy: frame.dy } } : {}),
     ...(outline ? { resultMask: outline.colourMask } : {}),
-    ...(tuning.lightnessBand !== undefined ? { lightnessBand: tuning.lightnessBand } : {}),
+    lightnessBand: tuning.lightnessBand ?? FACE_LIGHTNESS_BAND,
   });
   const corrected = review.corrected ?? joints?.image;
   const ceramics = review.framing.aligned
