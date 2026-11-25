@@ -2,6 +2,15 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-25 — AI 프롬프트: 올리브 벽 이름 시험(앱 변경 없음)
+
+- 무엇: 올리브 벽(#6a6b51)을 "olive"·"dark olive"로 부르는 `ai-export/prompt.ts` 규칙을 작업 줄기에서 시험했다. 둘 다 되돌려 앱 코드·AI에 보내는 그림·문장은 main과 같다(`git diff origin/main -- src` 비어 있음).
+- 확인:
+  - 감독 가린 평가: 로컬 olive 6 / 0 / 0 두 번, dark olive 12 / 0 / 0. Cloudflare olive 4 / 2 / 2(7회), dark olive 6 / 2 / 2(4회, 저장 답 8장 재사용). 두 번 모두 욕조 정면 2패로 버림.
+  - 각 규칙을 넣었을 때 단위 109–337개·typecheck·lint·e2e `flux-export`·`flux-refine` 13/13 통과. 저장 장면 155개 프롬프트 비교에서 올리브 문장 밖 변화 0
+  - 되돌린 뒤: 프롬프트·flux 단위 19파일 336개, typecheck, lint 통과
+- 결과: [올리브 벽 이름](olive-name-20261125.md). AI 원본 회색화는 미해결.
+
 ## 2026-11-24 — 다듬기: 큰 제품(욕조) 가장자리
 
 - 무엇: `ai-export/current-refine.ts`가 AI 이동만큼 옮긴 제품 상자를 `fixture-outline.ts` `cutoutMask`의 `movedFixtures`로 넘긴다(어느 상자에도 없는 렌더 제품 픽셀만 그 소유). `BATH_WALL_LIKE`(욕조 조각이 AI 벽색과 70 안이면 벽). AI에 보내는 그림·문장·AI 호출 수·저장 형식·API·SQL은 그대로다.
