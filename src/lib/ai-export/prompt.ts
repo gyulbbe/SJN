@@ -63,16 +63,6 @@ export function facingPhrase(_face: FluxFixture['face'], facing: NonNullable<Flu
   }[facing];
 }
 
-/**
- * A muted olive (backlog item 5, 2026-11-24): hue 40–65° (the range `colorWords` calls olive), not light
- * (≤ 0.6, else it would be "cream"), saturation from 0.10. Below the grey threshold, yet the model must
- * hear "olive": called grey with "do not warm, yellow or tint it", the registered olive brick (#6a6b51,
- * saturation 0.138) came back as grey stone in every local answer (step 27, chroma 1.0 against 14.8;
- * "olive" 10.4, blind 6/0/0 against "grey" and against "olive grey"). Warm greys (hue below 40°) and
- * fainter tints keep the grey words.
- */
-export const MUTED_OLIVE = { hue: [40, 65], maxLight: 0.6, minSaturation: 0.1 } as const;
-
 /** Whether a colour reads as grey/white/black (low saturation), the case the model tends to warm. */
 function achromatic(hex: string) {
   const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
@@ -81,16 +71,7 @@ function achromatic(hex: string) {
     light = (max + min) / 2,
     delta = max - min;
   const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * light - 1));
-  if (delta < 0.06) return true;
-  if (saturation >= 0.14) return false;
-  const hue =
-    (max === r ? ((g - b) / delta + 6) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4) * 60;
-  const olive =
-    hue >= MUTED_OLIVE.hue[0] &&
-    hue < MUTED_OLIVE.hue[1] &&
-    light <= MUTED_OLIVE.maxLight &&
-    saturation >= MUTED_OLIVE.minSaturation;
-  return !olive;
+  return saturation < 0.14 || delta < 0.06;
 }
 
 /**

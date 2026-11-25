@@ -160,41 +160,6 @@ describe('buildFluxPrompt', () => {
     expect(colorWords('#d8cbb5')).toBe('light beige (#d8cbb5)');
     expect(colorWords('#3d3d3f')).toBe('dark grey (#3d3d3f)');
   });
-
-  it('calls a muted olive "olive", and keeps warm greys, plain greys and other tints as they were', () => {
-    // The registered olive brick (SI ROMAN OLVIE-G, #6a6b51, saturation 0.138): grey before 2026-11-24.
-    expect(colorWords('#6a6b51')).toBe('olive (#6a6b51)');
-    const olive = buildFluxPrompt({ ...scene, surfaces: [{ ...scene.surfaces[0], color: '#6a6b51' }] });
-    expect(olive).toContain(
-      'olive (#6a6b51) matte tiles, 600 × 600 mm, grid layout, light grey (#d9d8d2) grout 2 mm. Keep this exact colour as it appears in image 0; do not change its hue or saturation.',
-    );
-    expect(olive).not.toContain('do not warm, yellow or tint it');
-    // The edges of MUTED_OLIVE: saturation 0.10, hue 40–65°, lightness 0.6.
-    expect(colorWords('#555646')).toBe('olive (#555646)'); // saturation 0.103, hue 64°
-    expect(colorWords('#585949')).toBe('dark grey (#585949)'); // saturation 0.099
-    expect(colorWords('#4a4439')).toBe('dark grey (#4a4439)'); // hue 38.8°: a warm grey
-    expect(colorWords('#565844')).toBe('dark grey (#565844)'); // hue 66°
-    expect(colorWords('#a1a28b')).toBe('olive (#a1a28b)'); // lightness 0.590
-    expect(colorWords('#a8a993')).toBe('light grey (#a8a993)'); // lightness above 0.6: not "cream"
-    // Unchanged: warm greys, plain greys, the colours of the trial scenes, muted greens and blues.
-    for (const [hex, words] of [
-      ['#8c8478', 'grey'], // warm grey, hue 36°, saturation 0.08
-      ['#a39e93', 'light grey'], // greige, hue 41°, saturation 0.08
-      ['#86847c', 'grey'],
-      ['#868686', 'grey'],
-      ['#8e8b85', 'grey'],
-      ['#c2c2c0', 'light grey'],
-      ['#151515', 'black'],
-      ['#fbfbfb', 'white'],
-      ['#5c6b5a', 'grey'], // grey-green, hue 113°
-      ['#7d8a8f', 'grey'], // blue grey, hue 197°
-      ['#d0b190', 'beige'],
-      ['#686f52', 'green'], // saturation 0.15, hue 74°: already hued before
-    ])
-      expect(colorWords(hex)).toBe(`${words} (${hex})`);
-    const warm = buildFluxPrompt({ ...scene, surfaces: [{ ...scene.surfaces[0], color: '#8c8478' }] });
-    expect(warm).toContain('Keep this exact grey as it appears in image 0; do not warm, yellow or tint it.');
-  });
 });
 
 describe('fluxSceneSchema', () => {
