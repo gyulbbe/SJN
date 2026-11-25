@@ -2,7 +2,7 @@
 // scaled to the answer), the mean CIELAB L*, chroma C* and hue angle h of the app picture (capture.png)
 // and of the model's raw answer under each sentence (prepare.mjs), and of the app's finished result where refine.ts made it. Olive #6a6b51 sits near h 100°; a
 // grey stone answer keeps L* but loses C*.
-//   node tests/olive-name/stats.mjs [--cf | --alt]
+//   node tests/olive-name/stats.mjs [--cf | --alt | --dark]
 // Output: test-results/olive-name-20261124/stats.json (--cf: olive-name-cf-20261124) and a table on stdout
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import sharp from 'sharp';
 import { OUT, SENTENCES } from './prepare.mjs';
 import { CF_OUT } from './reuse.mjs';
 import { ALT_OUT, ALTERNATIVES } from './alt.mjs';
+import { DARK_OUT } from './dark-setup.mjs';
 
 const lin = (v) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
 const f = (t) => (t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116);
@@ -53,7 +54,9 @@ export async function wallColour(image, dir) {
 // --alt: the step-30 local alternatives (alt.mjs), with the bath front's patchiness.
 const cf = process.argv.includes('--cf');
 const alt = process.argv.includes('--alt');
-const TREE = cf ? CF_OUT : alt ? ALT_OUT : OUT;
+// --dark: the step-31 Cloudflare tree (dark-setup.mjs): main, "olive" and the app's "dark olive".
+const dark = process.argv.includes('--dark');
+const TREE = cf ? CF_OUT : alt ? ALT_OUT : dark ? DARK_OUT : OUT;
 /**
  * The bath front (step 30): the lower 60% of the bath's box (the rim left out), mapped like the pairs.
  * spread: the L* standard deviation; bright: % above L* 92 (reflections); patch: % more than 12 L* below
@@ -86,7 +89,13 @@ async function bathFront(image, dir) {
   return { spread: +spread.toFixed(1), bright: share((v) => v > 92), patch: share((v) => v < median - 12) };
 }
 const rows = {};
-const revs = cf ? ['cur', 'n2'] : alt ? Object.keys(ALTERNATIVES) : Object.keys(SENTENCES);
+const revs = cf
+  ? ['cur', 'n2']
+  : alt
+    ? Object.keys(ALTERNATIVES)
+    : dark
+      ? ['cur', 'n2', 'a1']
+      : Object.keys(SENTENCES);
 const ids = readdirSync(join(TREE, 'cur', 'raw'))
   .filter((f) => f.endsWith('.png'))
   .map((f) => f.slice(0, -4))
@@ -102,7 +111,7 @@ for (const id of ids) {
     const file = join(TREE, rev, 'refined', `${id}.png`);
     if (existsSync(file)) row[`${rev}/refined`] = await wallColour(file, dir);
   }
-  if (alt)
+  if (alt || dark)
     for (const rev of revs)
       for (const [stage, sub] of [
         ['raw', ''],

@@ -9,6 +9,9 @@
  * 8805 while Windows reserves 8727–8826):
  *   EXPORT_PHOTOREAL_ROOT=C:/dev/SJN-dev EXPORT_PHOTOREAL_AI_URL=http://127.0.0.1:9199  *   node tests/run-browser-test.mjs tests/olive-name/cloud.ts [--max 7] [--dry]
  * Output: test-results/olive-name-cf-20261124/{cur,n2}/raw/ (side-tile-ai results trees)
+ *
+ * With --dark (step 31): the app's "dark olive" prompt (a1, after 3208c5a) in test-results/olive-dark-cf-20261125
+ * (dark-setup.mjs), the four scenes, round olive-dark-final; main's and "olive" answers are reused there.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -20,6 +23,7 @@ import { fluxNeurons } from '../export-photoreal/budget';
 import { LEDGER } from '../export-photoreal/paths.mjs';
 import { ROOT } from '../side-tile-ai/paths.mjs';
 import { CF_OUT } from './reuse.mjs';
+import { DARK_OUT, DARK_SCENES } from './dark-setup.mjs';
 
 const maxAt = process.argv.indexOf('--max');
 const max = maxAt > 0 ? Number(process.argv[maxAt + 1]) : 7;
@@ -35,13 +39,17 @@ const SEED = 424242;
 const sha = (b: Buffer | string) => createHash('sha256').update(b).digest('hex').slice(0, 16);
 // The app's (n2) and main's (cur) prompts, same input, front views first; an answer already in the tree
 // (reuse.mjs: bath-olive-0 cur, saved 11-24) is not asked again.
-const jobs = ['olive-0', 'olive-90', 'bath-olive-0', 'bath-olive-90'].flatMap((scene) =>
-  ['n2', 'cur'].map((rev) => ({ scene, rev })),
-);
+const dark = process.argv.includes('--dark');
+const TREE = dark ? DARK_OUT : CF_OUT;
+const jobs = dark
+  ? DARK_SCENES.map((scene) => ({ scene, rev: 'a1' }))
+  : ['olive-0', 'olive-90', 'bath-olive-0', 'bath-olive-90'].flatMap((scene) =>
+      ['n2', 'cur'].map((rev) => ({ scene, rev })),
+    );
 let sent = 0;
 for (const { scene, rev } of jobs) {
-  const dir = join(CF_OUT, rev, 'scenes', scene);
-  const out = join(CF_OUT, rev, 'raw', `${scene}-${SEED}.png`);
+  const dir = join(TREE, rev, 'scenes', scene);
+  const out = join(TREE, rev, 'raw', `${scene}-${SEED}.png`);
   if (existsSync(out)) {
     console.log(rev, scene, 'kept');
     continue;
@@ -63,9 +71,9 @@ for (const { scene, rev } of jobs) {
   try {
     const { image, ms } = await fluxCall(
       {
-        round: 'olive-name-final',
-        method: rev === 'cur' ? 'current' : 'olive',
-        scene: `olive-name-${rev}-${scene}`,
+        round: dark ? 'olive-dark-final' : 'olive-name-final',
+        method: rev === 'cur' ? 'current' : dark ? 'dark-olive' : 'olive',
+        scene: `${dark ? 'olive-dark' : 'olive-name'}-${rev}-${scene}`,
         seed: SEED,
         model: FLUX_MODEL,
         estimate,
@@ -74,7 +82,7 @@ for (const { scene, rev } of jobs) {
       { images: [input], prompt, width: output.width, height: output.height, seed: SEED },
     );
     sent++;
-    mkdirSync(join(CF_OUT, rev, 'raw'), { recursive: true });
+    mkdirSync(join(TREE, rev, 'raw'), { recursive: true });
     await sharp(image).png().toFile(out);
     writeFileSync(
       out.replace(/\.png$/, '.json'),
