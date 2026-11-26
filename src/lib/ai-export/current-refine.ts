@@ -50,6 +50,7 @@ import {
   TAP_RISE,
   TAP_THIN,
   trimBasinTaps,
+  trimCarried,
   trimProtrusions,
   type TrimmedPiece,
 } from './fixture-shape';
@@ -147,6 +148,11 @@ export type RefineTuning = {
    * stem (fixture-shape.ts trimBasinTaps); absent: TAP_RISE / TAP_THIN, false: T1 only.
    */
   taps?: { rise: number; thin: number } | false;
+  /** Trial (item 8): take objects the cut-out carried along off it (fixture-shape.ts trimCarried); absent: off. */
+  carried?: {
+    detached?: { near: number; min: number; side: number } | false;
+    side?: { thin: number; min: number; wide: number } | false;
+  };
 };
 
 type RefineInput = {
@@ -246,7 +252,12 @@ function refineSteps(input: RefineInput): CurrentRefine {
       ? trimProtrusions({ cuts: taps?.cuts ?? input.cuts, renderMask, fixtures })
       : undefined;
   if (trim && taps?.trimmed.length) trim.trimmed.unshift(...taps.trimmed);
-  const cuts = trim?.cuts ?? input.cuts;
+  const carried =
+    tuning.carried && trim && renderMask
+      ? trimCarried({ cuts: trim.cuts, renderMask, fixtures, ...tuning.carried })
+      : undefined;
+  if (trim && carried?.trimmed.length) trim.trimmed.push(...carried.trimmed);
+  const cuts = carried?.cuts ?? trim?.cuts ?? input.cuts;
   const outline =
     input.behind && cuts && frame?.aligned && renderMask
       ? cutoutMask({

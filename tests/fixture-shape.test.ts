@@ -12,6 +12,7 @@ import {
   TAP_RISE,
   TAP_THIN,
   trimBasinTaps,
+  trimCarried,
   trimProtrusions,
 } from '../src/lib/ai-export/fixture-shape';
 import { fluxResultNotices } from '../src/lib/ai-export/notices';
@@ -86,6 +87,54 @@ describe('T1: a thin piece sticking up out of a fixture leaves its cut-out', () 
     // Reaches 6 px from the basin, but its far part (more than 4 px away) is 2 px tall.
     const { trimmed } = trimProtrusions({ cuts: [cut(short)], renderMask, fixtures: [basin] });
     expect(trimmed).toEqual([]);
+  });
+});
+
+describe('trial (item 8): an object the cut-out took along beside the fixture', () => {
+  // The T1 scene: a 200 × 120 result, the render's basin at x 80–120, y 60–100, its crop x 60–140, y 10–110.
+  const W = 200,
+    H = 120;
+  const inBasin = (x: number, y: number) => x >= 80 && x < 120 && y >= 60 && y < 100;
+  const renderMask = maskOf(W, H, (x, y) => (inBasin(x, y) ? FIXTURE_REGION : 1));
+  const basin = fact('basin', [80 / W, 60 / H, 120 / W, 100 / H]);
+  const cut = (extra: (x: number, y: number) => boolean): Cut => {
+    const crop = { fixture: 0, left: 60, top: 10, width: 80, height: 100 };
+    const alpha = new Uint8Array(crop.width * crop.height);
+    for (let y = 0; y < crop.height; y++)
+      for (let x = 0; x < crop.width; x++)
+        if (inBasin(crop.left + x, crop.top + y) || extra(crop.left + x, crop.top + y))
+          alpha[y * crop.width + x] = 255;
+    return { ...crop, alpha };
+  };
+  const held = (c: Cut, x: number, y: number) => c.alpha[(y - c.top) * c.width + x - c.left] >= 128;
+  const detached = { near: 3, min: 200, side: 6 };
+
+  it('takes a piece standing apart (a brush) off the cut-out and keeps the fixture', () => {
+    // 10 × 30 px, 5 px left of the basin.
+    const brush = (x: number, y: number) => x >= 65 && x < 75 && y >= 70 && y < 100;
+    const { cuts, trimmed } = trimCarried({ cuts: [cut(brush)], renderMask, fixtures: [basin], detached });
+    expect(trimmed).toEqual([expect.objectContaining({ fixture: 0, why: 'detached', pixels: 300 })]);
+    expect(held(cuts[0], 70, 85)).toBe(false);
+    expect(held(cuts[0], 100, 80)).toBe(true);
+  });
+
+  it('keeps a piece that touches the fixture or lies within 3 px, and small or hairline pieces', () => {
+    const touching = (x: number, y: number) => x >= 70 && x < 80 && y >= 70 && y < 100;
+    const near = (x: number, y: number) => x >= 67 && x < 78 && y >= 70 && y < 100; // 3 px from the basin
+    const small = (x: number, y: number) => x >= 62 && x < 72 && y >= 70 && y < 80; // 100 px
+    const hairline = (x: number, y: number) => x >= 61 && x < 75 && y === 22; // 14 × 1
+    for (const extra of [touching, near, small, hairline]) {
+      const original = cut(extra);
+      const { cuts, trimmed } = trimCarried({ cuts: [original], renderMask, fixtures: [basin], detached });
+      expect(trimmed).toEqual([]);
+      expect(cuts[0]).toBe(original);
+    }
+  });
+
+  it('does nothing when switched off', () => {
+    const brush = (x: number, y: number) => x >= 65 && x < 75 && y >= 70 && y < 100;
+    const original = cut(brush);
+    expect(trimCarried({ cuts: [original], renderMask, fixtures: [basin] }).cuts[0]).toBe(original);
   });
 });
 

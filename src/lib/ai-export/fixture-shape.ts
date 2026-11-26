@@ -149,6 +149,199 @@ export function trimProtrusions(input: {
 }
 
 /**
+ * Trial (backlog item 8, 2026-11-26, default off): objects the cut-out model took along with a fixture
+ * (it cuts every foreground object in the crop). Of each cut-out:
+ * - `detached`: the 4-connected pieces of at least `min` px, `side` px across both ways, with no pixel
+ *   within `near` px of the render's fixture (a toilet brush standing beside the toilet) leave it;
+ * - `side`: the 4-connected pieces of its pixels outside the render's fixture that reach more than
+ *   PROTRUSION_FAR × the width from it, do not start above its top (T1's case), have at least `min` px,
+ *   are at most `thin` × the render fixture's height tall and `wide` × its width wide (a valve or pipe
+ *   sticking out of a tank's side, not a rim along the fixture) leave it, with the
+ *   outside pixels on their rows that join them to the fixture.
+ * The finishing steps then put the wall or floor back there.
+ */
+export function trimCarried(input: {
+  cuts: readonly Cut[];
+  renderMask: RegionMask;
+  fixtures: readonly FluxFixture[];
+  detached?: { near: number; min: number; side: number } | false;
+  side?: { thin: number; min: number; wide: number } | false;
+}): { cuts: Cut[]; trimmed: (TrimmedPiece & { why: 'detached' | 'side' })[] } {
+  const { renderMask, fixtures } = input;
+  const { width, height } = renderMask;
+  const n = width * height;
+  const far = Math.max(4, Math.round(width * PROTRUSION_FAR));
+  const own = fixtureMask(renderMask, fixtures, FLUX_FIXTURE_KINDS).mask.data;
+  const chosen = fixtures.filter((f) => f.box && FLUX_FIXTURE_KINDS.includes(f.kind));
+  const trimmed: (TrimmedPiece & { why: 'detached' | 'side' })[] = [];
+  const cuts = input.cuts.map((cut) => {
+    const label = chosen.indexOf(fixtures[cut.fixture]) + 1;
+    if (!label) return cut;
+    let top = height,
+      bottom = -1,
+      left = width,
+      right = -1;
+    const mine = new Uint8Array(n);
+    for (let i = 0; i < n; i++)
+      if (own[i] === label && renderMask.data[i] === FIXTURE_REGION) {
+        mine[i] = 1;
+        top = Math.min(top, Math.floor(i / width));
+        bottom = Math.max(bottom, Math.floor(i / width));
+        left = Math.min(left, i % width);
+        right = Math.max(right, i % width);
+      }
+    if (bottom < 0) return cut;
+    const fixtureHeight = bottom - top + 1,
+      fixtureWidth = right - left + 1;
+    const alpha = Uint8Array.from(cut.alpha);
+    let changed = false;
+    const at = (x: number, y: number) => (cut.top + y) * width + cut.left + x;
+    const box = (piece: number[]) => {
+      let minX = width,
+        maxX = -1,
+        minY = height,
+        maxY = -1;
+      for (const i of piece) {
+        minX = Math.min(minX, i % width);
+        maxX = Math.max(maxX, i % width);
+        minY = Math.min(minY, Math.floor(i / width));
+        maxY = Math.max(maxY, Math.floor(i / width));
+      }
+      return { minX, maxX, minY, maxY };
+    };
+    const clear = (pixels: Iterable<number>) => {
+      for (const i of pixels) {
+        const x = (i % width) - cut.left,
+          y = Math.floor(i / width) - cut.top;
+        if (x >= 0 && y >= 0 && x < cut.width && y < cut.height) alpha[y * cut.width + x] = 0;
+      }
+    };
+    if (input.detached) {
+      const near = input.detached.near;
+      const seen = new Uint8Array(cut.width * cut.height);
+      for (let s = 0; s < seen.length; s++) {
+        if (seen[s] || alpha[s] < 128) continue;
+        const piece: number[] = [];
+        const stack = [s];
+        seen[s] = 1;
+        let touches = false;
+        while (stack.length) {
+          const k = stack.pop()!;
+          const x = k % cut.width,
+            y = Math.floor(k / cut.width);
+          const i = at(x, y);
+          piece.push(i);
+          if (!touches)
+            for (let dy = -near; dy <= near && !touches; dy++)
+              for (let dx = -near; dx <= near && !touches; dx++) {
+                const xx = (i % width) + dx,
+                  yy = Math.floor(i / width) + dy;
+                if (xx >= 0 && yy >= 0 && xx < width && yy < height && mine[yy * width + xx]) touches = true;
+              }
+          for (const [nx, ny] of [
+            [x - 1, y],
+            [x + 1, y],
+            [x, y - 1],
+            [x, y + 1],
+          ]) {
+            if (nx < 0 || ny < 0 || nx >= cut.width || ny >= cut.height) continue;
+            const q = ny * cut.width + nx;
+            if (seen[q] || alpha[q] < 128) continue;
+            seen[q] = 1;
+            stack.push(q);
+          }
+        }
+        if (touches) continue;
+        const b = box(piece);
+        if (
+          piece.length < input.detached.min ||
+          Math.min(b.maxX - b.minX, b.maxY - b.minY) + 1 < input.detached.side
+        )
+          continue;
+        clear(piece);
+        changed = true;
+        trimmed.push({
+          fixture: cut.fixture,
+          pixels: piece.length,
+          width: b.maxX - b.minX + 1,
+          height: b.maxY - b.minY + 1,
+          why: 'detached',
+        });
+      }
+    }
+    if (input.side) {
+      const outside = new Uint8Array(n);
+      for (let y = 0; y < cut.height; y++)
+        for (let x = 0; x < cut.width; x++)
+          if (alpha[y * cut.width + x] >= 128 && !mine[at(x, y)]) outside[at(x, y)] = 1;
+      const dist = new Uint16Array(n).fill(65535);
+      let front: number[] = [];
+      for (let i = 0; i < n; i++)
+        if (mine[i]) {
+          dist[i] = 0;
+          front.push(i);
+        }
+      for (let step = 1; front.length; step++) {
+        const next: number[] = [];
+        for (const i of front)
+          for (const j of [i - 1, i + 1, i - width, i + width]) {
+            if (j < 0 || j >= n || !outside[j] || dist[j] !== 65535) continue;
+            dist[j] = step;
+            next.push(j);
+          }
+        front = next;
+      }
+      const seen = new Uint8Array(n);
+      for (let s = 0; s < n; s++) {
+        if (!outside[s] || seen[s] || dist[s] === 65535 || dist[s] <= far) continue;
+        const piece: number[] = [];
+        const stack = [s];
+        seen[s] = 1;
+        while (stack.length) {
+          const i = stack.pop()!;
+          piece.push(i);
+          for (const j of [i - 1, i + 1, i - width, i + width])
+            if (j >= 0 && j < n && outside[j] && !seen[j] && dist[j] > far) {
+              seen[j] = 1;
+              stack.push(j);
+            }
+        }
+        const b = box(piece);
+        const pieceHeight = b.maxY - b.minY + 1;
+        const pieceWidth = b.maxX - b.minX + 1;
+        if (
+          b.minY < top ||
+          pieceHeight > input.side.thin * fixtureHeight ||
+          piece.length < input.side.min ||
+          pieceWidth > input.side.wide * fixtureWidth
+        )
+          continue;
+        // With the outside pixels on its rows that join it to the fixture (its stem).
+        const stem = new Set(piece);
+        for (let i = 0; i < n; i++)
+          if (outside[i] && dist[i] <= far && dist[i] > 0) {
+            const y = Math.floor(i / width),
+              x = i % width;
+            if (y >= b.minY - 1 && y <= b.maxY + 1 && x >= b.minX - far - 1 && x <= b.maxX + far + 1)
+              stem.add(i);
+          }
+        clear(stem);
+        changed = true;
+        trimmed.push({
+          fixture: cut.fixture,
+          pixels: stem.size,
+          width: b.maxX - b.minX + 1,
+          height: pieceHeight,
+          why: 'side',
+        });
+      }
+    }
+    return changed ? { ...cut, alpha } : cut;
+  });
+  return { cuts, trimmed };
+}
+
+/**
  * docs/photo-shape-20261121.md (T2, in the app since 2026-11-21): a tap the model drew on a basin. Of each basin's cut-out,
  * the 4-connected pieces above the render's basin top that rise at least `rise` × the picture's width
  * and are at most `thin` × the basin's width wide leave the cut-out, and below each the cut-out's

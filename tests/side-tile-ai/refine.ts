@@ -303,6 +303,8 @@ try {
         joints: refined.joints?.restored.length ?? 0,
         bodies: refined.bodies?.length ?? 0,
         refined: !!shown,
+        // Pieces T1, T2 and the item-8 trial took off the cut-outs.
+        trimmed: refined.trimmed ?? [],
         // Each cut-out's overlap with the render's fixture and whether it was used (item 10).
         verdicts: (refined.outline?.verdicts ?? []).map((v) => ({
           fixture: v.fixture,
