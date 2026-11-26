@@ -40,7 +40,7 @@ import type { FluxInputLayout } from './contract';
 import { finishFixtureBodies, type FixtureBody } from './fixture-body';
 import { finishFixtureEdges } from './fixture-edge';
 import { restoreFixtureLightness } from './fixture-light';
-import { BATH_WALL_LIKE, cutoutMask, type Cut, type FixtureOutline } from './fixture-outline';
+import { BATH_WALL_LIKE, CUT_RESCUE, cutoutMask, type Cut, type FixtureOutline } from './fixture-outline';
 import {
   metalCeramics,
   metalScores,
@@ -55,6 +55,21 @@ import {
 } from './fixture-shape';
 import { OUTLINE_RIMS, restoreResultJoints, type JointRestore } from './joints';
 import type { FluxFixture } from './scene-contract';
+
+/**
+ * The cut-out rescue options for cutoutMask: CUT_RESCUE unless tuning turns it off or gives its own
+ * (the step-43 trial c12m5 is clipCuts and minIou without a guard).
+ */
+function rescueOptions(tuning: RefineTuning) {
+  if (tuning.rescue === false) return {};
+  if (tuning.clipCuts === undefined && tuning.minIou === undefined && tuning.rescueGuard === undefined)
+    return { ...CUT_RESCUE, rescueGuard: { ...CUT_RESCUE.rescueGuard } };
+  return {
+    ...(tuning.clipCuts ? { clipCuts: tuning.clipCuts } : {}),
+    ...(tuning.minIou !== undefined ? { minIou: tuning.minIou } : {}),
+    ...(tuning.rescueGuard ? { rescueGuard: tuning.rescueGuard } : {}),
+  };
+}
 
 export type CurrentRefine = {
   joints?: JointRestore;
@@ -112,6 +127,8 @@ export type RefineTuning = {
   detailMax?: number;
   /** The walls' and floor's lightness band instead of FACE_LIGHTNESS_BAND (8: color.ts LIGHTNESS_BAND, before 2026-11-25). */
   lightnessBand?: number;
+  /** Off: no rescue of a cut-out that fails MIN_IOU (before 2026-11-26). Absent: CUT_RESCUE. */
+  rescue?: false;
   /** Trial (item 10): clip each cut-out to this many px around the render's own fixture before scoring it (fixture-outline.ts). */
   clipCuts?: number;
   /** Trial (item 10): the cut-outs' overlap threshold instead of MIN_IOU (fixture-outline.ts). */
@@ -240,9 +257,7 @@ function refineSteps(input: RefineInput): CurrentRefine {
           ...(moved ? { movedFixtures: moved } : {}),
           cuts,
           ...(tuning.wallLike !== false ? { wallLike: tuning.wallLike ?? BATH_WALL_LIKE } : {}),
-          ...(tuning.clipCuts ? { clipCuts: tuning.clipCuts } : {}),
-          ...(tuning.minIou !== undefined ? { minIou: tuning.minIou } : {}),
-          ...(tuning.rescueGuard ? { rescueGuard: tuning.rescueGuard } : {}),
+          ...rescueOptions(tuning),
         })
       : undefined;
   const joints =

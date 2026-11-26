@@ -5,6 +5,7 @@ import { fluxInputLayout } from '../src/lib/ai-export/contract';
 import { FACE_LIGHTNESS_BAND, refineCurrentResult } from '../src/lib/ai-export/current-refine';
 import {
   cropPixels,
+  CUT_RESCUE,
   cutoutMask,
   MIN_IOU,
   OUTLINE_PAD,
@@ -240,5 +241,60 @@ describe('the finishing steps of today\x27s method', () => {
     expect(Math.abs(at(f1.shown!, 102, 80) - wall)).toBeLessThan(
       Math.abs(at(plain.shown!, 102, 80) - at(plain.shown!, 60, 80)),
     );
+  });
+});
+
+describe('the rescue of a cut-out that fails MIN_IOU (CUT_RESCUE, 2026-11-26)', () => {
+  // The crop around the toilet is x 34–66, y 8–72; the rescue here clips at 4 px so the crop has room.
+  const rescue = { ...CUT_RESCUE, clipCuts: 4, rescueGuard: { ...CUT_RESCUE.rescueGuard } };
+  const run = (held: (x: number, y: number) => boolean, options: object = rescue) =>
+    cutoutMask({
+      model: model(),
+      renderMask,
+      behindMask,
+      fixtures: [toilet],
+      cuts: [cutOf(0, [toilet], held)],
+      ...options,
+    });
+  // A neighbour the cut-out took along: rows 8–20 above the toilet and 6 px on each side.
+  const withNeighbour = (x: number, y: number) => (y >= 8 && y < 60 && x >= 34 && x < 66) || inRender(x, y);
+
+  it('uses a failing cut-out once clipped near the render fixture, when it covers it and its top', () => {
+    const outline = run(withNeighbour);
+    const v = outline.verdicts[0];
+    expect(v.iou).toBeLessThan(MIN_IOU);
+    expect(v.used).toBe(true);
+    expect(v.rescue).toMatchObject({ used: true, recall: 1, top: 1 });
+    expect(v.rescue!.iou).toBeGreaterThanOrEqual(CUT_RESCUE.minIou);
+    // Without the rescue the same cut-out is not used (today before 2026-11-26).
+    expect(run(withNeighbour, {}).verdicts[0].used).toBe(false);
+  });
+
+  it('keeps the render outline when the clipped cut-out lost the top quarter (a white tank on a white wall)', () => {
+    // The lower three quarters of the toilet, a 6 px strip beside it and junk rows 8–12 far above.
+    const lostTank = (x: number, y: number) =>
+      (y >= 30 && y < 60 && x >= 40 && x < 66) || (y >= 8 && y < 12 && x >= 34 && x < 66);
+    const v = run(lostTank).verdicts[0];
+    expect(v.iou).toBeLessThan(MIN_IOU);
+    expect(v.rescue!.iou).toBeGreaterThanOrEqual(CUT_RESCUE.minIou);
+    expect(v.rescue!.recall).toBeGreaterThanOrEqual(CUT_RESCUE.rescueGuard.recall);
+    expect(v.rescue!.top).toBe(0);
+    expect(v.used).toBe(false);
+  });
+
+  it('keeps the render outline when the clipped cut-out is too large for the fixture', () => {
+    const v = run(withNeighbour, { ...rescue, rescueGuard: { ...rescue.rescueGuard, ratio: 1.2 } })
+      .verdicts[0];
+    expect(v.rescue!.ratio).toBeGreaterThan(1.2);
+    expect(v.used).toBe(false);
+  });
+
+  it('leaves a cut-out that passes as it is unclipped', () => {
+    // Rows 8–14 above the toilet, farther than 4 px: kept, because the plain cut-out passes.
+    const above = (x: number, y: number) => inRender(x, y) || (y >= 8 && y < 14 && x >= 40 && x < 60);
+    const outline = run(above);
+    expect(outline.verdicts[0]).toEqual({ fixture: 0, iou: expect.any(Number), used: true });
+    expect(outline.verdicts[0].iou).toBeGreaterThanOrEqual(MIN_IOU);
+    expect(run(above, {}).mask.data).toEqual(outline.mask.data);
   });
 });

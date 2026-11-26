@@ -9,7 +9,10 @@
 // "top":0.5,"ratio":2.5}}' --suffix g1: only a cut-out failing 0.6 as it is gets clipped, and is used only if
 // it covers 75% of the render's fixture and half its top quarter, at most 2.5 times its area): the 6
 // pictures g1 changes, the 4 step 43 lost (now as today), and 2 controls.
-// Usage: node tests/cutout-haze/pairs.mjs [--step 44] [--seed 20261143]
+// With --step 45: held-out answers (other prompts of the same scenes, not used to set CUT_RESCUE): today
+// (refine.ts --tuning '{"rescue":false}' --suffix old45) against the new default (--suffix new45), the 5
+// pictures it changes.
+// Usage: node tests/cutout-haze/pairs.mjs [--step 44|45] [--seed 20261143]
 // Output: docs/plans/pictures/10/blind-step-<step>/pair-NN.png, key.json
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,7 +22,8 @@ import { ROOT } from '../side-tile-ai/paths.mjs';
 const at = process.argv.indexOf('--seed');
 const stepAt = process.argv.indexOf('--step');
 const step = stepAt > 0 ? process.argv[stepAt + 1] : '43';
-const trial = step === '44' ? 'refined-g1' : 'refined-c12m5';
+const trial = step === '45' ? 'refined-new45' : step === '44' ? 'refined-g1' : 'refined-c12m5';
+const base = step === '45' ? 'refined-old45' : 'refined-h43';
 let state = at > 0 ? Number(process.argv[at + 1]) : 20261100 + Number(step);
 const random = () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
 const dir = join(ROOT, 'docs', 'plans', 'pictures', '10', `blind-step-${step}`);
@@ -41,6 +45,13 @@ const CASES44 = [
   ['side-tile-ai-20261121/after', 'white-0-424242', 0, 'control'],
   ['olive-dark-cf-20261125/cur', 'bath-olive-0-424242', 1, 'control'],
 ];
+const CASES45 = [
+  ['olive-name-20261124/n2', 'bath-olive-90-424242', 0, 'held-out'],
+  ['olive-name-20261124/n2', 'bath-olive-90-777001', 0, 'held-out'],
+  ['olive-alt-20261125/a1', 'bath-olive-90-424242', 0, 'held-out'],
+  ['olive-alt-20261125/a1', 'bath-olive-90-777001', 0, 'held-out'],
+  ['olive-dark-cf-20261125/a1', 'bath-olive-90-424242', 0, 'held-out'],
+];
 const CASES43 = [
   ['basin-shape-20261124/app', 'basin-thin-olive-0-777001', 0, 'changed'],
   ['big-fixture-20261124/app', 'bath-olive-90-424242', 0, 'changed'],
@@ -55,12 +66,14 @@ const CASES43 = [
   ['olive-dark-cf-20261125/cur', 'bath-olive-0-424242', 1, 'control'],
   ['big-fixture-20261124/app', 'bath-white-0-424242', 0, 'control'],
 ];
-const pairs = (step === '44' ? CASES44 : CASES43).map(([tree, id, fixture, why]) => ({
-  tree,
-  id,
-  fixture,
-  why,
-}));
+const pairs = (step === '45' ? CASES45 : step === '44' ? CASES44 : CASES43).map(
+  ([tree, id, fixture, why]) => ({
+    tree,
+    id,
+    fixture,
+    why,
+  }),
+);
 for (let i = pairs.length - 1; i > 0; i--) {
   const j = Math.floor(random() * (i + 1));
   [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
@@ -78,6 +91,8 @@ const NAMES = {
   'refined-h43': 'today',
   'refined-c12m5': 'c12m5 (clip 12 px, overlap 0.5)',
   'refined-g1': 'g1 (rescue only failing cut-outs, guarded)',
+  'refined-old45': 'today (rescue off)',
+  'refined-new45': 'new default (CUT_RESCUE)',
 };
 const key = {};
 for (const [n, pair] of pairs.entries()) {
@@ -85,7 +100,7 @@ for (const [n, pair] of pairs.entries()) {
   const root = T(pair.tree);
   const scene = pair.id.replace(/-\d+$/, '');
   const sceneDir = join(root, 'scenes', scene);
-  const [l, r] = random() < 0.5 ? ['refined-h43', trial] : [trial, 'refined-h43'];
+  const [l, r] = random() < 0.5 ? [base, trial] : [trial, base];
   const files = [
     join(sceneDir, 'capture.png'),
     join(root, l, `${pair.id}.png`),

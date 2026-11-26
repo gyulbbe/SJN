@@ -36,6 +36,19 @@ import { blurInside } from './joints';
 import { FLUX_FIXTURE_KINDS, type FluxFixture } from './scene-contract';
 
 export const MIN_IOU = 0.6;
+/**
+ * The rescue of a cut-out that fails MIN_IOU (backlog item 10, 2026-11-26, docs/cutout-haze-20261126.md):
+ * clipped to CUT_RESCUE.clipCuts px around the render's own fixture (a neighbour the cut-out took along,
+ * the bath behind a toilet seen from the side, no longer sinks its overlap), it is used when it reaches
+ * `minIou`, covers `recall` of the render's fixture and `top` of its top quarter (a white tank lost on
+ * a white wall fails here), and is at most `ratio` times its area. A cut-out that passes as it is stays
+ * as it is. Supervisor's blind set 5 / 0 / 7; ceramics on the render's outline 13 → 7 of 58.
+ */
+export const CUT_RESCUE = {
+  clipCuts: 12,
+  minIou: 0.5,
+  rescueGuard: { recall: 0.75, top: 0.5, ratio: 2.5 },
+} as const;
 /** A render fixture pixel becomes wall only this near (sRGB distance, a few pixels' mean) the model's wall colour around. */
 export const WALL_NEAR = 30;
 /**
