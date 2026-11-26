@@ -3,8 +3,10 @@
 // candidates (8), and the app's finished result ("앱 최종", refine.ts) once per scene and candidate on
 // alternating seeds (4). Each pair-NN.png: a header naming the stage; the shower's catalogue photo with its
 // record (화이트 · 무광), the design (app picture), A and B; below, the shower enlarged in the design, A, B.
-// Usage: node tests/photo-colour/pairs.mjs [--seed 20261139]
-// Output: docs/plans/pictures/9/blind-step-39/pair-NN.png, key.json
+// With --step 40: s1 (a little lighter, the photo's shading kept) against today's, both scenes × both
+// seeds × both stages (8).
+// Usage: node tests/photo-colour/pairs.mjs [--step 40] [--seed 20261139]
+// Output: docs/plans/pictures/9/blind-step-<step>/pair-NN.png, key.json
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -12,22 +14,34 @@ import { ROOT } from '../side-tile-ai/paths.mjs';
 import { OUT, SCENES } from './variants.mjs';
 
 const at = process.argv.indexOf('--seed');
-let state = at > 0 ? Number(process.argv[at + 1]) : 20261139;
+const stepAt = process.argv.indexOf('--step');
+const step = stepAt > 0 ? process.argv[stepAt + 1] : '39';
+let state = at > 0 ? Number(process.argv[at + 1]) : 20261100 + Number(step);
 const random = () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
-const dir = join(ROOT, 'docs', 'plans', 'pictures', '9', 'blind-step-39');
+const dir = join(ROOT, 'docs', 'plans', 'pictures', '9', `blind-step-${step}`);
 rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
-const NAMES = { cur: 'today "grey (#8d8a87)"', w1: 'w1 "white" (record name)', w2: 'w2 "white (#ebe8e4)"' };
+const NAMES = {
+  cur: 'today "grey (#8d8a87)"',
+  w1: 'w1 "white" (record name)',
+  w2: 'w2 "white (#ebe8e4)"',
+  s1: 's1 "light grey (#a39f9c)"',
+};
 const STAGES = { raw: 'AI 원본', refined: '앱 최종' };
 const SEEDS = [424242, 777001];
-const pairs = [
-  ...SCENES.flatMap((scene) =>
-    SEEDS.flatMap((seed) => ['w1', 'w2'].map((x) => ({ scene, seed, x, stage: 'raw' }))),
-  ),
-  ...SCENES.flatMap((scene, i) =>
-    ['w1', 'w2'].map((x, j) => ({ scene, seed: SEEDS[(i + j) % 2], x, stage: 'refined' })),
-  ),
-];
+const pairs =
+  step === '40'
+    ? SCENES.flatMap((scene) =>
+        SEEDS.flatMap((seed) => ['raw', 'refined'].map((stage) => ({ scene, seed, x: 's1', stage }))),
+      )
+    : [
+        ...SCENES.flatMap((scene) =>
+          SEEDS.flatMap((seed) => ['w1', 'w2'].map((x) => ({ scene, seed, x, stage: 'raw' }))),
+        ),
+        ...SCENES.flatMap((scene, i) =>
+          ['w1', 'w2'].map((x, j) => ({ scene, seed: SEEDS[(i + j) % 2], x, stage: 'refined' })),
+        ),
+      ];
 for (let i = pairs.length - 1; i > 0; i--) {
   const j = Math.floor(random() * (i + 1));
   [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
