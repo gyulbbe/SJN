@@ -12,7 +12,10 @@
 // With --step 45: held-out answers (other prompts of the same scenes, not used to set CUT_RESCUE): today
 // (refine.ts --tuning '{"rescue":false}' --suffix old45) against the new default (--suffix new45), the 5
 // pictures it changes.
-// Usage: node tests/cutout-haze/pairs.mjs [--step 44|45] [--seed 20261143]
+// With --step 46: Cloudflare answers (seed 424242), the rescue off (--tuning '{"rescue":false}' --suffix
+// old46) against the default (--suffix new46): the held-out scenes (SIDE_TILE_SPECS=held, 3 new answers)
+// and the saved big-room answers of 2026-11-24 (the one the default changes and a front control).
+// Usage: node tests/cutout-haze/pairs.mjs [--step 44|45|46] [--seed 20261143]
 // Output: docs/plans/pictures/10/blind-step-<step>/pair-NN.png, key.json
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,8 +25,15 @@ import { ROOT } from '../side-tile-ai/paths.mjs';
 const at = process.argv.indexOf('--seed');
 const stepAt = process.argv.indexOf('--step');
 const step = stepAt > 0 ? process.argv[stepAt + 1] : '43';
-const trial = step === '45' ? 'refined-new45' : step === '44' ? 'refined-g1' : 'refined-c12m5';
-const base = step === '45' ? 'refined-old45' : 'refined-h43';
+const trial =
+  step === '46'
+    ? 'refined-new46'
+    : step === '45'
+      ? 'refined-new45'
+      : step === '44'
+        ? 'refined-g1'
+        : 'refined-c12m5';
+const base = step === '46' ? 'refined-old46' : step === '45' ? 'refined-old45' : 'refined-h43';
 let state = at > 0 ? Number(process.argv[at + 1]) : 20261100 + Number(step);
 const random = () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
 const dir = join(ROOT, 'docs', 'plans', 'pictures', '10', `blind-step-${step}`);
@@ -52,6 +62,13 @@ const CASES45 = [
   ['olive-alt-20261125/a1', 'bath-olive-90-777001', 0, 'held-out'],
   ['olive-dark-cf-20261125/a1', 'bath-olive-90-424242', 0, 'held-out'],
 ];
+const CASES46 = [
+  ['big-fixture-20261124/cf/app', 'bath-white-90-424242', 0, 'changed'],
+  ['cutout-held-20261126/app', 'side-beige-90-424242', 0, 'held-out, same'],
+  ['cutout-held-20261126/app', 'tank-white-0-424242', 0, 'held-out, same'],
+  ['cutout-held-20261126/app', 'thin-white-0-424242', 0, 'held-out, same'],
+  ['big-fixture-20261124/cf/app', 'bath-white-0-424242', 0, 'control, same'],
+];
 const CASES43 = [
   ['basin-shape-20261124/app', 'basin-thin-olive-0-777001', 0, 'changed'],
   ['big-fixture-20261124/app', 'bath-olive-90-424242', 0, 'changed'],
@@ -66,7 +83,7 @@ const CASES43 = [
   ['olive-dark-cf-20261125/cur', 'bath-olive-0-424242', 1, 'control'],
   ['big-fixture-20261124/app', 'bath-white-0-424242', 0, 'control'],
 ];
-const pairs = (step === '45' ? CASES45 : step === '44' ? CASES44 : CASES43).map(
+const pairs = (step === '46' ? CASES46 : step === '45' ? CASES45 : step === '44' ? CASES44 : CASES43).map(
   ([tree, id, fixture, why]) => ({
     tree,
     id,
@@ -93,6 +110,8 @@ const NAMES = {
   'refined-g1': 'g1 (rescue only failing cut-outs, guarded)',
   'refined-old45': 'today (rescue off)',
   'refined-new45': 'new default (CUT_RESCUE)',
+  'refined-old46': 'today (rescue off)',
+  'refined-new46': 'new default (CUT_RESCUE)',
 };
 const key = {};
 for (const [n, pair] of pairs.entries()) {

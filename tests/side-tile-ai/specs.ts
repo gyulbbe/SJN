@@ -122,10 +122,72 @@ export function photoColourSpecs(materialIds: readonly string[]): SceneSpec[] {
     })),
   ];
 }
-/** The scene set the trial tools draw: SIDE_TILE_SPECS=big (item 6), photo (item 9), else the side-tile scenes. */
+/**
+ * Backlog item 10, step 46 (the cut-out rescue's final check): scenes not used to set CUT_RESCUE, each a
+ * different layout from those that were: the big room's side view with the beige tiles and the toilet
+ * (LC-3100J) moved next to the bath; a two-piece toilet's white tank (LC-2200) on the white wall, left of
+ * centre; and the standard thin wall-hung basin (item 7) on the left wall nearer the front, white tiles.
+ * Chosen with SIDE_TILE_SPECS=held.
+ */
+const THIN_BASIN = {
+  id: 'basin',
+  kind: 'basin',
+  face: 'left' as const,
+  u: 0.3,
+  v: 0.62,
+  widthMm: 600,
+  heightMm: 150,
+  depthMm: 450,
+  baseHeightMm: 780,
+  extra: { basinVariant: 'wall', basinShape: 'rectangular' },
+};
+export function heldOutSpecs(materialIds: readonly string[]): SceneSpec[] {
+  const one = (prefix: string) => {
+    const found = materialIds.filter((id) => id.startsWith(prefix));
+    if (found.length !== 1) throw new Error(`material ${prefix}: ${found.length} matches`);
+    return found[0];
+  };
+  return [
+    {
+      id: 'side-beige-90',
+      label: 'held-out side toilet next to the bath, beige, 90°',
+      room: BIG_ROOM,
+      wall: one(TILES.beige),
+      floor: one(TILES.greyFloor),
+      standard: [BATH],
+      products: [
+        { id: 'photo-toilet', materialId: one(TOILETS.lc3100j), face: 'floor' as const, u: 0.6, v: 0.2 },
+      ],
+      azimuth: 90,
+    },
+    {
+      id: 'tank-white-0',
+      label: 'held-out two-piece white tank on the white wall, 0°',
+      room: ROOM,
+      wall: one(TILES.white),
+      floor: one(TILES.stoneFloor),
+      products: [
+        { id: 'photo-toilet', materialId: one(TOILETS.lc2200), face: 'floor' as const, u: 0.35, v: 0.2 },
+      ],
+      azimuth: 0,
+    },
+    {
+      id: 'thin-white-0',
+      label: 'held-out thin wall-hung basin, white, nearer the front, 0°',
+      room: ROOM,
+      wall: one(TILES.white),
+      floor: one(TILES.stoneFloor),
+      standard: [THIN_BASIN],
+      azimuth: 0,
+    },
+  ];
+}
+/** The scene set the trial tools draw: SIDE_TILE_SPECS=big (item 6), photo (item 9), held (item 10), else the side-tile scenes. */
 export const sceneSpecs = (materialIds: readonly string[]) =>
   process.env.SIDE_TILE_SPECS === 'big'
     ? bigFixtureSpecs(materialIds)
     : process.env.SIDE_TILE_SPECS === 'photo'
       ? photoColourSpecs(materialIds)
-      : trialSpecs(materialIds);
+      : process.env.SIDE_TILE_SPECS === 'held'
+        ? heldOutSpecs(materialIds)
+        : trialSpecs(materialIds);
