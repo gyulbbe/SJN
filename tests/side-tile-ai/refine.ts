@@ -309,6 +309,7 @@ try {
           kind: fixtures[v.fixture]?.kind,
           iou: v.iou,
           used: v.used,
+          ...(v.rescue ? { rescue: v.rescue } : {}),
         })),
       };
       console.log(rev, id, JSON.stringify(summary[`${rev}/${id}`]));

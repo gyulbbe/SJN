@@ -116,6 +116,8 @@ export type RefineTuning = {
   clipCuts?: number;
   /** Trial (item 10): the cut-outs' overlap threshold instead of MIN_IOU (fixture-outline.ts). */
   minIou?: number;
+  /** Trial (item 10, step 44): checks a rescued (clipped) cut-out must also pass (fixture-outline.ts). */
+  rescueGuard?: { recall: number; top: number; ratio: number };
   /**
    * docs/photo-shape-20261121.md (S2): a basin whose outline score (fixture-shape.ts outlineScores)
    * is under this goes back as the render's, as P1 does (absent: none). `shapeFallback`: also when
@@ -240,6 +242,7 @@ function refineSteps(input: RefineInput): CurrentRefine {
           ...(tuning.wallLike !== false ? { wallLike: tuning.wallLike ?? BATH_WALL_LIKE } : {}),
           ...(tuning.clipCuts ? { clipCuts: tuning.clipCuts } : {}),
           ...(tuning.minIou !== undefined ? { minIou: tuning.minIou } : {}),
+          ...(tuning.rescueGuard ? { rescueGuard: tuning.rescueGuard } : {}),
         })
       : undefined;
   const joints =

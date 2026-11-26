@@ -75,7 +75,13 @@ const PIECE_WALL = 1,
 export type OutlineCrop = { fixture: number; left: number; top: number; width: number; height: number };
 /** A crop's cut-out alpha (one byte a pixel, top-down, the crop's size). */
 export type Cut = OutlineCrop & { alpha: Uint8Array };
-export type FixtureVerdict = { fixture: number; iou: number; used: boolean };
+export type FixtureVerdict = {
+  fixture: number;
+  iou: number;
+  used: boolean;
+  /** Trial rescue (clipCuts): the clipped cut-out's scores, when the plain one did not pass. */
+  rescue?: { iou: number; recall: number; top: number; ratio: number; used: boolean };
+};
 export type FixtureOutline = {
   mask: RegionMask;
   colourMask: RegionMask;
@@ -145,8 +151,15 @@ export function cutoutMask(input: {
    * toilet seen from the side) does not sink its overlap.
    */
   clipCuts?: number;
-  /** Trial (item 10): the overlap a cut-out needs to be used instead of MIN_IOU. */
+  /** Trial (item 10): the overlap a clipped cut-out needs to be used instead of MIN_IOU. */
   minIou?: number;
+  /**
+   * Trial (item 10, step 44): with clipCuts, only a cut-out that fails MIN_IOU as it is gets clipped, and
+   * the clipped one is used only if it also covers this share of the render's fixture (`recall`), of the
+   * render fixture's top quarter (`top`, a white tank the cut-out lost), and is at most `ratio` times
+   * the render fixture's area (a thin basin it bloated). Absent: no such checks.
+   */
+  rescueGuard?: { recall: number; top: number; ratio: number };
 }): FixtureOutline {
   const { renderMask, behindMask, fixtures, cuts } = input;
   const { width, height } = renderMask;
@@ -162,12 +175,15 @@ export function cutoutMask(input: {
   const claimed = new Uint8Array(n),
     reliable = new Set<number>();
   const verdicts: FixtureVerdict[] = [];
-  for (const original of cuts) {
-    const cut = input.clipCuts
-      ? clipCut(original, own, (label) => ownIndex(label), width, input.clipCuts)
-      : original;
+  // A cut-out's overlap with its render fixture, the share of that fixture (and of its top quarter) it
+  // covers, and its area against the fixture's.
+  const score = (cut: Cut) => {
     let both = 0,
-      either = 0;
+      either = 0,
+      mine = 0,
+      cutArea = 0,
+      top = Infinity,
+      bottom = -1;
     for (let y = 0; y < cut.height; y++)
       for (let x = 0; x < cut.width; x++) {
         const i = (cut.top + y) * width + cut.left + x;
@@ -175,10 +191,65 @@ export function cutoutMask(input: {
           r = ownIndex(own[i]) === cut.fixture;
         if (c && r) both++;
         if (c || r) either++;
+        if (c) cutArea++;
+        if (r) {
+          mine++;
+          top = Math.min(top, y);
+          bottom = Math.max(bottom, y);
+        }
       }
-    const iou = either ? both / either : 0;
-    const used = iou >= (input.minIou ?? MIN_IOU);
-    verdicts.push({ fixture: cut.fixture, iou: +iou.toFixed(3), used });
+    let topMine = 0,
+      topBoth = 0;
+    const limit = top + (bottom - top + 1) / 4;
+    for (let y = top; y < limit && y < cut.height; y++)
+      for (let x = 0; x < cut.width; x++) {
+        if (ownIndex(own[(cut.top + y) * width + cut.left + x]) !== cut.fixture) continue;
+        topMine++;
+        if (cut.alpha[y * cut.width + x] >= 128) topBoth++;
+      }
+    return {
+      iou: either ? both / either : 0,
+      recall: mine ? both / mine : 0,
+      top: topMine ? topBoth / topMine : 0,
+      ratio: mine ? cutArea / mine : Infinity,
+    };
+  };
+  const round = (v: number) => +v.toFixed(3);
+  for (const original of cuts) {
+    let cut = original;
+    let iou: number;
+    let used: boolean;
+    let rescue: FixtureVerdict['rescue'];
+    if (input.rescueGuard && input.clipCuts) {
+      // Step-44 rescue: a cut-out that passes as it is stays as it is (today's rule).
+      iou = score(original).iou;
+      used = iou >= MIN_IOU;
+      if (!used) {
+        const clipped = clipCut(original, own, (label) => ownIndex(label), width, input.clipCuts);
+        const s = score(clipped);
+        const g = input.rescueGuard;
+        const ok =
+          s.iou >= (input.minIou ?? MIN_IOU) && s.recall >= g.recall && s.top >= g.top && s.ratio <= g.ratio;
+        rescue = {
+          iou: round(s.iou),
+          recall: round(s.recall),
+          top: round(s.top),
+          ratio: round(s.ratio),
+          used: ok,
+        };
+        if (ok) {
+          cut = clipped;
+          used = true;
+        }
+      }
+    } else {
+      cut = input.clipCuts
+        ? clipCut(original, own, (label) => ownIndex(label), width, input.clipCuts)
+        : original;
+      iou = score(cut).iou;
+      used = iou >= (input.minIou ?? MIN_IOU);
+    }
+    verdicts.push({ fixture: cut.fixture, iou: round(iou), used, ...(rescue ? { rescue } : {}) });
     if (!used) continue;
     reliable.add(cut.fixture);
     for (let y = 0; y < cut.height; y++)

@@ -5,22 +5,43 @@
 // trial uses where today keeps the render's outline, and 3 that both use (controls).
 // Each pair-NN.png: the design (app picture), A and B; below, the fixture with the wall around it enlarged
 // in all three.
-// Usage: node tests/cutout-haze/pairs.mjs [--seed 20261143]
-// Output: docs/plans/pictures/10/blind-step-43/pair-NN.png, key.json
+// With --step 44: today against g1 (refine.ts --tuning '{"clipCuts":12,"minIou":0.5,"rescueGuard":{"recall":0.75,
+// "top":0.5,"ratio":2.5}}' --suffix g1: only a cut-out failing 0.6 as it is gets clipped, and is used only if
+// it covers 75% of the render's fixture and half its top quarter, at most 2.5 times its area): the 6
+// pictures g1 changes, the 4 step 43 lost (now as today), and 2 controls.
+// Usage: node tests/cutout-haze/pairs.mjs [--step 44] [--seed 20261143]
+// Output: docs/plans/pictures/10/blind-step-<step>/pair-NN.png, key.json
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { ROOT } from '../side-tile-ai/paths.mjs';
 
 const at = process.argv.indexOf('--seed');
-let state = at > 0 ? Number(process.argv[at + 1]) : 20261143;
+const stepAt = process.argv.indexOf('--step');
+const step = stepAt > 0 ? process.argv[stepAt + 1] : '43';
+const trial = step === '44' ? 'refined-g1' : 'refined-c12m5';
+let state = at > 0 ? Number(process.argv[at + 1]) : 20261100 + Number(step);
 const random = () => (state = (state * 1664525 + 1013904223) >>> 0) / 4294967296;
-const dir = join(ROOT, 'docs', 'plans', 'pictures', '10', 'blind-step-43');
+const dir = join(ROOT, 'docs', 'plans', 'pictures', '10', `blind-step-${step}`);
 rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
 const T = (p) => join(ROOT, 'test-results', ...p.split('/'));
 // [tree, answer id, fixture index, why]
-const CASES = [
+const CASES44 = [
+  ['big-fixture-20261124/app', 'bath-olive-90-424242', 0, 'changed'],
+  ['big-fixture-20261124/app', 'bath-olive-90-777001', 0, 'changed'],
+  ['big-fixture-20261124/app', 'bath-white-90-424242', 0, 'changed'],
+  ['big-fixture-20261124/app', 'bath-white-90-777001', 0, 'changed'],
+  ['olive-dark-cf-20261125/cur', 'bath-olive-90-424242', 0, 'changed'],
+  ['side-tile-ai-20261121/after', 'olive-90-424242', 0, 'changed'],
+  ['big-fixture-20261124/app', 'bath-white-0-424242', 0, 'step-43 loss'],
+  ['photo-colour-20261126/cur', 'shower-white-0-424242', 0, 'step-43 loss'],
+  ['photo-colour-20261126/cur', 'shower-white-0-777001', 0, 'step-43 loss'],
+  ['basin-shape-20261124/app', 'basin-thin-olive-0-777001', 0, 'step-43 loss'],
+  ['side-tile-ai-20261121/after', 'white-0-424242', 0, 'control'],
+  ['olive-dark-cf-20261125/cur', 'bath-olive-0-424242', 1, 'control'],
+];
+const CASES43 = [
   ['basin-shape-20261124/app', 'basin-thin-olive-0-777001', 0, 'changed'],
   ['big-fixture-20261124/app', 'bath-olive-90-424242', 0, 'changed'],
   ['big-fixture-20261124/app', 'bath-olive-90-777001', 0, 'changed'],
@@ -34,7 +55,12 @@ const CASES = [
   ['olive-dark-cf-20261125/cur', 'bath-olive-0-424242', 1, 'control'],
   ['big-fixture-20261124/app', 'bath-white-0-424242', 0, 'control'],
 ];
-const pairs = CASES.map(([tree, id, fixture, why]) => ({ tree, id, fixture, why }));
+const pairs = (step === '44' ? CASES44 : CASES43).map(([tree, id, fixture, why]) => ({
+  tree,
+  id,
+  fixture,
+  why,
+}));
 for (let i = pairs.length - 1; i > 0; i--) {
   const j = Math.floor(random() * (i + 1));
   [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
@@ -48,14 +74,18 @@ const text = (s) =>
   Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${LABEL}"><text x="4" y="29" font-family="Malgun Gothic, sans-serif" font-size="28" font-weight="700" fill="#111">${s}</text></svg>`,
   );
-const NAMES = { 'refined-h43': 'today', 'refined-c12m5': 'c12m5 (clip 12 px, overlap 0.5)' };
+const NAMES = {
+  'refined-h43': 'today',
+  'refined-c12m5': 'c12m5 (clip 12 px, overlap 0.5)',
+  'refined-g1': 'g1 (rescue only failing cut-outs, guarded)',
+};
 const key = {};
 for (const [n, pair] of pairs.entries()) {
   const name = `pair-${String(n + 1).padStart(2, '0')}`;
   const root = T(pair.tree);
   const scene = pair.id.replace(/-\d+$/, '');
   const sceneDir = join(root, 'scenes', scene);
-  const [l, r] = random() < 0.5 ? ['refined-h43', 'refined-c12m5'] : ['refined-c12m5', 'refined-h43'];
+  const [l, r] = random() < 0.5 ? ['refined-h43', trial] : [trial, 'refined-h43'];
   const files = [
     join(sceneDir, 'capture.png'),
     join(root, l, `${pair.id}.png`),
