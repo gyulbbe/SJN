@@ -303,6 +303,13 @@ try {
         joints: refined.joints?.restored.length ?? 0,
         bodies: refined.bodies?.length ?? 0,
         refined: !!shown,
+        // Each cut-out's overlap with the render's fixture and whether it was used (item 10).
+        verdicts: (refined.outline?.verdicts ?? []).map((v) => ({
+          fixture: v.fixture,
+          kind: fixtures[v.fixture]?.kind,
+          iou: v.iou,
+          used: v.used,
+        })),
       };
       console.log(rev, id, JSON.stringify(summary[`${rev}/${id}`]));
     }

@@ -139,6 +139,14 @@ export function cutoutMask(input: {
    * belonging to none (a band of a moved fixture otherwise keeps the model's pixels).
    */
   movedFixtures?: readonly FluxFixture[];
+  /**
+   * Trial (backlog item 10, default off): before a cut-out is scored, keep only its pixels within this
+   * many pixels of the render's own fixture, so a neighbour the cut-out took along (a bath behind a
+   * toilet seen from the side) does not sink its overlap.
+   */
+  clipCuts?: number;
+  /** Trial (item 10): the overlap a cut-out needs to be used instead of MIN_IOU. */
+  minIou?: number;
 }): FixtureOutline {
   const { renderMask, behindMask, fixtures, cuts } = input;
   const { width, height } = renderMask;
@@ -154,7 +162,10 @@ export function cutoutMask(input: {
   const claimed = new Uint8Array(n),
     reliable = new Set<number>();
   const verdicts: FixtureVerdict[] = [];
-  for (const cut of cuts) {
+  for (const original of cuts) {
+    const cut = input.clipCuts
+      ? clipCut(original, own, (label) => ownIndex(label), width, input.clipCuts)
+      : original;
     let both = 0,
       either = 0;
     for (let y = 0; y < cut.height; y++)
@@ -166,7 +177,7 @@ export function cutoutMask(input: {
         if (c || r) either++;
       }
     const iou = either ? both / either : 0;
-    const used = iou >= MIN_IOU;
+    const used = iou >= (input.minIou ?? MIN_IOU);
     verdicts.push({ fixture: cut.fixture, iou: +iou.toFixed(3), used });
     if (!used) continue;
     reliable.add(cut.fixture);
@@ -267,6 +278,54 @@ export function cutoutMask(input: {
  * whose border with the wall is mostly a line the model drew (its fixture's outline) is fixture, one
  * with hardly any line (the wall goes on) is wall; small and thin pieces keep the pixel rule.
  */
+/**
+ * A cut-out with only the pixels within `grow` px (chessboard distance) of the render's own fixture
+ * (`own` labels mapped to fixture indices by `index`); the rest of its alpha is cleared.
+ */
+function clipCut(
+  cut: Cut,
+  own: Uint8Array,
+  index: (label: number) => number,
+  width: number,
+  grow: number,
+): Cut {
+  const { width: w, height: h } = cut;
+  // Mark the render's own fixture inside the crop, then grow it with two separable max passes.
+  const mine = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (index(own[(cut.top + y) * width + cut.left + x]) === cut.fixture) mine[y * w + x] = 1;
+  const across = new Uint8Array(w * h),
+    near = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    let last = -Infinity;
+    for (let x = 0; x < w; x++) {
+      if (mine[y * w + x]) last = x;
+      if (x - last <= grow) across[y * w + x] = 1;
+    }
+    last = Infinity;
+    for (let x = w - 1; x >= 0; x--) {
+      if (mine[y * w + x]) last = x;
+      if (last - x <= grow) across[y * w + x] = 1;
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let last = -Infinity;
+    for (let y = 0; y < h; y++) {
+      if (across[y * w + x]) last = y;
+      if (y - last <= grow) near[y * w + x] = 1;
+    }
+    last = Infinity;
+    for (let y = h - 1; y >= 0; y--) {
+      if (across[y * w + x]) last = y;
+      if (last - y <= grow) near[y * w + x] = 1;
+    }
+  }
+  const alpha = new Uint8Array(cut.alpha.length);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = near[i] ? cut.alpha[i] : 0;
+  return { ...cut, alpha };
+}
+
 function pieceVerdicts(input: {
   planes: Float32Array[];
   wallColour: { mean: Float32Array }[];
