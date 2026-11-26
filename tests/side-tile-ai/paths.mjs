@@ -11,7 +11,10 @@ export const OUT = process.env.SIDE_TILE_OUT
   ? resolve(process.env.SIDE_TILE_OUT)
   : join(ROOT, 'test-results', 'side-tile-ai-20261121');
 /** The public catalogue records and list images of the scenes' materials only (catalog.mjs). */
-export const CATALOG = join(ROOT, 'test-results', 'side-tile-ai-20261121', 'catalog');
+// SIDE_TILE_CATALOG: another catalogue cache of the same shape (item 9: tests/photo-colour/catalog.mjs).
+export const CATALOG = process.env.SIDE_TILE_CATALOG
+  ? resolve(process.env.SIDE_TILE_CATALOG)
+  : join(ROOT, 'test-results', 'side-tile-ai-20261121', 'catalog');
 /** The app's cut-out model (BiRefNet lite fp16, the pinned file the app itself downloads). */
 export const BACKGROUND_MODEL = join(ROOT, 'tmp', 'background-model');
 /** The two renderers compared: before (6e0ca52) and after (3037c8e) the 3D light change. */
