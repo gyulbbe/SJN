@@ -12,6 +12,7 @@ import {
   TAP_RISE,
   TAP_THIN,
   trimBasinTaps,
+  DETACHED_CARRY,
   trimCarried,
   trimProtrusions,
 } from '../src/lib/ai-export/fixture-shape';
@@ -90,7 +91,7 @@ describe('T1: a thin piece sticking up out of a fixture leaves its cut-out', () 
   });
 });
 
-describe('trial (item 8): an object the cut-out took along beside the fixture', () => {
+describe('an object the cut-out took along beside the fixture (DETACHED_CARRY, 2026-11-26)', () => {
   // The T1 scene: a 200 × 120 result, the render's basin at x 80–120, y 60–100, its crop x 60–140, y 10–110.
   const W = 200,
     H = 120;
@@ -107,7 +108,7 @@ describe('trial (item 8): an object the cut-out took along beside the fixture', 
     return { ...crop, alpha };
   };
   const held = (c: Cut, x: number, y: number) => c.alpha[(y - c.top) * c.width + x - c.left] >= 128;
-  const detached = { near: 3, min: 200, side: 6 };
+  const detached = { ...DETACHED_CARRY };
 
   it('takes a piece standing apart (a brush) off the cut-out and keeps the fixture', () => {
     // 10 × 30 px, 5 px left of the basin.

@@ -38,6 +38,14 @@ export const PROTRUSION_THIN = 0.15;
 /** T2 (trimBasinTaps): a tap rises at least this × the picture's width and is at most TAP_THIN × the basin's width wide. */
 export const TAP_RISE = 0.008;
 export const TAP_THIN = 0.2;
+/**
+ * Detached pieces the cut-out carried along (trimCarried), in the app since 2026-11-26 (backlog item 8,
+ * docs/extra-objects-20261126.md): at least `min` px and `side` px across both ways, with no pixel within
+ * `near` px of the render's fixture (a toilet brush beside the toilet). Supervisor's blind set 1 / 0 / 5;
+ * 1 picture of 95 changed, 93 normal pictures byte for byte the same. Pieces joined to the fixture (a
+ * valve on a tank) stay: the side rule took product parts off (pedestal edges) and is not used.
+ */
+export const DETACHED_CARRY = { near: 3, min: 200, side: 6 } as const;
 export const METAL_BANDS = 6.5;
 export const METAL_RATIO = 3;
 
