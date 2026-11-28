@@ -2,6 +2,22 @@
 
 검증일: 2026-09-06. 작업 환경: Windows, Node.js 22.13.1, npm 10.9.2. 외부 서버 연결·배포 없이 `127.0.0.1:3000`의 로컬 모드를 검증했습니다. 사용자가 입력한 실제 Supabase 자격 증명은 없습니다.
 
+## 2026-11-28 — D1 사용 줄이기 3차: 역할 확인 탭당 하나, 공개 배치 이미지 확인, 공개 이미지 캐시 5분, 준비 검사 재사용 5분
+
+- 무엇: [결과 문서](d1-efficiency-round3-results-20261128.md). 운영 통계(7일, 읽기만)와 화면별 요청 수·요청 1회 비용을 잰 뒤, 사용자 결정으로 A·I·C·D를 바꿨다. B·F는 하지 않았다. 새 migration은 없다.
+- 전후
+  - 관리자 수정 창 열기·닫기 3회의 역할 요청: 6 → 0
+  - 공개 배치 이미지 확인(48개, 버전 1·5·20개): 288·864·3,024행 → 240행
+  - 준비 검사: 27쿼리 → 5쿼리, 5분 안 재사용 0쿼리
+- 새 시험: `admin-role`(4), `d1-public-images`(4: 옛 SQL과 같은 결과 15가지 사례·무작위 300가지, 읽은 행, 쿼리 계획), `storage-status-reuse`(3), `e2e/role-check-once`(2). 측정 도구 `e2e/d1-round3-baseline.spec.ts`(`SJN_D1_ROUND3=1`), `tests/d1-round3-baseline.test.ts`(`SJN_D1_COST=1`)는 평소 건너뛴다.
+- 통과: `npm run typecheck`, `npx eslint . --ignore-pattern ".claude/**"`(오류 0, 경고 1은 이번에 바꾸지 않은 `tests/direction-photo-methods/review/server.mjs`), 바꾼 코드 파일 Prettier.
+- D1 시험 차례 실행(`tests/d1-*.test.ts`, `admin-*`, `storage-*`, `service-limit*`, `catalog-*`, 35개 파일)
+  - e2e와 동시에 돌린 첫 실행은 3시간 넘게 걸렸고, 8개 파일이 시간 초과와 Miniflare `fetch failed`로 실패했다. 판정 실패는 없었다.
+  - 실패한 8개 파일을 혼자 다시 돌려 모두 통과했다(73개).
+- 관련 e2e 61개(material-paging, fixture-layouts, catalog-access, login-flow, guest-workspace, list-thumbnails, service-limit, storage-bootstrap, role-check-once): 59개 통과.
+  - `list-thumbnails` 관리자 버튼 1개는 단독 재실행에서 통과했다.
+  - `service-limit`의 "실사 변환이 AI 하루 한도…"는 내보내기 창이 변환할 이미지를 준비하는 단계에서 멈춘다. 이번 변경이 없는 `origin/main`(`9aef49a`) 깨끗한 폴더에서도 같은 자리에서 실패해 원래 있던 실패다.
+
 ## 2026-11-26 — 다듬기: 컷아웃에 딸린 떨어진 조각 되돌리기(DETACHED_CARRY)
 
 - 무엇: `ai-export/fixture-shape.ts` `trimCarried`를 `current-refine.ts`가 기본으로 부른다. 쓰는 도기 컷아웃에서 렌더 제품과 3px 안에 닿지 않는 200px·6px 이상 조각(변기 옆 변기솔)을 빼서 벽·바닥으로 되돌린다. AI에 보내는 그림·문장·호출 수·저장 형식·API·SQL은 그대로다.

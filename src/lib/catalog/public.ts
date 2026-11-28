@@ -25,6 +25,8 @@ export type PublicMaterial = {
   depthMm: number;
   images: { url: string; label: string }[];
 };
+/** Seconds a browser may reuse a public catalogue image (GET /api/catalog/images). */
+export const PUBLIC_IMAGE_MAX_AGE = 300;
 const visible =
   "m.scope='shared' AND m.active=1 AND m.purpose='catalog' AND json_type(v.payload_json,'$.reconstruction') IS NULL";
 /**
@@ -72,6 +74,41 @@ export const publiclyDisplayed = `EXISTS(SELECT 1 FROM d1_material_assets r
   CROSS JOIN d1_material_versions v CROSS JOIN d1_materials m
   WHERE r.asset_id=a.id AND v.id=r.version_id AND m.id=v.material_id AND m.current_version_id=v.id
   AND ${visible} AND ${directDisplay})`;
+const imageConditions = `a.deleting=0
+     AND json_extract(a.metadata_json,'$.kind') IN ('texture','product','preview')
+     AND json_extract(a.metadata_json,'$.mime') IN ('image/png','image/jpeg','image/webp')`;
+/**
+ * `publiclyDisplayed` for given (version, image) pairs (a JSON array of `[versionId, assetId]`): each
+ * pair reads its own asset, reference row, version and material by key, so a page costs a few rows an
+ * image however many versions its materials have had. A pair it confirms passes `publiclyDisplayed`
+ * through that very version.
+ */
+const pairSql = `SELECT DISTINCT a.id,a.metadata_json FROM json_each(?) p
+  CROSS JOIN d1_assets a CROSS JOIN d1_material_assets r CROSS JOIN d1_material_versions v CROSS JOIN d1_materials m
+  WHERE a.id=json_extract(p.value,'$[1]') AND ${imageConditions}
+  AND r.version_id=json_extract(p.value,'$[0]') AND r.asset_id=a.id AND v.id=r.version_id AND m.id=v.material_id
+  AND m.current_version_id=v.id AND ${visible} AND ${directDisplay}`;
+const fullSql = `SELECT a.id,a.metadata_json FROM d1_assets a WHERE a.id IN(SELECT value FROM json_each(?))
+     AND ${imageConditions} AND ${publiclyDisplayed}`;
+/**
+ * The images among the pairs' that are publicly displayed: the same rows the old full check gave for
+ * those ids (docs/d1-efficiency-round3-results-20261128.md, I). Each image is confirmed through the
+ * public version in hand that shows it; only one that check leaves out is asked the full way (any
+ * current public version), so nothing changes in what is public.
+ */
+export async function publicImageRows(env: D1Bindings, pairs: [versionId: string, assetId: string][]) {
+  if (!pairs.length) return [];
+  const first = (
+    await env.DB.prepare(pairSql).bind(JSON.stringify(pairs)).all<{ id: string; metadata_json: string }>()
+  ).results;
+  const found = new Set(first.map((row) => row.id));
+  const rest = [...new Set(pairs.map(([, id]) => id))].filter((id) => !found.has(id));
+  if (!rest.length) return first;
+  const more = await env.DB.prepare(fullSql)
+    .bind(JSON.stringify(rest))
+    .all<{ id: string; metadata_json: string }>();
+  return [...first, ...more.results];
+}
 function pageQuery(params: URLSearchParams) {
   try {
     return parsePageSearchParams(params);
@@ -150,7 +187,10 @@ export async function publicImage(env: D1Bindings, request: Request): Promise<Re
   return new Response(file.body, {
     headers: {
       'Content-Type': mime,
-      'Cache-Control': 'no-store',
+      // An asset id's bytes never change. A browser may show an image again for five minutes without
+      // asking, so one taken out of the catalogue can stay that long where it was already seen; the
+      // next request after that is checked again (user decision, docs/d1-efficiency-round3-results-20261128.md, C).
+      'Cache-Control': `public, max-age=${PUBLIC_IMAGE_MAX_AGE}`,
       'X-Content-Type-Options': 'nosniff',
       ...(size === 'list' ? { 'X-SJN-List-Image': list ? '1' : '0' } : {}),
     },
@@ -222,18 +262,14 @@ export async function placementsOf(env: D1Bindings, rows: PublicVersionRow[]): P
     row,
     v: readMaterialViews(JSON.parse(row.payload_json) as MaterialVersion),
   }));
-  const ids = [...new Set(versions.flatMap(({ v }) => displayImages(v).map((ref) => ref.id)))];
-  const imageRows = await env.DB.prepare(
-    `SELECT a.id,a.metadata_json FROM d1_assets a WHERE a.deleting=0
-     AND a.id IN(SELECT value FROM json_each(?))
-     AND json_extract(a.metadata_json,'$.kind') IN ('texture','product','preview')
-     AND json_extract(a.metadata_json,'$.mime') IN ('image/png','image/jpeg','image/webp')
-     AND ${publiclyDisplayed}`,
-  )
-    .bind(JSON.stringify(ids))
-    .all<{ id: string; metadata_json: string }>();
+  const imageRows = await publicImageRows(
+    env,
+    versions.flatMap(({ row, v }) =>
+      displayImages(v).map((ref): [string, string] => [row.version_id, ref.id]),
+    ),
+  );
   const images = new Map(
-    imageRows.results.map((row) => {
+    imageRows.map((row) => {
       const metadata = JSON.parse(row.metadata_json);
       return [
         row.id,

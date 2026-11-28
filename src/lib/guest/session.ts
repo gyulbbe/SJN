@@ -232,9 +232,9 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
       .flatMap((placement) => placement.images)
       .find((item) => item.id === id);
     if (!image) throw new StorageNotFoundError('체험 이미지');
+    // The browser may answer from its copy for five minutes (GET /api/catalog/images, d1 round 3 C).
     const response = await deps.fetch(image.url + '&size=list', {
       credentials: 'same-origin',
-      cache: 'no-store',
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok)
@@ -265,7 +265,6 @@ export function createGuestSessionManager(deps: GuestSessionDependencies) {
         if (!image) throw new StorageNotFoundError('체험 이미지');
         const response = await deps.fetch(image.url, {
           credentials: 'same-origin',
-          cache: 'no-store',
           signal: AbortSignal.timeout(30_000),
         });
         if (!response.ok)
