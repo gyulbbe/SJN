@@ -112,7 +112,7 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 
 누락된 바인딩·migration·secret·연결 실패·초기 timeout은 계정 작업공간 접근을 잠근다. 메인과 빈 공간 체험은 열리고, 공용 자재는 [독립 DB/R2 환경 검사](../../../../src/lib/catalog/public-context.ts)로 읽어 OAuth 준비 실패에 종속되지 않는다. DB/R2가 없으면 자재 영역에 오류·재시도를 표시한다. 세션 만료 시 기존 계정 편집 화면을 숨기고 로그인 안내를 표시하되 본인 계정의 IndexedDB 복구본은 보존한다. 관리자 타인 프로젝트 편집은 명시적으로 범위가 지정된 저장소를 사용하고 캐시로 권한을 우회하지 않는다.
 
-계정 저장용 `GET /api/storage/status`는 서버 최대 4.5초, 브라우저 초기 확인 최대 5초다. D1 스키마와 R2 `HEAD __sjn_readiness__`를 읽기만 하며 sentinel 객체가 없어도 HEAD 성공이면 된다. `ready:true`는 실제 Google callback/R2 업로드 성공까지 보증하지 않는다. 원본: [status route](../../../../src/app/api/storage/status/route.ts), [database](../../../../src/lib/d1/database.ts), [auth](../../../../src/lib/auth/d1.ts).
+계정 저장용 `GET /api/storage/status`는 서버 최대 4.5초, 브라우저 초기 확인 최대 5초다. D1 스키마와 R2 `HEAD __sjn_readiness__`를 읽기만 하며 sentinel 객체가 없어도 HEAD 성공이면 된다. `ready:true`는 실제 Google callback/R2 업로드 성공까지 보증하지 않는다. 통과한 D1/R2 검사는 같은 isolate·바인딩에서 5분(`READY_REUSE_MS`) 다시 묻지 않는다. 실패는 재사용하지 않고, migration 직후 최대 5분은 옛 결과가 보일 수 있다. 재사용 중 하루 한도는 다른 요청의 `SERVICE_LIMIT`으로 화면에 알린다(2026-11-28, [3차 결과](../../../../docs/d1-efficiency-round3-results-20261128.md)). 원본: [status route](../../../../src/app/api/storage/status/route.ts), [database](../../../../src/lib/d1/database.ts), [auth](../../../../src/lib/auth/d1.ts).
 
 ## R2 키와 접근 API
 
@@ -123,7 +123,7 @@ D1 `DB`와 R2 `ASSET_BUCKET`은 바인딩이며 URL/비밀번호 변수가 아�
 
 객체 키와 브라우저 URL은 다르다. 일반 업로드·조회는 `/api/d1/assets`, raw 바이트는 `?id={assetId}&raw=1`다. 관리자 전용 경로는 `/api/admin/project-assets?projectId=...`이며 해당 프로젝트/행위자 범위만 허용한다. `/api/catalog/images?id=...`는 로그인 없이 현재 활성 공용 자재에서 직접 사용하는 표시 이미지(texture/product/preview)만 전달한다. `GET /api/catalog/placement`는 최소 배치 DTO 목록, `?materialId=...`는 현재 버전 한 건을 반환하며 과거 버전/개인 자재 조회 경로로 쓰지 않는다. source 원본·메시를 공용 이미지로 노출하지 않는다.
 
-이미지 업로드는 최대 25MB, 서버에서 형식·MIME·metadata를 검사한다. raw는 private/no-store이며 버킷 공개나 S3 관리 키 배포는 필요 없다. [assets](../../../../src/lib/d1/assets.ts), [projects](../../../../src/lib/d1/projects.ts), [admin projects](../../../../src/lib/admin/projects.ts), [catalog images](../../../../src/app/api/catalog/images/route.ts)를 확인한다. 과거 Supabase migration의 scene-assets 규칙은 현재 R2 경로와 별개다. 실행 어댑터와 SDK는 제거했다.
+이미지 업로드는 최대 25MB, 서버에서 형식·MIME·metadata를 검사한다. raw는 private/no-store이며 버킷 공개나 S3 관리 키 배포는 필요 없다. 공개 카탈로그 이미지(`/api/catalog/images`, `size=list` 포함)만 성공 응답이 `public, max-age=300`이다(사용자 결정 2026-11-28: 비활성 자재 이미지는 이미 본 브라우저에 최대 5분 남고, 서버는 바로 404). 회원·관리자 자산은 그대로 `private, no-store`다. [assets](../../../../src/lib/d1/assets.ts), [projects](../../../../src/lib/d1/projects.ts), [admin projects](../../../../src/lib/admin/projects.ts), [catalog images](../../../../src/app/api/catalog/images/route.ts)를 확인한다. 과거 Supabase migration의 scene-assets 규칙은 현재 R2 경로와 별개다. 실행 어댑터와 SDK는 제거했다.
 
 ## AI와 빌드·운영 경계
 
