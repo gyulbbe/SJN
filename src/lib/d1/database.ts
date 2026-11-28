@@ -268,6 +268,32 @@ export async function replay(ctx: Context): Promise<{ value: unknown } | null> {
   if (ctx.adminWrite || ctx.adminProject) await requireActiveAdmin(ctx);
   return { value };
 }
+/** The columns the app reads, table by table (checkD1Storage). Each reads no row. */
+const D1_COLUMN_PROBES = [
+  'SELECT user_id,status,revision,updated_at FROM d1_user_management LIMIT 0',
+  'SELECT id,actor_id,action,target_user_id,project_id,project_revision,before_json,after_json,reason,request_id,created_at FROM d1_admin_audit LIMIT 0',
+  'SELECT id,access_ok,target_ok,revision_ok,last_admin_ok,self_ok FROM d1_admin_checks LIMIT 0',
+  'SELECT project_id,asset_id,actor_id,created_at FROM d1_admin_project_assets LIMIT 0',
+  'SELECT project_id,version_id,actor_id,created_at FROM d1_admin_project_versions LIMIT 0',
+  'SELECT id,owner_id,storage_revision,object_key,summary_json,byte_size FROM d1_projects LIMIT 0',
+  'SELECT id,owner_id,object_key,source_asset_id,metadata_json,content_hash,deleting FROM d1_assets LIMIT 0',
+  'SELECT id,owner_id,scope,current_version_id,active FROM d1_materials LIMIT 0',
+  // 0011: 표시 순서 (empty for none).
+  'SELECT id,kind,display_order FROM d1_catalog_options LIMIT 0',
+  'SELECT id,category_code,display_order FROM d1_material_subcategories LIMIT 0',
+  'SELECT id,material_id,version,payload_json,category,view_count FROM d1_material_versions LIMIT 0',
+  'SELECT project_id,asset_id FROM d1_project_assets LIMIT 0',
+  'SELECT project_id,version_id FROM d1_project_versions LIMIT 0',
+  'SELECT version_id,asset_id FROM d1_material_assets LIMIT 0',
+  // 0009 and 0010: the paged lists read these (no meta version: the migrations only add).
+  'SELECT version_id,material_id,owner_id,scope,purpose,active,updated_at,is_current,lane,category,code,class,search_catalog,search_picker,search_library,prio,name_key,created_at FROM d1_material_list LIMIT 0',
+  'SELECT version_id,facet,value,material_id,scope,active,is_current,updated_at,lane,category,class,prio,name_key,created_at FROM d1_material_list_facets LIMIT 0',
+  'SELECT active,lane,category,class,facet,value,n FROM d1_material_list_counts LIMIT 0',
+  'SELECT object_key,owner_id,asset_id,eligible_at,attempts,lease_token,lease_until,next_attempt_at FROM d1_cleanup_jobs LIMIT 0',
+  'SELECT owner_id,request_key,resource,request_hash,response_key,response_json,created_at FROM d1_mutations LIMIT 0',
+  'SELECT id,conflict_ok,reference_ok FROM d1_checks LIMIT 0',
+  'SELECT owner_id,next_run_at FROM d1_maintenance LIMIT 0',
+];
 export async function checkD1Storage(env: D1Bindings): Promise<void> {
   if (!env?.DB?.prepare || !env?.ASSET_BUCKET?.head) throw new Error('D1/R2 bindings are missing');
   const names = [
@@ -323,59 +349,19 @@ export async function checkD1Storage(env: D1Bindings): Promise<void> {
   const present = new Set(rows.results.map((row) => row.name));
   if ([...names, ...ordered].some((name) => !present.has(name)))
     throw new Error('D1 storage migrations are incomplete');
-  const adminVersion = await env.DB.prepare('SELECT version FROM d1_admin_meta WHERE id=1').first<{
-    version: number;
-  }>();
-  if (adminVersion?.version !== 1) throw new Error('Unsupported admin schema');
-  const version = await env.DB.prepare('SELECT version FROM d1_storage_meta').first<{ version: number }>();
-  if (version?.version !== 1) throw new Error('Unsupported D1 storage schema');
-  const catalogVersion = await env.DB.prepare('SELECT version FROM d1_catalog_meta WHERE id=1').first<{
-    version: number;
-  }>();
-  if (catalogVersion?.version !== 1) throw new Error('Unsupported catalog schema');
-  await env.DB.batch([
-    env.DB.prepare('SELECT user_id,status,revision,updated_at FROM d1_user_management LIMIT 0'),
-    env.DB.prepare(
-      'SELECT id,actor_id,action,target_user_id,project_id,project_revision,before_json,after_json,reason,request_id,created_at FROM d1_admin_audit LIMIT 0',
-    ),
-    env.DB.prepare(
-      'SELECT id,access_ok,target_ok,revision_ok,last_admin_ok,self_ok FROM d1_admin_checks LIMIT 0',
-    ),
-    env.DB.prepare('SELECT project_id,asset_id,actor_id,created_at FROM d1_admin_project_assets LIMIT 0'),
-    env.DB.prepare('SELECT project_id,version_id,actor_id,created_at FROM d1_admin_project_versions LIMIT 0'),
-    env.DB.prepare(
-      'SELECT id,owner_id,storage_revision,object_key,summary_json,byte_size FROM d1_projects LIMIT 0',
-    ),
-    env.DB.prepare(
-      'SELECT id,owner_id,object_key,source_asset_id,metadata_json,content_hash,deleting FROM d1_assets LIMIT 0',
-    ),
-    env.DB.prepare('SELECT id,owner_id,scope,current_version_id,active FROM d1_materials LIMIT 0'),
-    // 0011: 표시 순서 (empty for none).
-    env.DB.prepare('SELECT id,kind,display_order FROM d1_catalog_options LIMIT 0'),
-    env.DB.prepare('SELECT id,category_code,display_order FROM d1_material_subcategories LIMIT 0'),
-    env.DB.prepare(
-      'SELECT id,material_id,version,payload_json,category,view_count FROM d1_material_versions LIMIT 0',
-    ),
-    env.DB.prepare('SELECT project_id,asset_id FROM d1_project_assets LIMIT 0'),
-    env.DB.prepare('SELECT project_id,version_id FROM d1_project_versions LIMIT 0'),
-    env.DB.prepare('SELECT version_id,asset_id FROM d1_material_assets LIMIT 0'),
-    // 0009 and 0010: the paged lists read these (no meta version: the migrations only add).
-    env.DB.prepare(
-      'SELECT version_id,material_id,owner_id,scope,purpose,active,updated_at,is_current,lane,category,code,class,search_catalog,search_picker,search_library,prio,name_key,created_at FROM d1_material_list LIMIT 0',
-    ),
-    env.DB.prepare(
-      'SELECT version_id,facet,value,material_id,scope,active,is_current,updated_at,lane,category,class,prio,name_key,created_at FROM d1_material_list_facets LIMIT 0',
-    ),
-    env.DB.prepare('SELECT active,lane,category,class,facet,value,n FROM d1_material_list_counts LIMIT 0'),
-    env.DB.prepare(
-      'SELECT object_key,owner_id,asset_id,eligible_at,attempts,lease_token,lease_until,next_attempt_at FROM d1_cleanup_jobs LIMIT 0',
-    ),
-    env.DB.prepare(
-      'SELECT owner_id,request_key,resource,request_hash,response_key,response_json,created_at FROM d1_mutations LIMIT 0',
-    ),
-    env.DB.prepare('SELECT id,conflict_ok,reference_ok FROM d1_checks LIMIT 0'),
-    env.DB.prepare('SELECT owner_id,next_run_at FROM d1_maintenance LIMIT 0'),
-  ]);
+  // One statement for the three schema versions (each table's own row, as before).
+  const versions = await env.DB.prepare(
+    `SELECT (SELECT version FROM d1_admin_meta WHERE id=1) AS admin,
+      (SELECT version FROM d1_storage_meta) AS storage,
+      (SELECT version FROM d1_catalog_meta WHERE id=1) AS catalog`,
+  ).first<{ admin: number | null; storage: number | null; catalog: number | null }>();
+  if (versions?.admin !== 1) throw new Error('Unsupported admin schema');
+  if (versions?.storage !== 1) throw new Error('Unsupported D1 storage schema');
+  if (versions?.catalog !== 1) throw new Error('Unsupported catalog schema');
+  // Every column the app reads, in one statement: each probe reads no row and fails on a missing column.
+  await env.DB.prepare(
+    'SELECT 1 FROM ' + D1_COLUMN_PROBES.map((probe, index) => `(${probe}) AS p${index}`).join(' CROSS JOIN '),
+  ).all();
   // Missing sentinel is fine; a successful HEAD proves the bucket can be reached without writes.
   await env.ASSET_BUCKET.head('__sjn_readiness__');
 }

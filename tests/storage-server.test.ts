@@ -5,7 +5,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 
 const runtime = vi.hoisted(() => ({ value: { platform: 'node' } as Record<string, unknown> }));
 vi.mock('@/lib/platform/runtime', () => ({ getRuntimeEnvironment: () => runtime.value }));
-import { storageStatus, requireD1Environment, serverError } from '@/lib/storage/server';
+import { storageStatus, requireD1Environment, serverError, READY_REUSE_MS } from '@/lib/storage/server';
 import { GET as statusRoute } from '@/app/api/storage/status/route';
 
 let mf: Miniflare;
@@ -158,6 +158,10 @@ describe('runtime storage status with real local D1/R2 bindings', () => {
     await db.prepare('UPDATE d1_auth_meta SET version = 999').run();
     try {
       runtime.value = ready;
+      // A passed check may be reused for READY_REUSE_MS in this isolate (d1 round 3 D); past that the
+      // broken schema is seen.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + READY_REUSE_MS + 1);
       expect(await storageStatus()).toMatchObject({ mode: 'd1', ready: false, reason: 'connection_failed' });
     } finally {
       await db.prepare('UPDATE d1_auth_meta SET version = 1').run();

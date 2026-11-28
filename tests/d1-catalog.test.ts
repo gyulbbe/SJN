@@ -768,6 +768,9 @@ describe('material role isolation and public media', () => {
     const publicFile = await image(displayed.id);
     expect(publicFile.headers.get('content-type')).toBe('image/png');
     expect(publicFile.headers.get('x-content-type-options')).toBe('nosniff');
+    // A browser may reuse a public image for five minutes (user decision, d1 round 3 C); the server
+    // still refuses it at once below once the material is taken out.
+    expect(publicFile.headers.get('cache-control')).toBe('public, max-age=300');
     expect(new Uint8Array(await publicFile.arrayBuffer())).toEqual(png);
     await expect(image(original.id)).rejects.toMatchObject({ status: 404 });
     expect(

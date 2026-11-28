@@ -8,6 +8,21 @@ export function runtimeSelection() {
   return { environment, selection: configuredStorage(environment as RuntimeSettings) };
 }
 
+/**
+ * How long a passed D1/R2 readiness check is reused in this isolate (user decision,
+ * docs/d1-efficiency-round3-results-20261128.md, D). The schema only changes with a migration, so a
+ * migration can go unnoticed this long. A failure is never kept, and a spent daily limit still reaches
+ * the screens through the other requests' answers (SERVICE_LIMIT).
+ */
+export const READY_REUSE_MS = 5 * 60_000;
+const passed = new WeakMap<object, WeakMap<object, number>>();
+const passedRecently = (db: object, bucket: object) => (passed.get(db)?.get(bucket) ?? 0) > Date.now();
+function rememberPassed(db: object, bucket: object) {
+  let byBucket = passed.get(db);
+  if (!byBucket) passed.set(db, (byBucket = new WeakMap()));
+  byBucket.set(bucket, Date.now() + READY_REUSE_MS);
+}
+
 export async function storageStatus(): Promise<StorageStatus> {
   const { environment: env, selection } = runtimeSelection();
   if (selection.reason === 'invalid_configuration') return selection;
@@ -22,6 +37,15 @@ export async function storageStatus(): Promise<StorageStatus> {
   } catch {
     return blockedStatus('invalid_configuration');
   }
+  const ready: StorageStatus = {
+    ...selection,
+    ready: true,
+    googleSignIn,
+    ...(env.APP_ENV === 'production' ? { flux9b: true } : {}),
+  };
+  const db = env.DB as object,
+    bucket = env.ASSET_BUCKET as object;
+  if (passedRecently(db, bucket)) return ready;
   let modules: [typeof import('../d1'), typeof import('../auth/d1')];
   try {
     modules = await Promise.all([import('../d1'), import('../auth/d1')]);
@@ -34,13 +58,10 @@ export async function storageStatus(): Promise<StorageStatus> {
     auth.checkD1AuthSchema(env as unknown as Parameters<typeof auth.checkD1AuthSchema>[0]),
   ]);
   const failures = checks.flatMap((check) => (check.status === 'rejected' ? [check.reason] : []));
-  if (!failures.length)
-    return {
-      ...selection,
-      ready: true,
-      googleSignIn,
-      ...(env.APP_ENV === 'production' ? { flux9b: true } : {}),
-    };
+  if (!failures.length) {
+    rememberPassed(db, bucket);
+    return ready;
+  }
   // A spent daily limit is told as such, with when it comes back (the screens' first request).
   for (const failure of failures) {
     const limit = detectServiceLimit(failure);
